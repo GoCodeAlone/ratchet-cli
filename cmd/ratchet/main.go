@@ -9,6 +9,7 @@ import (
 	"github.com/GoCodeAlone/ratchet-cli/internal/daemon"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 	providerauth "github.com/GoCodeAlone/ratchet-cli/internal/provider"
+	"github.com/GoCodeAlone/ratchet-cli/internal/tui"
 	"github.com/GoCodeAlone/ratchet-cli/internal/version"
 )
 
@@ -52,9 +53,23 @@ func main() {
 }
 
 func runInteractive() error {
-	// TODO: auto-start daemon, connect, launch TUI
-	fmt.Println("ratchet interactive mode (not yet implemented)")
-	return nil
+	ctx := context.Background()
+
+	c, err := client.EnsureDaemon()
+	if err != nil {
+		return fmt.Errorf("connect to daemon: %w", err)
+	}
+	defer c.Close()
+
+	wd, _ := os.Getwd()
+	session, err := c.CreateSession(ctx, &pb.CreateSessionReq{
+		WorkingDir: wd,
+	})
+	if err != nil {
+		return fmt.Errorf("create session: %w", err)
+	}
+
+	return tui.Run(ctx, c, session)
 }
 
 func handleDaemon(args []string) {
