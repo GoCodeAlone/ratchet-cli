@@ -24,7 +24,6 @@ archives:
     format: tar.gz
     name_template: "ratchet_{{ .Os }}_{{ .Arch }}"
     files:
-      - LICENSE
       - RATCHET.md
 
 checksum:
