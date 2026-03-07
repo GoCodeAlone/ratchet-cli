@@ -17,6 +17,7 @@ type Service struct {
 	startedAt time.Time
 	engine    *EngineContext
 	sessions  *SessionManager
+	permGate  *permissionGate
 }
 
 func NewService(ctx context.Context) (*Service, error) {
@@ -28,6 +29,7 @@ func NewService(ctx context.Context) (*Service, error) {
 		startedAt: time.Now(),
 		engine:    engine,
 		sessions:  NewSessionManager(engine.DB),
+		permGate:  newPermissionGate(),
 	}, nil
 }
 
@@ -95,11 +97,14 @@ func (s *Service) KillSession(ctx context.Context, req *pb.KillReq) (*pb.Empty, 
 }
 
 func (s *Service) SendMessage(req *pb.SendMessageReq, stream pb.RatchetDaemon_SendMessageServer) error {
-	return status.Error(codes.Unimplemented, "not yet implemented")
+	return s.handleChat(stream.Context(), req.SessionId, req.Content, stream)
 }
 
 func (s *Service) RespondToPermission(ctx context.Context, req *pb.PermissionResponse) (*pb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "not yet implemented")
+	if !s.permGate.Respond(req) {
+		return nil, status.Error(codes.NotFound, "no pending permission request with that ID")
+	}
+	return &pb.Empty{}, nil
 }
 
 func (s *Service) AddProvider(ctx context.Context, req *pb.AddProviderReq) (*pb.Provider, error) {
