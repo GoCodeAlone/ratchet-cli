@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/GoCodeAlone/ratchet/ratchetplugin"
 	"github.com/GoCodeAlone/workflow/secrets"
@@ -18,6 +19,7 @@ type EngineContext struct {
 	ToolRegistry     *ratchetplugin.ToolRegistry
 	MemoryStore      *ratchetplugin.MemoryStore
 	SecretGuard      *ratchetplugin.SecretGuard
+	SecretsProvider  secrets.Provider
 }
 
 func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error) {
@@ -41,9 +43,15 @@ func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error
 		return nil, fmt.Errorf("memory tables: %w", err)
 	}
 
-	// Secret guard using env provider
-	secretProvider := secrets.NewEnvProvider("")
-	ec.SecretGuard = ratchetplugin.NewSecretGuard(secretProvider, "env")
+	// Secret guard using file provider (writable, stored in ~/.ratchet/secrets/)
+	secretsDir := DataDir() + "/secrets"
+	if err := os.MkdirAll(secretsDir, 0700); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create secrets dir: %w", err)
+	}
+	secretProvider := secrets.NewFileProvider(secretsDir)
+	ec.SecretGuard = ratchetplugin.NewSecretGuard(secretProvider, "file")
+	ec.SecretsProvider = secretProvider
 
 	// Provider registry
 	ec.ProviderRegistry = ratchetplugin.NewProviderRegistry(db, secretProvider)
