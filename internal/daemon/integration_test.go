@@ -2,9 +2,11 @@ package daemon
 
 import (
 	"context"
+	"io"
 	"net"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -205,5 +207,84 @@ func TestIntegrationPermissionGate(t *testing.T) {
 	})
 	if err == nil {
 		t.Error("expected error for non-existent permission request")
+	}
+}
+
+func TestIntegrationChatFlow(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	// Register the built-in mock provider (type "mock" returns fixed text responses)
+	_, err := client.AddProvider(ctx, &pb.AddProviderReq{
+		Alias:     "test-mock",
+		Type:      "mock",
+		ApiKey:    "mock-key", // stored in secrets; the mock factory ignores it
+		IsDefault: true,
+	})
+	if err != nil {
+		t.Fatalf("AddProvider: %v", err)
+	}
+
+	// Create session pinned to the mock provider
+	session, err := client.CreateSession(ctx, &pb.CreateSessionReq{
+		WorkingDir: t.TempDir(),
+		Provider:   "test-mock",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	// Send a message and collect streaming events
+	stream, err := client.SendMessage(ctx, &pb.SendMessageReq{
+		SessionId: session.Id,
+		Content:   "hello",
+	})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+
+	var tokenContent string
+	var gotComplete bool
+	for {
+		event, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("stream.Recv: %v", err)
+		}
+		switch e := event.Event.(type) {
+		case *pb.ChatEvent_Token:
+			tokenContent += e.Token.Content
+		case *pb.ChatEvent_Complete:
+			gotComplete = true
+		case *pb.ChatEvent_Error:
+			t.Errorf("unexpected error event: %s", e.Error.Message)
+		}
+	}
+
+	if tokenContent == "" {
+		t.Error("expected non-empty token content from mock provider")
+	}
+	if !gotComplete {
+		t.Error("expected SessionComplete event")
+	}
+
+	// Verify conversation history was persisted
+	sessions, err := client.ListSessions(ctx, &pb.Empty{})
+	if err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	found := false
+	for _, s := range sessions.Sessions {
+		if s.Id == session.Id {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("session not found in list after chat")
 	}
 }
