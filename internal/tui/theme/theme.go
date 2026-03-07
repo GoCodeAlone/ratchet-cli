@@ -32,6 +32,7 @@ type Theme struct {
 	SidebarActive    lipgloss.Style
 	AgentBadge       lipgloss.Style
 	ErrorText        lipgloss.Style
+	OnboardingCard   lipgloss.Style
 }
 
 func Dark() Theme {
@@ -111,6 +112,11 @@ func Dark() Theme {
 
 	t.ErrorText = lipgloss.NewStyle().
 		Foreground(t.Error)
+
+	t.OnboardingCard = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(t.Primary).
+		Padding(1, 2)
 
 	return t
 }

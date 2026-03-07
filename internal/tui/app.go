@@ -15,12 +15,28 @@ import (
 	"github.com/GoCodeAlone/ratchet-cli/internal/tui/theme"
 )
 
+type appPage int
+
+const (
+	pageSplash appPage = iota
+	pageOnboarding
+	pageChat
+)
+
+// ProvidersCheckedMsg carries the result of the async provider list check.
+type ProvidersCheckedMsg struct {
+	Providers []*pb.Provider
+}
+
 // App is the root Bubbletea v2 model.
 type App struct {
 	client      *client.Client
 	sessionID   string
+	session     *pb.Session
 	chat        pages.ChatModel
 	team        pages.TeamModel
+	splash      pages.SplashModel
+	onboarding  pages.OnboardingModel
 	sidebar     components.SidebarModel
 	theme       theme.Theme
 	dark        bool
@@ -29,81 +45,153 @@ type App struct {
 	showSidebar bool
 	showTeam    bool
 	ready       bool
+	page        appPage
+
+	// Coordination between splash animation and provider check.
+	splashDone     bool
+	providersReady bool
+	providers      []*pb.Provider
 }
 
 // NewApp creates the root TUI application model.
 func NewApp(c *client.Client, session *pb.Session, t theme.Theme, dark bool) App {
-	chat := pages.NewChat(c, session.GetId(), t, dark)
-	team := pages.NewTeam()
+	splash := pages.NewSplash()
 	sidebar := components.NewSidebar([]*pb.Session{session}, session.GetId())
 	return App{
 		client:    c,
 		sessionID: session.GetId(),
-		chat:      chat,
-		team:      team,
+		session:   session,
+		splash:    splash,
 		sidebar:   sidebar,
 		theme:     t,
 		dark:      dark,
+		page:      pageSplash,
 	}
 }
 
 func (a App) Init() tea.Cmd {
 	return tea.Batch(
-		a.chat.Init(),
+		a.splash.Init(),
+		a.checkProviders(),
 	)
+}
+
+func (a App) checkProviders() tea.Cmd {
+	return func() tea.Msg {
+		resp, err := a.client.ListProviders(context.Background())
+		if err != nil {
+			return ProvidersCheckedMsg{Providers: nil}
+		}
+		return ProvidersCheckedMsg{Providers: resp.Providers}
+	}
 }
 
 func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
-		switch msg.String() {
-		case "ctrl+c":
-			return a, tea.Quit
-		case "ctrl+d":
-			// Detach: quit TUI, leave session running
-			return a, tea.Quit
-		case "ctrl+s":
-			a.showSidebar = !a.showSidebar
-			if a.showSidebar {
-				a.showTeam = false
-			}
-		case "ctrl+t":
-			a.showTeam = !a.showTeam
-			if a.showTeam {
-				a.showSidebar = false
-			}
-		}
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
 		a.ready = true
+
+	case tea.KeyPressMsg:
+		if msg.String() == "ctrl+c" {
+			return a, tea.Quit
+		}
+		// Chat-only shortcuts
+		if a.page == pageChat {
+			switch msg.String() {
+			case "ctrl+d":
+				return a, tea.Quit
+			case "ctrl+s":
+				a.showSidebar = !a.showSidebar
+				if a.showSidebar {
+					a.showTeam = false
+				}
+			case "ctrl+t":
+				a.showTeam = !a.showTeam
+				if a.showTeam {
+					a.showSidebar = false
+				}
+			}
+		}
+
+	case pages.SplashDoneMsg:
+		a.splashDone = true
+		if a.providersReady {
+			return a.transitionFromSplash()
+		}
+		return a, nil
+
+	case ProvidersCheckedMsg:
+		a.providersReady = true
+		a.providers = msg.Providers
+		if a.splashDone {
+			return a.transitionFromSplash()
+		}
+		return a, nil
+
+	case pages.OnboardingDoneMsg:
+		return a.transitionToChat()
+
 	case components.SessionSelectedMsg:
 		a.sessionID = msg.SessionID
 		a.showSidebar = false
+
 	case components.SessionKillMsg:
 		go func() {
 			a.client.KillSession(context.Background(), msg.SessionID)
 		}()
 	}
 
-	// Route key events to active panel
-	if a.showSidebar {
-		var sidebarCmd tea.Cmd
-		a.sidebar, sidebarCmd = a.sidebar.Update(msg)
-		cmds = append(cmds, sidebarCmd)
-	} else if a.showTeam {
-		var teamCmd tea.Cmd
-		a.team, teamCmd = a.team.Update(msg)
-		cmds = append(cmds, teamCmd)
-	} else {
-		var chatCmd tea.Cmd
-		a.chat, chatCmd = a.chat.Update(msg)
-		cmds = append(cmds, chatCmd)
+	// Route updates to active page
+	switch a.page {
+	case pageSplash:
+		var splashCmd tea.Cmd
+		a.splash, splashCmd = a.splash.Update(msg)
+		cmds = append(cmds, splashCmd)
+
+	case pageOnboarding:
+		var obCmd tea.Cmd
+		a.onboarding, obCmd = a.onboarding.Update(msg)
+		cmds = append(cmds, obCmd)
+
+	case pageChat:
+		if a.showSidebar {
+			var sidebarCmd tea.Cmd
+			a.sidebar, sidebarCmd = a.sidebar.Update(msg)
+			cmds = append(cmds, sidebarCmd)
+		} else if a.showTeam {
+			var teamCmd tea.Cmd
+			a.team, teamCmd = a.team.Update(msg)
+			cmds = append(cmds, teamCmd)
+		} else {
+			var chatCmd tea.Cmd
+			a.chat, chatCmd = a.chat.Update(msg)
+			cmds = append(cmds, chatCmd)
+		}
 	}
 
 	return a, tea.Batch(cmds...)
+}
+
+func (a App) transitionFromSplash() (tea.Model, tea.Cmd) {
+	if len(a.providers) == 0 {
+		a.onboarding = pages.NewOnboarding(a.client, a.theme)
+		a.page = pageOnboarding
+		return a, a.onboarding.Init()
+	}
+	return a.transitionToChat()
+}
+
+func (a App) transitionToChat() (tea.Model, tea.Cmd) {
+	chat := pages.NewChat(a.client, a.sessionID, a.theme, a.dark)
+	team := pages.NewTeam()
+	a.chat = chat
+	a.team = team
+	a.page = pageChat
+	return a, a.chat.Init()
 }
 
 func (a App) View() tea.View {
@@ -112,26 +200,35 @@ func (a App) View() tea.View {
 		return v
 	}
 
-	header := a.renderHeader()
-	var body string
+	var content string
 
-	switch {
-	case a.showSidebar:
-		sidebarWidth := 30
-		if a.width > 0 && sidebarWidth > a.width/3 {
-			sidebarWidth = a.width / 3
+	switch a.page {
+	case pageSplash:
+		content = a.splash.View(a.theme, a.width, a.height)
+
+	case pageOnboarding:
+		content = a.onboarding.View(a.theme, a.width, a.height)
+
+	case pageChat:
+		header := a.renderHeader()
+		var body string
+		switch {
+		case a.showSidebar:
+			sidebarWidth := 30
+			if a.width > 0 && sidebarWidth > a.width/3 {
+				sidebarWidth = a.width / 3
+			}
+			sidebarView := a.sidebar.SetSize(sidebarWidth, a.height-3).View(a.theme)
+			chatView := a.chat.View(a.theme)
+			body = joinColumns(sidebarView, chatView, sidebarWidth, a.width)
+		case a.showTeam:
+			teamView := a.team.SetSize(a.width, a.height-3).View(a.theme)
+			body = teamView
+		default:
+			body = a.chat.View(a.theme)
 		}
-		sidebarView := a.sidebar.SetSize(sidebarWidth, a.height-3).View(a.theme)
-		chatView := a.chat.View(a.theme)
-		body = joinColumns(sidebarView, chatView, sidebarWidth, a.width)
-	case a.showTeam:
-		teamView := a.team.SetSize(a.width, a.height-3).View(a.theme)
-		body = teamView
-	default:
-		body = a.chat.View(a.theme)
+		content = header + "\n" + body
 	}
-
-	content := header + "\n" + body
 
 	view := tea.NewView(content)
 	view.AltScreen = true
