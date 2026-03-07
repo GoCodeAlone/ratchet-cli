@@ -14,9 +14,14 @@ import (
 )
 
 // ChatEventMsg wraps an incoming proto ChatEvent for the TUI.
+// The channel is carried so handleChatEvent can schedule the next read.
 type ChatEventMsg struct {
 	Event *pb.ChatEvent
+	ch    <-chan *pb.ChatEvent
 }
+
+// chatStreamDoneMsg signals the event channel was closed.
+type chatStreamDoneMsg struct{}
 
 type ChatModel struct {
 	client    *client.Client
@@ -27,6 +32,7 @@ type ChatModel struct {
 	viewport   viewport.Model
 	input      components.InputModel
 	statusBar  components.StatusBar
+	toolCalls  components.ToolCallListModel
 	messages   []components.Message
 	streaming  string // current streaming response
 	width      int
@@ -48,6 +54,7 @@ func NewChat(c *client.Client, sessionID string, t theme.Theme, dark bool) ChatM
 		viewport:  vp,
 		input:     input,
 		statusBar: statusBar,
+		toolCalls: components.NewToolCallList(),
 		ctx:       context.Background(),
 	}
 }
@@ -65,6 +72,13 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 		m.height = msg.Height
 		m.relayout()
 
+	case tea.KeyPressMsg:
+		// Cancel in-flight streaming with Escape
+		if msg.String() == "esc" && m.cancelChat != nil {
+			m.cancelChat()
+			m.cancelChat = nil
+		}
+
 	case components.SubmitMsg:
 		// Add user message and send to daemon
 		m.messages = append(m.messages, components.Message{
@@ -76,7 +90,19 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 		cmds = append(cmds, m.sendMessage(msg.Content))
 
 	case ChatEventMsg:
-		cmds = append(cmds, m.handleChatEvent(msg.Event))
+		cmds = append(cmds, m.handleChatEvent(msg)...)
+
+	case chatStreamDoneMsg:
+		// Stream channel closed without a Complete event
+		if m.streaming != "" {
+			m.messages = append(m.messages, components.Message{
+				Role:    components.RoleAssistant,
+				Content: m.streaming,
+			})
+			m.streaming = ""
+			m.refreshViewport()
+		}
+		m.cancelChat = nil
 	}
 
 	var inputCmd, vpCmd tea.Cmd
@@ -107,6 +133,11 @@ func (m *ChatModel) refreshViewport() {
 		sb.WriteString(msg.Render(m.theme, m.width, m.dark))
 		sb.WriteString("\n")
 	}
+	// Render any active tool calls
+	toolView := m.toolCalls.View(m.theme, m.width)
+	if toolView != "" {
+		sb.WriteString(toolView)
+	}
 	if m.streaming != "" {
 		assistantMsg := components.Message{
 			Role:    components.RoleAssistant,
@@ -124,7 +155,7 @@ func (m ChatModel) sendMessage(content string) tea.Cmd {
 			return nil
 		}
 		ctx, cancel := context.WithCancel(m.ctx)
-		_ = cancel // stored for potential cancellation
+		m.cancelChat = cancel
 
 		ch, err := m.client.SendMessage(ctx, m.sessionID, content)
 		if err != nil {
@@ -135,24 +166,69 @@ func (m ChatModel) sendMessage(content string) tea.Cmd {
 			}}
 		}
 
-		// Return first event; subsequent events come via streaming
+		// Read first event and carry channel for subsequent reads
 		event, ok := <-ch
 		if !ok {
-			return nil
+			return chatStreamDoneMsg{}
 		}
-		return ChatEventMsg{Event: event}
+		return ChatEventMsg{Event: event, ch: ch}
 	}
 }
 
-func (m ChatModel) handleChatEvent(event *pb.ChatEvent) tea.Cmd {
+// nextEvent returns a Cmd that reads the next event from the channel.
+func nextEvent(ch <-chan *pb.ChatEvent) tea.Cmd {
+	return func() tea.Msg {
+		event, ok := <-ch
+		if !ok {
+			return chatStreamDoneMsg{}
+		}
+		return ChatEventMsg{Event: event, ch: ch}
+	}
+}
+
+func (m *ChatModel) handleChatEvent(msg ChatEventMsg) []tea.Cmd {
+	event := msg.Event
 	if event == nil {
 		return nil
 	}
+
+	var cmds []tea.Cmd
+
 	switch e := event.Event.(type) {
 	case *pb.ChatEvent_Token:
 		m.streaming += e.Token.Content
 		m.refreshViewport()
-		return nil
+
+	case *pb.ChatEvent_ToolStart:
+		m.toolCalls.AddCard(e.ToolStart.CallId, e.ToolStart.ToolName, e.ToolStart.ArgumentsJson)
+		m.refreshViewport()
+
+	case *pb.ChatEvent_ToolResult:
+		m.toolCalls.UpdateResult(e.ToolResult.CallId, e.ToolResult.ResultJson, e.ToolResult.Success)
+		m.refreshViewport()
+
+	case *pb.ChatEvent_Permission:
+		// Show permission prompt inline
+		m.messages = append(m.messages, components.Message{
+			Role:    components.RoleTool,
+			Content: "Permission required: " + e.Permission.ToolName + " — " + e.Permission.Description,
+		})
+		m.refreshViewport()
+
+	case *pb.ChatEvent_AgentSpawned:
+		m.messages = append(m.messages, components.Message{
+			Role:    components.RoleTool,
+			Content: "Agent spawned: " + e.AgentSpawned.AgentName + " (" + e.AgentSpawned.Role + ")",
+		})
+		m.refreshViewport()
+
+	case *pb.ChatEvent_AgentMessage:
+		m.messages = append(m.messages, components.Message{
+			Role:    components.RoleTool,
+			Content: "[" + e.AgentMessage.FromAgent + "] " + e.AgentMessage.Content,
+		})
+		m.refreshViewport()
+
 	case *pb.ChatEvent_Complete:
 		if m.streaming != "" {
 			m.messages = append(m.messages, components.Message{
@@ -162,7 +238,9 @@ func (m ChatModel) handleChatEvent(event *pb.ChatEvent) tea.Cmd {
 			m.streaming = ""
 			m.refreshViewport()
 		}
-		return nil
+		m.cancelChat = nil
+		return cmds // don't schedule next read — stream is done
+
 	case *pb.ChatEvent_Error:
 		m.messages = append(m.messages, components.Message{
 			Role:    components.RoleTool,
@@ -170,9 +248,15 @@ func (m ChatModel) handleChatEvent(event *pb.ChatEvent) tea.Cmd {
 		})
 		m.streaming = ""
 		m.refreshViewport()
-		return nil
+		m.cancelChat = nil
+		return cmds // don't schedule next read — stream is done
 	}
-	return nil
+
+	// Schedule read of next event from the channel
+	if msg.ch != nil {
+		cmds = append(cmds, nextEvent(msg.ch))
+	}
+	return cmds
 }
 
 func (m ChatModel) View(t theme.Theme) string {

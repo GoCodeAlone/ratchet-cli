@@ -23,7 +23,6 @@ func Discover(workingDir string) []Skill {
 		filepath.Join(workingDir, ".ratchet", "skills"),
 	}
 
-	seen := make(map[string]bool)
 	var skills []Skill
 
 	for _, dir := range searchDirs {
@@ -48,8 +47,6 @@ func Discover(workingDir string) []Skill {
 			if err != nil {
 				continue
 			}
-			// Later paths (project-level) override earlier paths (global)
-			seen[name] = true
 			skills = append(skills, Skill{
 				Name:    name,
 				Path:    path,
@@ -57,7 +54,6 @@ func Discover(workingDir string) []Skill {
 			})
 		}
 	}
-	_ = seen
 	return dedup(skills)
 }
 

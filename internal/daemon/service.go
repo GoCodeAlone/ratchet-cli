@@ -110,34 +110,41 @@ func (s *Service) AddProvider(ctx context.Context, req *pb.AddProviderReq) (*pb.
 	id := uuid.New().String()
 	secretName := fmt.Sprintf("provider_%s", req.Alias)
 
-	// Clear existing default if this is the new default
-	if req.IsDefault {
-		if _, err := s.engine.DB.ExecContext(ctx, `UPDATE llm_providers SET is_default = 0`); err != nil {
-			return nil, status.Errorf(codes.Internal, "clear defaults: %v", err)
-		}
-	}
-
 	isDefault := 0
 	if req.IsDefault {
 		isDefault = 1
 	}
 
+	tx, err := s.engine.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "begin transaction: %v", err)
+	}
+	defer tx.Rollback()
+
+	// Clear existing default if this is the new default
+	if req.IsDefault {
+		if _, err := tx.ExecContext(ctx, `UPDATE llm_providers SET is_default = 0`); err != nil {
+			return nil, status.Errorf(codes.Internal, "clear defaults: %v", err)
+		}
+	}
+
 	// DB insert before secret store to avoid orphaned secrets on constraint failure
-	_, err := s.engine.DB.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO llm_providers (id, alias, type, model, secret_name, base_url, max_tokens, is_default) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, req.Alias, req.Type, req.Model, secretName, req.BaseUrl, req.MaxTokens, isDefault,
-	)
-	if err != nil {
+	); err != nil {
 		return nil, status.Errorf(codes.Internal, "insert provider: %v", err)
 	}
 
 	// Store API key after successful insert
 	if req.ApiKey != "" {
 		if err := s.engine.SecretsProvider.Set(ctx, secretName, req.ApiKey); err != nil {
-			// Best-effort rollback
-			s.engine.DB.ExecContext(ctx, `DELETE FROM llm_providers WHERE alias = ?`, req.Alias)
 			return nil, status.Errorf(codes.Internal, "store api key: %v", err)
 		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, status.Errorf(codes.Internal, "commit: %v", err)
 	}
 
 	s.engine.ProviderRegistry.InvalidateCacheAlias(req.Alias)

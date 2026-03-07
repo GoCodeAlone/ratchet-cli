@@ -164,3 +164,37 @@ func (c *Client) Shutdown(ctx context.Context) error {
 	_, err := c.daemon.Shutdown(ctx, &pb.Empty{})
 	return err
 }
+
+// StartTeam starts a team and returns a channel of TeamEvents.
+func (c *Client) StartTeam(ctx context.Context, req *pb.StartTeamReq) (<-chan *pb.TeamEvent, error) {
+	stream, err := c.daemon.StartTeam(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	ch := make(chan *pb.TeamEvent, 64)
+	go func() {
+		defer close(ch)
+		for {
+			event, err := stream.Recv()
+			if err == io.EOF {
+				return
+			}
+			if err != nil {
+				ch <- &pb.TeamEvent{
+					Event: &pb.TeamEvent_Error{
+						Error: &pb.ErrorEvent{Message: err.Error()},
+					},
+				}
+				return
+			}
+			ch <- event
+		}
+	}()
+	return ch, nil
+}
+
+// GetTeamStatus returns the status of the active team.
+func (c *Client) GetTeamStatus(ctx context.Context, teamID string) (*pb.TeamStatus, error) {
+	return c.daemon.GetTeamStatus(ctx, &pb.TeamStatusReq{TeamId: teamID})
+}

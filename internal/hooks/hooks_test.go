@@ -8,6 +8,7 @@ import (
 
 func TestLoadEmpty(t *testing.T) {
 	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
 	cfg, err := Load(tmp)
 	if err != nil {
 		t.Fatal(err)
