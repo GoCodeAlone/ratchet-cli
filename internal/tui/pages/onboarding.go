@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/bubbles/v2/spinner"
@@ -11,6 +12,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/client"
+	providerauth "github.com/GoCodeAlone/ratchet-cli/internal/provider"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 	"github.com/GoCodeAlone/ratchet-cli/internal/tui/theme"
 )
@@ -30,20 +32,42 @@ type providerTestedMsg struct {
 	err    error
 }
 
+// browserAuthResultMsg carries the result of a browser-based auth flow.
+type browserAuthResultMsg struct {
+	token string
+	err   error
+}
+
+// deviceCodeMsg carries the device code for display in the TUI.
+type deviceCodeMsg struct {
+	result *providerauth.DeviceCodeResult
+	err    error
+}
+
 type onboardingStep int
 
 const (
 	stepSelectProvider onboardingStep = iota
+	stepBrowserAuth
 	stepEnterAPIKey
 	stepEnterBaseURL
 	stepSelectModel
 	stepTestConnection
 )
 
+type authMethod string
+
+const (
+	authAPIKey     authMethod = "api_key"
+	authBrowser    authMethod = "browser"
+	authDeviceFlow authMethod = "device_flow"
+	authNone       authMethod = "none"
+)
+
 type providerTypeInfo struct {
 	name          string
 	displayName   string
-	needsAPIKey   bool
+	auth          authMethod
 	needsBaseURL  bool
 	defaultURL    string
 	defaultModels []string
@@ -52,24 +76,29 @@ type providerTypeInfo struct {
 var providerTypes = []providerTypeInfo{
 	{
 		name: "anthropic", displayName: "Anthropic (Claude)",
-		needsAPIKey: true, needsBaseURL: false,
+		auth: authBrowser,
 		defaultModels: []string{"claude-sonnet-4-20250514", "claude-opus-4-20250514", "claude-haiku-4-20250514"},
 	},
 	{
+		name: "copilot", displayName: "GitHub Copilot",
+		auth: authDeviceFlow,
+		defaultModels: []string{"gpt-4o", "claude-3.5-sonnet", "o3-mini"},
+	},
+	{
 		name: "openai", displayName: "OpenAI (GPT)",
-		needsAPIKey: true, needsBaseURL: true,
+		auth: authAPIKey, needsBaseURL: true,
 		defaultURL:    "https://api.openai.com/v1",
 		defaultModels: []string{"gpt-4o", "gpt-4o-mini", "o3-mini"},
 	},
 	{
 		name: "ollama", displayName: "Ollama (Local)",
-		needsAPIKey: false, needsBaseURL: true,
+		auth: authNone, needsBaseURL: true,
 		defaultURL:    "http://localhost:11434",
 		defaultModels: []string{"llama3.3", "codellama", "mistral"},
 	},
 	{
 		name: "gemini", displayName: "Google Gemini",
-		needsAPIKey: true, needsBaseURL: false,
+		auth: authAPIKey,
 		defaultModels: []string{"gemini-2.5-pro", "gemini-2.5-flash"},
 	},
 }
@@ -87,6 +116,13 @@ type OnboardingModel struct {
 
 	// Base URL input
 	baseURLInput textinput.Model
+
+	// Browser/device flow auth
+	authToken   string // token obtained from browser/device auth
+	authError   string
+	authing     bool   // browser/device auth in progress
+	deviceCode  *providerauth.DeviceCodeResult
+	authCancel  context.CancelFunc
 
 	// Model selection
 	modelCursor int
@@ -118,11 +154,11 @@ func NewOnboarding(c *client.Client, t theme.Theme) OnboardingModel {
 	sp.Style = lipgloss.NewStyle().Foreground(t.Primary)
 
 	return OnboardingModel{
-		client:   c,
-		step:     stepSelectProvider,
+		client:       c,
+		step:         stepSelectProvider,
 		apiKeyInput:  apiKey,
 		baseURLInput: baseURL,
-		spinner:  sp,
+		spinner:      sp,
 	}
 }
 
@@ -141,6 +177,33 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
+	case browserAuthResultMsg:
+		m.authing = false
+		if msg.err != nil {
+			m.authError = msg.err.Error()
+			return m, nil
+		}
+		m.authToken = msg.token
+		m.authError = ""
+		// Auth succeeded, advance to model selection
+		m.step = stepSelectModel
+		m.modelCursor = 0
+		return m, nil
+
+	case deviceCodeMsg:
+		if msg.err != nil {
+			m.authing = false
+			m.authError = msg.err.Error()
+			return m, nil
+		}
+		m.deviceCode = msg.result
+		// Open browser to verification URI
+		go providerauth.OpenBrowserURL(msg.result.VerificationURI) //nolint:errcheck
+		// Start polling for token
+		ctx, cancel := context.WithCancel(context.Background())
+		m.authCancel = cancel
+		return m, m.pollDeviceFlow(ctx, msg.result.DeviceCode, msg.result.Interval)
+
 	case providerAddedMsg:
 		if msg.err != nil {
 			m.testing = false
@@ -148,7 +211,6 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 			return m, nil
 		}
 		m.added = true
-		// Now test the connection
 		return m, m.testProvider(msg.provider.Alias)
 
 	case providerTestedMsg:
@@ -164,7 +226,7 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		return m, nil
 
 	case spinner.TickMsg:
-		if m.testing {
+		if m.testing || m.authing {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
 			return m, cmd
@@ -175,6 +237,8 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 	switch m.step {
 	case stepSelectProvider:
 		return m.updateSelectProvider(msg)
+	case stepBrowserAuth:
+		return m.updateBrowserAuth(msg)
 	case stepEnterAPIKey:
 		return m.updateEnterAPIKey(msg)
 	case stepEnterBaseURL:
@@ -199,16 +263,14 @@ func (m OnboardingModel) updateSelectProvider(msg tea.Msg) (OnboardingModel, tea
 			if m.cursor > 0 {
 				m.cursor--
 			}
-		case "1":
-			m.cursor = 0
-		case "2":
-			m.cursor = 1
-		case "3":
-			m.cursor = 2
-		case "4":
-			m.cursor = 3
 		case "enter", " ":
 			return m.advanceFromProvider()
+		}
+		// Number shortcuts
+		for i := range providerTypes {
+			if keyMsg.String() == fmt.Sprintf("%d", i+1) && i < len(providerTypes) {
+				m.cursor = i
+			}
 		}
 	}
 	return m, nil
@@ -216,17 +278,82 @@ func (m OnboardingModel) updateSelectProvider(msg tea.Msg) (OnboardingModel, tea
 
 func (m OnboardingModel) advanceFromProvider() (OnboardingModel, tea.Cmd) {
 	p := m.selectedProvider()
-	if p.needsAPIKey {
+	switch p.auth {
+	case authBrowser:
+		m.step = stepBrowserAuth
+		m.authing = true
+		m.authError = ""
+		m.authToken = ""
+		return m, tea.Batch(m.spinner.Tick, m.startBrowserAuth())
+	case authDeviceFlow:
+		m.step = stepBrowserAuth
+		m.authing = true
+		m.authError = ""
+		m.authToken = ""
+		m.deviceCode = nil
+		return m, tea.Batch(m.spinner.Tick, m.startDeviceFlow())
+	case authAPIKey:
 		m.step = stepEnterAPIKey
 		return m, m.apiKeyInput.Focus()
+	case authNone:
+		if p.needsBaseURL {
+			m.step = stepEnterBaseURL
+			m.baseURLInput.SetValue(p.defaultURL)
+			return m, m.baseURLInput.Focus()
+		}
+		m.step = stepSelectModel
+		m.modelCursor = 0
+		return m, nil
 	}
-	if p.needsBaseURL {
-		m.step = stepEnterBaseURL
-		m.baseURLInput.SetValue(p.defaultURL)
-		return m, m.baseURLInput.Focus()
+	return m, nil
+}
+
+func (m OnboardingModel) startBrowserAuth() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		_ = cancel // cancel stored separately if needed
+		ch := providerauth.StartAnthropicOAuth(ctx)
+		result := <-ch
+		return browserAuthResultMsg{token: result.Token, err: result.Err}
 	}
-	m.step = stepSelectModel
-	m.modelCursor = 0
+}
+
+func (m OnboardingModel) startDeviceFlow() tea.Cmd {
+	return func() tea.Msg {
+		result, err := providerauth.StartGitHubDeviceFlow(context.Background())
+		return deviceCodeMsg{result: result, err: err}
+	}
+}
+
+func (m OnboardingModel) pollDeviceFlow(ctx context.Context, deviceCode string, interval int) tea.Cmd {
+	return func() tea.Msg {
+		ch := providerauth.PollGitHubDeviceFlow(ctx, deviceCode, interval)
+		result := <-ch
+		return browserAuthResultMsg{token: result.Token, err: result.Err}
+	}
+}
+
+func (m OnboardingModel) updateBrowserAuth(msg tea.Msg) (OnboardingModel, tea.Cmd) {
+	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+		switch keyMsg.String() {
+		case "escape":
+			// Cancel auth and go back
+			if m.authCancel != nil {
+				m.authCancel()
+				m.authCancel = nil
+			}
+			m.authing = false
+			m.authError = ""
+			m.deviceCode = nil
+			m.step = stepSelectProvider
+			return m, nil
+		case "r":
+			if !m.authing && m.authError != "" {
+				// Retry
+				return m.advanceFromProvider()
+			}
+		}
+	}
 	return m, nil
 }
 
@@ -263,7 +390,7 @@ func (m OnboardingModel) updateEnterBaseURL(msg tea.Msg) (OnboardingModel, tea.C
 		switch keyMsg.String() {
 		case "escape":
 			p := m.selectedProvider()
-			if p.needsAPIKey {
+			if p.auth == authAPIKey {
 				m.step = stepEnterAPIKey
 				return m, m.apiKeyInput.Focus()
 			}
@@ -289,12 +416,16 @@ func (m OnboardingModel) updateSelectModel(msg tea.Msg) (OnboardingModel, tea.Cm
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 		switch keyMsg.String() {
 		case "escape":
-			// Go back
+			// Go back — skip browser auth steps (can't go back to those)
+			if p.auth == authBrowser || p.auth == authDeviceFlow {
+				m.step = stepSelectProvider
+				return m, nil
+			}
 			if p.needsBaseURL {
 				m.step = stepEnterBaseURL
 				return m, m.baseURLInput.Focus()
 			}
-			if p.needsAPIKey {
+			if p.auth == authAPIKey {
 				m.step = stepEnterAPIKey
 				return m, m.apiKeyInput.Focus()
 			}
@@ -337,13 +468,21 @@ func (m OnboardingModel) startTest() (OnboardingModel, tea.Cmd) {
 	)
 }
 
+func (m OnboardingModel) resolveAPIKey() string {
+	// Browser/device flow auth stores token in authToken
+	if m.authToken != "" {
+		return m.authToken
+	}
+	return m.apiKeyInput.Value()
+}
+
 func (m OnboardingModel) addProvider(p providerTypeInfo, model string) tea.Cmd {
 	return func() tea.Msg {
 		req := &pb.AddProviderReq{
 			Alias:     p.name,
 			Type:      p.name,
 			Model:     model,
-			ApiKey:    m.apiKeyInput.Value(),
+			ApiKey:    m.resolveAPIKey(),
 			BaseUrl:   m.baseURLInput.Value(),
 			IsDefault: true,
 		}
@@ -361,13 +500,11 @@ func (m OnboardingModel) testProvider(alias string) tea.Cmd {
 
 func (m OnboardingModel) updateTestConnection(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
-		// Only handle keys when test is done
 		if m.testing {
 			return m, nil
 		}
 
 		if m.testResult != nil && m.testResult.Success {
-			// Success — any key proceeds
 			switch keyMsg.String() {
 			case "enter", " ":
 				p := m.selectedProvider()
@@ -386,10 +523,8 @@ func (m OnboardingModel) updateTestConnection(msg tea.Msg) (OnboardingModel, tea
 			return m, nil
 		}
 
-		// Failure — offer retry or back
 		switch keyMsg.String() {
 		case "r":
-			// Retry: re-test (provider already added)
 			if m.added {
 				m.testing = true
 				m.testError = ""
@@ -398,7 +533,6 @@ func (m OnboardingModel) updateTestConnection(msg tea.Msg) (OnboardingModel, tea
 			}
 			return m.startTest()
 		case "b", "escape":
-			// Remove the broken provider and go back
 			if m.added {
 				p := m.selectedProvider()
 				go m.client.RemoveProvider(context.Background(), p.name) //nolint:errcheck
@@ -457,7 +591,34 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 			label := fmt.Sprintf("%s%d. %s", cursor, i+1, p.displayName)
 			sb.WriteString(style.Render(label) + "\n")
 		}
-		sb.WriteString("\n" + mutedStyle.Render("↑/↓ or 1-4: select  Enter: confirm"))
+		sb.WriteString("\n" + mutedStyle.Render(fmt.Sprintf("↑/↓ or 1-%d: select  Enter: confirm", len(providerTypes))))
+
+	case stepBrowserAuth:
+		p := m.selectedProvider()
+		if m.authing {
+			if p.auth == authDeviceFlow && m.deviceCode != nil {
+				// Device flow: show user code
+				codeStyle := lipgloss.NewStyle().Foreground(t.Primary).Bold(true)
+				sb.WriteString("Sign in with GitHub\n\n")
+				sb.WriteString("Enter this code at " + mutedStyle.Render(m.deviceCode.VerificationURI) + ":\n\n")
+				sb.WriteString("  " + codeStyle.Render(m.deviceCode.UserCode) + "\n\n")
+				sb.WriteString(m.spinner.View() + " Waiting for authorization...\n\n")
+				sb.WriteString(mutedStyle.Render("A browser window should have opened.\nEsc: cancel"))
+			} else if p.auth == authDeviceFlow {
+				sb.WriteString(m.spinner.View() + " Requesting device code...\n")
+			} else {
+				// Browser OAuth: waiting for callback
+				sb.WriteString("Sign in with " + p.displayName + "\n\n")
+				sb.WriteString(m.spinner.View() + " Opening browser...\n\n")
+				sb.WriteString(mutedStyle.Render("Complete sign-in in your browser.\nEsc: cancel"))
+			}
+		} else if m.authError != "" {
+			sb.WriteString(errorStyle.Render("Authentication failed") + "\n\n")
+			sb.WriteString(errorStyle.Render("✗") + " " + m.authError + "\n\n")
+			sb.WriteString(mutedStyle.Render("r: retry  Esc: back"))
+		} else {
+			sb.WriteString(successStyle.Render("✓ Authenticated!") + "\n")
+		}
 
 	case stepEnterAPIKey:
 		p := m.selectedProvider()
@@ -516,8 +677,11 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 func (m OnboardingModel) stepCount() int {
 	p := m.selectedProvider()
 	count := 3 // provider + model + test
-	if p.needsAPIKey {
-		count++
+	if p.auth == authBrowser || p.auth == authDeviceFlow {
+		count++ // browser auth step
+	}
+	if p.auth == authAPIKey {
+		count++ // api key step
 	}
 	if p.needsBaseURL {
 		count++
@@ -530,16 +694,19 @@ func (m OnboardingModel) currentStepIndex() int {
 	switch m.step {
 	case stepSelectProvider:
 		return 0
+	case stepBrowserAuth:
+		return 1
 	case stepEnterAPIKey:
 		return 1
 	case stepEnterBaseURL:
-		if p.needsAPIKey {
-			return 2
+		idx := 1
+		if p.auth == authAPIKey || p.auth == authBrowser || p.auth == authDeviceFlow {
+			idx++
 		}
-		return 1
+		return idx
 	case stepSelectModel:
 		idx := 1
-		if p.needsAPIKey {
+		if p.auth != authNone {
 			idx++
 		}
 		if p.needsBaseURL {
