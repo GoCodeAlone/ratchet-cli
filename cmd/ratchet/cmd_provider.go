@@ -39,7 +39,11 @@ func handleProvider(args []string) {
 		}
 		baseURL := ""
 		if providerType == "ollama" || providerType == "custom" || providerType == "openai" {
-			baseURL, _ = providerauth.PromptBaseURL("http://localhost:11434")
+			baseURL, err = providerauth.PromptBaseURL("http://localhost:11434")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
 		}
 		p, err := c.AddProvider(context.Background(), &pb.AddProviderReq{
 			Alias:   alias,

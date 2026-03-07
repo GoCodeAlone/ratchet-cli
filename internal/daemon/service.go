@@ -43,8 +43,7 @@ func (s *Service) Health(ctx context.Context, _ *pb.Empty) (*pb.HealthResponse, 
 }
 
 func (s *Service) Shutdown(ctx context.Context, _ *pb.Empty) (*pb.Empty, error) {
-	// TODO: graceful shutdown
-	return &pb.Empty{}, nil
+	return nil, status.Error(codes.Unimplemented, "not yet implemented")
 }
 
 func (s *Service) CreateSession(ctx context.Context, req *pb.CreateSessionReq) (*pb.Session, error) {
@@ -111,13 +110,6 @@ func (s *Service) AddProvider(ctx context.Context, req *pb.AddProviderReq) (*pb.
 	id := uuid.New().String()
 	secretName := fmt.Sprintf("provider_%s", req.Alias)
 
-	// Store API key in file-based secrets if provided
-	if req.ApiKey != "" {
-		if err := s.engine.SecretsProvider.Set(ctx, secretName, req.ApiKey); err != nil {
-			return nil, status.Errorf(codes.Internal, "store api key: %v", err)
-		}
-	}
-
 	// Clear existing default if this is the new default
 	if req.IsDefault {
 		if _, err := s.engine.DB.ExecContext(ctx, `UPDATE llm_providers SET is_default = 0`); err != nil {
@@ -129,6 +121,8 @@ func (s *Service) AddProvider(ctx context.Context, req *pb.AddProviderReq) (*pb.
 	if req.IsDefault {
 		isDefault = 1
 	}
+
+	// DB insert before secret store to avoid orphaned secrets on constraint failure
 	_, err := s.engine.DB.ExecContext(ctx,
 		`INSERT INTO llm_providers (id, alias, type, model, secret_name, base_url, max_tokens, is_default) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, req.Alias, req.Type, req.Model, secretName, req.BaseUrl, req.MaxTokens, isDefault,
@@ -136,6 +130,16 @@ func (s *Service) AddProvider(ctx context.Context, req *pb.AddProviderReq) (*pb.
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "insert provider: %v", err)
 	}
+
+	// Store API key after successful insert
+	if req.ApiKey != "" {
+		if err := s.engine.SecretsProvider.Set(ctx, secretName, req.ApiKey); err != nil {
+			// Best-effort rollback
+			s.engine.DB.ExecContext(ctx, `DELETE FROM llm_providers WHERE alias = ?`, req.Alias)
+			return nil, status.Errorf(codes.Internal, "store api key: %v", err)
+		}
+	}
+
 	s.engine.ProviderRegistry.InvalidateCacheAlias(req.Alias)
 
 	return &pb.Provider{
@@ -190,18 +194,27 @@ func (s *Service) RemoveProvider(ctx context.Context, req *pb.RemoveProviderReq)
 }
 
 func (s *Service) SetDefaultProvider(ctx context.Context, req *pb.SetDefaultProviderReq) (*pb.Empty, error) {
-	if _, err := s.engine.DB.ExecContext(ctx, `UPDATE llm_providers SET is_default = 0`); err != nil {
+	tx, err := s.engine.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "begin transaction: %v", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `UPDATE llm_providers SET is_default = 0`); err != nil {
 		return nil, status.Errorf(codes.Internal, "clear defaults: %v", err)
 	}
-	if _, err := s.engine.DB.ExecContext(ctx, `UPDATE llm_providers SET is_default = 1 WHERE alias = ?`, req.Alias); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE llm_providers SET is_default = 1 WHERE alias = ?`, req.Alias); err != nil {
 		return nil, status.Errorf(codes.Internal, "set default: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, status.Errorf(codes.Internal, "commit: %v", err)
 	}
 	s.engine.ProviderRegistry.InvalidateCacheAlias(req.Alias)
 	return &pb.Empty{}, nil
 }
 
 func (s *Service) ListAgents(ctx context.Context, _ *pb.Empty) (*pb.AgentList, error) {
-	return &pb.AgentList{}, nil
+	return nil, status.Error(codes.Unimplemented, "not yet implemented")
 }
 
 func (s *Service) GetAgentStatus(ctx context.Context, req *pb.AgentStatusReq) (*pb.Agent, error) {

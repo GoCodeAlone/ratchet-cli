@@ -32,6 +32,11 @@ func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error
 	}
 	db.SetMaxOpenConns(1)
 
+	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("enable foreign keys: %w", err)
+	}
+
 	if err := initDB(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("init db: %w", err)
@@ -47,7 +52,7 @@ func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error
 	}
 
 	// Secret guard using file provider (writable, stored in ~/.ratchet/secrets/)
-	secretsDir := DataDir() + "/secrets"
+	secretsDir := filepath.Join(DataDir(), "secrets")
 	if err := os.MkdirAll(secretsDir, 0700); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("create secrets dir: %w", err)

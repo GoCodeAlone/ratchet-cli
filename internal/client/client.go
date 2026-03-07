@@ -112,6 +112,11 @@ func (c *Client) AttachSession(ctx context.Context, sessionID string) (<-chan *p
 				return
 			}
 			if err != nil {
+				ch <- &pb.ChatEvent{
+					Event: &pb.ChatEvent_Error{
+						Error: &pb.ErrorEvent{Message: err.Error()},
+					},
+				}
 				return
 			}
 			ch <- event
