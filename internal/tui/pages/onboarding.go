@@ -49,6 +49,12 @@ type deviceCodeMsg struct {
 	err    error
 }
 
+// modelsListMsg carries the result of a live model listing.
+type modelsListMsg struct {
+	models []providerauth.ModelInfo
+	err    error
+}
+
 type onboardingStep int
 
 const (
@@ -56,6 +62,7 @@ const (
 	stepBrowserAuth
 	stepEnterAPIKey
 	stepEnterBaseURL
+	stepFetchModels
 	stepSelectModel
 	stepTestConnection
 )
@@ -64,47 +71,41 @@ type authMethod string
 
 const (
 	authAPIKey  authMethod = "api_key"
-	authBrowser authMethod = "browser"  // Anthropic: open keys page, paste key
-	authGHCLI   authMethod = "gh_cli"   // Copilot: try gh auth token, then paste
+	authBrowser authMethod = "browser" // Anthropic: browser OAuth, fallback to key paste
+	authGHCLI   authMethod = "gh_cli"  // Copilot: gh token → device flow → key paste
 	authNone    authMethod = "none"
 )
 
 type providerTypeInfo struct {
-	name          string
-	displayName   string
-	auth          authMethod
-	needsBaseURL  bool
-	defaultURL    string
-	defaultModels []string
+	name         string
+	displayName  string
+	auth         authMethod
+	needsBaseURL bool
+	defaultURL   string
 }
 
 var providerTypes = []providerTypeInfo{
 	{
 		name: "anthropic", displayName: "Anthropic (Claude)",
 		auth: authBrowser,
-		defaultModels: []string{"claude-sonnet-4-20250514", "claude-opus-4-20250514", "claude-haiku-4-20250514"},
 	},
 	{
 		name: "copilot", displayName: "GitHub Copilot",
 		auth: authGHCLI,
-		defaultModels: []string{"gpt-4o", "claude-3.5-sonnet", "o3-mini"},
 	},
 	{
 		name: "openai", displayName: "OpenAI (GPT)",
 		auth: authAPIKey, needsBaseURL: true,
-		defaultURL:    "https://api.openai.com/v1",
-		defaultModels: []string{"gpt-4o", "gpt-4o-mini", "o3-mini"},
+		defaultURL: "https://api.openai.com/v1",
 	},
 	{
 		name: "ollama", displayName: "Ollama (Local)",
 		auth: authNone, needsBaseURL: true,
-		defaultURL:    "http://localhost:11434",
-		defaultModels: []string{"llama3.3", "codellama", "mistral"},
+		defaultURL: "http://localhost:11434",
 	},
 	{
 		name: "gemini", displayName: "Google Gemini",
 		auth: authAPIKey,
-		defaultModels: []string{"gemini-2.5-pro", "gemini-2.5-flash"},
 	},
 }
 
@@ -130,6 +131,11 @@ type OnboardingModel struct {
 	authCancel            context.CancelFunc
 	deviceUserCode        string // device flow: code to display to user
 	deviceVerificationURI string // device flow: URL to open
+
+	// Model listing
+	fetchingModels bool
+	fetchedModels  []providerauth.ModelInfo
+	modelsError    string
 
 	// Model selection
 	modelCursor int
@@ -177,6 +183,14 @@ func (m OnboardingModel) selectedProvider() providerTypeInfo {
 	return providerTypes[m.cursor]
 }
 
+// selectedModelID returns the ID of the currently selected model.
+func (m OnboardingModel) selectedModelID() string {
+	if m.modelCursor < len(m.fetchedModels) {
+		return m.fetchedModels[m.modelCursor].ID
+	}
+	return ""
+}
+
 func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -186,12 +200,10 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 
 	case ghTokenMsg:
 		if msg.token != "" {
-			// gh CLI provided a token — skip to model selection
+			// gh CLI provided a token — fetch models
 			m.authing = false
 			m.authToken = msg.token
-			m.step = stepSelectModel
-			m.modelCursor = 0
-			return m, nil
+			return m.transitionToFetchModels()
 		}
 		// gh not available — start GitHub device flow
 		return m, m.startDeviceFlow()
@@ -229,8 +241,18 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 			return m, m.apiKeyInput.Focus()
 		}
 		m.authToken = msg.token
-		m.step = stepSelectModel
+		return m.transitionToFetchModels()
+
+	case modelsListMsg:
+		m.fetchingModels = false
+		if msg.err != nil {
+			m.modelsError = msg.err.Error()
+			m.step = stepSelectModel
+			return m, nil
+		}
+		m.fetchedModels = msg.models
 		m.modelCursor = 0
+		m.step = stepSelectModel
 		return m, nil
 
 	case providerAddedMsg:
@@ -255,7 +277,7 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		return m, nil
 
 	case spinner.TickMsg:
-		if m.testing || m.authing {
+		if m.testing || m.authing || m.fetchingModels {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
 			return m, cmd
@@ -272,6 +294,8 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		return m.updateEnterAPIKey(msg)
 	case stepEnterBaseURL:
 		return m.updateEnterBaseURL(msg)
+	case stepFetchModels:
+		return m.updateFetchModels(msg)
 	case stepSelectModel:
 		return m.updateSelectModel(msg)
 	case stepTestConnection:
@@ -307,12 +331,14 @@ func (m OnboardingModel) updateSelectProvider(msg tea.Msg) (OnboardingModel, tea
 
 func (m OnboardingModel) advanceFromProvider() (OnboardingModel, tea.Cmd) {
 	p := m.selectedProvider()
-	// Reset auth state
+	// Reset state
 	m.authToken = ""
 	m.authError = ""
 	m.browserOpened = false
 	m.deviceUserCode = ""
 	m.deviceVerificationURI = ""
+	m.fetchedModels = nil
+	m.modelsError = ""
 
 	switch p.auth {
 	case authBrowser:
@@ -327,7 +353,7 @@ func (m OnboardingModel) advanceFromProvider() (OnboardingModel, tea.Cmd) {
 		return m, tea.Batch(m.spinner.Tick, m.startAnthropicAuth(ctx))
 
 	case authGHCLI:
-		// Copilot: try gh auth token first
+		// Copilot: try gh auth token first, then device flow
 		m.step = stepBrowserAuth
 		m.authing = true
 		return m, tea.Batch(m.spinner.Tick, m.tryGHToken())
@@ -342,11 +368,28 @@ func (m OnboardingModel) advanceFromProvider() (OnboardingModel, tea.Cmd) {
 			m.baseURLInput.SetValue(p.defaultURL)
 			return m, m.baseURLInput.Focus()
 		}
-		m.step = stepSelectModel
-		m.modelCursor = 0
-		return m, nil
+		return m.transitionToFetchModels()
 	}
 	return m, nil
+}
+
+// transitionToFetchModels starts the async model listing step.
+func (m OnboardingModel) transitionToFetchModels() (OnboardingModel, tea.Cmd) {
+	m.step = stepFetchModels
+	m.fetchingModels = true
+	m.fetchedModels = nil
+	m.modelsError = ""
+	return m, tea.Batch(m.spinner.Tick, m.fetchModels())
+}
+
+func (m OnboardingModel) fetchModels() tea.Cmd {
+	return func() tea.Msg {
+		p := providerTypes[m.cursor]
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		models, err := providerauth.ListModels(ctx, p.name, m.authToken, m.baseURLInput.Value())
+		return modelsListMsg{models: models, err: err}
+	}
 }
 
 func (m OnboardingModel) tryGHToken() tea.Cmd {
@@ -415,9 +458,7 @@ func (m OnboardingModel) updateEnterAPIKey(msg tea.Msg) (OnboardingModel, tea.Cm
 				m.baseURLInput.SetValue(p.defaultURL)
 				return m, m.baseURLInput.Focus()
 			}
-			m.step = stepSelectModel
-			m.modelCursor = 0
-			return m, nil
+			return m.transitionToFetchModels()
 		}
 	}
 
@@ -441,9 +482,7 @@ func (m OnboardingModel) updateEnterBaseURL(msg tea.Msg) (OnboardingModel, tea.C
 			if m.baseURLInput.Value() == "" {
 				return m, nil
 			}
-			m.step = stepSelectModel
-			m.modelCursor = 0
-			return m, nil
+			return m.transitionToFetchModels()
 		}
 	}
 
@@ -452,20 +491,32 @@ func (m OnboardingModel) updateEnterBaseURL(msg tea.Msg) (OnboardingModel, tea.C
 	return m, cmd
 }
 
+func (m OnboardingModel) updateFetchModels(msg tea.Msg) (OnboardingModel, tea.Cmd) {
+	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+		if keyMsg.String() == "escape" {
+			m.fetchingModels = false
+			m.step = stepSelectProvider
+			return m, nil
+		}
+	}
+	return m, nil
+}
+
 func (m OnboardingModel) updateSelectModel(msg tea.Msg) (OnboardingModel, tea.Cmd) {
-	p := m.selectedProvider()
+	models := m.fetchedModels
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 		switch keyMsg.String() {
 		case "escape":
+			p := m.selectedProvider()
 			if p.needsBaseURL {
 				m.step = stepEnterBaseURL
 				return m, m.baseURLInput.Focus()
 			}
-			// For browser/gh_cli auth, go back to provider selection (can't re-enter auth step)
+			// For browser/gh_cli auth, go back to provider selection
 			m.step = stepSelectProvider
 			return m, nil
 		case "j", "down":
-			if m.modelCursor < len(p.defaultModels)-1 {
+			if m.modelCursor < len(models)-1 {
 				m.modelCursor++
 			}
 		case "k", "up":
@@ -473,11 +524,16 @@ func (m OnboardingModel) updateSelectModel(msg tea.Msg) (OnboardingModel, tea.Cm
 				m.modelCursor--
 			}
 		case "enter", " ":
-			return m.startTest()
+			if len(models) > 0 {
+				return m.startTest()
+			}
 		}
-		// Number shortcuts
-		for i := range p.defaultModels {
-			if keyMsg.String() == fmt.Sprintf("%d", i+1) && i < len(p.defaultModels) {
+		// Number shortcuts (1-9)
+		for i := range models {
+			if i >= 9 {
+				break
+			}
+			if keyMsg.String() == fmt.Sprintf("%d", i+1) {
 				m.modelCursor = i
 			}
 		}
@@ -493,7 +549,7 @@ func (m OnboardingModel) startTest() (OnboardingModel, tea.Cmd) {
 	m.added = false
 
 	p := m.selectedProvider()
-	model := p.defaultModels[m.modelCursor]
+	model := m.selectedModelID()
 
 	return m, tea.Batch(
 		m.spinner.Tick,
@@ -533,7 +589,7 @@ func (m OnboardingModel) updateTestConnection(msg tea.Msg) (OnboardingModel, tea
 			switch keyMsg.String() {
 			case "enter", " ":
 				p := m.selectedProvider()
-				model := p.defaultModels[m.modelCursor]
+				model := m.selectedModelID()
 				return m, func() tea.Msg {
 					return OnboardingDoneMsg{
 						Provider: &pb.Provider{
@@ -647,11 +703,9 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 		p := m.selectedProvider()
 		switch p.auth {
 		case authBrowser:
-			// Anthropic fallback: user pastes API key from console
 			sb.WriteString("Paste your Anthropic API key:\n\n")
 			sb.WriteString(mutedStyle.Render("Get one at console.anthropic.com/settings/keys") + "\n\n")
 		case authGHCLI:
-			// Copilot fallback: need gh CLI or PAT
 			sb.WriteString("Paste your GitHub token:\n\n")
 			sb.WriteString(mutedStyle.Render("Run: gh auth token") + "\n")
 			sb.WriteString(mutedStyle.Render("Or create a PAT at github.com/settings/tokens") + "\n\n")
@@ -668,20 +722,54 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 		sb.WriteString("URL: " + m.baseURLInput.View() + "\n\n")
 		sb.WriteString(mutedStyle.Render("Enter: continue  Esc: back"))
 
-	case stepSelectModel:
+	case stepFetchModels:
 		p := m.selectedProvider()
-		sb.WriteString("Select a model:\n\n")
-		for i, model := range p.defaultModels {
-			cursor := "  "
-			style := mutedStyle
-			if i == m.modelCursor {
-				cursor = "▶ "
-				style = lipgloss.NewStyle().Foreground(t.Foreground).Bold(true)
+		sb.WriteString(successStyle.Render("Authenticated!") + "\n\n")
+		sb.WriteString(m.spinner.View() + " Loading available models from " + p.displayName + "...\n\n")
+		sb.WriteString(mutedStyle.Render("Esc: cancel"))
+
+	case stepSelectModel:
+		models := m.fetchedModels
+		if m.modelsError != "" || len(models) == 0 {
+			sb.WriteString(errorStyle.Render("Could not fetch models") + "\n\n")
+			if m.modelsError != "" {
+				sb.WriteString(mutedStyle.Render(m.modelsError) + "\n\n")
 			}
-			label := fmt.Sprintf("%s%d. %s", cursor, i+1, model)
-			sb.WriteString(style.Render(label) + "\n")
+			sb.WriteString(mutedStyle.Render("Esc: back"))
+		} else {
+			sb.WriteString("Select your default model:\n\n")
+			// Show up to 15 models with scrolling
+			maxVisible := 15
+			start := 0
+			if m.modelCursor >= maxVisible {
+				start = m.modelCursor - maxVisible + 1
+			}
+			end := start + maxVisible
+			if end > len(models) {
+				end = len(models)
+			}
+			if start > 0 {
+				sb.WriteString(mutedStyle.Render("  ... more above") + "\n")
+			}
+			for i := start; i < end; i++ {
+				cursor := "  "
+				style := mutedStyle
+				if i == m.modelCursor {
+					cursor = "▶ "
+					style = lipgloss.NewStyle().Foreground(t.Foreground).Bold(true)
+				}
+				label := models[i].Name
+				if models[i].Name != models[i].ID {
+					label = fmt.Sprintf("%s (%s)", models[i].Name, models[i].ID)
+				}
+				sb.WriteString(style.Render(cursor+label) + "\n")
+			}
+			if end < len(models) {
+				sb.WriteString(mutedStyle.Render("  ... more below") + "\n")
+			}
+			sb.WriteString("\n" + mutedStyle.Render("Other models can be used later."))
+			sb.WriteString("\n" + mutedStyle.Render("↑/↓: select  Enter: confirm  Esc: back"))
 		}
-		sb.WriteString("\n" + mutedStyle.Render("↑/↓: select  Enter: confirm  Esc: back"))
 
 	case stepTestConnection:
 		p := m.selectedProvider()
@@ -690,7 +778,7 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 		} else if m.testResult != nil && m.testResult.Success {
 			sb.WriteString(successStyle.Render("Connection successful!") + "\n\n")
 			sb.WriteString(successStyle.Render("✓") + " Provider: " + p.name + "\n")
-			sb.WriteString(successStyle.Render("✓") + " Model: " + p.defaultModels[m.modelCursor] + "\n")
+			sb.WriteString(successStyle.Render("✓") + " Default model: " + m.selectedModelID() + "\n")
 			sb.WriteString(successStyle.Render("✓") + fmt.Sprintf(" Response time: %dms", m.testResult.LatencyMs) + "\n")
 			sb.WriteString("\n" + mutedStyle.Render("Press Enter to start chatting"))
 		} else {
@@ -712,7 +800,6 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 func (m OnboardingModel) stepCount() int {
 	p := m.selectedProvider()
 	count := 3 // provider + model + test
-	// Auth step (browser, gh_cli, or api_key all add 1)
 	if p.auth != authNone {
 		count++
 	}
@@ -735,7 +822,7 @@ func (m OnboardingModel) currentStepIndex() int {
 			idx++
 		}
 		return idx
-	case stepSelectModel:
+	case stepFetchModels, stepSelectModel:
 		idx := 1
 		if p.auth != authNone {
 			idx++
