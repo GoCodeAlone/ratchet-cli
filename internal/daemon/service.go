@@ -14,6 +14,7 @@ type Service struct {
 	pb.UnimplementedRatchetDaemonServer
 	startedAt time.Time
 	engine    *EngineContext
+	sessions  *SessionManager
 }
 
 func NewService(ctx context.Context) (*Service, error) {
@@ -24,6 +25,7 @@ func NewService(ctx context.Context) (*Service, error) {
 	return &Service{
 		startedAt: time.Now(),
 		engine:    engine,
+		sessions:  NewSessionManager(engine.DB),
 	}, nil
 }
 
@@ -42,11 +44,37 @@ func (s *Service) Shutdown(ctx context.Context, _ *pb.Empty) (*pb.Empty, error) 
 }
 
 func (s *Service) CreateSession(ctx context.Context, req *pb.CreateSessionReq) (*pb.Session, error) {
-	return nil, status.Error(codes.Unimplemented, "not yet implemented")
+	si, err := s.sessions.Create(ctx, req.WorkingDir, req.Provider, req.Model, req.InitialPrompt)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "create session: %v", err)
+	}
+	return &pb.Session{
+		Id:         si.ID,
+		Name:       si.Name,
+		Status:     si.Status,
+		WorkingDir: si.WorkingDir,
+		Provider:   si.Provider,
+		Model:      si.Model,
+	}, nil
 }
 
 func (s *Service) ListSessions(ctx context.Context, _ *pb.Empty) (*pb.SessionList, error) {
-	return &pb.SessionList{}, nil
+	sessions, err := s.sessions.List(ctx)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "list sessions: %v", err)
+	}
+	var pbSessions []*pb.Session
+	for _, si := range sessions {
+		pbSessions = append(pbSessions, &pb.Session{
+			Id:         si.ID,
+			Name:       si.Name,
+			Status:     si.Status,
+			WorkingDir: si.WorkingDir,
+			Provider:   si.Provider,
+			Model:      si.Model,
+		})
+	}
+	return &pb.SessionList{Sessions: pbSessions}, nil
 }
 
 func (s *Service) AttachSession(req *pb.AttachReq, stream pb.RatchetDaemon_AttachSessionServer) error {
@@ -58,7 +86,10 @@ func (s *Service) DetachSession(ctx context.Context, req *pb.DetachReq) (*pb.Emp
 }
 
 func (s *Service) KillSession(ctx context.Context, req *pb.KillReq) (*pb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "not yet implemented")
+	if err := s.sessions.Kill(ctx, req.SessionId); err != nil {
+		return nil, status.Errorf(codes.Internal, "kill session: %v", err)
+	}
+	return &pb.Empty{}, nil
 }
 
 func (s *Service) SendMessage(req *pb.SendMessageReq, stream pb.RatchetDaemon_SendMessageServer) error {
