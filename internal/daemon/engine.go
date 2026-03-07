@@ -7,6 +7,9 @@ import (
 	"log"
 	"os"
 
+	"path/filepath"
+
+	"github.com/GoCodeAlone/ratchet-cli/internal/plugins"
 	"github.com/GoCodeAlone/ratchet/ratchetplugin"
 	"github.com/GoCodeAlone/workflow/secrets"
 	_ "modernc.org/sqlite"
@@ -58,6 +61,16 @@ func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error
 
 	// Tool registry
 	ec.ToolRegistry = ratchetplugin.NewToolRegistry()
+
+	// Load external plugins from ~/.ratchet/plugins/
+	pluginLoader := plugins.NewLoader(filepath.Join(DataDir(), "plugins"))
+	loaded, err := pluginLoader.LoadAll()
+	if err != nil {
+		log.Printf("warning: plugin loading: %v", err)
+	}
+	for _, p := range loaded {
+		log.Printf("loaded plugin: %s (%s)", p.Name, p.Path)
+	}
 
 	log.Println("engine context initialized")
 	return ec, nil
