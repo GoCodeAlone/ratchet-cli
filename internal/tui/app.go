@@ -94,6 +94,14 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.width = msg.Width
 		a.height = msg.Height
 		a.ready = true
+		// Propagate size to chat if active (header takes 1 line)
+		if a.page == pageChat {
+			chatHeight := a.height - 1
+			if chatHeight < 1 {
+				chatHeight = 1
+			}
+			a.chat.SetSize(a.width, chatHeight)
+		}
 
 	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+c" {
@@ -188,6 +196,13 @@ func (a App) transitionFromSplash() (tea.Model, tea.Cmd) {
 func (a App) transitionToChat() (tea.Model, tea.Cmd) {
 	chat := pages.NewChat(a.client, a.sessionID, a.theme, a.dark)
 	team := pages.NewTeam()
+	// Pass known dimensions — chat won't get an initial WindowSizeMsg
+	// since that was consumed during the splash screen.
+	chatHeight := a.height - 1 // reserve 1 line for header
+	if chatHeight < 1 {
+		chatHeight = 1
+	}
+	chat.SetSize(a.width, chatHeight)
 	a.chat = chat
 	a.team = team
 	a.page = pageChat

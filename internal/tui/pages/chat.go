@@ -59,6 +59,13 @@ func NewChat(c *client.Client, sessionID string, t theme.Theme, dark bool) ChatM
 	}
 }
 
+// SetSize sets the chat model's dimensions and recalculates layout.
+func (m *ChatModel) SetSize(width, height int) {
+	m.width = width
+	m.height = height
+	m.relayout()
+}
+
 func (m ChatModel) Init() tea.Cmd {
 	return m.input.Init()
 }
