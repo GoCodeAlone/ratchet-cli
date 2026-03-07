@@ -13,11 +13,17 @@ import (
 type Service struct {
 	pb.UnimplementedRatchetDaemonServer
 	startedAt time.Time
+	engine    *EngineContext
 }
 
 func NewService(ctx context.Context) (*Service, error) {
+	engine, err := NewEngineContext(ctx, DBPath())
+	if err != nil {
+		return nil, err
+	}
 	return &Service{
 		startedAt: time.Now(),
+		engine:    engine,
 	}, nil
 }
 
