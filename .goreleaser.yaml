@@ -5,7 +5,7 @@ builds:
     main: ./cmd/ratchet
     binary: ratchet
     env:
-      - CGO_ENABLED=1
+      - CGO_ENABLED=0
     goos:
       - linux
       - darwin
@@ -23,9 +23,17 @@ archives:
     builds: [ratchet]
     format: tar.gz
     name_template: "ratchet_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - RATCHET.md
 
 checksum:
   name_template: "checksums.txt"
 
 changelog:
   sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
