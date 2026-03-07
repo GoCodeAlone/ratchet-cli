@@ -38,15 +38,27 @@ const (
 	anthropicAuthURL  = "https://console.anthropic.com/oauth/authorize"
 	anthropicTokenURL = "https://console.anthropic.com/oauth/token"
 	anthropicClientID = "ratchet-cli"
+	anthropicKeysURL  = "https://console.anthropic.com/settings/keys"
 )
 
-// GitHub Copilot device flow constants.
+// GitHub device flow constants.
 const (
 	githubDeviceCodeURL = "https://github.com/login/device/code"
 	githubTokenURL      = "https://github.com/login/oauth/access_token"
-	// Public client ID for GitHub Copilot (used by Copilot CLI/extensions).
+	// GitHub Copilot's official OAuth App client ID.
 	githubCopilotClientID = "Iv1.b507a08c87ecfe98"
 )
+
+// TryGHToken attempts to get a GitHub token from the gh CLI.
+// Returns the token if gh is installed and authenticated, empty string otherwise.
+func TryGHToken() string {
+	cmd := exec.Command("gh", "auth", "token")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
 
 // StartAnthropicOAuth runs the OAuth PKCE flow for Anthropic/Claude.
 // It starts a local HTTP server, opens the browser to the auth URL,
@@ -188,12 +200,12 @@ func exchangeAnthropicCode(ctx context.Context, code, verifier, redirectURI stri
 	return token, nil
 }
 
-// StartGitHubDeviceFlow initiates the GitHub device code flow for Copilot.
+// StartGitHubDeviceFlow initiates the GitHub device code flow.
 // Returns the device code result so the TUI can display the user code,
 // then call PollGitHubDeviceFlow to wait for authorization.
-func StartGitHubDeviceFlow(ctx context.Context) (*DeviceCodeResult, error) {
+func StartGitHubDeviceFlow(ctx context.Context, clientID string) (*DeviceCodeResult, error) {
 	data := url.Values{
-		"client_id": {githubCopilotClientID},
+		"client_id": {clientID},
 		"scope":     {"copilot"},
 	}
 
@@ -221,9 +233,14 @@ func StartGitHubDeviceFlow(ctx context.Context) (*DeviceCodeResult, error) {
 		VerificationURI string `json:"verification_uri"`
 		ExpiresIn       int    `json:"expires_in"`
 		Interval        int    `json:"interval"`
+		Error           string `json:"error"`
+		ErrorDesc       string `json:"error_description"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, fmt.Errorf("parse device code response: %w", err)
+	}
+	if result.Error != "" {
+		return nil, fmt.Errorf("%s: %s", result.Error, result.ErrorDesc)
 	}
 
 	interval := result.Interval
@@ -241,7 +258,7 @@ func StartGitHubDeviceFlow(ctx context.Context) (*DeviceCodeResult, error) {
 }
 
 // PollGitHubDeviceFlow polls for the device flow token until authorized or timeout.
-func PollGitHubDeviceFlow(ctx context.Context, deviceCode string, interval int) <-chan OAuthResult {
+func PollGitHubDeviceFlow(ctx context.Context, clientID, deviceCode string, interval int) <-chan OAuthResult {
 	ch := make(chan OAuthResult, 1)
 
 	go func() {
@@ -256,7 +273,7 @@ func PollGitHubDeviceFlow(ctx context.Context, deviceCode string, interval int) 
 				ch <- OAuthResult{Err: ctx.Err()}
 				return
 			case <-ticker.C:
-				token, done, err := pollGitHubToken(ctx, deviceCode)
+				token, done, err := pollGitHubToken(ctx, clientID, deviceCode)
 				if err != nil {
 					ch <- OAuthResult{Err: err}
 					return
@@ -265,7 +282,6 @@ func PollGitHubDeviceFlow(ctx context.Context, deviceCode string, interval int) 
 					ch <- OAuthResult{Token: token}
 					return
 				}
-				// Not yet authorized, keep polling
 			}
 		}
 	}()
@@ -273,9 +289,9 @@ func PollGitHubDeviceFlow(ctx context.Context, deviceCode string, interval int) 
 	return ch
 }
 
-func pollGitHubToken(ctx context.Context, deviceCode string) (token string, done bool, err error) {
+func pollGitHubToken(ctx context.Context, clientID, deviceCode string) (token string, done bool, err error) {
 	data := url.Values{
-		"client_id":   {githubCopilotClientID},
+		"client_id":   {clientID},
 		"device_code": {deviceCode},
 		"grant_type":  {"urn:ietf:params:oauth:grant-type:device_code"},
 	}
@@ -306,6 +322,9 @@ func pollGitHubToken(ctx context.Context, deviceCode string) (token string, done
 
 	switch result.Error {
 	case "":
+		if result.AccessToken == "" {
+			return "", false, fmt.Errorf("empty access token in response")
+		}
 		return result.AccessToken, true, nil
 	case "authorization_pending":
 		return "", false, nil
@@ -321,15 +340,15 @@ func pollGitHubToken(ctx context.Context, deviceCode string) (token string, done
 }
 
 // OpenBrowserURL opens a URL in the default browser.
-func OpenBrowserURL(url string) error {
+func OpenBrowserURL(rawURL string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("open", url)
+		cmd = exec.Command("open", rawURL)
 	case "linux":
-		cmd = exec.Command("xdg-open", url)
+		cmd = exec.Command("xdg-open", rawURL)
 	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", rawURL)
 	default:
 		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
 	}

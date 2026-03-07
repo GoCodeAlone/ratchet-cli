@@ -38,10 +38,9 @@ type browserAuthResultMsg struct {
 	err   error
 }
 
-// deviceCodeMsg carries the device code for display in the TUI.
-type deviceCodeMsg struct {
-	result *providerauth.DeviceCodeResult
-	err    error
+// ghTokenMsg carries the result of a `gh auth token` check.
+type ghTokenMsg struct {
+	token string // empty if gh not available
 }
 
 type onboardingStep int
@@ -58,10 +57,10 @@ const (
 type authMethod string
 
 const (
-	authAPIKey     authMethod = "api_key"
-	authBrowser    authMethod = "browser"
-	authDeviceFlow authMethod = "device_flow"
-	authNone       authMethod = "none"
+	authAPIKey  authMethod = "api_key"
+	authBrowser authMethod = "browser"  // Anthropic: open keys page, paste key
+	authGHCLI   authMethod = "gh_cli"   // Copilot: try gh auth token, then paste
+	authNone    authMethod = "none"
 )
 
 type providerTypeInfo struct {
@@ -81,7 +80,7 @@ var providerTypes = []providerTypeInfo{
 	},
 	{
 		name: "copilot", displayName: "GitHub Copilot",
-		auth: authDeviceFlow,
+		auth: authGHCLI,
 		defaultModels: []string{"gpt-4o", "claude-3.5-sonnet", "o3-mini"},
 	},
 	{
@@ -111,18 +110,18 @@ type OnboardingModel struct {
 	// Provider selection
 	cursor int
 
-	// API key input
+	// API key input (used for manual key entry and browser auth fallback)
 	apiKeyInput textinput.Model
 
 	// Base URL input
 	baseURLInput textinput.Model
 
-	// Browser/device flow auth
-	authToken   string // token obtained from browser/device auth
-	authError   string
-	authing     bool   // browser/device auth in progress
-	deviceCode  *providerauth.DeviceCodeResult
-	authCancel  context.CancelFunc
+	// Browser auth state
+	authing       bool   // browser/gh auth in progress
+	authError     string
+	authToken     string // token obtained from browser/gh auth
+	browserOpened bool   // browser was opened for user
+	authCancel    context.CancelFunc
 
 	// Model selection
 	modelCursor int
@@ -177,32 +176,34 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		m.height = msg.Height
 		return m, nil
 
+	case ghTokenMsg:
+		m.authing = false
+		if msg.token != "" {
+			// gh CLI provided a token — skip to model selection
+			m.authToken = msg.token
+			m.step = stepSelectModel
+			m.modelCursor = 0
+			return m, nil
+		}
+		// gh not available — fall through to API key entry with instructions
+		m.browserOpened = false
+		m.step = stepEnterAPIKey
+		m.apiKeyInput.Placeholder = "ghp_..."
+		return m, m.apiKeyInput.Focus()
+
 	case browserAuthResultMsg:
 		m.authing = false
 		if msg.err != nil {
+			// OAuth failed — fall back to API key paste
 			m.authError = msg.err.Error()
-			return m, nil
+			m.step = stepEnterAPIKey
+			m.apiKeyInput.Placeholder = "sk-ant-..."
+			return m, m.apiKeyInput.Focus()
 		}
 		m.authToken = msg.token
-		m.authError = ""
-		// Auth succeeded, advance to model selection
 		m.step = stepSelectModel
 		m.modelCursor = 0
 		return m, nil
-
-	case deviceCodeMsg:
-		if msg.err != nil {
-			m.authing = false
-			m.authError = msg.err.Error()
-			return m, nil
-		}
-		m.deviceCode = msg.result
-		// Open browser to verification URI
-		go providerauth.OpenBrowserURL(msg.result.VerificationURI) //nolint:errcheck
-		// Start polling for token
-		ctx, cancel := context.WithCancel(context.Background())
-		m.authCancel = cancel
-		return m, m.pollDeviceFlow(ctx, msg.result.DeviceCode, msg.result.Interval)
 
 	case providerAddedMsg:
 		if msg.err != nil {
@@ -278,23 +279,33 @@ func (m OnboardingModel) updateSelectProvider(msg tea.Msg) (OnboardingModel, tea
 
 func (m OnboardingModel) advanceFromProvider() (OnboardingModel, tea.Cmd) {
 	p := m.selectedProvider()
+	// Reset auth state
+	m.authToken = ""
+	m.authError = ""
+	m.browserOpened = false
+
 	switch p.auth {
 	case authBrowser:
+		// Anthropic: try OAuth first, open browser
 		m.step = stepBrowserAuth
 		m.authing = true
-		m.authError = ""
-		m.authToken = ""
-		return m, tea.Batch(m.spinner.Tick, m.startBrowserAuth())
-	case authDeviceFlow:
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		m.authCancel = cancel
+		// Open API keys page as fallback context
+		go providerauth.OpenBrowserURL("https://console.anthropic.com/settings/keys") //nolint:errcheck
+		m.browserOpened = true
+		return m, tea.Batch(m.spinner.Tick, m.startAnthropicAuth(ctx))
+
+	case authGHCLI:
+		// Copilot: try gh auth token first
 		m.step = stepBrowserAuth
 		m.authing = true
-		m.authError = ""
-		m.authToken = ""
-		m.deviceCode = nil
-		return m, tea.Batch(m.spinner.Tick, m.startDeviceFlow())
+		return m, tea.Batch(m.spinner.Tick, m.tryGHToken())
+
 	case authAPIKey:
 		m.step = stepEnterAPIKey
 		return m, m.apiKeyInput.Focus()
+
 	case authNone:
 		if p.needsBaseURL {
 			m.step = stepEnterBaseURL
@@ -308,26 +319,16 @@ func (m OnboardingModel) advanceFromProvider() (OnboardingModel, tea.Cmd) {
 	return m, nil
 }
 
-func (m OnboardingModel) startBrowserAuth() tea.Cmd {
+func (m OnboardingModel) tryGHToken() tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		_ = cancel // cancel stored separately if needed
+		token := providerauth.TryGHToken()
+		return ghTokenMsg{token: token}
+	}
+}
+
+func (m OnboardingModel) startAnthropicAuth(ctx context.Context) tea.Cmd {
+	return func() tea.Msg {
 		ch := providerauth.StartAnthropicOAuth(ctx)
-		result := <-ch
-		return browserAuthResultMsg{token: result.Token, err: result.Err}
-	}
-}
-
-func (m OnboardingModel) startDeviceFlow() tea.Cmd {
-	return func() tea.Msg {
-		result, err := providerauth.StartGitHubDeviceFlow(context.Background())
-		return deviceCodeMsg{result: result, err: err}
-	}
-}
-
-func (m OnboardingModel) pollDeviceFlow(ctx context.Context, deviceCode string, interval int) tea.Cmd {
-	return func() tea.Msg {
-		ch := providerauth.PollGitHubDeviceFlow(ctx, deviceCode, interval)
 		result := <-ch
 		return browserAuthResultMsg{token: result.Token, err: result.Err}
 	}
@@ -337,21 +338,14 @@ func (m OnboardingModel) updateBrowserAuth(msg tea.Msg) (OnboardingModel, tea.Cm
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 		switch keyMsg.String() {
 		case "escape":
-			// Cancel auth and go back
 			if m.authCancel != nil {
 				m.authCancel()
 				m.authCancel = nil
 			}
 			m.authing = false
 			m.authError = ""
-			m.deviceCode = nil
 			m.step = stepSelectProvider
 			return m, nil
-		case "r":
-			if !m.authing && m.authError != "" {
-				// Retry
-				return m.advanceFromProvider()
-			}
 		}
 	}
 	return m, nil
@@ -363,11 +357,13 @@ func (m OnboardingModel) updateEnterAPIKey(msg tea.Msg) (OnboardingModel, tea.Cm
 		case "escape":
 			m.step = stepSelectProvider
 			m.apiKeyInput.SetValue("")
+			m.authError = ""
 			return m, nil
 		case "enter":
 			if m.apiKeyInput.Value() == "" {
 				return m, nil
 			}
+			m.authToken = m.apiKeyInput.Value()
 			p := m.selectedProvider()
 			if p.needsBaseURL {
 				m.step = stepEnterBaseURL
@@ -416,19 +412,11 @@ func (m OnboardingModel) updateSelectModel(msg tea.Msg) (OnboardingModel, tea.Cm
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 		switch keyMsg.String() {
 		case "escape":
-			// Go back — skip browser auth steps (can't go back to those)
-			if p.auth == authBrowser || p.auth == authDeviceFlow {
-				m.step = stepSelectProvider
-				return m, nil
-			}
 			if p.needsBaseURL {
 				m.step = stepEnterBaseURL
 				return m, m.baseURLInput.Focus()
 			}
-			if p.auth == authAPIKey {
-				m.step = stepEnterAPIKey
-				return m, m.apiKeyInput.Focus()
-			}
+			// For browser/gh_cli auth, go back to provider selection (can't re-enter auth step)
 			m.step = stepSelectProvider
 			return m, nil
 		case "j", "down":
@@ -468,21 +456,13 @@ func (m OnboardingModel) startTest() (OnboardingModel, tea.Cmd) {
 	)
 }
 
-func (m OnboardingModel) resolveAPIKey() string {
-	// Browser/device flow auth stores token in authToken
-	if m.authToken != "" {
-		return m.authToken
-	}
-	return m.apiKeyInput.Value()
-}
-
 func (m OnboardingModel) addProvider(p providerTypeInfo, model string) tea.Cmd {
 	return func() tea.Msg {
 		req := &pb.AddProviderReq{
 			Alias:     p.name,
 			Type:      p.name,
 			Model:     model,
-			ApiKey:    m.resolveAPIKey(),
+			ApiKey:    m.authToken,
 			BaseUrl:   m.baseURLInput.Value(),
 			IsDefault: true,
 		}
@@ -596,34 +576,36 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 	case stepBrowserAuth:
 		p := m.selectedProvider()
 		if m.authing {
-			if p.auth == authDeviceFlow && m.deviceCode != nil {
-				// Device flow: show user code
-				codeStyle := lipgloss.NewStyle().Foreground(t.Primary).Bold(true)
-				sb.WriteString("Sign in with GitHub\n\n")
-				sb.WriteString("Enter this code at " + mutedStyle.Render(m.deviceCode.VerificationURI) + ":\n\n")
-				sb.WriteString("  " + codeStyle.Render(m.deviceCode.UserCode) + "\n\n")
-				sb.WriteString(m.spinner.View() + " Waiting for authorization...\n\n")
-				sb.WriteString(mutedStyle.Render("A browser window should have opened.\nEsc: cancel"))
-			} else if p.auth == authDeviceFlow {
-				sb.WriteString(m.spinner.View() + " Requesting device code...\n")
+			if p.auth == authGHCLI {
+				sb.WriteString(m.spinner.View() + " Checking for GitHub CLI auth...\n")
 			} else {
-				// Browser OAuth: waiting for callback
 				sb.WriteString("Sign in with " + p.displayName + "\n\n")
-				sb.WriteString(m.spinner.View() + " Opening browser...\n\n")
-				sb.WriteString(mutedStyle.Render("Complete sign-in in your browser.\nEsc: cancel"))
+				sb.WriteString(m.spinner.View() + " Waiting for browser sign-in...\n\n")
+				sb.WriteString(mutedStyle.Render("Complete sign-in in your browser.") + "\n")
+				sb.WriteString(mutedStyle.Render("Esc: cancel and enter key manually"))
 			}
 		} else if m.authError != "" {
-			sb.WriteString(errorStyle.Render("Authentication failed") + "\n\n")
-			sb.WriteString(errorStyle.Render("✗") + " " + m.authError + "\n\n")
-			sb.WriteString(mutedStyle.Render("r: retry  Esc: back"))
-		} else {
-			sb.WriteString(successStyle.Render("✓ Authenticated!") + "\n")
+			sb.WriteString(errorStyle.Render("Authentication issue") + "\n\n")
+			sb.WriteString(mutedStyle.Render(m.authError) + "\n\n")
+			sb.WriteString(mutedStyle.Render("Falling back to manual key entry..."))
 		}
 
 	case stepEnterAPIKey:
 		p := m.selectedProvider()
-		sb.WriteString(fmt.Sprintf("Enter your %s API key:\n\n", p.displayName))
-		sb.WriteString("API Key: " + m.apiKeyInput.View() + "\n\n")
+		switch p.auth {
+		case authBrowser:
+			// Anthropic fallback: user pastes API key from console
+			sb.WriteString("Paste your Anthropic API key:\n\n")
+			sb.WriteString(mutedStyle.Render("Get one at console.anthropic.com/settings/keys") + "\n\n")
+		case authGHCLI:
+			// Copilot fallback: need gh CLI or PAT
+			sb.WriteString("Paste your GitHub token:\n\n")
+			sb.WriteString(mutedStyle.Render("Run: gh auth token") + "\n")
+			sb.WriteString(mutedStyle.Render("Or create a PAT at github.com/settings/tokens") + "\n\n")
+		default:
+			sb.WriteString(fmt.Sprintf("Enter your %s API key:\n\n", p.displayName))
+		}
+		sb.WriteString("Key: " + m.apiKeyInput.View() + "\n\n")
 		sb.WriteString(mutedStyle.Render("Your key is stored locally and never shared.") + "\n\n")
 		sb.WriteString(mutedStyle.Render("Enter: continue  Esc: back"))
 
@@ -677,11 +659,9 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 func (m OnboardingModel) stepCount() int {
 	p := m.selectedProvider()
 	count := 3 // provider + model + test
-	if p.auth == authBrowser || p.auth == authDeviceFlow {
-		count++ // browser auth step
-	}
-	if p.auth == authAPIKey {
-		count++ // api key step
+	// Auth step (browser, gh_cli, or api_key all add 1)
+	if p.auth != authNone {
+		count++
 	}
 	if p.needsBaseURL {
 		count++
@@ -694,13 +674,11 @@ func (m OnboardingModel) currentStepIndex() int {
 	switch m.step {
 	case stepSelectProvider:
 		return 0
-	case stepBrowserAuth:
-		return 1
-	case stepEnterAPIKey:
+	case stepBrowserAuth, stepEnterAPIKey:
 		return 1
 	case stepEnterBaseURL:
 		idx := 1
-		if p.auth == authAPIKey || p.auth == authBrowser || p.auth == authDeviceFlow {
+		if p.auth != authNone {
 			idx++
 		}
 		return idx
