@@ -43,6 +43,12 @@ type ghTokenMsg struct {
 	token string // empty if gh not available
 }
 
+// deviceCodeMsg carries the result of a GitHub device code request.
+type deviceCodeMsg struct {
+	result *providerauth.DeviceCodeResult
+	err    error
+}
+
 type onboardingStep int
 
 const (
@@ -116,12 +122,14 @@ type OnboardingModel struct {
 	// Base URL input
 	baseURLInput textinput.Model
 
-	// Browser auth state
-	authing       bool   // browser/gh auth in progress
-	authError     string
-	authToken     string // token obtained from browser/gh auth
-	browserOpened bool   // browser was opened for user
-	authCancel    context.CancelFunc
+	// Browser/device auth state
+	authing               bool   // browser/gh/device auth in progress
+	authError             string
+	authToken             string // token obtained from auth flow
+	browserOpened         bool   // browser was opened for user
+	authCancel            context.CancelFunc
+	deviceUserCode        string // device flow: code to display to user
+	deviceVerificationURI string // device flow: URL to open
 
 	// Model selection
 	modelCursor int
@@ -177,27 +185,47 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		return m, nil
 
 	case ghTokenMsg:
-		m.authing = false
 		if msg.token != "" {
 			// gh CLI provided a token — skip to model selection
+			m.authing = false
 			m.authToken = msg.token
 			m.step = stepSelectModel
 			m.modelCursor = 0
 			return m, nil
 		}
-		// gh not available — fall through to API key entry with instructions
-		m.browserOpened = false
-		m.step = stepEnterAPIKey
-		m.apiKeyInput.Placeholder = "ghp_..."
-		return m, m.apiKeyInput.Focus()
+		// gh not available — start GitHub device flow
+		return m, m.startDeviceFlow()
+
+	case deviceCodeMsg:
+		if msg.err != nil {
+			// Device flow request failed — fall to API key paste
+			m.authing = false
+			m.authError = msg.err.Error()
+			m.step = stepEnterAPIKey
+			m.apiKeyInput.Placeholder = "ghp_..."
+			return m, m.apiKeyInput.Focus()
+		}
+		// Show user code and start polling
+		m.deviceUserCode = msg.result.UserCode
+		m.deviceVerificationURI = msg.result.VerificationURI
+		m.browserOpened = true
+		go providerauth.OpenBrowserURL(msg.result.VerificationURI) //nolint:errcheck
+		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(msg.result.ExpiresIn)*time.Second)
+		m.authCancel = cancel
+		return m, m.pollDeviceFlow(ctx, msg.result.DeviceCode, msg.result.Interval)
 
 	case browserAuthResultMsg:
 		m.authing = false
 		if msg.err != nil {
-			// OAuth failed — fall back to API key paste
+			// Auth failed — fall back to API key paste
 			m.authError = msg.err.Error()
 			m.step = stepEnterAPIKey
-			m.apiKeyInput.Placeholder = "sk-ant-..."
+			p := m.selectedProvider()
+			if p.auth == authGHCLI {
+				m.apiKeyInput.Placeholder = "ghp_..."
+			} else {
+				m.apiKeyInput.Placeholder = "sk-ant-..."
+			}
 			return m, m.apiKeyInput.Focus()
 		}
 		m.authToken = msg.token
@@ -283,6 +311,8 @@ func (m OnboardingModel) advanceFromProvider() (OnboardingModel, tea.Cmd) {
 	m.authToken = ""
 	m.authError = ""
 	m.browserOpened = false
+	m.deviceUserCode = ""
+	m.deviceVerificationURI = ""
 
 	switch p.auth {
 	case authBrowser:
@@ -323,6 +353,21 @@ func (m OnboardingModel) tryGHToken() tea.Cmd {
 	return func() tea.Msg {
 		token := providerauth.TryGHToken()
 		return ghTokenMsg{token: token}
+	}
+}
+
+func (m OnboardingModel) startDeviceFlow() tea.Cmd {
+	return func() tea.Msg {
+		result, err := providerauth.StartGitHubDeviceFlow(context.Background(), providerauth.GithubCopilotClientID)
+		return deviceCodeMsg{result: result, err: err}
+	}
+}
+
+func (m OnboardingModel) pollDeviceFlow(ctx context.Context, deviceCode string, interval int) tea.Cmd {
+	return func() tea.Msg {
+		ch := providerauth.PollGitHubDeviceFlow(ctx, providerauth.GithubCopilotClientID, deviceCode, interval)
+		result := <-ch
+		return browserAuthResultMsg{token: result.Token, err: result.Err}
 	}
 }
 
@@ -576,7 +621,15 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 	case stepBrowserAuth:
 		p := m.selectedProvider()
 		if m.authing {
-			if p.auth == authGHCLI {
+			if p.auth == authGHCLI && m.deviceUserCode != "" {
+				// Device flow: show user code
+				sb.WriteString("Sign in with GitHub Copilot\n\n")
+				codeStyle := lipgloss.NewStyle().Bold(true).Foreground(t.Accent)
+				sb.WriteString("Your code: " + codeStyle.Render(m.deviceUserCode) + "\n\n")
+				sb.WriteString(m.spinner.View() + " Waiting for authorization...\n\n")
+				sb.WriteString(mutedStyle.Render("Enter the code at "+m.deviceVerificationURI) + "\n")
+				sb.WriteString(mutedStyle.Render("Esc: cancel"))
+			} else if p.auth == authGHCLI {
 				sb.WriteString(m.spinner.View() + " Checking for GitHub CLI auth...\n")
 			} else {
 				sb.WriteString("Sign in with " + p.displayName + "\n\n")

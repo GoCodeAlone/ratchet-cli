@@ -45,8 +45,8 @@ const (
 const (
 	githubDeviceCodeURL = "https://github.com/login/device/code"
 	githubTokenURL      = "https://github.com/login/oauth/access_token"
-	// GitHub Copilot's official OAuth App client ID.
-	githubCopilotClientID = "Iv1.b507a08c87ecfe98"
+	// GithubCopilotClientID is GitHub Copilot's official OAuth App client ID.
+	GithubCopilotClientID = "Iv1.b507a08c87ecfe98"
 )
 
 // TryGHToken attempts to get a GitHub token from the gh CLI.
@@ -206,7 +206,6 @@ func exchangeAnthropicCode(ctx context.Context, code, verifier, redirectURI stri
 func StartGitHubDeviceFlow(ctx context.Context, clientID string) (*DeviceCodeResult, error) {
 	data := url.Values{
 		"client_id": {clientID},
-		"scope":     {"copilot"},
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", githubDeviceCodeURL, strings.NewReader(data.Encode()))
