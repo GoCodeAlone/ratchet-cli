@@ -1,0 +1,264 @@
+syntax = "proto3";
+
+package ratchet;
+
+option go_package = "github.com/GoCodeAlone/ratchet-cli/internal/proto";
+
+import "google/protobuf/timestamp.proto";
+
+// === Messages ===
+
+message Empty {}
+
+message Session {
+  string id = 1;
+  string name = 2;
+  string status = 3; // active, background, completed
+  string working_dir = 4;
+  string provider = 5;
+  string model = 6;
+  google.protobuf.Timestamp created_at = 7;
+  int32 active_agents = 8;
+}
+
+message CreateSessionReq {
+  string initial_prompt = 1;
+  string working_dir = 2;
+  string provider = 3;
+  string model = 4;
+}
+
+message SessionList {
+  repeated Session sessions = 1;
+}
+
+message AttachReq {
+  string session_id = 1;
+}
+
+message DetachReq {
+  string session_id = 1;
+}
+
+message KillReq {
+  string session_id = 1;
+}
+
+// Chat streaming
+message SendMessageReq {
+  string session_id = 1;
+  string content = 2;
+}
+
+message ChatEvent {
+  oneof event {
+    TokenDelta token = 1;
+    ToolCallStart tool_start = 2;
+    ToolCallResult tool_result = 3;
+    PermissionRequest permission = 4;
+    AgentSpawned agent_spawned = 5;
+    AgentMessage agent_message = 6;
+    SessionComplete complete = 7;
+    ErrorEvent error = 8;
+    SessionHistory history = 9;
+  }
+}
+
+message TokenDelta {
+  string content = 1;
+}
+
+message ToolCallStart {
+  string tool_name = 1;
+  string arguments_json = 2;
+  string call_id = 3;
+}
+
+message ToolCallResult {
+  string call_id = 1;
+  string result_json = 2;
+  bool success = 3;
+}
+
+message PermissionRequest {
+  string request_id = 1;
+  string tool_name = 2;
+  string arguments_json = 3;
+  string description = 4;
+}
+
+message PermissionResponse {
+  string request_id = 1;
+  bool allowed = 2;
+  string scope = 3; // "once", "session", "always"
+}
+
+message AgentSpawned {
+  string agent_id = 1;
+  string agent_name = 2;
+  string role = 3;
+}
+
+message AgentMessage {
+  string from_agent = 1;
+  string to_agent = 2;
+  string content = 3;
+}
+
+message SessionComplete {
+  string summary = 1;
+  int32 total_tokens = 2;
+}
+
+message ErrorEvent {
+  string message = 1;
+  string code = 2;
+}
+
+message SessionHistory {
+  repeated HistoryMessage messages = 1;
+}
+
+message HistoryMessage {
+  string role = 1;
+  string content = 2;
+  string tool_name = 3;
+  string tool_call_id = 4;
+  google.protobuf.Timestamp timestamp = 5;
+}
+
+// Provider management
+message AddProviderReq {
+  string alias = 1;
+  string type = 2;
+  string model = 3;
+  string api_key = 4;
+  string base_url = 5;
+  int32 max_tokens = 6;
+  bool is_default = 7;
+}
+
+message Provider {
+  string alias = 1;
+  string type = 2;
+  string model = 3;
+  string base_url = 4;
+  bool is_default = 5;
+}
+
+message ProviderList {
+  repeated Provider providers = 1;
+}
+
+message TestProviderReq {
+  string alias = 1;
+}
+
+message TestProviderResult {
+  bool success = 1;
+  string message = 2;
+  int64 latency_ms = 3;
+}
+
+message RemoveProviderReq {
+  string alias = 1;
+}
+
+message SetDefaultProviderReq {
+  string alias = 1;
+}
+
+// Agent management
+message Agent {
+  string id = 1;
+  string name = 2;
+  string role = 3;
+  string status = 4;
+  string model = 5;
+  string provider = 6;
+  string current_task = 7;
+  string session_id = 8;
+}
+
+message AgentList {
+  repeated Agent agents = 1;
+}
+
+message AgentStatusReq {
+  string agent_id = 1;
+}
+
+// Team management
+message StartTeamReq {
+  string task = 1;
+  string session_id = 2;
+  string orchestrator_provider = 3;
+}
+
+message TeamEvent {
+  oneof event {
+    AgentSpawned agent_spawned = 1;
+    AgentMessage agent_message = 2;
+    TokenDelta token = 3;
+    ToolCallStart tool_start = 4;
+    ToolCallResult tool_result = 5;
+    PermissionRequest permission = 6;
+    SessionComplete complete = 7;
+    ErrorEvent error = 8;
+  }
+}
+
+message TeamStatusReq {
+  string team_id = 1;
+}
+
+message TeamStatus {
+  string team_id = 1;
+  string task = 2;
+  repeated Agent agents = 3;
+  string status = 4;
+}
+
+// Daemon health
+message HealthResponse {
+  bool healthy = 1;
+  int32 active_sessions = 2;
+  int32 active_agents = 3;
+  string uptime = 4;
+}
+
+// === Service ===
+
+service RatchetDaemon {
+  // Session management
+  rpc CreateSession(CreateSessionReq) returns (Session);
+  rpc ListSessions(Empty) returns (SessionList);
+  rpc AttachSession(AttachReq) returns (stream ChatEvent);
+  rpc DetachSession(DetachReq) returns (Empty);
+  rpc KillSession(KillReq) returns (Empty);
+
+  // Chat
+  rpc SendMessage(SendMessageReq) returns (stream ChatEvent);
+
+  // Permissions
+  rpc RespondToPermission(PermissionResponse) returns (Empty);
+
+  // Providers
+  rpc AddProvider(AddProviderReq) returns (Provider);
+  rpc ListProviders(Empty) returns (ProviderList);
+  rpc TestProvider(TestProviderReq) returns (TestProviderResult);
+  rpc RemoveProvider(RemoveProviderReq) returns (Empty);
+  rpc SetDefaultProvider(SetDefaultProviderReq) returns (Empty);
+
+  // Agents
+  rpc ListAgents(Empty) returns (AgentList);
+  rpc GetAgentStatus(AgentStatusReq) returns (Agent);
+
+  // Teams
+  rpc StartTeam(StartTeamReq) returns (stream TeamEvent);
+  rpc GetTeamStatus(TeamStatusReq) returns (TeamStatus);
+
+  // Daemon
+  rpc Health(Empty) returns (HealthResponse);
+  rpc Shutdown(Empty) returns (Empty);
+}
