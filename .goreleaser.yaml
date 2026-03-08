@@ -9,6 +9,7 @@ builds:
     goos:
       - linux
       - darwin
+      - windows
     goarch:
       - amd64
       - arm64
@@ -20,9 +21,12 @@ builds:
 
 archives:
   - id: ratchet
-    builds: [ratchet]
-    format: tar.gz
+    ids: [ratchet]
+    formats: [tar.gz]
     name_template: "ratchet_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
     files:
       - RATCHET.md
 
@@ -36,3 +40,18 @@ changelog:
       - "^docs:"
       - "^test:"
       - "^chore:"
+
+homebrew_casks:
+  - name: ratchet
+    binaries:
+      - ratchet
+    homepage: "https://github.com/GoCodeAlone/ratchet-cli"
+    description: "Interactive AI agent CLI"
+    repository:
+      owner: GoCodeAlone
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
