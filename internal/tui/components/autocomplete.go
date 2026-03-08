@@ -49,7 +49,8 @@ func (m AutocompleteModel) Visible() bool { return m.visible }
 
 // SetFilter updates the autocomplete based on current input text.
 func (m AutocompleteModel) SetFilter(input string) AutocompleteModel {
-	input = strings.TrimSpace(input)
+	// Do NOT TrimSpace — a trailing space (e.g. after autocomplete selection)
+	// must suppress the dropdown. Trimming would re-match the command prefix.
 	if !strings.HasPrefix(input, "/") || strings.Contains(input, " ") {
 		m.visible = false
 		m.filter = ""
