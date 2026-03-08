@@ -9,7 +9,6 @@ builds:
     goos:
       - linux
       - darwin
-      - windows
     goarch:
       - amd64
       - arm64
@@ -24,9 +23,6 @@ archives:
     ids: [ratchet]
     formats: [tar.gz]
     name_template: "ratchet_{{ .Os }}_{{ .Arch }}"
-    format_overrides:
-      - goos: windows
-        formats: [zip]
     files:
       - RATCHET.md
 
