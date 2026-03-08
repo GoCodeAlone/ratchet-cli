@@ -1,12 +1,19 @@
 package components
 
 import (
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/lipgloss/v2"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/tui/theme"
 )
+
+// InputResizedMsg is sent when the input height changes due to content.
+type InputResizedMsg struct {
+	Height int
+}
 
 // SubmitMsg is sent when the user submits input.
 type SubmitMsg struct {
@@ -17,13 +24,14 @@ type InputModel struct {
 	textarea textarea.Model
 	history  []string
 	histIdx  int
+	height   int
 }
 
 func NewInput(t theme.Theme) InputModel {
 	ta := textarea.New()
 	ta.Placeholder = "Message ratchet..."
 	ta.ShowLineNumbers = false
-	ta.SetHeight(3)
+	ta.SetHeight(1)
 
 	styles := textarea.DefaultDarkStyles()
 	styles.Focused.Text = lipgloss.NewStyle().Foreground(t.Foreground)
@@ -39,6 +47,7 @@ func NewInput(t theme.Theme) InputModel {
 	return InputModel{
 		textarea: ta,
 		histIdx:  -1,
+		height:   1,
 	}
 }
 
@@ -92,6 +101,14 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 	}
 
 	m.textarea, cmd = m.textarea.Update(msg)
+
+	newHeight := m.calcHeight()
+	if newHeight != m.height {
+		m.height = newHeight
+		m.textarea.SetHeight(newHeight)
+		return m, tea.Batch(cmd, func() tea.Msg { return InputResizedMsg{Height: newHeight} })
+	}
+
 	return m, cmd
 }
 
@@ -106,4 +123,21 @@ func (m InputModel) Focused() bool {
 
 func (m *InputModel) SetWidth(w int) {
 	m.textarea.SetWidth(w - 2)
+}
+
+func (m InputModel) calcHeight() int {
+	val := m.textarea.Value()
+	lines := strings.Count(val, "\n") + 1
+	if lines < 1 {
+		lines = 1
+	}
+	if lines > 6 {
+		lines = 6
+	}
+	return lines
+}
+
+// Height returns the current content-driven height of the input.
+func (m InputModel) Height() int {
+	return m.height
 }

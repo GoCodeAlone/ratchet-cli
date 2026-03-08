@@ -104,6 +104,9 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 			m.cancelChat = nil
 		}
 
+	case components.InputResizedMsg:
+		m.relayout()
+
 	case components.SubmitMsg:
 		// Check for slash command first
 		if result := commands.Parse(msg.Content, m.client); result != nil {
@@ -157,9 +160,9 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 }
 
 func (m *ChatModel) relayout() {
-	inputHeight := 5
-	statusHeight := 1
-	vpHeight := m.height - inputHeight - statusHeight - 2
+	inputHeight := m.input.Height() + 2 // +2 for border
+	statusHeight := 2                    // two-line status bar
+	vpHeight := m.height - inputHeight - statusHeight - 1
 	if vpHeight < 1 {
 		vpHeight = 1
 	}
