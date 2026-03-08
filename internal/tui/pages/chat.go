@@ -31,11 +31,12 @@ type ChatModel struct {
 	theme     theme.Theme
 	dark      bool
 
-	viewport   viewport.Model
-	input      components.InputModel
-	statusBar  components.StatusBar
-	toolCalls  components.ToolCallListModel
-	messages   []components.Message
+	viewport     viewport.Model
+	input        components.InputModel
+	statusBar    components.StatusBar
+	toolCalls    components.ToolCallListModel
+	autocomplete components.AutocompleteModel
+	messages     []components.Message
 	streaming  string // current streaming response
 	width      int
 	height     int
@@ -65,15 +66,16 @@ func NewChat(c *client.Client, sessionID string, t theme.Theme, dark bool) ChatM
 	statusBar := components.NewStatusBar()
 
 	return ChatModel{
-		client:    c,
-		sessionID: sessionID,
-		theme:     t,
-		dark:      dark,
-		viewport:  vp,
-		input:     input,
-		statusBar: statusBar,
-		toolCalls: components.NewToolCallList(),
-		ctx:       context.Background(),
+		client:       c,
+		sessionID:    sessionID,
+		theme:        t,
+		dark:         dark,
+		viewport:     vp,
+		input:        input,
+		statusBar:    statusBar,
+		toolCalls:    components.NewToolCallList(),
+		autocomplete: components.NewAutocomplete(),
+		ctx:          context.Background(),
 	}
 }
 
@@ -114,6 +116,21 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 			m.cancelChat()
 			m.cancelChat = nil
 		}
+
+		// If autocomplete is visible, route navigation keys to it
+		if m.autocomplete.Visible() {
+			switch msg.String() {
+			case "up", "down", "tab", "enter", "esc":
+				var acCmd tea.Cmd
+				m.autocomplete, acCmd = m.autocomplete.Update(msg)
+				cmds = append(cmds, acCmd)
+				return m, tea.Batch(cmds...)
+			}
+		}
+
+	case components.AutocompleteSelectedMsg:
+		m.input.SetValue(msg.Command + " ")
+		m.autocomplete = m.autocomplete.SetFilter("")
 
 	case components.InputResizedMsg:
 		m.relayout()
@@ -172,6 +189,8 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 	m.input, inputCmd = m.input.Update(msg)
 	m.viewport, vpCmd = m.viewport.Update(msg)
 	cmds = append(cmds, inputCmd, vpCmd)
+
+	m.autocomplete = m.autocomplete.SetFilter(m.input.Value())
 
 	return m, tea.Batch(cmds...)
 }
@@ -326,6 +345,10 @@ func (m ChatModel) View(t theme.Theme) string {
 	var sb strings.Builder
 	sb.WriteString(m.viewport.View())
 	sb.WriteString("\n")
+	if ac := m.autocomplete.View(t, m.width); ac != "" {
+		sb.WriteString(ac)
+		sb.WriteString("\n")
+	}
 	sb.WriteString(m.input.View(t, m.width))
 	sb.WriteString("\n")
 	sb.WriteString(m.statusBar.View(t))

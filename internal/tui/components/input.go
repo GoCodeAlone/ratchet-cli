@@ -141,3 +141,13 @@ func (m InputModel) calcHeight() int {
 func (m InputModel) Height() int {
 	return m.height
 }
+
+// Value returns the current text content of the input.
+func (m InputModel) Value() string {
+	return m.textarea.Value()
+}
+
+// SetValue replaces the input text content.
+func (m *InputModel) SetValue(s string) {
+	m.textarea.SetValue(s)
+}
