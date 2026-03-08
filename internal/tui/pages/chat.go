@@ -9,6 +9,7 @@ import (
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/client"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
+	"github.com/GoCodeAlone/ratchet-cli/internal/tui/commands"
 	"github.com/GoCodeAlone/ratchet-cli/internal/tui/components"
 	"github.com/GoCodeAlone/ratchet-cli/internal/tui/theme"
 )
@@ -87,6 +88,24 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 		}
 
 	case components.SubmitMsg:
+		// Check for slash command first
+		if result := commands.Parse(msg.Content, m.client); result != nil {
+			m.messages = append(m.messages, components.Message{
+				Role:    components.RoleUser,
+				Content: msg.Content,
+			})
+			for _, line := range result.Lines {
+				m.messages = append(m.messages, components.Message{
+					Role:    components.RoleSystem,
+					Content: line,
+				})
+			}
+			m.refreshViewport()
+			if result.NavigateToOnboarding {
+				return m, func() tea.Msg { return NavigateToOnboardingMsg{} }
+			}
+			return m, nil
+		}
 		// Add user message and send to daemon
 		m.messages = append(m.messages, components.Message{
 			Role:    components.RoleUser,

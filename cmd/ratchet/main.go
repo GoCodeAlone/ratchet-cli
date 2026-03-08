@@ -13,9 +13,20 @@ import (
 )
 
 func main() {
-	if len(os.Args) < 2 {
+	// Check for --reconfigure / -r flag before subcommand dispatch
+	reconfigure := false
+	var filteredArgs []string
+	for _, arg := range os.Args[1:] {
+		if arg == "--reconfigure" || arg == "-r" {
+			reconfigure = true
+		} else {
+			filteredArgs = append(filteredArgs, arg)
+		}
+	}
+
+	if len(filteredArgs) == 0 {
 		// Default: launch interactive TUI
-		if err := runInteractive(); err != nil {
+		if err := runInteractive(reconfigure); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
@@ -23,42 +34,42 @@ func main() {
 	}
 
 	// One-shot mode: ratchet -p "prompt"
-	if os.Args[1] == "-p" {
-		prompt := strings.Join(os.Args[2:], " ")
+	if filteredArgs[0] == "-p" {
+		prompt := strings.Join(filteredArgs[1:], " ")
 		handleOneShot(prompt)
 		return
 	}
 
-	switch os.Args[1] {
+	switch filteredArgs[0] {
 	case "daemon":
-		handleDaemon(os.Args[2:])
+		handleDaemon(filteredArgs[1:])
 	case "sessions":
-		handleSessions(os.Args[2:])
+		handleSessions(filteredArgs[1:])
 	case "provider":
-		handleProvider(os.Args[2:])
+		handleProvider(filteredArgs[1:])
 	case "agent":
-		handleAgent(os.Args[2:])
+		handleAgent(filteredArgs[1:])
 	case "team":
-		handleTeam(os.Args[2:])
+		handleTeam(filteredArgs[1:])
 	case "plugin":
-		handlePlugin(os.Args[2:])
+		handlePlugin(filteredArgs[1:])
 	case "skill":
-		handleSkill(os.Args[2:])
+		handleSkill(filteredArgs[1:])
 	case "config":
-		handleConfig(os.Args[2:])
+		handleConfig(filteredArgs[1:])
 	case "chat":
-		handleChat(os.Args[1:]) // pass "chat" + remaining args
+		handleChat(filteredArgs) // pass "chat" + remaining args
 	case "version":
 		fmt.Println(version.String())
 	case "help", "--help", "-h":
 		printUsage()
 	default:
 		// Treat as implicit chat: ratchet "fix the bug"
-		handleChat(os.Args[1:])
+		handleChat(filteredArgs)
 	}
 }
 
-func runInteractive() error {
+func runInteractive(reconfigure bool) error {
 	ctx := context.Background()
 
 	c, err := client.EnsureDaemon()
@@ -75,11 +86,14 @@ func runInteractive() error {
 		return fmt.Errorf("create session: %w", err)
 	}
 
-	return tui.Run(ctx, c, session)
+	return tui.Run(ctx, c, session, reconfigure)
 }
 
 func printUsage() {
-	fmt.Print(`Usage: ratchet [command] [args]
+	fmt.Print(`Usage: ratchet [flags] [command] [args]
+
+Flags:
+  --reconfigure, -r  Re-run provider setup wizard
 
 Commands:
   (default)        Launch interactive TUI
@@ -95,6 +109,14 @@ Commands:
   skill            Manage skills
   config           Configuration
   version          Print version
+
+Slash commands (inside TUI):
+  /help                      Show available commands
+  /provider list             List configured providers
+  /provider add              Add a new provider
+  /provider remove <alias>   Remove a provider
+  /provider default <alias>  Set default provider
+  /provider test <alias>     Test provider connection
 
 Run 'ratchet <command> --help' for details.
 `)

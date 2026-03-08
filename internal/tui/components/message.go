@@ -14,6 +14,7 @@ const (
 	RoleUser      MessageRole = "user"
 	RoleAssistant MessageRole = "assistant"
 	RoleTool      MessageRole = "tool"
+	RoleSystem    MessageRole = "system"
 )
 
 type Message struct {
@@ -39,6 +40,10 @@ func (m Message) Render(t theme.Theme, width int, dark bool) string {
 		return prefix + "\n" + body
 	case RoleTool:
 		return fmt.Sprintf("  [tool: %s]\n", m.Content)
+	case RoleSystem:
+		prefix := lipgloss.NewStyle().Foreground(t.Muted).Render("⚙ ")
+		body := lipgloss.NewStyle().Foreground(t.Muted).Render(m.Content)
+		return prefix + body + "\n"
 	}
 	return m.Content
 }

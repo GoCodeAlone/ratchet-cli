@@ -22,6 +22,9 @@ type OnboardingDoneMsg struct {
 	Provider *pb.Provider
 }
 
+// NavigateToOnboardingMsg signals the app to switch to the onboarding page.
+type NavigateToOnboardingMsg struct{}
+
 type providerAddedMsg struct {
 	provider *pb.Provider
 	err      error

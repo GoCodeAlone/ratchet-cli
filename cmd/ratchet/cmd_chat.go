@@ -17,7 +17,7 @@ func handleChat(args []string) {
 	}
 	if len(args) == 0 {
 		// Fall back to interactive TUI
-		if err := runInteractive(); err != nil {
+		if err := runInteractive(false); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}

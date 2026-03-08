@@ -51,21 +51,24 @@ type App struct {
 	splashDone     bool
 	providersReady bool
 	providers      []*pb.Provider
+	reconfigure    bool
 }
 
 // NewApp creates the root TUI application model.
-func NewApp(c *client.Client, session *pb.Session, t theme.Theme, dark bool) App {
+func NewApp(c *client.Client, session *pb.Session, t theme.Theme, dark bool, reconfigure ...bool) App {
 	splash := pages.NewSplash()
 	sidebar := components.NewSidebar([]*pb.Session{session}, session.GetId())
+	reconf := len(reconfigure) > 0 && reconfigure[0]
 	return App{
-		client:    c,
-		sessionID: session.GetId(),
-		session:   session,
-		splash:    splash,
-		sidebar:   sidebar,
-		theme:     t,
-		dark:      dark,
-		page:      pageSplash,
+		client:      c,
+		sessionID:   session.GetId(),
+		session:     session,
+		splash:      splash,
+		sidebar:     sidebar,
+		theme:       t,
+		dark:        dark,
+		page:        pageSplash,
+		reconfigure: reconf,
 	}
 }
 
@@ -143,6 +146,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case pages.OnboardingDoneMsg:
 		return a.transitionToChat()
 
+	case pages.NavigateToOnboardingMsg:
+		a.onboarding = pages.NewOnboarding(a.client, a.theme)
+		a.page = pageOnboarding
+		return a, a.onboarding.Init()
+
 	case components.SessionSelectedMsg:
 		a.sessionID = msg.SessionID
 		a.showSidebar = false
@@ -185,7 +193,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (a App) transitionFromSplash() (tea.Model, tea.Cmd) {
-	if len(a.providers) == 0 {
+	if a.reconfigure || len(a.providers) == 0 {
 		a.onboarding = pages.NewOnboarding(a.client, a.theme)
 		a.page = pageOnboarding
 		return a, a.onboarding.Init()
@@ -295,9 +303,10 @@ func joinColumns(left, right string, leftWidth, totalWidth int) string {
 }
 
 // Run launches the TUI for a given session.
-func Run(ctx context.Context, c *client.Client, session *pb.Session) error {
+func Run(ctx context.Context, c *client.Client, session *pb.Session, reconfigure ...bool) error {
 	t := theme.Dark()
-	app := NewApp(c, session, t, true)
+	reconf := len(reconfigure) > 0 && reconfigure[0]
+	app := NewApp(c, session, t, true, reconf)
 
 	p := tea.NewProgram(app, tea.WithContext(ctx))
 	_, err := p.Run()
