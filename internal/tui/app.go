@@ -211,6 +211,16 @@ func (a App) transitionToChat() (tea.Model, tea.Cmd) {
 		chatHeight = 1
 	}
 	chat.SetSize(a.width, chatHeight)
+	// Set status bar context
+	if a.session != nil {
+		chat.SetWorkingDir(a.session.GetWorkingDir())
+	}
+	for _, p := range a.providers {
+		if p.IsDefault {
+			chat.SetProviderModel(p.Type, p.Model)
+			break
+		}
+	}
 	a.chat = chat
 	a.team = team
 	a.page = pageChat

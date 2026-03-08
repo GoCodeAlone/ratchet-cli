@@ -84,6 +84,17 @@ func (m *ChatModel) SetSize(width, height int) {
 	m.relayout()
 }
 
+// SetWorkingDir sets the working directory shown in the status bar.
+func (m *ChatModel) SetWorkingDir(dir string) {
+	m.statusBar.WorkingDir = dir
+}
+
+// SetProviderModel sets the provider and model shown in the status bar.
+func (m *ChatModel) SetProviderModel(provider, model string) {
+	m.statusBar.Provider = provider
+	m.statusBar.Model = model
+}
+
 func (m ChatModel) Init() tea.Cmd {
 	return m.input.Init()
 }
