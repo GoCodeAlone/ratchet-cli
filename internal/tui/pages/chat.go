@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/viewport"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/client"
@@ -44,6 +45,22 @@ type ChatModel struct {
 
 func NewChat(c *client.Client, sessionID string, t theme.Theme, dark bool) ChatModel {
 	vp := viewport.New(viewport.WithHeight(20))
+
+	// Disable all viewport keybindings — the viewport auto-scrolls to
+	// bottom on new content and supports mouse-wheel scrolling. Without
+	// this, the default keymap intercepts single-letter keys (f, b, d,
+	// u, j, k, h, l, space) that belong to the textarea input.
+	vp.KeyMap = viewport.KeyMap{
+		PageDown:     key.NewBinding(key.WithKeys("pgdown")),
+		PageUp:       key.NewBinding(key.WithKeys("pgup")),
+		HalfPageDown: key.NewBinding(key.WithDisabled()),
+		HalfPageUp:   key.NewBinding(key.WithDisabled()),
+		Down:         key.NewBinding(key.WithDisabled()),
+		Up:           key.NewBinding(key.WithDisabled()),
+		Left:         key.NewBinding(key.WithDisabled()),
+		Right:        key.NewBinding(key.WithDisabled()),
+	}
+
 	input := components.NewInput(t)
 	statusBar := components.NewStatusBar()
 

@@ -29,6 +29,13 @@ func NewInput(t theme.Theme) InputModel {
 	styles.Focused.Text = lipgloss.NewStyle().Foreground(t.Foreground)
 	ta.SetStyles(styles)
 
+	// Focus the textarea immediately so it accepts input.
+	// textarea.Focus() is a pointer-receiver method that sets focus=true
+	// in-place. Calling it here preserves the state in the returned model.
+	// Init() re-calls Focus() to obtain the cursor blink Cmd, but its
+	// side-effect on focus is harmless since it's already true.
+	ta.Focus()
+
 	return InputModel{
 		textarea: ta,
 		histIdx:  -1,
