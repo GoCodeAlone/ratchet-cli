@@ -278,11 +278,7 @@ func (a App) renderHeader() string {
 		Foreground(a.theme.Muted).
 		Render(fmt.Sprintf("  session: %s", a.sessionID[:8]))
 
-	hints := lipgloss.NewStyle().
-		Foreground(a.theme.Muted).
-		Render("  Ctrl+S: sidebar  Ctrl+T: team  Ctrl+D: detach  Ctrl+C: quit")
-
-	return title + sessionInfo + hints
+	return title + sessionInfo
 }
 
 // joinColumns renders two column strings side by side.
