@@ -131,9 +131,15 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 					Content: line,
 				})
 			}
+			if result.ClearChat {
+				m.messages = nil
+			}
 			m.refreshViewport()
 			if result.NavigateToOnboarding {
 				return m, func() tea.Msg { return NavigateToOnboardingMsg{} }
+			}
+			if result.Quit {
+				return m, tea.Quit
 			}
 			return m, nil
 		}
