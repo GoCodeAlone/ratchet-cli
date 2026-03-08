@@ -129,6 +129,7 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 		}
 
 	case components.AutocompleteSelectedMsg:
+		// Trailing space ensures SetFilter sees a space → hides autocomplete.
 		m.input.SetValue(msg.Command + " ")
 		m.autocomplete = m.autocomplete.SetFilter("")
 

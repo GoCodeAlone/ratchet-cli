@@ -128,13 +128,7 @@ func (m *InputModel) SetWidth(w int) {
 func (m InputModel) calcHeight() int {
 	val := m.textarea.Value()
 	lines := strings.Count(val, "\n") + 1
-	if lines < 1 {
-		lines = 1
-	}
-	if lines > 6 {
-		lines = 6
-	}
-	return lines
+	return min(lines, 6)
 }
 
 // Height returns the current content-driven height of the input.
