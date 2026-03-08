@@ -42,6 +42,10 @@ github.com/DataDog/datadog-go/v5 v5.4.0 h1:Ea3eXUVwrVV28F/fo3Dr3aa+TL/Z7Xi6SUPKW
 github.com/DataDog/datadog-go/v5 v5.4.0/go.mod h1:K9kcYBlxkcPP8tvvjZZKs/m1edNAUFzBbdpTUKfCsuw=
 github.com/GoCodeAlone/ratchet v0.0.0-20260306063013-14c21e0892a7 h1:Hm5XjNLH/eYxAlUKNk+4+wDwEkMvzahbp2EiW0W3aB0=
 github.com/GoCodeAlone/ratchet v0.0.0-20260306063013-14c21e0892a7/go.mod h1:GUh5VvJzeHUFiYxETxbA2JsTYWqBm0mtQFYVL4WI4P8=
+github.com/GoCodeAlone/ratchet v0.0.0-20260308203548-405822969275 h1:UNzzzfohj5eeDMzGRPznZAU9RcKcptH3dRV7o+s7x5o=
+github.com/GoCodeAlone/ratchet v0.0.0-20260308203548-405822969275/go.mod h1:8Xad4PqNVeebO4UzKoJW1YCapmawjXeaaYAhs+qPNj0=
+github.com/GoCodeAlone/ratchet v0.0.0-20260308203630-7997b652ed8b h1:oUuHs9/D03Ef2n9gBV6yGDoj75ELVn6/e3OVPqOWMLc=
+github.com/GoCodeAlone/ratchet v0.0.0-20260308203630-7997b652ed8b/go.mod h1:8Xad4PqNVeebO4UzKoJW1YCapmawjXeaaYAhs+qPNj0=
 github.com/GoCodeAlone/workflow v0.3.24 h1:wTM4mq1FpjuX4CYpOEw0Gxz2kQdSBIt80MyhKrPb+zw=
 github.com/GoCodeAlone/workflow v0.3.24/go.mod h1:v60REpp2GR3HsOcDk5QfRhCeQeMshpjpHb/ErW3/QBM=
 github.com/GoCodeAlone/workflow-plugin-agent v0.1.2 h1:UVj6JtgQY8mZ85Gc5UcRMk35fA+TqbRL9dqR0TlrTGw=

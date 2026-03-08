@@ -6,7 +6,7 @@ require (
 	charm.land/bubbles/v2 v2.0.0
 	charm.land/bubbletea/v2 v2.0.1
 	charm.land/lipgloss/v2 v2.0.0
-	github.com/GoCodeAlone/ratchet v0.0.0-20260306063013-14c21e0892a7
+	github.com/GoCodeAlone/ratchet v0.0.0-20260308203630-7997b652ed8b
 	github.com/GoCodeAlone/workflow v0.3.24
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/google/uuid v1.6.0
