@@ -6,9 +6,9 @@ require (
 	charm.land/bubbles/v2 v2.0.0
 	charm.land/bubbletea/v2 v2.0.1
 	charm.land/lipgloss/v2 v2.0.0
-	github.com/GoCodeAlone/ratchet v0.1.13
+	github.com/GoCodeAlone/ratchet v0.1.14
 	github.com/GoCodeAlone/workflow v0.3.24
-	github.com/GoCodeAlone/workflow-plugin-agent v0.2.0
+	github.com/GoCodeAlone/workflow-plugin-agent v0.3.0
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/google/uuid v1.6.0
 	golang.org/x/term v0.40.0

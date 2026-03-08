@@ -116,6 +116,7 @@ func initDB(db *sql.DB) error {
 			secret_name TEXT,
 			base_url TEXT,
 			max_tokens INTEGER DEFAULT 4096,
+			settings TEXT NOT NULL DEFAULT '{}',
 			is_default INTEGER DEFAULT 0
 		)`,
 		`CREATE TABLE IF NOT EXISTS permissions (
