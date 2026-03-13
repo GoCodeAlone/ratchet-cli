@@ -1,14 +1,11 @@
 package daemon
 
 import (
-	"context"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 )
@@ -86,15 +83,22 @@ func (pm *PlanManager) Approve(planID string, skipSteps []string) error {
 	return nil
 }
 
-// Reject marks a plan as rejected.
-func (pm *PlanManager) Reject(planID string) error {
+// Reject marks a plan as rejected with optional feedback.
+// Returns an error if the plan is not found or is already in a terminal state
+// (approved, executing, completed, or rejected).
+func (pm *PlanManager) Reject(planID, feedback string) error {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 	plan, ok := pm.plans[planID]
 	if !ok {
 		return fmt.Errorf("plan %q not found", planID)
 	}
+	switch plan.Status {
+	case "approved", "executing", "completed", "rejected":
+		return fmt.Errorf("plan %q cannot be rejected (current status: %s)", planID, plan.Status)
+	}
 	plan.Status = "rejected"
+	plan.Feedback = feedback
 	return nil
 }
 
@@ -136,27 +140,3 @@ func (pm *PlanManager) UpdateStep(planID, stepID, stepStatus, errMsg string) err
 	return nil
 }
 
-// ApprovePlan implements the ApprovePlan RPC.
-func (s *Service) ApprovePlan(req *pb.ApprovePlanReq, stream pb.RatchetDaemon_ApprovePlanServer) error {
-	if err := s.plans.Approve(req.PlanId, req.SkipSteps); err != nil {
-		return status.Errorf(codes.InvalidArgument, "approve plan: %v", err)
-	}
-	plan := s.plans.Get(req.PlanId)
-	if plan == nil {
-		return status.Error(codes.NotFound, "plan not found after approval")
-	}
-	// Send the approved plan back as a plan_proposed event so the client can refresh
-	return stream.Send(&pb.ChatEvent{
-		Event: &pb.ChatEvent_PlanProposed{
-			PlanProposed: plan,
-		},
-	})
-}
-
-// RejectPlan implements the RejectPlan RPC.
-func (s *Service) RejectPlan(ctx context.Context, req *pb.RejectPlanReq) (*pb.Empty, error) {
-	if err := s.plans.Reject(req.PlanId); err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "reject plan: %v", err)
-	}
-	return &pb.Empty{}, nil
-}

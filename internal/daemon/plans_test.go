@@ -87,15 +87,31 @@ func TestPlanManager_Reject(t *testing.T) {
 	pm := NewPlanManager()
 	plan := pm.Create("sess1", "goal", makePlanSteps("s1"))
 
-	if err := pm.Reject(plan.Id); err != nil {
+	if err := pm.Reject(plan.Id, "needs more detail"); err != nil {
 		t.Fatalf("Reject: %v", err)
 	}
-	if pm.Get(plan.Id).Status != "rejected" {
+	got := pm.Get(plan.Id)
+	if got.Status != "rejected" {
 		t.Error("expected plan status rejected")
+	}
+	if got.Feedback != "needs more detail" {
+		t.Errorf("feedback: got %q want %q", got.Feedback, "needs more detail")
+	}
+
+	// Reject already-rejected plan should fail (state guard)
+	if err := pm.Reject(plan.Id, "again"); err == nil {
+		t.Error("expected error rejecting already-rejected plan")
+	}
+
+	// Reject approved plan should fail
+	plan2 := pm.Create("sess1", "goal2", makePlanSteps("s1"))
+	_ = pm.Approve(plan2.Id, nil)
+	if err := pm.Reject(plan2.Id, ""); err == nil {
+		t.Error("expected error rejecting approved plan")
 	}
 
 	// Reject nonexistent
-	if err := pm.Reject("bad-id"); err == nil {
+	if err := pm.Reject("bad-id", ""); err == nil {
 		t.Error("expected error rejecting nonexistent plan")
 	}
 }

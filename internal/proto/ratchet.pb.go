@@ -2363,6 +2363,7 @@ type Plan struct {
 	Steps         []*PlanStep            `protobuf:"bytes,4,rep,name=steps,proto3" json:"steps,omitempty"`
 	Status        string                 `protobuf:"bytes,5,opt,name=status,proto3" json:"status,omitempty"` // proposed, approved, executing, completed, rejected
 	CreatedAt     string                 `protobuf:"bytes,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	Feedback      string                 `protobuf:"bytes,7,opt,name=feedback,proto3" json:"feedback,omitempty"` // rejection feedback from user
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2435,6 +2436,13 @@ func (x *Plan) GetStatus() string {
 func (x *Plan) GetCreatedAt() string {
 	if x != nil {
 		return x.CreatedAt
+	}
+	return ""
+}
+
+func (x *Plan) GetFeedback() string {
+	if x != nil {
+		return x.Feedback
 	}
 	return ""
 }
@@ -3392,7 +3400,7 @@ const file_internal_proto_ratchet_proto_rawDesc = "" +
 	"\vdescription\x18\x02 \x01(\tR\vdescription\x12\x16\n" +
 	"\x06status\x18\x03 \x01(\tR\x06status\x12\x14\n" +
 	"\x05files\x18\x04 \x03(\tR\x05files\x12\x14\n" +
-	"\x05error\x18\x05 \x01(\tR\x05error\"\xa9\x01\n" +
+	"\x05error\x18\x05 \x01(\tR\x05error\"\xc5\x01\n" +
 	"\x04Plan\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -3401,7 +3409,8 @@ const file_internal_proto_ratchet_proto_rawDesc = "" +
 	"\x05steps\x18\x04 \x03(\v2\x11.ratchet.PlanStepR\x05steps\x12\x16\n" +
 	"\x06status\x18\x05 \x01(\tR\x06status\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\x06 \x01(\tR\tcreatedAt\"g\n" +
+	"created_at\x18\x06 \x01(\tR\tcreatedAt\x12\x1a\n" +
+	"\bfeedback\x18\a \x01(\tR\bfeedback\"g\n" +
 	"\x0eApprovePlanReq\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x17\n" +

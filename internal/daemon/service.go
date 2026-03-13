@@ -359,3 +359,27 @@ func cronJobToPB(j CronJob) *pb.CronJob {
 		RunCount:  j.RunCount,
 	}
 }
+
+// ApprovePlan implements the ApprovePlan RPC.
+func (s *Service) ApprovePlan(req *pb.ApprovePlanReq, stream pb.RatchetDaemon_ApprovePlanServer) error {
+	if err := s.plans.Approve(req.PlanId, req.SkipSteps); err != nil {
+		return status.Errorf(codes.InvalidArgument, "approve plan: %v", err)
+	}
+	plan := s.plans.Get(req.PlanId)
+	if plan == nil {
+		return status.Error(codes.NotFound, "plan not found after approval")
+	}
+	return stream.Send(&pb.ChatEvent{
+		Event: &pb.ChatEvent_PlanProposed{
+			PlanProposed: plan,
+		},
+	})
+}
+
+// RejectPlan implements the RejectPlan RPC.
+func (s *Service) RejectPlan(ctx context.Context, req *pb.RejectPlanReq) (*pb.Empty, error) {
+	if err := s.plans.Reject(req.PlanId, req.Feedback); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "reject plan: %v", err)
+	}
+	return &pb.Empty{}, nil
+}

@@ -238,6 +238,7 @@ message Plan {
   repeated PlanStep steps = 4;
   string status = 5;  // proposed, approved, executing, completed, rejected
   string created_at = 6;
+  string feedback = 7;  // rejection feedback from user
 }
 
 message ApprovePlanReq {
