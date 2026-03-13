@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/client"
+	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 )
 
 // Result holds the output of a parsed slash command.
@@ -77,6 +78,12 @@ func Parse(input string, c *client.Client) *Result {
 			return &Result{Lines: []string{"Usage: /mcp <list|enable <name>|disable <name>>"}}
 		}
 		return mcpCmd(parts[1:])
+	case "/compact":
+		return compactCmd(c)
+	case "/review":
+		return reviewCmd(c)
+	case "/team":
+		return teamCmd(parts[1:], c)
 	case "/plan":
 		return &Result{Lines: []string{"Plan mode: wait for the assistant to propose a plan, then use /approve or /reject."}}
 	case "/approve":
@@ -111,6 +118,8 @@ func helpCmd() *Result {
 		"  /provider default <alias>  Set default provider",
 		"  /provider test <alias>     Test provider connection",
 		"  /fleet <plan_id>           Start fleet execution for a plan",
+		"  /team status <id>          Get team status",
+		"  /team start <task>         Start a new team for a task",
 		"  /plan                      Show plan mode info",
 		"  /approve <plan_id>         Approve a proposed plan",
 		"  /reject <plan_id>          Reject a proposed plan",
@@ -120,7 +129,9 @@ func helpCmd() *Result {
 		"  /cron pause <id>           Pause a cron job",
 		"  /cron resume <id>          Resume a paused cron job",
 		"  /cron stop <id>            Stop and remove a cron job",
-		"  /exit                      Quit ratchet",
+		"  /compact                   Manually compress conversation context",
+	"  /review                    Run built-in code-reviewer on current git diff",
+	"  /exit                      Quit ratchet",
 	}}
 }
 
@@ -395,6 +406,64 @@ func cronStop(id string, c *client.Client) *Result {
 		return &Result{Lines: []string{fmt.Sprintf("Error stopping %s: %v", id, err)}}
 	}
 	return &Result{Lines: []string{fmt.Sprintf("Cron job %s stopped.", id)}}
+}
+
+// teamCmd handles /team subcommands.
+func teamCmd(args []string, c *client.Client) *Result {
+	if c == nil {
+		return &Result{Lines: []string{"Not connected to daemon"}}
+	}
+	if len(args) == 0 {
+		return &Result{Lines: []string{
+			"Usage: /team status <team_id> | /team start <task description>",
+		}}
+	}
+	sub := strings.ToLower(args[0])
+	switch sub {
+	case "status":
+		if len(args) < 2 {
+			return &Result{Lines: []string{"Usage: /team status <team_id>"}}
+		}
+		return teamStatus(args[1], c)
+	case "start":
+		if len(args) < 2 {
+			return &Result{Lines: []string{"Usage: /team start <task description>"}}
+		}
+		task := strings.Join(args[1:], " ")
+		return teamStart(task, c)
+	default:
+		return &Result{Lines: []string{fmt.Sprintf("Unknown team subcommand: %s", sub)}}
+	}
+}
+
+func teamStatus(teamID string, c *client.Client) *Result {
+	st, err := c.GetTeamStatus(context.Background(), teamID)
+	if err != nil {
+		return &Result{Lines: []string{fmt.Sprintf("Error: %v", err)}}
+	}
+	lines := []string{fmt.Sprintf("Team %s (%s):", teamID[:min(8, len(teamID))], st.Status), ""}
+	for _, a := range st.Agents {
+		lines = append(lines, fmt.Sprintf("  %-20s %-12s %-10s %s", a.Name, a.Role, a.Status, a.Model))
+	}
+	return &Result{Lines: lines}
+}
+
+func teamStart(task string, c *client.Client) *Result {
+	go func() {
+		// Fire-and-forget: start team async.
+		_, _ = c.StartTeam(context.Background(), &pb.StartTeamReq{Task: task})
+	}()
+	return &Result{Lines: []string{
+		fmt.Sprintf("Starting team for task: %s", task),
+		"Team events will appear in the chat stream.",
+	}}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // mcpCmd handles /mcp subcommands. MCP discovery runs on the daemon side;

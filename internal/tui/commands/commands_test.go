@@ -156,6 +156,26 @@ func TestParseProviderRemoveNoAlias(t *testing.T) {
 	}
 }
 
+func TestParseCompact(t *testing.T) {
+	result := Parse("/compact", nil)
+	if result == nil {
+		t.Fatal("expected result for /compact")
+	}
+	if len(result.Lines) == 0 {
+		t.Error("expected output for /compact")
+	}
+}
+
+func TestReviewCommand_Parse(t *testing.T) {
+	result := Parse("/review", nil)
+	if result == nil {
+		t.Fatal("expected result for /review")
+	}
+	if len(result.Lines) == 0 {
+		t.Error("expected output for /review")
+	}
+}
+
 // TestParseAfterAutocompleteSelection tests the exact flow of:
 // 1. Autocomplete selects "/model" → input becomes "/model "
 // 2. User presses Enter → SubmitMsg with content "/model "

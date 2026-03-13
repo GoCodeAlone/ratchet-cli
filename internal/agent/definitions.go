@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bufio"
+	"embed"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,40 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+//go:embed builtins/*.yaml
+var builtinFS embed.FS
+
+// LoadBuiltins returns the built-in agent definitions embedded in the binary.
+func LoadBuiltins() ([]AgentDefinition, error) {
+	entries, err := builtinFS.ReadDir("builtins")
+	if err != nil {
+		return nil, fmt.Errorf("read builtins: %w", err)
+	}
+	var defs []AgentDefinition
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		ext := filepath.Ext(e.Name())
+		if ext != ".yaml" && ext != ".yml" {
+			continue
+		}
+		data, err := builtinFS.ReadFile("builtins/" + e.Name())
+		if err != nil {
+			continue
+		}
+		var def AgentDefinition
+		if err := yaml.Unmarshal(data, &def); err != nil {
+			continue
+		}
+		if def.Name == "" {
+			def.Name = strings.TrimSuffix(e.Name(), ext)
+		}
+		defs = append(defs, def)
+	}
+	return defs, nil
+}
 
 // AgentDefinition defines a reusable AI agent configuration.
 type AgentDefinition struct {
