@@ -9,6 +9,8 @@ import (
 
 	"path/filepath"
 
+	"github.com/GoCodeAlone/ratchet-cli/internal/config"
+	"github.com/GoCodeAlone/ratchet-cli/internal/mcp"
 	"github.com/GoCodeAlone/ratchet-cli/internal/plugins"
 	"github.com/GoCodeAlone/ratchet/ratchetplugin"
 	"github.com/GoCodeAlone/workflow/secrets"
@@ -23,9 +25,12 @@ type EngineContext struct {
 	MemoryStore      *ratchetplugin.MemoryStore
 	SecretGuard      *ratchetplugin.SecretGuard
 	SecretsProvider  secrets.Provider
+	MCPDiscoverer    *mcp.Discoverer
+	ModelRouting     config.ModelRouting
 }
 
-func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error) {
+func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error) { //nolint:unparam
+
 	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
@@ -42,7 +47,12 @@ func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error
 		return nil, fmt.Errorf("init db: %w", err)
 	}
 
+	// Load config for model routing settings (non-fatal on error).
+	cfg, _ := config.Load()
 	ec := &EngineContext{DB: db}
+	if cfg != nil {
+		ec.ModelRouting = cfg.ModelRouting
+	}
 
 	// Memory store
 	ec.MemoryStore = ratchetplugin.NewMemoryStore(db)
@@ -66,6 +76,15 @@ func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error
 
 	// Tool registry
 	ec.ToolRegistry = ratchetplugin.NewToolRegistry()
+
+	// MCP CLI discovery (runs in background; errors are non-fatal)
+	ec.MCPDiscoverer = mcp.NewDiscoverer(ec.ToolRegistry)
+	go func() {
+		result := ec.MCPDiscoverer.Discover()
+		for cli, tools := range result.Registered {
+			log.Printf("mcp: discovered %s (%d tools)", cli, len(tools))
+		}
+	}()
 
 	// Load external plugins from ~/.ratchet/plugins/
 	pluginLoader := plugins.NewLoader(filepath.Join(DataDir(), "plugins"))

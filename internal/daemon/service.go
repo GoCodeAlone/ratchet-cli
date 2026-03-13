@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/GoCodeAlone/ratchet-cli/internal/config"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 )
 
@@ -42,7 +43,12 @@ func NewService(ctx context.Context) (*Service, error) {
 		engine.Close()
 		return nil, fmt.Errorf("start cron scheduler: %w", err)
 	}
-	svc.fleet = NewFleetManager()
+	cfg, _ := config.Load()
+	routing := config.ModelRouting{}
+	if cfg != nil {
+		routing = cfg.ModelRouting
+	}
+	svc.fleet = NewFleetManager(routing)
 	return svc, nil
 }
 

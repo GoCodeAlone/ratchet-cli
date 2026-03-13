@@ -1,0 +1,190 @@
+package daemon
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/GoCodeAlone/ratchet-cli/internal/config"
+	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
+)
+
+// fleetInstance tracks a running fleet.
+type fleetInstance struct {
+	mu        sync.RWMutex
+	status    *pb.FleetStatus
+	cancelFns map[string]context.CancelFunc
+}
+
+// FleetManager manages fleet instances.
+type FleetManager struct {
+	mu      sync.RWMutex
+	fleets  map[string]*fleetInstance
+	routing config.ModelRouting
+}
+
+// NewFleetManager returns an initialized FleetManager with optional model routing config.
+func NewFleetManager(routing config.ModelRouting) *FleetManager {
+	return &FleetManager{
+		fleets:  make(map[string]*fleetInstance),
+		routing: routing,
+	}
+}
+
+// StartFleet spawns worker goroutines for each step in the plan (up to maxWorkers).
+// It sends FleetStatus updates on the returned channel until all workers finish.
+func (fm *FleetManager) StartFleet(ctx context.Context, req *pb.StartFleetReq, steps []string, eventCh chan<- *pb.FleetStatus) string {
+	fleetID := uuid.New().String()
+
+	if len(steps) == 0 {
+		steps = []string{"step-1"} // default single step when no plan steps given
+	}
+
+	maxWorkers := int(req.MaxWorkers)
+	if maxWorkers <= 0 || maxWorkers > len(steps) {
+		maxWorkers = len(steps)
+	}
+
+	workers := make([]*pb.FleetWorker, len(steps))
+	for i, stepID := range steps {
+		workers[i] = &pb.FleetWorker{
+			Id:     uuid.New().String(),
+			Name:   fmt.Sprintf("worker-%d", i+1),
+			StepId: stepID,
+			Status: "pending",
+			Model:  ModelForStep(stepID, fm.routing),
+		}
+	}
+
+	fi := &fleetInstance{
+		status: &pb.FleetStatus{
+			FleetId:   fleetID,
+			SessionId: req.SessionId,
+			Workers:   workers,
+			Status:    "running",
+			Total:     int32(len(workers)),
+		},
+		cancelFns: make(map[string]context.CancelFunc),
+	}
+
+	fm.mu.Lock()
+	fm.fleets[fleetID] = fi
+	fm.mu.Unlock()
+
+	go fm.runFleet(ctx, fi, maxWorkers, eventCh)
+
+	return fleetID
+}
+
+// runFleet executes workers with concurrency cap and sends status updates.
+func (fm *FleetManager) runFleet(ctx context.Context, fi *fleetInstance, maxWorkers int, eventCh chan<- *pb.FleetStatus) {
+	sem := make(chan struct{}, maxWorkers)
+	var wg sync.WaitGroup
+
+	for _, w := range fi.status.Workers {
+		w := w // capture loop var
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer func() {
+				<-sem
+				wg.Done()
+			}()
+
+			workerCtx, cancel := context.WithCancel(ctx)
+			fi.mu.Lock()
+			fi.cancelFns[w.Id] = cancel
+			w.Status = "running"
+			fi.mu.Unlock()
+
+			sendFleetStatus(eventCh, fi)
+
+			// Simulate work — in production this would delegate to an agent/session
+			err := fm.executeWorker(workerCtx, w)
+
+			fi.mu.Lock()
+			delete(fi.cancelFns, w.Id)
+			if err != nil {
+				w.Status = "failed"
+				w.Error = err.Error()
+			} else {
+				w.Status = "completed"
+			}
+			fi.status.Completed++
+			fi.mu.Unlock()
+
+			sendFleetStatus(eventCh, fi)
+		}()
+	}
+
+	wg.Wait()
+
+	fi.mu.Lock()
+	fi.status.Status = "completed"
+	fi.mu.Unlock()
+
+	sendFleetStatus(eventCh, fi)
+	close(eventCh)
+}
+
+// executeWorker runs a single fleet worker step.
+func (fm *FleetManager) executeWorker(ctx context.Context, w *pb.FleetWorker) error {
+	// Placeholder: real implementation would create a sub-session and run the step.
+	// For now, simulate a brief execution.
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(100 * time.Millisecond):
+		return nil
+	}
+}
+
+// GetStatus returns the current FleetStatus for the given fleet ID.
+func (fm *FleetManager) GetStatus(fleetID string) (*pb.FleetStatus, error) {
+	fm.mu.RLock()
+	fi, ok := fm.fleets[fleetID]
+	fm.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("fleet %s not found", fleetID)
+	}
+
+	fi.mu.RLock()
+	defer fi.mu.RUnlock()
+	s := *fi.status
+	return &s, nil
+}
+
+// KillWorker cancels a specific worker within a fleet.
+func (fm *FleetManager) KillWorker(fleetID, workerID string) error {
+	fm.mu.RLock()
+	fi, ok := fm.fleets[fleetID]
+	fm.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("fleet %s not found", fleetID)
+	}
+
+	fi.mu.Lock()
+	cancel, ok := fi.cancelFns[workerID]
+	fi.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("worker %s not found or already finished", workerID)
+	}
+	cancel()
+	return nil
+}
+
+func sendFleetStatus(ch chan<- *pb.FleetStatus, fi *fleetInstance) {
+	if ch == nil {
+		return
+	}
+	fi.mu.RLock()
+	s := *fi.status
+	fi.mu.RUnlock()
+	select {
+	case ch <- &s:
+	default:
+	}
+}
