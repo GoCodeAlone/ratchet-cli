@@ -14,6 +14,17 @@ type Config struct {
 	InstructionCompat []string         `yaml:"instruction_compat"`
 	Permissions       PermissionConfig `yaml:"permissions"`
 	Daemon            DaemonConfig     `yaml:"daemon"`
+	ModelRouting      ModelRouting     `yaml:"model_routing"`
+}
+
+// ModelRouting controls which model handles which class of task.
+type ModelRouting struct {
+	// SimpleTaskModel is used for lightweight steps (set, log, validate, etc.).
+	SimpleTaskModel string `yaml:"simple_task_model"`
+	// ComplexTaskModel is used for heavy steps (http_call, db_query, code execution, etc.).
+	ComplexTaskModel string `yaml:"complex_task_model"`
+	// ReviewModel is used for code review / plan review tasks.
+	ReviewModel string `yaml:"review_model"`
 }
 
 type PermissionConfig struct {
