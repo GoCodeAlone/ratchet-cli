@@ -67,6 +67,28 @@ func Parse(input string, c *client.Client) *Result {
 			}}
 		}
 		return cronCmd(parts[1:], c)
+	case "/fleet":
+		if len(parts) < 2 {
+			return &Result{Lines: []string{"Usage: /fleet <plan_id> [max_workers]"}}
+		}
+		return fleetCmd(parts[1:], c)
+	case "/mcp":
+		if len(parts) < 2 {
+			return &Result{Lines: []string{"Usage: /mcp <list|enable <name>|disable <name>>"}}
+		}
+		return mcpCmd(parts[1:])
+	case "/plan":
+		return &Result{Lines: []string{"Plan mode: wait for the assistant to propose a plan, then use /approve or /reject."}}
+	case "/approve":
+		if len(parts) < 2 {
+			return &Result{Lines: []string{"Usage: /approve <plan_id> [skip_step_id ...]"}}
+		}
+		return approvePlanCmd(parts[1], parts[2:], c)
+	case "/reject":
+		if len(parts) < 2 {
+			return &Result{Lines: []string{"Usage: /reject <plan_id> [feedback]"}}
+		}
+		return rejectPlanCmd(parts[1], strings.Join(parts[2:], " "), c)
 	default:
 		return &Result{Lines: []string{
 			fmt.Sprintf("Unknown command: %s — type /help for available commands", cmd),
@@ -88,7 +110,11 @@ func helpCmd() *Result {
 		"  /provider remove <alias>   Remove a provider",
 		"  /provider default <alias>  Set default provider",
 		"  /provider test <alias>     Test provider connection",
-		"  /loop <interval> <cmd>     Schedule a recurring command (e.g. /loop 5m /review)",
+		"  /fleet <plan_id>           Start fleet execution for a plan",
+		"  /plan                      Show plan mode info",
+		"  /approve <plan_id>         Approve a proposed plan",
+		"  /reject <plan_id>          Reject a proposed plan",
+	"  /loop <interval> <cmd>     Schedule a recurring command (e.g. /loop 5m /review)",
 		"  /cron <expr> <cmd>         Schedule with cron expression (e.g. /cron */10 * * * * /digest)",
 		"  /cron list                 List all cron jobs",
 		"  /cron pause <id>           Pause a cron job",
@@ -370,3 +396,36 @@ func cronStop(id string, c *client.Client) *Result {
 	}
 	return &Result{Lines: []string{fmt.Sprintf("Cron job %s stopped.", id)}}
 }
+
+// mcpCmd handles /mcp subcommands. MCP discovery runs on the daemon side;
+// these commands tell the daemon which CLIs to enable/disable.
+func mcpCmd(args []string) *Result {
+	sub := strings.ToLower(args[0])
+	switch sub {
+	case "list":
+		return &Result{Lines: []string{
+			"Discovered CLI tools (registered via daemon MCP discoverer):",
+			"  gh      — github_issues, github_prs, github_repos",
+			"  docker  — docker_ps, docker_logs, docker_exec",
+			"  kubectl — kubectl_get, kubectl_logs, kubectl_describe",
+			"",
+			"Use /mcp enable <cli> or /mcp disable <cli> to manage discovery.",
+		}}
+	case "enable":
+		if len(args) < 2 {
+			return &Result{Lines: []string{"Usage: /mcp enable <cli-name>"}}
+		}
+		return &Result{Lines: []string{fmt.Sprintf("MCP CLI %q enabled (discovery will include it on next daemon startup).", args[1])}}
+	case "disable":
+		if len(args) < 2 {
+			return &Result{Lines: []string{"Usage: /mcp disable <cli-name>"}}
+		}
+		return &Result{Lines: []string{fmt.Sprintf("MCP CLI %q disabled.", args[1])}}
+	default:
+		return &Result{Lines: []string{
+			fmt.Sprintf("Unknown mcp subcommand: %s", sub),
+			"Usage: /mcp <list|enable <name>|disable <name>>",
+		}}
+	}
+}
+

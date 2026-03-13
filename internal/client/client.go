@@ -265,3 +265,46 @@ func (c *Client) KillFleetWorker(ctx context.Context, fleetID, workerID string) 
 	})
 	return err
 }
+
+// ApprovePlan approves a proposed plan and returns a channel of ChatEvents.
+func (c *Client) ApprovePlan(ctx context.Context, sessionID, planID string, skipSteps []string) (<-chan *pb.ChatEvent, error) {
+	stream, err := c.daemon.ApprovePlan(ctx, &pb.ApprovePlanReq{
+		SessionId: sessionID,
+		PlanId:    planID,
+		SkipSteps: skipSteps,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	ch := make(chan *pb.ChatEvent, 16)
+	go func() {
+		defer close(ch)
+		for {
+			event, err := stream.Recv()
+			if err == io.EOF {
+				return
+			}
+			if err != nil {
+				ch <- &pb.ChatEvent{
+					Event: &pb.ChatEvent_Error{
+						Error: &pb.ErrorEvent{Message: err.Error()},
+					},
+				}
+				return
+			}
+			ch <- event
+		}
+	}()
+	return ch, nil
+}
+
+// RejectPlan rejects a proposed plan with optional feedback.
+func (c *Client) RejectPlan(ctx context.Context, sessionID, planID, feedback string) error {
+	_, err := c.daemon.RejectPlan(ctx, &pb.RejectPlanReq{
+		SessionId: sessionID,
+		PlanId:    planID,
+		Feedback:  feedback,
+	})
+	return err
+}

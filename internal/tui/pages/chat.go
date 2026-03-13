@@ -36,6 +36,7 @@ type ChatModel struct {
 	statusBar    components.StatusBar
 	toolCalls    components.ToolCallListModel
 	autocomplete components.AutocompleteModel
+	planView     components.PlanView
 	messages     []components.Message
 	streaming  string // current streaming response
 	width      int
@@ -75,6 +76,7 @@ func NewChat(c *client.Client, sessionID string, t theme.Theme, dark bool) ChatM
 		statusBar:    statusBar,
 		toolCalls:    components.NewToolCallList(),
 		autocomplete: components.NewAutocomplete(),
+		planView:     components.NewPlanView(),
 		ctx:          context.Background(),
 	}
 }
@@ -133,6 +135,35 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 		m.input.SetValue(msg.Command + " ")
 		m.autocomplete = m.autocomplete.SetFilter("")
 
+	case components.PlanApproveMsg:
+		if m.client != nil {
+			planID := msg.PlanID
+			skipSteps := msg.SkipSteps
+			cmds = append(cmds, func() tea.Msg {
+				ch, err := m.client.ApprovePlan(m.ctx, m.sessionID, planID, skipSteps)
+				if err != nil {
+					return ChatEventMsg{Event: &pb.ChatEvent{
+						Event: &pb.ChatEvent_Error{Error: &pb.ErrorEvent{Message: err.Error()}},
+					}}
+				}
+				event, ok := <-ch
+				if !ok {
+					return chatStreamDoneMsg{}
+				}
+				return ChatEventMsg{Event: event, ch: ch}
+			})
+		}
+
+	case components.PlanRejectMsg:
+		if m.client != nil {
+			go m.client.RejectPlan(m.ctx, m.sessionID, msg.PlanID, "") //nolint:errcheck
+			m.messages = append(m.messages, components.Message{
+				Role:    components.RoleSystem,
+				Content: "Plan rejected.",
+			})
+			m.refreshViewport()
+		}
+
 	case components.InputResizedMsg:
 		m.relayout()
 
@@ -186,10 +217,16 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 		m.cancelChat = nil
 	}
 
-	var inputCmd, vpCmd tea.Cmd
-	m.input, inputCmd = m.input.Update(msg)
+	var inputCmd, vpCmd, planCmd tea.Cmd
+	if m.planView.Active() {
+		m.planView, planCmd = m.planView.Update(msg)
+		cmds = append(cmds, planCmd)
+	} else {
+		m.input, inputCmd = m.input.Update(msg)
+		cmds = append(cmds, inputCmd)
+	}
 	m.viewport, vpCmd = m.viewport.Update(msg)
-	cmds = append(cmds, inputCmd, vpCmd)
+	cmds = append(cmds, vpCmd)
 
 	m.autocomplete = m.autocomplete.SetFilter(m.input.Value())
 
@@ -227,6 +264,11 @@ func (m *ChatModel) refreshViewport() {
 			Content: m.streaming,
 		}
 		sb.WriteString(assistantMsg.Render(m.theme, m.width, m.dark))
+	}
+	if m.planView.Active() {
+		sb.WriteString("\n")
+		sb.WriteString(m.planView.View(m.theme))
+		sb.WriteString("\n")
 	}
 	m.viewport.SetContent(sb.String())
 	m.viewport.GotoBottom()
@@ -333,6 +375,17 @@ func (m *ChatModel) handleChatEvent(msg ChatEventMsg) []tea.Cmd {
 		m.refreshViewport()
 		m.cancelChat = nil
 		return cmds // don't schedule next read — stream is done
+
+	case *pb.ChatEvent_PlanProposed:
+		m.planView = m.planView.SetPlan(e.PlanProposed)
+		m.planView = m.planView.SetSize(m.width)
+		m.refreshViewport()
+
+	case *pb.ChatEvent_PlanStepUpdate:
+		// Update the plan view step if we have an active plan
+		if m.planView.Active() {
+			m.refreshViewport()
+		}
 	}
 
 	// Schedule read of next event from the channel
@@ -346,12 +399,14 @@ func (m ChatModel) View(t theme.Theme) string {
 	var sb strings.Builder
 	sb.WriteString(m.viewport.View())
 	sb.WriteString("\n")
-	if ac := m.autocomplete.View(t, m.width); ac != "" {
-		sb.WriteString(ac)
+	if !m.planView.Active() {
+		if ac := m.autocomplete.View(t, m.width); ac != "" {
+			sb.WriteString(ac)
+			sb.WriteString("\n")
+		}
+		sb.WriteString(m.input.View(t, m.width))
 		sb.WriteString("\n")
 	}
-	sb.WriteString(m.input.View(t, m.width))
-	sb.WriteString("\n")
 	sb.WriteString(m.statusBar.View(t))
 	return sb.String()
 }
