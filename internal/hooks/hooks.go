@@ -26,7 +26,36 @@ const (
 	OnError             Event = "on-error"
 	OnToolCall          Event = "on-tool-call"
 	OnPermissionRequest Event = "on-permission-request"
+
+	// Plan lifecycle
+	PrePlan  Event = "pre-plan"
+	PostPlan Event = "post-plan"
+
+	// Fleet lifecycle
+	PreFleet  Event = "pre-fleet"
+	PostFleet Event = "post-fleet"
+
+	// Agent lifecycle
+	OnAgentSpawn    Event = "on-agent-spawn"
+	OnAgentComplete Event = "on-agent-complete"
+
+	// Token and cron events
+	OnTokenLimit Event = "on-token-limit"
+	OnCronTick   Event = "on-cron-tick"
 )
+
+// AllEvents lists every valid lifecycle event for documentation and validation.
+var AllEvents = []Event{
+	PreEdit, PostEdit,
+	PreCommand, PostCommand,
+	PreSession, PostSession,
+	PreCommit, PostCommit,
+	OnError, OnToolCall, OnPermissionRequest,
+	PrePlan, PostPlan,
+	PreFleet, PostFleet,
+	OnAgentSpawn, OnAgentComplete,
+	OnTokenLimit, OnCronTick,
+}
 
 // Hook defines a single hook command with an optional glob pattern.
 type Hook struct {
@@ -73,7 +102,9 @@ func Load(workingDir string) (*HookConfig, error) {
 }
 
 // Run executes all hooks for the given event, expanding templates with data.
-// data keys include: "file", "command", "error", "tool", "session_id"
+// data keys include: "file", "command", "error", "tool", "session_id",
+// "plan_id", "fleet_id", "agent_name", "agent_role", "cron_id",
+// "tokens_used", "tokens_limit"
 func (hc *HookConfig) Run(event Event, data map[string]string) error {
 	hooks := hc.Hooks[event]
 	for _, h := range hooks {
