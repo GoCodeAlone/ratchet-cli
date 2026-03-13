@@ -35,6 +35,8 @@ const (
 	RatchetDaemon_GetAgentStatus_FullMethodName      = "/ratchet.RatchetDaemon/GetAgentStatus"
 	RatchetDaemon_StartTeam_FullMethodName           = "/ratchet.RatchetDaemon/StartTeam"
 	RatchetDaemon_GetTeamStatus_FullMethodName       = "/ratchet.RatchetDaemon/GetTeamStatus"
+	RatchetDaemon_ApprovePlan_FullMethodName         = "/ratchet.RatchetDaemon/ApprovePlan"
+	RatchetDaemon_RejectPlan_FullMethodName          = "/ratchet.RatchetDaemon/RejectPlan"
 	RatchetDaemon_Health_FullMethodName              = "/ratchet.RatchetDaemon/Health"
 	RatchetDaemon_Shutdown_FullMethodName            = "/ratchet.RatchetDaemon/Shutdown"
 )
@@ -65,6 +67,9 @@ type RatchetDaemonClient interface {
 	// Teams
 	StartTeam(ctx context.Context, in *StartTeamReq, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TeamEvent], error)
 	GetTeamStatus(ctx context.Context, in *TeamStatusReq, opts ...grpc.CallOption) (*TeamStatus, error)
+	// Plan mode
+	ApprovePlan(ctx context.Context, in *ApprovePlanReq, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ChatEvent], error)
+	RejectPlan(ctx context.Context, in *RejectPlanReq, opts ...grpc.CallOption) (*Empty, error)
 	// Daemon
 	Health(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*HealthResponse, error)
 	Shutdown(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*Empty, error)
@@ -265,6 +270,35 @@ func (c *ratchetDaemonClient) GetTeamStatus(ctx context.Context, in *TeamStatusR
 	return out, nil
 }
 
+func (c *ratchetDaemonClient) ApprovePlan(ctx context.Context, in *ApprovePlanReq, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ChatEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &RatchetDaemon_ServiceDesc.Streams[3], RatchetDaemon_ApprovePlan_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ApprovePlanReq, ChatEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RatchetDaemon_ApprovePlanClient = grpc.ServerStreamingClient[ChatEvent]
+
+func (c *ratchetDaemonClient) RejectPlan(ctx context.Context, in *RejectPlanReq, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, RatchetDaemon_RejectPlan_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *ratchetDaemonClient) Health(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*HealthResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(HealthResponse)
@@ -311,6 +345,9 @@ type RatchetDaemonServer interface {
 	// Teams
 	StartTeam(*StartTeamReq, grpc.ServerStreamingServer[TeamEvent]) error
 	GetTeamStatus(context.Context, *TeamStatusReq) (*TeamStatus, error)
+	// Plan mode
+	ApprovePlan(*ApprovePlanReq, grpc.ServerStreamingServer[ChatEvent]) error
+	RejectPlan(context.Context, *RejectPlanReq) (*Empty, error)
 	// Daemon
 	Health(context.Context, *Empty) (*HealthResponse, error)
 	Shutdown(context.Context, *Empty) (*Empty, error)
@@ -371,6 +408,12 @@ func (UnimplementedRatchetDaemonServer) StartTeam(*StartTeamReq, grpc.ServerStre
 }
 func (UnimplementedRatchetDaemonServer) GetTeamStatus(context.Context, *TeamStatusReq) (*TeamStatus, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetTeamStatus not implemented")
+}
+func (UnimplementedRatchetDaemonServer) ApprovePlan(*ApprovePlanReq, grpc.ServerStreamingServer[ChatEvent]) error {
+	return status.Error(codes.Unimplemented, "method ApprovePlan not implemented")
+}
+func (UnimplementedRatchetDaemonServer) RejectPlan(context.Context, *RejectPlanReq) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method RejectPlan not implemented")
 }
 func (UnimplementedRatchetDaemonServer) Health(context.Context, *Empty) (*HealthResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Health not implemented")
@@ -666,6 +709,35 @@ func _RatchetDaemon_GetTeamStatus_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RatchetDaemon_ApprovePlan_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ApprovePlanReq)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(RatchetDaemonServer).ApprovePlan(m, &grpc.GenericServerStream[ApprovePlanReq, ChatEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type RatchetDaemon_ApprovePlanServer = grpc.ServerStreamingServer[ChatEvent]
+
+func _RatchetDaemon_RejectPlan_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RejectPlanReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RatchetDaemonServer).RejectPlan(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RatchetDaemon_RejectPlan_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RatchetDaemonServer).RejectPlan(ctx, req.(*RejectPlanReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _RatchetDaemon_Health_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(Empty)
 	if err := dec(in); err != nil {
@@ -762,6 +834,10 @@ var RatchetDaemon_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _RatchetDaemon_GetTeamStatus_Handler,
 		},
 		{
+			MethodName: "RejectPlan",
+			Handler:    _RatchetDaemon_RejectPlan_Handler,
+		},
+		{
 			MethodName: "Health",
 			Handler:    _RatchetDaemon_Health_Handler,
 		},
@@ -784,6 +860,11 @@ var RatchetDaemon_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "StartTeam",
 			Handler:       _RatchetDaemon_StartTeam_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "ApprovePlan",
+			Handler:       _RatchetDaemon_ApprovePlan_Handler,
 			ServerStreams: true,
 		},
 	},

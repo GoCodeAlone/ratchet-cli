@@ -468,6 +468,8 @@ type ChatEvent struct {
 	//	*ChatEvent_Complete
 	//	*ChatEvent_Error
 	//	*ChatEvent_History
+	//	*ChatEvent_PlanProposed
+	//	*ChatEvent_PlanStepUpdate
 	Event         isChatEvent_Event `protobuf_oneof:"event"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -591,6 +593,24 @@ func (x *ChatEvent) GetHistory() *SessionHistory {
 	return nil
 }
 
+func (x *ChatEvent) GetPlanProposed() *Plan {
+	if x != nil {
+		if x, ok := x.Event.(*ChatEvent_PlanProposed); ok {
+			return x.PlanProposed
+		}
+	}
+	return nil
+}
+
+func (x *ChatEvent) GetPlanStepUpdate() *PlanStep {
+	if x != nil {
+		if x, ok := x.Event.(*ChatEvent_PlanStepUpdate); ok {
+			return x.PlanStepUpdate
+		}
+	}
+	return nil
+}
+
 type isChatEvent_Event interface {
 	isChatEvent_Event()
 }
@@ -631,6 +651,14 @@ type ChatEvent_History struct {
 	History *SessionHistory `protobuf:"bytes,9,opt,name=history,proto3,oneof"`
 }
 
+type ChatEvent_PlanProposed struct {
+	PlanProposed *Plan `protobuf:"bytes,10,opt,name=plan_proposed,json=planProposed,proto3,oneof"`
+}
+
+type ChatEvent_PlanStepUpdate struct {
+	PlanStepUpdate *PlanStep `protobuf:"bytes,11,opt,name=plan_step_update,json=planStepUpdate,proto3,oneof"`
+}
+
 func (*ChatEvent_Token) isChatEvent_Event() {}
 
 func (*ChatEvent_ToolStart) isChatEvent_Event() {}
@@ -648,6 +676,10 @@ func (*ChatEvent_Complete) isChatEvent_Event() {}
 func (*ChatEvent_Error) isChatEvent_Event() {}
 
 func (*ChatEvent_History) isChatEvent_Event() {}
+
+func (*ChatEvent_PlanProposed) isChatEvent_Event() {}
+
+func (*ChatEvent_PlanStepUpdate) isChatEvent_Event() {}
 
 type TokenDelta struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -2230,6 +2262,287 @@ func (x *TeamStatus) GetStatus() string {
 	return ""
 }
 
+// Plan mode
+type PlanStep struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Description   string                 `protobuf:"bytes,2,opt,name=description,proto3" json:"description,omitempty"`
+	Status        string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"` // pending, in_progress, completed, failed, skipped
+	Files         []string               `protobuf:"bytes,4,rep,name=files,proto3" json:"files,omitempty"`
+	Error         string                 `protobuf:"bytes,5,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PlanStep) Reset() {
+	*x = PlanStep{}
+	mi := &file_internal_proto_ratchet_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PlanStep) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PlanStep) ProtoMessage() {}
+
+func (x *PlanStep) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_ratchet_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PlanStep.ProtoReflect.Descriptor instead.
+func (*PlanStep) Descriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{34}
+}
+
+func (x *PlanStep) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *PlanStep) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *PlanStep) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *PlanStep) GetFiles() []string {
+	if x != nil {
+		return x.Files
+	}
+	return nil
+}
+
+func (x *PlanStep) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+type Plan struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	SessionId     string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Goal          string                 `protobuf:"bytes,3,opt,name=goal,proto3" json:"goal,omitempty"`
+	Steps         []*PlanStep            `protobuf:"bytes,4,rep,name=steps,proto3" json:"steps,omitempty"`
+	Status        string                 `protobuf:"bytes,5,opt,name=status,proto3" json:"status,omitempty"` // proposed, approved, executing, completed, rejected
+	CreatedAt     string                 `protobuf:"bytes,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Plan) Reset() {
+	*x = Plan{}
+	mi := &file_internal_proto_ratchet_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Plan) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Plan) ProtoMessage() {}
+
+func (x *Plan) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_ratchet_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Plan.ProtoReflect.Descriptor instead.
+func (*Plan) Descriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *Plan) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *Plan) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *Plan) GetGoal() string {
+	if x != nil {
+		return x.Goal
+	}
+	return ""
+}
+
+func (x *Plan) GetSteps() []*PlanStep {
+	if x != nil {
+		return x.Steps
+	}
+	return nil
+}
+
+func (x *Plan) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *Plan) GetCreatedAt() string {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return ""
+}
+
+type ApprovePlanReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	PlanId        string                 `protobuf:"bytes,2,opt,name=plan_id,json=planId,proto3" json:"plan_id,omitempty"`
+	SkipSteps     []string               `protobuf:"bytes,3,rep,name=skip_steps,json=skipSteps,proto3" json:"skip_steps,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ApprovePlanReq) Reset() {
+	*x = ApprovePlanReq{}
+	mi := &file_internal_proto_ratchet_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ApprovePlanReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ApprovePlanReq) ProtoMessage() {}
+
+func (x *ApprovePlanReq) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_ratchet_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ApprovePlanReq.ProtoReflect.Descriptor instead.
+func (*ApprovePlanReq) Descriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *ApprovePlanReq) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *ApprovePlanReq) GetPlanId() string {
+	if x != nil {
+		return x.PlanId
+	}
+	return ""
+}
+
+func (x *ApprovePlanReq) GetSkipSteps() []string {
+	if x != nil {
+		return x.SkipSteps
+	}
+	return nil
+}
+
+type RejectPlanReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	PlanId        string                 `protobuf:"bytes,2,opt,name=plan_id,json=planId,proto3" json:"plan_id,omitempty"`
+	Feedback      string                 `protobuf:"bytes,3,opt,name=feedback,proto3" json:"feedback,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RejectPlanReq) Reset() {
+	*x = RejectPlanReq{}
+	mi := &file_internal_proto_ratchet_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RejectPlanReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RejectPlanReq) ProtoMessage() {}
+
+func (x *RejectPlanReq) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_ratchet_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RejectPlanReq.ProtoReflect.Descriptor instead.
+func (*RejectPlanReq) Descriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *RejectPlanReq) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *RejectPlanReq) GetPlanId() string {
+	if x != nil {
+		return x.PlanId
+	}
+	return ""
+}
+
+func (x *RejectPlanReq) GetFeedback() string {
+	if x != nil {
+		return x.Feedback
+	}
+	return ""
+}
+
 // Daemon health
 type HealthResponse struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
@@ -2243,7 +2556,7 @@ type HealthResponse struct {
 
 func (x *HealthResponse) Reset() {
 	*x = HealthResponse{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[34]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2255,7 +2568,7 @@ func (x *HealthResponse) String() string {
 func (*HealthResponse) ProtoMessage() {}
 
 func (x *HealthResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[34]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2268,7 +2581,7 @@ func (x *HealthResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthResponse.ProtoReflect.Descriptor instead.
 func (*HealthResponse) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{34}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *HealthResponse) GetHealthy() bool {
@@ -2336,7 +2649,7 @@ const file_internal_proto_ratchet_proto_rawDesc = "" +
 	"\x0eSendMessageReq\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x18\n" +
-	"\acontent\x18\x02 \x01(\tR\acontent\"\x8a\x04\n" +
+	"\acontent\x18\x02 \x01(\tR\acontent\"\xff\x04\n" +
 	"\tChatEvent\x12+\n" +
 	"\x05token\x18\x01 \x01(\v2\x13.ratchet.TokenDeltaH\x00R\x05token\x127\n" +
 	"\n" +
@@ -2350,7 +2663,10 @@ const file_internal_proto_ratchet_proto_rawDesc = "" +
 	"\ragent_message\x18\x06 \x01(\v2\x15.ratchet.AgentMessageH\x00R\fagentMessage\x126\n" +
 	"\bcomplete\x18\a \x01(\v2\x18.ratchet.SessionCompleteH\x00R\bcomplete\x12+\n" +
 	"\x05error\x18\b \x01(\v2\x13.ratchet.ErrorEventH\x00R\x05error\x123\n" +
-	"\ahistory\x18\t \x01(\v2\x17.ratchet.SessionHistoryH\x00R\ahistoryB\a\n" +
+	"\ahistory\x18\t \x01(\v2\x17.ratchet.SessionHistoryH\x00R\ahistory\x124\n" +
+	"\rplan_proposed\x18\n" +
+	" \x01(\v2\r.ratchet.PlanH\x00R\fplanProposed\x12=\n" +
+	"\x10plan_step_update\x18\v \x01(\v2\x11.ratchet.PlanStepH\x00R\x0eplanStepUpdateB\a\n" +
 	"\x05event\"&\n" +
 	"\n" +
 	"TokenDelta\x12\x18\n" +
@@ -2471,12 +2787,38 @@ const file_internal_proto_ratchet_proto_rawDesc = "" +
 	"\ateam_id\x18\x01 \x01(\tR\x06teamId\x12\x12\n" +
 	"\x04task\x18\x02 \x01(\tR\x04task\x12&\n" +
 	"\x06agents\x18\x03 \x03(\v2\x0e.ratchet.AgentR\x06agents\x12\x16\n" +
-	"\x06status\x18\x04 \x01(\tR\x06status\"\x90\x01\n" +
+	"\x06status\x18\x04 \x01(\tR\x06status\"\x80\x01\n" +
+	"\bPlanStep\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12 \n" +
+	"\vdescription\x18\x02 \x01(\tR\vdescription\x12\x16\n" +
+	"\x06status\x18\x03 \x01(\tR\x06status\x12\x14\n" +
+	"\x05files\x18\x04 \x03(\tR\x05files\x12\x14\n" +
+	"\x05error\x18\x05 \x01(\tR\x05error\"\xa9\x01\n" +
+	"\x04Plan\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x12\n" +
+	"\x04goal\x18\x03 \x01(\tR\x04goal\x12'\n" +
+	"\x05steps\x18\x04 \x03(\v2\x11.ratchet.PlanStepR\x05steps\x12\x16\n" +
+	"\x06status\x18\x05 \x01(\tR\x06status\x12\x1d\n" +
+	"\n" +
+	"created_at\x18\x06 \x01(\tR\tcreatedAt\"g\n" +
+	"\x0eApprovePlanReq\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x17\n" +
+	"\aplan_id\x18\x02 \x01(\tR\x06planId\x12\x1d\n" +
+	"\n" +
+	"skip_steps\x18\x03 \x03(\tR\tskipSteps\"c\n" +
+	"\rRejectPlanReq\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x17\n" +
+	"\aplan_id\x18\x02 \x01(\tR\x06planId\x12\x1a\n" +
+	"\bfeedback\x18\x03 \x01(\tR\bfeedback\"\x90\x01\n" +
 	"\x0eHealthResponse\x12\x18\n" +
 	"\ahealthy\x18\x01 \x01(\bR\ahealthy\x12'\n" +
 	"\x0factive_sessions\x18\x02 \x01(\x05R\x0eactiveSessions\x12#\n" +
 	"\ractive_agents\x18\x03 \x01(\x05R\factiveAgents\x12\x16\n" +
-	"\x06uptime\x18\x04 \x01(\tR\x06uptime2\xa8\b\n" +
+	"\x06uptime\x18\x04 \x01(\tR\x06uptime2\x9c\t\n" +
 	"\rRatchetDaemon\x12<\n" +
 	"\rCreateSession\x12\x19.ratchet.CreateSessionReq\x1a\x10.ratchet.Session\x124\n" +
 	"\fListSessions\x12\x0e.ratchet.Empty\x1a\x14.ratchet.SessionList\x129\n" +
@@ -2494,7 +2836,10 @@ const file_internal_proto_ratchet_proto_rawDesc = "" +
 	"ListAgents\x12\x0e.ratchet.Empty\x1a\x12.ratchet.AgentList\x129\n" +
 	"\x0eGetAgentStatus\x12\x17.ratchet.AgentStatusReq\x1a\x0e.ratchet.Agent\x128\n" +
 	"\tStartTeam\x12\x15.ratchet.StartTeamReq\x1a\x12.ratchet.TeamEvent0\x01\x12<\n" +
-	"\rGetTeamStatus\x12\x16.ratchet.TeamStatusReq\x1a\x13.ratchet.TeamStatus\x121\n" +
+	"\rGetTeamStatus\x12\x16.ratchet.TeamStatusReq\x1a\x13.ratchet.TeamStatus\x12<\n" +
+	"\vApprovePlan\x12\x17.ratchet.ApprovePlanReq\x1a\x12.ratchet.ChatEvent0\x01\x124\n" +
+	"\n" +
+	"RejectPlan\x12\x16.ratchet.RejectPlanReq\x1a\x0e.ratchet.Empty\x121\n" +
 	"\x06Health\x12\x0e.ratchet.Empty\x1a\x17.ratchet.HealthResponse\x12*\n" +
 	"\bShutdown\x12\x0e.ratchet.Empty\x1a\x0e.ratchet.EmptyB3Z1github.com/GoCodeAlone/ratchet-cli/internal/protob\x06proto3"
 
@@ -2510,7 +2855,7 @@ func file_internal_proto_ratchet_proto_rawDescGZIP() []byte {
 	return file_internal_proto_ratchet_proto_rawDescData
 }
 
-var file_internal_proto_ratchet_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
+var file_internal_proto_ratchet_proto_msgTypes = make([]protoimpl.MessageInfo, 39)
 var file_internal_proto_ratchet_proto_goTypes = []any{
 	(*Empty)(nil),                 // 0: ratchet.Empty
 	(*Session)(nil),               // 1: ratchet.Session
@@ -2546,11 +2891,15 @@ var file_internal_proto_ratchet_proto_goTypes = []any{
 	(*TeamEvent)(nil),             // 31: ratchet.TeamEvent
 	(*TeamStatusReq)(nil),         // 32: ratchet.TeamStatusReq
 	(*TeamStatus)(nil),            // 33: ratchet.TeamStatus
-	(*HealthResponse)(nil),        // 34: ratchet.HealthResponse
-	(*timestamppb.Timestamp)(nil), // 35: google.protobuf.Timestamp
+	(*PlanStep)(nil),              // 34: ratchet.PlanStep
+	(*Plan)(nil),                  // 35: ratchet.Plan
+	(*ApprovePlanReq)(nil),        // 36: ratchet.ApprovePlanReq
+	(*RejectPlanReq)(nil),         // 37: ratchet.RejectPlanReq
+	(*HealthResponse)(nil),        // 38: ratchet.HealthResponse
+	(*timestamppb.Timestamp)(nil), // 39: google.protobuf.Timestamp
 }
 var file_internal_proto_ratchet_proto_depIdxs = []int32{
-	35, // 0: ratchet.Session.created_at:type_name -> google.protobuf.Timestamp
+	39, // 0: ratchet.Session.created_at:type_name -> google.protobuf.Timestamp
 	1,  // 1: ratchet.SessionList.sessions:type_name -> ratchet.Session
 	9,  // 2: ratchet.ChatEvent.token:type_name -> ratchet.TokenDelta
 	10, // 3: ratchet.ChatEvent.tool_start:type_name -> ratchet.ToolCallStart
@@ -2561,60 +2910,67 @@ var file_internal_proto_ratchet_proto_depIdxs = []int32{
 	16, // 8: ratchet.ChatEvent.complete:type_name -> ratchet.SessionComplete
 	17, // 9: ratchet.ChatEvent.error:type_name -> ratchet.ErrorEvent
 	18, // 10: ratchet.ChatEvent.history:type_name -> ratchet.SessionHistory
-	19, // 11: ratchet.SessionHistory.messages:type_name -> ratchet.HistoryMessage
-	35, // 12: ratchet.HistoryMessage.timestamp:type_name -> google.protobuf.Timestamp
-	21, // 13: ratchet.ProviderList.providers:type_name -> ratchet.Provider
-	27, // 14: ratchet.AgentList.agents:type_name -> ratchet.Agent
-	14, // 15: ratchet.TeamEvent.agent_spawned:type_name -> ratchet.AgentSpawned
-	15, // 16: ratchet.TeamEvent.agent_message:type_name -> ratchet.AgentMessage
-	9,  // 17: ratchet.TeamEvent.token:type_name -> ratchet.TokenDelta
-	10, // 18: ratchet.TeamEvent.tool_start:type_name -> ratchet.ToolCallStart
-	11, // 19: ratchet.TeamEvent.tool_result:type_name -> ratchet.ToolCallResult
-	12, // 20: ratchet.TeamEvent.permission:type_name -> ratchet.PermissionRequest
-	16, // 21: ratchet.TeamEvent.complete:type_name -> ratchet.SessionComplete
-	17, // 22: ratchet.TeamEvent.error:type_name -> ratchet.ErrorEvent
-	27, // 23: ratchet.TeamStatus.agents:type_name -> ratchet.Agent
-	2,  // 24: ratchet.RatchetDaemon.CreateSession:input_type -> ratchet.CreateSessionReq
-	0,  // 25: ratchet.RatchetDaemon.ListSessions:input_type -> ratchet.Empty
-	4,  // 26: ratchet.RatchetDaemon.AttachSession:input_type -> ratchet.AttachReq
-	5,  // 27: ratchet.RatchetDaemon.DetachSession:input_type -> ratchet.DetachReq
-	6,  // 28: ratchet.RatchetDaemon.KillSession:input_type -> ratchet.KillReq
-	7,  // 29: ratchet.RatchetDaemon.SendMessage:input_type -> ratchet.SendMessageReq
-	13, // 30: ratchet.RatchetDaemon.RespondToPermission:input_type -> ratchet.PermissionResponse
-	20, // 31: ratchet.RatchetDaemon.AddProvider:input_type -> ratchet.AddProviderReq
-	0,  // 32: ratchet.RatchetDaemon.ListProviders:input_type -> ratchet.Empty
-	23, // 33: ratchet.RatchetDaemon.TestProvider:input_type -> ratchet.TestProviderReq
-	25, // 34: ratchet.RatchetDaemon.RemoveProvider:input_type -> ratchet.RemoveProviderReq
-	26, // 35: ratchet.RatchetDaemon.SetDefaultProvider:input_type -> ratchet.SetDefaultProviderReq
-	0,  // 36: ratchet.RatchetDaemon.ListAgents:input_type -> ratchet.Empty
-	29, // 37: ratchet.RatchetDaemon.GetAgentStatus:input_type -> ratchet.AgentStatusReq
-	30, // 38: ratchet.RatchetDaemon.StartTeam:input_type -> ratchet.StartTeamReq
-	32, // 39: ratchet.RatchetDaemon.GetTeamStatus:input_type -> ratchet.TeamStatusReq
-	0,  // 40: ratchet.RatchetDaemon.Health:input_type -> ratchet.Empty
-	0,  // 41: ratchet.RatchetDaemon.Shutdown:input_type -> ratchet.Empty
-	1,  // 42: ratchet.RatchetDaemon.CreateSession:output_type -> ratchet.Session
-	3,  // 43: ratchet.RatchetDaemon.ListSessions:output_type -> ratchet.SessionList
-	8,  // 44: ratchet.RatchetDaemon.AttachSession:output_type -> ratchet.ChatEvent
-	0,  // 45: ratchet.RatchetDaemon.DetachSession:output_type -> ratchet.Empty
-	0,  // 46: ratchet.RatchetDaemon.KillSession:output_type -> ratchet.Empty
-	8,  // 47: ratchet.RatchetDaemon.SendMessage:output_type -> ratchet.ChatEvent
-	0,  // 48: ratchet.RatchetDaemon.RespondToPermission:output_type -> ratchet.Empty
-	21, // 49: ratchet.RatchetDaemon.AddProvider:output_type -> ratchet.Provider
-	22, // 50: ratchet.RatchetDaemon.ListProviders:output_type -> ratchet.ProviderList
-	24, // 51: ratchet.RatchetDaemon.TestProvider:output_type -> ratchet.TestProviderResult
-	0,  // 52: ratchet.RatchetDaemon.RemoveProvider:output_type -> ratchet.Empty
-	0,  // 53: ratchet.RatchetDaemon.SetDefaultProvider:output_type -> ratchet.Empty
-	28, // 54: ratchet.RatchetDaemon.ListAgents:output_type -> ratchet.AgentList
-	27, // 55: ratchet.RatchetDaemon.GetAgentStatus:output_type -> ratchet.Agent
-	31, // 56: ratchet.RatchetDaemon.StartTeam:output_type -> ratchet.TeamEvent
-	33, // 57: ratchet.RatchetDaemon.GetTeamStatus:output_type -> ratchet.TeamStatus
-	34, // 58: ratchet.RatchetDaemon.Health:output_type -> ratchet.HealthResponse
-	0,  // 59: ratchet.RatchetDaemon.Shutdown:output_type -> ratchet.Empty
-	42, // [42:60] is the sub-list for method output_type
-	24, // [24:42] is the sub-list for method input_type
-	24, // [24:24] is the sub-list for extension type_name
-	24, // [24:24] is the sub-list for extension extendee
-	0,  // [0:24] is the sub-list for field type_name
+	35, // 11: ratchet.ChatEvent.plan_proposed:type_name -> ratchet.Plan
+	34, // 12: ratchet.ChatEvent.plan_step_update:type_name -> ratchet.PlanStep
+	19, // 13: ratchet.SessionHistory.messages:type_name -> ratchet.HistoryMessage
+	39, // 14: ratchet.HistoryMessage.timestamp:type_name -> google.protobuf.Timestamp
+	21, // 15: ratchet.ProviderList.providers:type_name -> ratchet.Provider
+	27, // 16: ratchet.AgentList.agents:type_name -> ratchet.Agent
+	14, // 17: ratchet.TeamEvent.agent_spawned:type_name -> ratchet.AgentSpawned
+	15, // 18: ratchet.TeamEvent.agent_message:type_name -> ratchet.AgentMessage
+	9,  // 19: ratchet.TeamEvent.token:type_name -> ratchet.TokenDelta
+	10, // 20: ratchet.TeamEvent.tool_start:type_name -> ratchet.ToolCallStart
+	11, // 21: ratchet.TeamEvent.tool_result:type_name -> ratchet.ToolCallResult
+	12, // 22: ratchet.TeamEvent.permission:type_name -> ratchet.PermissionRequest
+	16, // 23: ratchet.TeamEvent.complete:type_name -> ratchet.SessionComplete
+	17, // 24: ratchet.TeamEvent.error:type_name -> ratchet.ErrorEvent
+	27, // 25: ratchet.TeamStatus.agents:type_name -> ratchet.Agent
+	34, // 26: ratchet.Plan.steps:type_name -> ratchet.PlanStep
+	2,  // 27: ratchet.RatchetDaemon.CreateSession:input_type -> ratchet.CreateSessionReq
+	0,  // 28: ratchet.RatchetDaemon.ListSessions:input_type -> ratchet.Empty
+	4,  // 29: ratchet.RatchetDaemon.AttachSession:input_type -> ratchet.AttachReq
+	5,  // 30: ratchet.RatchetDaemon.DetachSession:input_type -> ratchet.DetachReq
+	6,  // 31: ratchet.RatchetDaemon.KillSession:input_type -> ratchet.KillReq
+	7,  // 32: ratchet.RatchetDaemon.SendMessage:input_type -> ratchet.SendMessageReq
+	13, // 33: ratchet.RatchetDaemon.RespondToPermission:input_type -> ratchet.PermissionResponse
+	20, // 34: ratchet.RatchetDaemon.AddProvider:input_type -> ratchet.AddProviderReq
+	0,  // 35: ratchet.RatchetDaemon.ListProviders:input_type -> ratchet.Empty
+	23, // 36: ratchet.RatchetDaemon.TestProvider:input_type -> ratchet.TestProviderReq
+	25, // 37: ratchet.RatchetDaemon.RemoveProvider:input_type -> ratchet.RemoveProviderReq
+	26, // 38: ratchet.RatchetDaemon.SetDefaultProvider:input_type -> ratchet.SetDefaultProviderReq
+	0,  // 39: ratchet.RatchetDaemon.ListAgents:input_type -> ratchet.Empty
+	29, // 40: ratchet.RatchetDaemon.GetAgentStatus:input_type -> ratchet.AgentStatusReq
+	30, // 41: ratchet.RatchetDaemon.StartTeam:input_type -> ratchet.StartTeamReq
+	32, // 42: ratchet.RatchetDaemon.GetTeamStatus:input_type -> ratchet.TeamStatusReq
+	36, // 43: ratchet.RatchetDaemon.ApprovePlan:input_type -> ratchet.ApprovePlanReq
+	37, // 44: ratchet.RatchetDaemon.RejectPlan:input_type -> ratchet.RejectPlanReq
+	0,  // 45: ratchet.RatchetDaemon.Health:input_type -> ratchet.Empty
+	0,  // 46: ratchet.RatchetDaemon.Shutdown:input_type -> ratchet.Empty
+	1,  // 47: ratchet.RatchetDaemon.CreateSession:output_type -> ratchet.Session
+	3,  // 48: ratchet.RatchetDaemon.ListSessions:output_type -> ratchet.SessionList
+	8,  // 49: ratchet.RatchetDaemon.AttachSession:output_type -> ratchet.ChatEvent
+	0,  // 50: ratchet.RatchetDaemon.DetachSession:output_type -> ratchet.Empty
+	0,  // 51: ratchet.RatchetDaemon.KillSession:output_type -> ratchet.Empty
+	8,  // 52: ratchet.RatchetDaemon.SendMessage:output_type -> ratchet.ChatEvent
+	0,  // 53: ratchet.RatchetDaemon.RespondToPermission:output_type -> ratchet.Empty
+	21, // 54: ratchet.RatchetDaemon.AddProvider:output_type -> ratchet.Provider
+	22, // 55: ratchet.RatchetDaemon.ListProviders:output_type -> ratchet.ProviderList
+	24, // 56: ratchet.RatchetDaemon.TestProvider:output_type -> ratchet.TestProviderResult
+	0,  // 57: ratchet.RatchetDaemon.RemoveProvider:output_type -> ratchet.Empty
+	0,  // 58: ratchet.RatchetDaemon.SetDefaultProvider:output_type -> ratchet.Empty
+	28, // 59: ratchet.RatchetDaemon.ListAgents:output_type -> ratchet.AgentList
+	27, // 60: ratchet.RatchetDaemon.GetAgentStatus:output_type -> ratchet.Agent
+	31, // 61: ratchet.RatchetDaemon.StartTeam:output_type -> ratchet.TeamEvent
+	33, // 62: ratchet.RatchetDaemon.GetTeamStatus:output_type -> ratchet.TeamStatus
+	8,  // 63: ratchet.RatchetDaemon.ApprovePlan:output_type -> ratchet.ChatEvent
+	0,  // 64: ratchet.RatchetDaemon.RejectPlan:output_type -> ratchet.Empty
+	38, // 65: ratchet.RatchetDaemon.Health:output_type -> ratchet.HealthResponse
+	0,  // 66: ratchet.RatchetDaemon.Shutdown:output_type -> ratchet.Empty
+	47, // [47:67] is the sub-list for method output_type
+	27, // [27:47] is the sub-list for method input_type
+	27, // [27:27] is the sub-list for extension type_name
+	27, // [27:27] is the sub-list for extension extendee
+	0,  // [0:27] is the sub-list for field type_name
 }
 
 func init() { file_internal_proto_ratchet_proto_init() }
@@ -2632,6 +2988,8 @@ func file_internal_proto_ratchet_proto_init() {
 		(*ChatEvent_Complete)(nil),
 		(*ChatEvent_Error)(nil),
 		(*ChatEvent_History)(nil),
+		(*ChatEvent_PlanProposed)(nil),
+		(*ChatEvent_PlanStepUpdate)(nil),
 	}
 	file_internal_proto_ratchet_proto_msgTypes[31].OneofWrappers = []any{
 		(*TeamEvent_AgentSpawned)(nil),
@@ -2649,7 +3007,7 @@ func file_internal_proto_ratchet_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_internal_proto_ratchet_proto_rawDesc), len(file_internal_proto_ratchet_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   35,
+			NumMessages:   39,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
