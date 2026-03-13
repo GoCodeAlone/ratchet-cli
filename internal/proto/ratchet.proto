@@ -61,6 +61,8 @@ message ChatEvent {
     SessionComplete complete = 7;
     ErrorEvent error = 8;
     SessionHistory history = 9;
+    Plan plan_proposed = 10;
+    PlanStep plan_step_update = 11;
   }
 }
 
@@ -219,6 +221,36 @@ message TeamStatus {
   string status = 4;
 }
 
+// Plan mode
+message PlanStep {
+  string id = 1;
+  string description = 2;
+  string status = 3;  // pending, in_progress, completed, failed, skipped
+  repeated string files = 4;
+  string error = 5;
+}
+
+message Plan {
+  string id = 1;
+  string session_id = 2;
+  string goal = 3;
+  repeated PlanStep steps = 4;
+  string status = 5;  // proposed, approved, executing, completed, rejected
+  string created_at = 6;
+}
+
+message ApprovePlanReq {
+  string session_id = 1;
+  string plan_id = 2;
+  repeated string skip_steps = 3;
+}
+
+message RejectPlanReq {
+  string session_id = 1;
+  string plan_id = 2;
+  string feedback = 3;
+}
+
 // Daemon health
 message HealthResponse {
   bool healthy = 1;
@@ -257,6 +289,10 @@ service RatchetDaemon {
   // Teams
   rpc StartTeam(StartTeamReq) returns (stream TeamEvent);
   rpc GetTeamStatus(TeamStatusReq) returns (TeamStatus);
+
+  // Plan mode
+  rpc ApprovePlan(ApprovePlanReq) returns (stream ChatEvent);
+  rpc RejectPlan(RejectPlanReq) returns (Empty);
 
   // Daemon
   rpc Health(Empty) returns (HealthResponse);
