@@ -126,6 +126,16 @@ func initDB(db *sql.DB) error {
 			session_id TEXT,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
+		`CREATE TABLE IF NOT EXISTS cron_jobs (
+			id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			schedule TEXT NOT NULL,
+			command TEXT NOT NULL,
+			status TEXT DEFAULT 'active',
+			last_run TEXT,
+			next_run TEXT,
+			run_count INTEGER DEFAULT 0
+		)`,
 	}
 	for _, ddl := range tables {
 		if _, err := db.Exec(ddl); err != nil {

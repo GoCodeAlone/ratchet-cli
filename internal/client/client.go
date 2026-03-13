@@ -198,3 +198,70 @@ func (c *Client) StartTeam(ctx context.Context, req *pb.StartTeamReq) (<-chan *p
 func (c *Client) GetTeamStatus(ctx context.Context, teamID string) (*pb.TeamStatus, error) {
 	return c.daemon.GetTeamStatus(ctx, &pb.TeamStatusReq{TeamId: teamID})
 }
+
+func (c *Client) CreateCron(ctx context.Context, sessionID, schedule, command string) (*pb.CronJob, error) {
+	return c.daemon.CreateCron(ctx, &pb.CreateCronReq{
+		SessionId: sessionID,
+		Schedule:  schedule,
+		Command:   command,
+	})
+}
+
+func (c *Client) ListCrons(ctx context.Context) (*pb.CronJobList, error) {
+	return c.daemon.ListCrons(ctx, &pb.Empty{})
+}
+
+func (c *Client) PauseCron(ctx context.Context, jobID string) error {
+	_, err := c.daemon.PauseCron(ctx, &pb.CronJobReq{JobId: jobID})
+	return err
+}
+
+func (c *Client) ResumeCron(ctx context.Context, jobID string) error {
+	_, err := c.daemon.ResumeCron(ctx, &pb.CronJobReq{JobId: jobID})
+	return err
+}
+
+func (c *Client) StopCron(ctx context.Context, jobID string) error {
+	_, err := c.daemon.StopCron(ctx, &pb.CronJobReq{JobId: jobID})
+	return err
+}
+
+// StartFleet starts a fleet execution and returns a channel of ChatEvents containing FleetStatus updates.
+func (c *Client) StartFleet(ctx context.Context, req *pb.StartFleetReq) (<-chan *pb.ChatEvent, error) {
+	stream, err := c.daemon.StartFleet(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	ch := make(chan *pb.ChatEvent, 64)
+	go func() {
+		defer close(ch)
+		for {
+			event, err := stream.Recv()
+			if err == io.EOF {
+				return
+			}
+			if err != nil {
+				ch <- &pb.ChatEvent{
+					Event: &pb.ChatEvent_Error{Error: &pb.ErrorEvent{Message: err.Error()}},
+				}
+				return
+			}
+			ch <- event
+		}
+	}()
+	return ch, nil
+}
+
+// GetFleetStatus returns the current status of a fleet.
+func (c *Client) GetFleetStatus(ctx context.Context, fleetID string) (*pb.FleetStatus, error) {
+	return c.daemon.GetFleetStatus(ctx, &pb.FleetStatusReq{FleetId: fleetID})
+}
+
+// KillFleetWorker cancels a specific worker within a fleet.
+func (c *Client) KillFleetWorker(ctx context.Context, fleetID, workerID string) error {
+	_, err := c.daemon.KillFleetWorker(ctx, &pb.KillFleetWorkerReq{
+		FleetId:  fleetID,
+		WorkerId: workerID,
+	})
+	return err
+}

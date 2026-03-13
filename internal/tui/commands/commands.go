@@ -55,6 +55,18 @@ func Parse(input string, c *client.Client) *Result {
 			}}
 		}
 		return providerCmd(parts[1:], c)
+	case "/loop":
+		if len(parts) < 3 {
+			return &Result{Lines: []string{"Usage: /loop <interval> <command>"}}
+		}
+		return cronCreate(parts[1], strings.Join(parts[2:], " "), c)
+	case "/cron":
+		if len(parts) < 2 {
+			return &Result{Lines: []string{
+				"Usage: /cron <expr> <command> | /cron list | /cron pause <id> | /cron resume <id> | /cron stop <id>",
+			}}
+		}
+		return cronCmd(parts[1:], c)
 	default:
 		return &Result{Lines: []string{
 			fmt.Sprintf("Unknown command: %s — type /help for available commands", cmd),
@@ -76,6 +88,12 @@ func helpCmd() *Result {
 		"  /provider remove <alias>   Remove a provider",
 		"  /provider default <alias>  Set default provider",
 		"  /provider test <alias>     Test provider connection",
+		"  /loop <interval> <cmd>     Schedule a recurring command (e.g. /loop 5m /review)",
+		"  /cron <expr> <cmd>         Schedule with cron expression (e.g. /cron */10 * * * * /digest)",
+		"  /cron list                 List all cron jobs",
+		"  /cron pause <id>           Pause a cron job",
+		"  /cron resume <id>          Resume a paused cron job",
+		"  /cron stop <id>            Stop and remove a cron job",
 		"  /exit                      Quit ratchet",
 	}}
 }
@@ -246,4 +264,109 @@ func sessionsCmd(c *client.Client) *Result {
 		lines = append(lines, fmt.Sprintf("  %-10s %-10s %s", id, s.Status, s.Name))
 	}
 	return &Result{Lines: lines}
+}
+
+// cronCreate creates a new cron job with a duration-style schedule (used by /loop).
+func cronCreate(schedule, command string, c *client.Client) *Result {
+	if c == nil {
+		return &Result{Lines: []string{"Not connected to daemon"}}
+	}
+	job, err := c.CreateCron(context.Background(), "", schedule, command)
+	if err != nil {
+		return &Result{Lines: []string{fmt.Sprintf("Error creating cron job: %v", err)}}
+	}
+	id := job.Id
+	if len(id) > 8 {
+		id = id[:8]
+	}
+	return &Result{Lines: []string{
+		fmt.Sprintf("Cron job created: %s  schedule=%s  command=%s", id, job.Schedule, job.Command),
+	}}
+}
+
+func cronCmd(args []string, c *client.Client) *Result {
+	sub := strings.ToLower(args[0])
+	switch sub {
+	case "list":
+		return cronList(c)
+	case "pause":
+		if len(args) < 2 {
+			return &Result{Lines: []string{"Usage: /cron pause <id>"}}
+		}
+		return cronPause(args[1], c)
+	case "resume":
+		if len(args) < 2 {
+			return &Result{Lines: []string{"Usage: /cron resume <id>"}}
+		}
+		return cronResume(args[1], c)
+	case "stop":
+		if len(args) < 2 {
+			return &Result{Lines: []string{"Usage: /cron stop <id>"}}
+		}
+		return cronStop(args[1], c)
+	default:
+		// Treat first arg as start of cron expression; remaining as command.
+		// "/cron */10 * * * * /digest" → expr="*/10 * * * *", cmd="/digest"
+		if len(args) < 6 {
+			return &Result{Lines: []string{
+				"Usage: /cron <expr> <command>  (5-field cron expression followed by command)",
+				"       /cron list | pause <id> | resume <id> | stop <id>",
+			}}
+		}
+		expr := strings.Join(args[:5], " ")
+		cmd := strings.Join(args[5:], " ")
+		return cronCreate(expr, cmd, c)
+	}
+}
+
+func cronList(c *client.Client) *Result {
+	if c == nil {
+		return &Result{Lines: []string{"Not connected to daemon"}}
+	}
+	resp, err := c.ListCrons(context.Background())
+	if err != nil {
+		return &Result{Lines: []string{fmt.Sprintf("Error: %v", err)}}
+	}
+	if len(resp.Jobs) == 0 {
+		return &Result{Lines: []string{"No cron jobs scheduled."}}
+	}
+	lines := []string{"Cron jobs:", ""}
+	for _, j := range resp.Jobs {
+		id := j.Id
+		if len(id) > 8 {
+			id = id[:8]
+		}
+		lines = append(lines, fmt.Sprintf("  %-10s %-8s %-20s %s", id, j.Status, j.Schedule, j.Command))
+	}
+	return &Result{Lines: lines}
+}
+
+func cronPause(id string, c *client.Client) *Result {
+	if c == nil {
+		return &Result{Lines: []string{"Not connected to daemon"}}
+	}
+	if err := c.PauseCron(context.Background(), id); err != nil {
+		return &Result{Lines: []string{fmt.Sprintf("Error pausing %s: %v", id, err)}}
+	}
+	return &Result{Lines: []string{fmt.Sprintf("Cron job %s paused.", id)}}
+}
+
+func cronResume(id string, c *client.Client) *Result {
+	if c == nil {
+		return &Result{Lines: []string{"Not connected to daemon"}}
+	}
+	if err := c.ResumeCron(context.Background(), id); err != nil {
+		return &Result{Lines: []string{fmt.Sprintf("Error resuming %s: %v", id, err)}}
+	}
+	return &Result{Lines: []string{fmt.Sprintf("Cron job %s resumed.", id)}}
+}
+
+func cronStop(id string, c *client.Client) *Result {
+	if c == nil {
+		return &Result{Lines: []string{"Not connected to daemon"}}
+	}
+	if err := c.StopCron(context.Background(), id); err != nil {
+		return &Result{Lines: []string{fmt.Sprintf("Error stopping %s: %v", id, err)}}
+	}
+	return &Result{Lines: []string{fmt.Sprintf("Cron job %s stopped.", id)}}
 }

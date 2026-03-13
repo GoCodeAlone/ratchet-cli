@@ -18,6 +18,9 @@ type Service struct {
 	engine    *EngineContext
 	sessions  *SessionManager
 	permGate  *permissionGate
+	plans     *PlanManager
+	cron      *CronScheduler
+	fleet     *FleetManager
 }
 
 func NewService(ctx context.Context) (*Service, error) {
@@ -25,12 +28,22 @@ func NewService(ctx context.Context) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Service{
+	svc := &Service{
 		startedAt: time.Now(),
 		engine:    engine,
 		sessions:  NewSessionManager(engine.DB),
 		permGate:  newPermissionGate(),
-	}, nil
+		plans:     NewPlanManager(),
+	}
+	svc.cron = NewCronScheduler(engine.DB, func(sessionID, command string) {
+		// Tick handler: future integration point to inject command into session.
+	})
+	if err := svc.cron.Start(ctx); err != nil {
+		engine.Close()
+		return nil, fmt.Errorf("start cron scheduler: %w", err)
+	}
+	svc.fleet = NewFleetManager()
+	return svc, nil
 }
 
 func (s *Service) Health(ctx context.Context, _ *pb.Empty) (*pb.HealthResponse, error) {
@@ -234,4 +247,97 @@ func (s *Service) StartTeam(req *pb.StartTeamReq, stream pb.RatchetDaemon_StartT
 
 func (s *Service) GetTeamStatus(ctx context.Context, req *pb.TeamStatusReq) (*pb.TeamStatus, error) {
 	return nil, status.Error(codes.Unimplemented, "not yet implemented")
+}
+
+func (s *Service) CreateCron(ctx context.Context, req *pb.CreateCronReq) (*pb.CronJob, error) {
+	j, err := s.cron.Create(ctx, req.SessionId, req.Schedule, req.Command)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "create cron: %v", err)
+	}
+	return cronJobToPB(j), nil
+}
+
+func (s *Service) ListCrons(ctx context.Context, _ *pb.Empty) (*pb.CronJobList, error) {
+	jobs, err := s.cron.List(ctx)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "list crons: %v", err)
+	}
+	var pbJobs []*pb.CronJob
+	for _, j := range jobs {
+		pbJobs = append(pbJobs, cronJobToPB(j))
+	}
+	return &pb.CronJobList{Jobs: pbJobs}, nil
+}
+
+func (s *Service) PauseCron(ctx context.Context, req *pb.CronJobReq) (*pb.Empty, error) {
+	if err := s.cron.Pause(ctx, req.JobId); err != nil {
+		return nil, status.Errorf(codes.NotFound, "pause cron: %v", err)
+	}
+	return &pb.Empty{}, nil
+}
+
+func (s *Service) ResumeCron(ctx context.Context, req *pb.CronJobReq) (*pb.Empty, error) {
+	if err := s.cron.Resume(ctx, req.JobId); err != nil {
+		return nil, status.Errorf(codes.NotFound, "resume cron: %v", err)
+	}
+	return &pb.Empty{}, nil
+}
+
+func (s *Service) StopCron(ctx context.Context, req *pb.CronJobReq) (*pb.Empty, error) {
+	if err := s.cron.Stop(ctx, req.JobId); err != nil {
+		return nil, status.Errorf(codes.Internal, "stop cron: %v", err)
+	}
+	return &pb.Empty{}, nil
+}
+
+// StartFleet starts a fleet of workers for plan execution and streams status events.
+func (s *Service) StartFleet(req *pb.StartFleetReq, stream pb.RatchetDaemon_StartFleetServer) error {
+	// Decompose plan steps — for now use a simple single-step decomposition.
+	// Future: load plan from PlanManager and extract independent steps.
+	steps := []string{req.PlanId}
+	if req.PlanId == "" {
+		steps = []string{"default-step"}
+	}
+
+	eventCh := make(chan *pb.FleetStatus, 32)
+	_ = s.fleet.StartFleet(stream.Context(), req, steps, eventCh)
+
+	for fs := range eventCh {
+		if err := stream.Send(&pb.ChatEvent{
+			Event: &pb.ChatEvent_FleetStatus{FleetStatus: fs},
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// GetFleetStatus returns the current status of a fleet.
+func (s *Service) GetFleetStatus(ctx context.Context, req *pb.FleetStatusReq) (*pb.FleetStatus, error) {
+	fs, err := s.fleet.GetStatus(req.FleetId)
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "%v", err)
+	}
+	return fs, nil
+}
+
+// KillFleetWorker cancels a specific worker within a fleet.
+func (s *Service) KillFleetWorker(ctx context.Context, req *pb.KillFleetWorkerReq) (*pb.Empty, error) {
+	if err := s.fleet.KillWorker(req.FleetId, req.WorkerId); err != nil {
+		return nil, status.Errorf(codes.NotFound, "%v", err)
+	}
+	return &pb.Empty{}, nil
+}
+
+func cronJobToPB(j CronJob) *pb.CronJob {
+	return &pb.CronJob{
+		Id:        j.ID,
+		SessionId: j.SessionID,
+		Schedule:  j.Schedule,
+		Command:   j.Command,
+		Status:    j.Status,
+		LastRun:   j.LastRun,
+		NextRun:   j.NextRun,
+		RunCount:  j.RunCount,
+	}
 }

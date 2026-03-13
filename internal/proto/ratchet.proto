@@ -63,6 +63,7 @@ message ChatEvent {
     SessionHistory history = 9;
     Plan plan_proposed = 10;
     PlanStep plan_step_update = 11;
+    FleetStatus fleet_status = 12;
   }
 }
 
@@ -251,6 +252,56 @@ message RejectPlanReq {
   string feedback = 3;
 }
 
+// Cron scheduling
+message CronJob {
+  string id = 1;
+  string session_id = 2;
+  string schedule = 3;     // duration ("5m") or cron expr ("*/10 * * * *")
+  string command = 4;      // slash command or prompt
+  string status = 5;       // active, paused, stopped
+  string last_run = 6;
+  string next_run = 7;
+  int32 run_count = 8;
+}
+
+message CreateCronReq {
+  string session_id = 1;
+  string schedule = 2;
+  string command = 3;
+}
+
+message CronJobList { repeated CronJob jobs = 1; }
+message CronJobReq { string job_id = 1; }
+
+// Fleet mode
+message StartFleetReq {
+  string session_id = 1;
+  string plan_id = 2;
+  int32 max_workers = 3;
+}
+
+message FleetWorker {
+  string id = 1;
+  string name = 2;
+  string step_id = 3;
+  string status = 4;  // pending, running, completed, failed
+  string model = 5;
+  string provider = 6;
+  string error = 7;
+}
+
+message FleetStatus {
+  string fleet_id = 1;
+  string session_id = 2;
+  repeated FleetWorker workers = 3;
+  string status = 4;  // running, completed, failed
+  int32 completed = 5;
+  int32 total = 6;
+}
+
+message FleetStatusReq { string fleet_id = 1; }
+message KillFleetWorkerReq { string fleet_id = 1; string worker_id = 2; }
+
 // Daemon health
 message HealthResponse {
   bool healthy = 1;
@@ -293,6 +344,18 @@ service RatchetDaemon {
   // Plan mode
   rpc ApprovePlan(ApprovePlanReq) returns (stream ChatEvent);
   rpc RejectPlan(RejectPlanReq) returns (Empty);
+
+  // Fleet mode
+  rpc StartFleet(StartFleetReq) returns (stream ChatEvent);
+  rpc GetFleetStatus(FleetStatusReq) returns (FleetStatus);
+  rpc KillFleetWorker(KillFleetWorkerReq) returns (Empty);
+
+  // Cron scheduling
+  rpc CreateCron(CreateCronReq) returns (CronJob);
+  rpc ListCrons(Empty) returns (CronJobList);
+  rpc PauseCron(CronJobReq) returns (Empty);
+  rpc ResumeCron(CronJobReq) returns (Empty);
+  rpc StopCron(CronJobReq) returns (Empty);
 
   // Daemon
   rpc Health(Empty) returns (HealthResponse);
