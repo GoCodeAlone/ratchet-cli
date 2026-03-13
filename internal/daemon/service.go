@@ -22,6 +22,7 @@ type Service struct {
 	plans     *PlanManager
 	cron      *CronScheduler
 	fleet     *FleetManager
+	teams     *TeamManager
 }
 
 func NewService(ctx context.Context) (*Service, error) {
@@ -49,6 +50,7 @@ func NewService(ctx context.Context) (*Service, error) {
 		routing = cfg.ModelRouting
 	}
 	svc.fleet = NewFleetManager(routing)
+	svc.teams = NewTeamManager()
 	return svc, nil
 }
 
@@ -248,11 +250,21 @@ func (s *Service) GetAgentStatus(ctx context.Context, req *pb.AgentStatusReq) (*
 }
 
 func (s *Service) StartTeam(req *pb.StartTeamReq, stream pb.RatchetDaemon_StartTeamServer) error {
-	return status.Error(codes.Unimplemented, "not yet implemented")
+	_, eventCh := s.teams.StartTeam(stream.Context(), req)
+	for ev := range eventCh {
+		if err := stream.Send(ev); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Service) GetTeamStatus(ctx context.Context, req *pb.TeamStatusReq) (*pb.TeamStatus, error) {
-	return nil, status.Error(codes.Unimplemented, "not yet implemented")
+	st, err := s.teams.GetStatus(req.TeamId)
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "get team status: %v", err)
+	}
+	return st, nil
 }
 
 func (s *Service) CreateCron(ctx context.Context, req *pb.CreateCronReq) (*pb.CronJob, error) {
