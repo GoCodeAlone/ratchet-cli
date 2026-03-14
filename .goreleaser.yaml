@@ -53,3 +53,8 @@ brews:
       email: bot@goreleaser.com
     install: |
       bin.install "ratchet"
+    post_install: |
+      # Ad-hoc codesign so macOS Gatekeeper allows execution
+      if OS.mac?
+        system "codesign", "--force", "--sign", "-", "#{bin}/ratchet"
+      end
