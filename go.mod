@@ -8,7 +8,7 @@ require (
 	charm.land/lipgloss/v2 v2.0.0
 	github.com/GoCodeAlone/ratchet v0.1.16
 	github.com/GoCodeAlone/workflow v0.3.40
-	github.com/GoCodeAlone/workflow-plugin-agent v0.4.0
+	github.com/GoCodeAlone/workflow-plugin-agent v0.4.1
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/google/generative-ai-go v0.20.1
 	github.com/google/uuid v1.6.0
