@@ -1,11 +1,13 @@
 package components
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
+	"github.com/GoCodeAlone/ratchet-cli/internal/tui/theme"
 )
 
 func makePlan(id, goal string, stepIDs ...string) *pb.Plan {
@@ -205,5 +207,51 @@ func TestPlanView_SetPlanResetsCursor(t *testing.T) {
 	}
 	if v.plan.Id != "p2" {
 		t.Errorf("plan should be updated to p2, got %s", v.plan.Id)
+	}
+}
+
+func TestPlanView_Render(t *testing.T) {
+	plan := makePlan("p1", "build the feature", "s1", "s2", "s3")
+	v := NewPlanView().SetPlan(plan)
+
+	out := v.View(theme.Dark())
+
+	if out == "" {
+		t.Fatal("expected non-empty View output")
+	}
+	if !strings.Contains(out, "build the feature") {
+		t.Errorf("expected goal 'build the feature' in output, got:\n%s", out)
+	}
+	for _, sid := range []string{"s1", "s2", "s3"} {
+		if !strings.Contains(out, "step "+sid) {
+			t.Errorf("expected step description 'step %s' in output, got:\n%s", sid, out)
+		}
+	}
+}
+
+func TestPlanView_StepStatusUpdate(t *testing.T) {
+	plan := &pb.Plan{
+		Id:   "p-status",
+		Goal: "check status indicators",
+		Steps: []*pb.PlanStep{
+			{Id: "s1", Description: "completed step", Status: "completed"},
+			{Id: "s2", Description: "failed step", Status: "failed"},
+			{Id: "s3", Description: "in progress step", Status: "in_progress"},
+			{Id: "s4", Description: "pending step", Status: "pending"},
+		},
+		Status: "executing",
+	}
+	v := NewPlanView().SetPlan(plan)
+
+	out := v.View(theme.Dark())
+
+	if !strings.Contains(out, "✓") {
+		t.Errorf("expected ✓ for completed step in output:\n%s", out)
+	}
+	if !strings.Contains(out, "✗") {
+		t.Errorf("expected ✗ for failed step in output:\n%s", out)
+	}
+	if !strings.Contains(out, "⟳") {
+		t.Errorf("expected ⟳ for in_progress step in output:\n%s", out)
 	}
 }
