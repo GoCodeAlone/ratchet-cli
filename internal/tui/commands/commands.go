@@ -462,13 +462,6 @@ func teamStart(task string, c *client.Client) *Result {
 	}}
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // costCmd shows token usage and, when a fleet ID is provided, a per-worker
 // model/cost breakdown based on the fleet's worker assignments.
 func costCmd(args []string, c *client.Client) *Result {
