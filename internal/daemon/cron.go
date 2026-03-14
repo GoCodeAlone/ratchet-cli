@@ -71,7 +71,7 @@ func (cs *CronScheduler) Start(ctx context.Context) error {
 			log.Printf("cron: scan job: %v", err)
 			continue
 		}
-		cs.startEntry(ctx, j)
+		cs.startEntry(j)
 	}
 	return rows.Err()
 }
@@ -102,7 +102,7 @@ func (cs *CronScheduler) Create(ctx context.Context, sessionID, schedule, comman
 		return CronJob{}, fmt.Errorf("persist cron job: %w", err)
 	}
 
-	cs.startEntry(ctx, j)
+	cs.startEntry(j)
 	return j, nil
 }
 
@@ -186,16 +186,23 @@ func (cs *CronScheduler) Stop(ctx context.Context, jobID string) error {
 	}
 	cs.mu.Unlock()
 
-	if ok {
-		entry.cancel()
+	if !ok {
+		return fmt.Errorf("cron job %s not found", jobID)
 	}
+	entry.cancel()
 	_, err := cs.db.ExecContext(ctx, `UPDATE cron_jobs SET status='stopped' WHERE id=?`, jobID)
 	return err
 }
 
-// startEntry launches the goroutine for a job and registers it.
-func (cs *CronScheduler) startEntry(ctx context.Context, j CronJob) {
-	runCtx, cancel := context.WithCancel(ctx)
+// startEntry launches the goroutine for a job using the daemon's parent context.
+// Using parentCtx (not the RPC request context) ensures the goroutine survives
+// after the CreateCron RPC returns.
+func (cs *CronScheduler) startEntry(j CronJob) {
+	cs.mu.Lock()
+	parent := cs.parentCtx
+	cs.mu.Unlock()
+
+	runCtx, cancel := context.WithCancel(parent)
 	entry := &cronEntry{job: j, cancel: cancel}
 
 	cs.mu.Lock()
