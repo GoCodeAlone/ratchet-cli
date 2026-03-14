@@ -147,10 +147,10 @@ func buildFallbackSummary(messages []provider.Message) string {
 	var topics []string
 	for _, m := range messages {
 		if m.Role == provider.RoleUser && len(m.Content) > 0 {
-			// Use first ~50 chars of each user message as a topic hint
+			// Use first ~50 runes of each user message as a topic hint
 			snippet := m.Content
-			if len(snippet) > 50 {
-				snippet = snippet[:50] + "..."
+			if runes := []rune(snippet); len(runes) > 50 {
+				snippet = string(runes[:50]) + "..."
 			}
 			if !seen[snippet] {
 				seen[snippet] = true
