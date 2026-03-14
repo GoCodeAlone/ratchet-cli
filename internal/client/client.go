@@ -308,3 +308,26 @@ func (c *Client) RejectPlan(ctx context.Context, sessionID, planID, feedback str
 	})
 	return err
 }
+
+// ListJobs returns all active jobs from the daemon's job registry.
+func (c *Client) ListJobs(ctx context.Context) (*pb.JobList, error) {
+	return c.daemon.ListJobs(ctx, &pb.Empty{})
+}
+
+// PauseJob pauses the job with the given ID.
+func (c *Client) PauseJob(ctx context.Context, jobID string) error {
+	_, err := c.daemon.PauseJob(ctx, &pb.JobReq{JobId: jobID})
+	return err
+}
+
+// ResumeJob resumes a paused job.
+func (c *Client) ResumeJob(ctx context.Context, jobID string) error {
+	_, err := c.daemon.ResumeJob(ctx, &pb.JobReq{JobId: jobID})
+	return err
+}
+
+// KillJob kills the job with the given ID.
+func (c *Client) KillJob(ctx context.Context, jobID string) error {
+	_, err := c.daemon.KillJob(ctx, &pb.JobReq{JobId: jobID})
+	return err
+}

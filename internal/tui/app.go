@@ -38,12 +38,14 @@ type App struct {
 	splash      pages.SplashModel
 	onboarding  pages.OnboardingModel
 	sidebar     components.SidebarModel
+	jobPanel    components.JobPanel
 	theme       theme.Theme
 	dark        bool
 	width       int
 	height      int
 	showSidebar bool
 	showTeam    bool
+	showJobs    bool
 	ready       bool
 	page        appPage
 
@@ -124,6 +126,13 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.showTeam = !a.showTeam
 				if a.showTeam {
 					a.showSidebar = false
+					a.showJobs = false
+				}
+			case "ctrl+j":
+				a.showJobs = !a.showJobs
+				if a.showJobs {
+					a.showSidebar = false
+					a.showTeam = false
 				}
 			}
 		}
@@ -182,6 +191,14 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var teamCmd tea.Cmd
 			a.team, teamCmd = a.team.Update(msg)
 			cmds = append(cmds, teamCmd)
+		} else if a.showJobs {
+			var jpCmd tea.Cmd
+			a.jobPanel, jpCmd = a.jobPanel.Update(msg)
+			cmds = append(cmds, jpCmd)
+			// Escape closes the job panel
+			if kp, ok := msg.(tea.KeyPressMsg); ok && kp.String() == "esc" {
+				a.showJobs = false
+			}
 		} else {
 			var chatCmd tea.Cmd
 			a.chat, chatCmd = a.chat.Update(msg)
@@ -223,6 +240,7 @@ func (a App) transitionToChat() (tea.Model, tea.Cmd) {
 	}
 	a.chat = chat
 	a.team = team
+	a.jobPanel = components.NewJobPanel(a.client)
 	a.page = pageChat
 	return a, a.chat.Init()
 }
@@ -257,6 +275,8 @@ func (a App) View() tea.View {
 		case a.showTeam:
 			teamView := a.team.SetSize(a.width, a.height-3).View(a.theme)
 			body = teamView
+		case a.showJobs:
+			body = a.jobPanel.SetSize(a.width, a.height-3).View(a.theme)
 		default:
 			body = a.chat.View(a.theme)
 		}

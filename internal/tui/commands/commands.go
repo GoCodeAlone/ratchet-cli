@@ -96,6 +96,8 @@ func Parse(input string, c *client.Client) *Result {
 			return &Result{Lines: []string{"Usage: /reject <plan_id> [feedback]"}}
 		}
 		return rejectPlanCmd(parts[1], strings.Join(parts[2:], " "), c)
+	case "/jobs":
+		return jobsCmd(c)
 	default:
 		return &Result{Lines: []string{
 			fmt.Sprintf("Unknown command: %s — type /help for available commands", cmd),
@@ -129,7 +131,8 @@ func helpCmd() *Result {
 		"  /cron pause <id>           Pause a cron job",
 		"  /cron resume <id>          Resume a paused cron job",
 		"  /cron stop <id>            Stop and remove a cron job",
-		"  /compact                   Manually compress conversation context",
+		"  /jobs                      Show unified job control panel (or use Ctrl+J)",
+	"  /compact                   Manually compress conversation context",
 	"  /review                    Run built-in code-reviewer on current git diff",
 	"  /exit                      Quit ratchet",
 	}}
