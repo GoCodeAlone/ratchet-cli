@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/client"
+	"github.com/GoCodeAlone/ratchet-cli/internal/daemon"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 	"github.com/GoCodeAlone/ratchet-cli/internal/tui"
 	"github.com/GoCodeAlone/ratchet-cli/internal/version"
@@ -78,6 +79,25 @@ func runInteractive(reconfigure bool) error {
 	}
 	defer c.Close()
 
+	// Version handshake — warn or reload if needed.
+	if resp, err := c.EnsureCompatible(); err == nil {
+		if !resp.Compatible {
+			fmt.Fprintf(os.Stderr, "warning: %s\n", resp.Message)
+		} else if resp.ReloadRecommended {
+			fmt.Fprintf(os.Stderr, "daemon version mismatch (%s). Reloading daemon...\n", resp.Message)
+			c.Close()
+			if reloadErr := reloadAndReconnect(); reloadErr != nil {
+				fmt.Fprintf(os.Stderr, "reload failed: %v — continuing with existing daemon\n", reloadErr)
+			} else {
+				// Reconnect after successful reload.
+				c, err = client.EnsureDaemon()
+				if err != nil {
+					return fmt.Errorf("reconnect after reload: %w", err)
+				}
+			}
+		}
+	}
+
 	wd, _ := os.Getwd()
 	session, err := c.CreateSession(ctx, &pb.CreateSessionReq{
 		WorkingDir: wd,
@@ -87,6 +107,13 @@ func runInteractive(reconfigure bool) error {
 	}
 
 	return tui.Run(ctx, c, session, reconfigure)
+}
+
+// reloadAndReconnect triggers a daemon reload via SIGUSR1 then waits for the
+// new daemon to become ready.
+func reloadAndReconnect() error {
+	exe, _ := os.Executable()
+	return daemon.ReloadDaemon(exe)
 }
 
 func printUsage() {

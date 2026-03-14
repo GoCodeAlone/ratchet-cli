@@ -3505,6 +3505,9 @@ type HealthResponse struct {
 	ActiveSessions int32                  `protobuf:"varint,2,opt,name=active_sessions,json=activeSessions,proto3" json:"active_sessions,omitempty"`
 	ActiveAgents   int32                  `protobuf:"varint,3,opt,name=active_agents,json=activeAgents,proto3" json:"active_agents,omitempty"`
 	Uptime         string                 `protobuf:"bytes,4,opt,name=uptime,proto3" json:"uptime,omitempty"`
+	Version        string                 `protobuf:"bytes,5,opt,name=version,proto3" json:"version,omitempty"`
+	Commit         string                 `protobuf:"bytes,6,opt,name=commit,proto3" json:"commit,omitempty"`
+	ProtoVersion   int32                  `protobuf:"varint,7,opt,name=proto_version,json=protoVersion,proto3" json:"proto_version,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -3565,6 +3568,27 @@ func (x *HealthResponse) GetUptime() string {
 		return x.Uptime
 	}
 	return ""
+}
+
+func (x *HealthResponse) GetVersion() string {
+	if x != nil {
+		return x.Version
+	}
+	return ""
+}
+
+func (x *HealthResponse) GetCommit() string {
+	if x != nil {
+		return x.Commit
+	}
+	return ""
+}
+
+func (x *HealthResponse) GetProtoVersion() int32 {
+	if x != nil {
+		return x.ProtoVersion
+	}
+	return 0
 }
 
 var File_internal_proto_ratchet_proto protoreflect.FileDescriptor

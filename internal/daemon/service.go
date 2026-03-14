@@ -3,6 +3,8 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"log"
+	"os"
 	"time"
 
 	"github.com/google/uuid"
@@ -11,7 +13,13 @@ import (
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/config"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
+	"github.com/GoCodeAlone/ratchet-cli/internal/version"
 )
+
+// ProtoVersion is the current protocol version. Increment this when making
+// breaking proto changes (removing/renaming fields or RPCs). Minor additions
+// such as new fields or new RPCs do not require a bump.
+const ProtoVersion = 1
 
 type Service struct {
 	pb.UnimplementedRatchetDaemonServer
@@ -28,6 +36,9 @@ type Service struct {
 }
 
 func NewService(ctx context.Context) (*Service, error) {
+	// Publish version so checkpoint and health can reference it.
+	daemonVersion = version.Version
+
 	engine, err := NewEngineContext(ctx, DBPath())
 	if err != nil {
 		return nil, err
@@ -59,6 +70,13 @@ func NewService(ctx context.Context) (*Service, error) {
 	svc.jobs.Register("fleet_worker", NewFleetJobProvider(svc.fleet))
 	svc.jobs.Register("team_agent", NewTeamJobProvider(svc.teams))
 	svc.jobs.Register("cron", NewCronJobProvider(svc.cron))
+
+	// Restore state from checkpoint if one exists (written during graceful reload).
+	if cp, err := LoadCheckpoint(); err == nil {
+		log.Printf("restoring from checkpoint (daemon %s)", cp.Version)
+		os.Remove(CheckpointPath()) // consume immediately so it doesn't linger
+	}
+
 	return svc, nil
 }
 
@@ -68,7 +86,64 @@ func (s *Service) Health(ctx context.Context, _ *pb.Empty) (*pb.HealthResponse, 
 		ActiveSessions: 0,
 		ActiveAgents:   0,
 		Uptime:         time.Since(s.startedAt).Round(time.Second).String(),
+		Version:        version.Version,
+		Commit:         version.Commit,
+		ProtoVersion:   ProtoVersion,
 	}, nil
+}
+
+// CheckVersion compares CLI version/proto against the running daemon and
+// returns compatibility information.
+func (s *Service) CheckVersion(ctx context.Context, req *pb.VersionCheckReq) (*pb.VersionCheckResp, error) {
+	daemonVer := version.Version
+	compatible := req.CliProtoVersion == ProtoVersion
+	reloadRecommended := req.CliVersion != daemonVer && compatible
+
+	var msg string
+	switch {
+	case !compatible:
+		msg = fmt.Sprintf("protocol mismatch: CLI proto v%d, daemon proto v%d — please restart daemon",
+			req.CliProtoVersion, ProtoVersion)
+	case reloadRecommended:
+		msg = fmt.Sprintf("version mismatch: CLI %s, daemon %s — reload recommended",
+			req.CliVersion, daemonVer)
+	default:
+		msg = "compatible"
+	}
+
+	return &pb.VersionCheckResp{
+		Compatible:        compatible,
+		ReloadRecommended: reloadRecommended,
+		DaemonVersion:     daemonVer,
+		Message:           msg,
+	}, nil
+}
+
+// RequestReload checkpoints state and initiates a graceful daemon restart.
+// It streams status events back to the caller.
+func (s *Service) RequestReload(req *pb.ReloadReq, stream pb.RatchetDaemon_RequestReloadServer) error {
+	_ = stream.Send(&pb.ReloadStatus{Status: "checkpointing", Message: "saving daemon state..."})
+
+	cp, err := ExportCheckpoint(s)
+	if err != nil {
+		_ = stream.Send(&pb.ReloadStatus{Status: "failed", Message: fmt.Sprintf("checkpoint failed: %v", err)})
+		return status.Errorf(codes.Internal, "checkpoint: %v", err)
+	}
+	if err := SaveCheckpoint(cp); err != nil {
+		_ = stream.Send(&pb.ReloadStatus{Status: "failed", Message: fmt.Sprintf("save checkpoint failed: %v", err)})
+		return status.Errorf(codes.Internal, "save checkpoint: %v", err)
+	}
+
+	_ = stream.Send(&pb.ReloadStatus{Status: "restarting", Message: "checkpoint saved, restarting daemon..."})
+
+	// Trigger reload asynchronously so the stream response can flush first.
+	go func() {
+		if err := TriggerReload(); err != nil {
+			log.Printf("reload trigger failed: %v", err)
+		}
+	}()
+
+	return nil
 }
 
 func (s *Service) Shutdown(ctx context.Context, _ *pb.Empty) (*pb.Empty, error) {

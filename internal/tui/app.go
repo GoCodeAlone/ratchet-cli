@@ -28,6 +28,13 @@ type ProvidersCheckedMsg struct {
 	Providers []*pb.Provider
 }
 
+// VersionNoticeMsg carries a version compatibility message for the TUI.
+type VersionNoticeMsg struct {
+	Compatible        bool
+	ReloadRecommended bool
+	Message           string
+}
+
 // App is the root Bubbletea v2 model.
 type App struct {
 	client      *client.Client
@@ -54,6 +61,9 @@ type App struct {
 	providersReady bool
 	providers      []*pb.Provider
 	reconfigure    bool
+
+	// Version notice shown in the header when daemon and CLI differ.
+	versionNotice string
 }
 
 // NewApp creates the root TUI application model.
@@ -78,7 +88,25 @@ func (a App) Init() tea.Cmd {
 	return tea.Batch(
 		a.splash.Init(),
 		a.checkProviders(),
+		a.checkVersion(),
 	)
+}
+
+func (a App) checkVersion() tea.Cmd {
+	return func() tea.Msg {
+		resp, err := a.client.EnsureCompatible()
+		if err != nil {
+			return nil
+		}
+		if resp.Compatible && !resp.ReloadRecommended {
+			return nil
+		}
+		return VersionNoticeMsg{
+			Compatible:        resp.Compatible,
+			ReloadRecommended: resp.ReloadRecommended,
+			Message:           resp.Message,
+		}
+	}
 }
 
 func (a App) checkProviders() tea.Cmd {
@@ -173,6 +201,13 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		go func() {
 			a.client.KillAgent(context.Background(), msg.AgentID)
 		}()
+
+	case VersionNoticeMsg:
+		if !msg.Compatible {
+			a.versionNotice = "daemon incompatible: " + msg.Message
+		} else if msg.ReloadRecommended {
+			a.versionNotice = "version mismatch: " + msg.Message
+		}
 	}
 
 	// Route updates to active page
@@ -303,7 +338,16 @@ func (a App) renderHeader() string {
 		Foreground(a.theme.Muted).
 		Render(fmt.Sprintf("  session: %s", a.sessionID[:8]))
 
-	return title + sessionInfo
+	header := title + sessionInfo
+
+	if a.versionNotice != "" {
+		notice := lipgloss.NewStyle().
+			Foreground(a.theme.Warning).
+			Render("  [" + a.versionNotice + "]")
+		header += notice
+	}
+
+	return header
 }
 
 // joinColumns renders two column strings side by side.

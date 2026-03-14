@@ -51,6 +51,8 @@ const (
 	RatchetDaemon_KillJob_FullMethodName             = "/ratchet.RatchetDaemon/KillJob"
 	RatchetDaemon_Health_FullMethodName              = "/ratchet.RatchetDaemon/Health"
 	RatchetDaemon_Shutdown_FullMethodName            = "/ratchet.RatchetDaemon/Shutdown"
+	RatchetDaemon_CheckVersion_FullMethodName        = "/ratchet.RatchetDaemon/CheckVersion"
+	RatchetDaemon_RequestReload_FullMethodName       = "/ratchet.RatchetDaemon/RequestReload"
 )
 
 // RatchetDaemonClient is the client API for RatchetDaemon service.
@@ -100,6 +102,9 @@ type RatchetDaemonClient interface {
 	// Daemon
 	Health(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*HealthResponse, error)
 	Shutdown(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*Empty, error)
+	// Version and reload
+	CheckVersion(ctx context.Context, in *VersionCheckReq, opts ...grpc.CallOption) (*VersionCheckResp, error)
+	RequestReload(ctx context.Context, in *ReloadReq, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReloadStatus], error)
 }
 
 type ratchetDaemonClient struct {
@@ -475,6 +480,35 @@ func (c *ratchetDaemonClient) Shutdown(ctx context.Context, in *Empty, opts ...g
 	return out, nil
 }
 
+func (c *ratchetDaemonClient) CheckVersion(ctx context.Context, in *VersionCheckReq, opts ...grpc.CallOption) (*VersionCheckResp, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(VersionCheckResp)
+	err := c.cc.Invoke(ctx, RatchetDaemon_CheckVersion_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ratchetDaemonClient) RequestReload(ctx context.Context, in *ReloadReq, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ReloadStatus], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &RatchetDaemon_ServiceDesc.Streams[5], RatchetDaemon_RequestReload_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ReloadReq, ReloadStatus]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility.
+type RatchetDaemon_RequestReloadClient = grpc.ServerStreamingClient[ReloadStatus]
+
 // RatchetDaemonServer is the server API for RatchetDaemon service.
 // All implementations must embed UnimplementedRatchetDaemonServer
 // for forward compatibility.
@@ -522,6 +556,9 @@ type RatchetDaemonServer interface {
 	// Daemon
 	Health(context.Context, *Empty) (*HealthResponse, error)
 	Shutdown(context.Context, *Empty) (*Empty, error)
+	// Version and reload
+	CheckVersion(context.Context, *VersionCheckReq) (*VersionCheckResp, error)
+	RequestReload(*ReloadReq, grpc.ServerStreamingServer[ReloadStatus]) error
 	mustEmbedUnimplementedRatchetDaemonServer()
 }
 
@@ -627,6 +664,12 @@ func (UnimplementedRatchetDaemonServer) Health(context.Context, *Empty) (*Health
 }
 func (UnimplementedRatchetDaemonServer) Shutdown(context.Context, *Empty) (*Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method Shutdown not implemented")
+}
+func (UnimplementedRatchetDaemonServer) CheckVersion(context.Context, *VersionCheckReq) (*VersionCheckResp, error) {
+	return nil, status.Error(codes.Unimplemented, "method CheckVersion not implemented")
+}
+func (UnimplementedRatchetDaemonServer) RequestReload(*ReloadReq, grpc.ServerStreamingServer[ReloadStatus]) error {
+	return status.Error(codes.Unimplemented, "method RequestReload not implemented")
 }
 func (UnimplementedRatchetDaemonServer) mustEmbedUnimplementedRatchetDaemonServer() {}
 func (UnimplementedRatchetDaemonServer) testEmbeddedByValue()                       {}
@@ -1190,6 +1233,35 @@ func _RatchetDaemon_Shutdown_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RatchetDaemon_CheckVersion_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(VersionCheckReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RatchetDaemonServer).CheckVersion(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RatchetDaemon_CheckVersion_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RatchetDaemonServer).CheckVersion(ctx, req.(*VersionCheckReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RatchetDaemon_RequestReload_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ReloadReq)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(RatchetDaemonServer).RequestReload(m, &grpc.GenericServerStream[ReloadReq, ReloadStatus]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility.
+type RatchetDaemon_RequestReloadServer = grpc.ServerStreamingServer[ReloadStatus]
+
 // RatchetDaemon_ServiceDesc is the grpc.ServiceDesc for RatchetDaemon service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1305,6 +1377,10 @@ var RatchetDaemon_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "Shutdown",
 			Handler:    _RatchetDaemon_Shutdown_Handler,
 		},
+		{
+			MethodName: "CheckVersion",
+			Handler:    _RatchetDaemon_CheckVersion_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
@@ -1330,6 +1406,11 @@ var RatchetDaemon_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "StartFleet",
 			Handler:       _RatchetDaemon_StartFleet_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "RequestReload",
+			Handler:       _RatchetDaemon_RequestReload_Handler,
 			ServerStreams: true,
 		},
 	},

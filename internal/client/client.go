@@ -4,13 +4,18 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/daemon"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
+	"github.com/GoCodeAlone/ratchet-cli/internal/version"
 )
+
+// executablePath is a variable so tests can override it.
+var executablePath = os.Executable
 
 type Client struct {
 	conn   *grpc.ClientConn
@@ -41,6 +46,47 @@ func EnsureDaemon() (*Client, error) {
 		}
 	}
 	return Connect()
+}
+
+// EnsureCompatible sends a version check to the daemon and returns the result.
+// Callers should inspect Compatible and ReloadRecommended to decide what to do.
+func (c *Client) EnsureCompatible() (*pb.VersionCheckResp, error) {
+	return c.daemon.CheckVersion(context.Background(), &pb.VersionCheckReq{
+		CliVersion:      version.Version,
+		CliCommit:       version.Commit,
+		CliProtoVersion: daemon.ProtoVersion,
+	})
+}
+
+// RequestReload asks the daemon to checkpoint and restart, streaming status
+// events until the stream closes. The daemon stops after sending "restarting".
+func (c *Client) RequestReload(ctx context.Context) (<-chan *pb.ReloadStatus, error) {
+	exe, err := executablePath()
+	if err != nil {
+		return nil, fmt.Errorf("get executable: %w", err)
+	}
+	stream, err := c.daemon.RequestReload(ctx, &pb.ReloadReq{
+		NewBinaryPath: exe,
+		CliVersion:    version.Version,
+	})
+	if err != nil {
+		return nil, err
+	}
+	ch := make(chan *pb.ReloadStatus, 8)
+	go func() {
+		defer close(ch)
+		for {
+			msg, err := stream.Recv()
+			if err == io.EOF {
+				return
+			}
+			if err != nil {
+				return
+			}
+			ch <- msg
+		}
+	}()
+	return ch, nil
 }
 
 func (c *Client) Close() error {
