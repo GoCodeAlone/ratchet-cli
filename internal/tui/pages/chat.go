@@ -25,6 +25,10 @@ type ChatEventMsg struct {
 // chatStreamDoneMsg signals the event channel was closed.
 type chatStreamDoneMsg struct{}
 
+// chatCancelSetMsg carries the cancel function for an in-flight stream back to
+// the model so it can be stored on the real model, not a closure-local copy.
+type chatCancelSetMsg struct{ cancel context.CancelFunc }
+
 type ChatModel struct {
 	client    *client.Client
 	sessionID string
@@ -36,6 +40,7 @@ type ChatModel struct {
 	statusBar    components.StatusBar
 	toolCalls    components.ToolCallListModel
 	autocomplete components.AutocompleteModel
+	planView     components.PlanView
 	messages     []components.Message
 	streaming  string // current streaming response
 	width      int
@@ -75,6 +80,7 @@ func NewChat(c *client.Client, sessionID string, t theme.Theme, dark bool) ChatM
 		statusBar:    statusBar,
 		toolCalls:    components.NewToolCallList(),
 		autocomplete: components.NewAutocomplete(),
+		planView:     components.NewPlanView(),
 		ctx:          context.Background(),
 	}
 }
@@ -133,12 +139,41 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 		m.input.SetValue(msg.Command + " ")
 		m.autocomplete = m.autocomplete.SetFilter("")
 
+	case components.PlanApproveMsg:
+		if m.client != nil {
+			planID := msg.PlanID
+			skipSteps := msg.SkipSteps
+			cmds = append(cmds, func() tea.Msg {
+				ch, err := m.client.ApprovePlan(m.ctx, m.sessionID, planID, skipSteps)
+				if err != nil {
+					return ChatEventMsg{Event: &pb.ChatEvent{
+						Event: &pb.ChatEvent_Error{Error: &pb.ErrorEvent{Message: err.Error()}},
+					}}
+				}
+				event, ok := <-ch
+				if !ok {
+					return chatStreamDoneMsg{}
+				}
+				return ChatEventMsg{Event: event, ch: ch}
+			})
+		}
+
+	case components.PlanRejectMsg:
+		if m.client != nil {
+			go m.client.RejectPlan(m.ctx, m.sessionID, msg.PlanID, "") //nolint:errcheck
+			m.messages = append(m.messages, components.Message{
+				Role:    components.RoleSystem,
+				Content: "Plan rejected.",
+			})
+			m.refreshViewport()
+		}
+
 	case components.InputResizedMsg:
 		m.relayout()
 
 	case components.SubmitMsg:
 		// Check for slash command first
-		if result := commands.Parse(msg.Content, m.client); result != nil {
+		if result := commands.Parse(msg.Content, m.client, m.sessionID); result != nil {
 			m.messages = append(m.messages, components.Message{
 				Role:    components.RoleUser,
 				Content: msg.Content,
@@ -159,7 +194,16 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 			if result.Quit {
 				return m, tea.Quit
 			}
-			return m, nil
+			if result.TriggerCompact {
+				m.streaming = ""
+				cmds = append(cmds, m.compactSession())
+			}
+			if result.TriggerReview {
+				m.streaming = ""
+				reviewMsg := "You are a code reviewer. Please review the following git diff and provide detailed feedback on correctness, style, and potential issues:\n\n```diff\n" + result.ReviewDiff + "\n```"
+				cmds = append(cmds, m.sendMessage(reviewMsg))
+			}
+			return m, tea.Batch(cmds...)
 		}
 		// Add user message and send to daemon
 		m.messages = append(m.messages, components.Message{
@@ -172,6 +216,9 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 
 	case ChatEventMsg:
 		cmds = append(cmds, m.handleChatEvent(msg)...)
+
+	case chatCancelSetMsg:
+		m.cancelChat = msg.cancel
 
 	case chatStreamDoneMsg:
 		// Stream channel closed without a Complete event
@@ -186,10 +233,16 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 		m.cancelChat = nil
 	}
 
-	var inputCmd, vpCmd tea.Cmd
-	m.input, inputCmd = m.input.Update(msg)
+	var inputCmd, vpCmd, planCmd tea.Cmd
+	if m.planView.Active() {
+		m.planView, planCmd = m.planView.Update(msg)
+		cmds = append(cmds, planCmd)
+	} else {
+		m.input, inputCmd = m.input.Update(msg)
+		cmds = append(cmds, inputCmd)
+	}
 	m.viewport, vpCmd = m.viewport.Update(msg)
-	cmds = append(cmds, inputCmd, vpCmd)
+	cmds = append(cmds, vpCmd)
 
 	m.autocomplete = m.autocomplete.SetFilter(m.input.Value())
 
@@ -228,34 +281,69 @@ func (m *ChatModel) refreshViewport() {
 		}
 		sb.WriteString(assistantMsg.Render(m.theme, m.width, m.dark))
 	}
+	if m.planView.Active() {
+		sb.WriteString("\n")
+		sb.WriteString(m.planView.View(m.theme))
+		sb.WriteString("\n")
+	}
 	m.viewport.SetContent(sb.String())
 	m.viewport.GotoBottom()
 }
 
 func (m ChatModel) sendMessage(content string) tea.Cmd {
-	return func() tea.Msg {
-		if m.client == nil {
-			return nil
-		}
-		ctx, cancel := context.WithCancel(m.ctx)
-		m.cancelChat = cancel
+	ctx, cancel := context.WithCancel(m.ctx)
+	return tea.Batch(
+		func() tea.Msg { return chatCancelSetMsg{cancel: cancel} },
+		func() tea.Msg {
+			if m.client == nil {
+				cancel()
+				return nil
+			}
+			ch, err := m.client.SendMessage(ctx, m.sessionID, content)
+			if err != nil {
+				return ChatEventMsg{Event: &pb.ChatEvent{
+					Event: &pb.ChatEvent_Error{
+						Error: &pb.ErrorEvent{Message: err.Error()},
+					},
+				}}
+			}
 
-		ch, err := m.client.SendMessage(ctx, m.sessionID, content)
-		if err != nil {
-			return ChatEventMsg{Event: &pb.ChatEvent{
-				Event: &pb.ChatEvent_Error{
-					Error: &pb.ErrorEvent{Message: err.Error()},
-				},
-			}}
-		}
+			// Read first event and carry channel for subsequent reads
+			event, ok := <-ch
+			if !ok {
+				return chatStreamDoneMsg{}
+			}
+			return ChatEventMsg{Event: event, ch: ch}
+		},
+	)
+}
 
-		// Read first event and carry channel for subsequent reads
-		event, ok := <-ch
-		if !ok {
-			return chatStreamDoneMsg{}
-		}
-		return ChatEventMsg{Event: event, ch: ch}
-	}
+// compactSession sends a CompactSession request to the daemon and streams the result.
+func (m ChatModel) compactSession() tea.Cmd {
+	ctx, cancel := context.WithCancel(m.ctx)
+	return tea.Batch(
+		func() tea.Msg { return chatCancelSetMsg{cancel: cancel} },
+		func() tea.Msg {
+			if m.client == nil {
+				cancel()
+				return nil
+			}
+			ch, err := m.client.CompactSession(ctx, m.sessionID)
+			if err != nil {
+				return ChatEventMsg{Event: &pb.ChatEvent{
+					Event: &pb.ChatEvent_Error{
+						Error: &pb.ErrorEvent{Message: err.Error()},
+					},
+				}}
+			}
+
+			event, ok := <-ch
+			if !ok {
+				return chatStreamDoneMsg{}
+			}
+			return ChatEventMsg{Event: event, ch: ch}
+		},
+	)
 }
 
 // nextEvent returns a Cmd that reads the next event from the channel.
@@ -333,6 +421,17 @@ func (m *ChatModel) handleChatEvent(msg ChatEventMsg) []tea.Cmd {
 		m.refreshViewport()
 		m.cancelChat = nil
 		return cmds // don't schedule next read — stream is done
+
+	case *pb.ChatEvent_PlanProposed:
+		m.planView = m.planView.SetPlan(e.PlanProposed)
+		m.planView = m.planView.SetSize(m.width)
+		m.refreshViewport()
+
+	case *pb.ChatEvent_PlanStepUpdate:
+		// Update the plan view step if we have an active plan
+		if m.planView.Active() {
+			m.refreshViewport()
+		}
 	}
 
 	// Schedule read of next event from the channel
@@ -346,12 +445,14 @@ func (m ChatModel) View(t theme.Theme) string {
 	var sb strings.Builder
 	sb.WriteString(m.viewport.View())
 	sb.WriteString("\n")
-	if ac := m.autocomplete.View(t, m.width); ac != "" {
-		sb.WriteString(ac)
+	if !m.planView.Active() {
+		if ac := m.autocomplete.View(t, m.width); ac != "" {
+			sb.WriteString(ac)
+			sb.WriteString("\n")
+		}
+		sb.WriteString(m.input.View(t, m.width))
 		sb.WriteString("\n")
 	}
-	sb.WriteString(m.input.View(t, m.width))
-	sb.WriteString("\n")
 	sb.WriteString(m.statusBar.View(t))
 	return sb.String()
 }

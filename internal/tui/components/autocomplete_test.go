@@ -264,7 +264,7 @@ func TestAutocompleteNotVisibleWhenNoUpdate(t *testing.T) {
 	}
 
 	// Update when not visible should be a no-op
-	ac, cmd := ac.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	_, cmd := ac.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd != nil {
 		t.Error("expected no command when autocomplete is not visible")
 	}

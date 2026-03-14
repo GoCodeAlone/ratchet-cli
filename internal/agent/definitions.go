@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bufio"
+	"embed"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,40 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+//go:embed builtins/*.yaml
+var builtinFS embed.FS
+
+// LoadBuiltins returns the built-in agent definitions embedded in the binary.
+func LoadBuiltins() ([]AgentDefinition, error) {
+	entries, err := builtinFS.ReadDir("builtins")
+	if err != nil {
+		return nil, fmt.Errorf("read builtins: %w", err)
+	}
+	var defs []AgentDefinition
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		ext := filepath.Ext(e.Name())
+		if ext != ".yaml" && ext != ".yml" {
+			continue
+		}
+		data, err := builtinFS.ReadFile("builtins/" + e.Name())
+		if err != nil {
+			continue
+		}
+		var def AgentDefinition
+		if err := yaml.Unmarshal(data, &def); err != nil {
+			continue
+		}
+		if def.Name == "" {
+			def.Name = strings.TrimSuffix(e.Name(), ext)
+		}
+		defs = append(defs, def)
+	}
+	return defs, nil
+}
 
 // AgentDefinition defines a reusable AI agent configuration.
 type AgentDefinition struct {
@@ -19,6 +54,22 @@ type AgentDefinition struct {
 	SystemPrompt  string   `yaml:"system_prompt"`
 	Tools         []string `yaml:"tools"`
 	MaxIterations int      `yaml:"max_iterations"`
+}
+
+// EffectiveProvider returns the agent's provider, falling back to defaultProvider if unset.
+func (d AgentDefinition) EffectiveProvider(defaultProvider string) string {
+	if d.Provider != "" {
+		return d.Provider
+	}
+	return defaultProvider
+}
+
+// EffectiveModel returns the agent's model, falling back to defaultModel if unset.
+func (d AgentDefinition) EffectiveModel(defaultModel string) string {
+	if d.Model != "" {
+		return d.Model
+	}
+	return defaultModel
 }
 
 // LoadDefinitions discovers agent definitions from standard locations.
@@ -110,7 +161,7 @@ func parseMarkdownAgent(path string) (AgentDefinition, error) {
 	if err != nil {
 		return AgentDefinition{}, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	var frontMatter strings.Builder

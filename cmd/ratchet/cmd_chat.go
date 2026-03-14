@@ -34,7 +34,7 @@ func handleOneShot(prompt string) {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	wd, _ := os.Getwd()
 	session, err := c.CreateSession(ctx, &pb.CreateSessionReq{

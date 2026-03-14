@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net"
 	"net/http"
@@ -112,7 +113,7 @@ func StartAnthropicOAuth(ctx context.Context) <-chan OAuthResult {
 			}
 			if errMsg := r.URL.Query().Get("error"); errMsg != "" {
 				errCh <- fmt.Errorf("auth error: %s — %s", errMsg, r.URL.Query().Get("error_description"))
-				fmt.Fprintf(w, "<html><body><h2>Authentication failed</h2><p>%s</p><p>You can close this tab.</p></body></html>", errMsg)
+				fmt.Fprintf(w, "<html><body><h2>Authentication failed</h2><p>%s</p><p>You can close this tab.</p></body></html>", html.EscapeString(errMsg))
 				return
 			}
 			code := r.URL.Query().Get("code")

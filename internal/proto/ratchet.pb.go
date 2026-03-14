@@ -468,6 +468,10 @@ type ChatEvent struct {
 	//	*ChatEvent_Complete
 	//	*ChatEvent_Error
 	//	*ChatEvent_History
+	//	*ChatEvent_PlanProposed
+	//	*ChatEvent_PlanStepUpdate
+	//	*ChatEvent_FleetStatus
+	//	*ChatEvent_ContextCompressed
 	Event         isChatEvent_Event `protobuf_oneof:"event"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -591,6 +595,42 @@ func (x *ChatEvent) GetHistory() *SessionHistory {
 	return nil
 }
 
+func (x *ChatEvent) GetPlanProposed() *Plan {
+	if x != nil {
+		if x, ok := x.Event.(*ChatEvent_PlanProposed); ok {
+			return x.PlanProposed
+		}
+	}
+	return nil
+}
+
+func (x *ChatEvent) GetPlanStepUpdate() *PlanStep {
+	if x != nil {
+		if x, ok := x.Event.(*ChatEvent_PlanStepUpdate); ok {
+			return x.PlanStepUpdate
+		}
+	}
+	return nil
+}
+
+func (x *ChatEvent) GetFleetStatus() *FleetStatus {
+	if x != nil {
+		if x, ok := x.Event.(*ChatEvent_FleetStatus); ok {
+			return x.FleetStatus
+		}
+	}
+	return nil
+}
+
+func (x *ChatEvent) GetContextCompressed() *ContextCompressedEvent {
+	if x != nil {
+		if x, ok := x.Event.(*ChatEvent_ContextCompressed); ok {
+			return x.ContextCompressed
+		}
+	}
+	return nil
+}
+
 type isChatEvent_Event interface {
 	isChatEvent_Event()
 }
@@ -631,6 +671,22 @@ type ChatEvent_History struct {
 	History *SessionHistory `protobuf:"bytes,9,opt,name=history,proto3,oneof"`
 }
 
+type ChatEvent_PlanProposed struct {
+	PlanProposed *Plan `protobuf:"bytes,10,opt,name=plan_proposed,json=planProposed,proto3,oneof"`
+}
+
+type ChatEvent_PlanStepUpdate struct {
+	PlanStepUpdate *PlanStep `protobuf:"bytes,11,opt,name=plan_step_update,json=planStepUpdate,proto3,oneof"`
+}
+
+type ChatEvent_FleetStatus struct {
+	FleetStatus *FleetStatus `protobuf:"bytes,12,opt,name=fleet_status,json=fleetStatus,proto3,oneof"`
+}
+
+type ChatEvent_ContextCompressed struct {
+	ContextCompressed *ContextCompressedEvent `protobuf:"bytes,13,opt,name=context_compressed,json=contextCompressed,proto3,oneof"`
+}
+
 func (*ChatEvent_Token) isChatEvent_Event() {}
 
 func (*ChatEvent_ToolStart) isChatEvent_Event() {}
@@ -649,6 +705,82 @@ func (*ChatEvent_Error) isChatEvent_Event() {}
 
 func (*ChatEvent_History) isChatEvent_Event() {}
 
+func (*ChatEvent_PlanProposed) isChatEvent_Event() {}
+
+func (*ChatEvent_PlanStepUpdate) isChatEvent_Event() {}
+
+func (*ChatEvent_FleetStatus) isChatEvent_Event() {}
+
+func (*ChatEvent_ContextCompressed) isChatEvent_Event() {}
+
+type ContextCompressedEvent struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	SessionId       string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Summary         string                 `protobuf:"bytes,2,opt,name=summary,proto3" json:"summary,omitempty"` // short text summary of compressed messages
+	MessagesRemoved int32                  `protobuf:"varint,3,opt,name=messages_removed,json=messagesRemoved,proto3" json:"messages_removed,omitempty"`
+	MessagesKept    int32                  `protobuf:"varint,4,opt,name=messages_kept,json=messagesKept,proto3" json:"messages_kept,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *ContextCompressedEvent) Reset() {
+	*x = ContextCompressedEvent{}
+	mi := &file_internal_proto_ratchet_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ContextCompressedEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ContextCompressedEvent) ProtoMessage() {}
+
+func (x *ContextCompressedEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_ratchet_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ContextCompressedEvent.ProtoReflect.Descriptor instead.
+func (*ContextCompressedEvent) Descriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *ContextCompressedEvent) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *ContextCompressedEvent) GetSummary() string {
+	if x != nil {
+		return x.Summary
+	}
+	return ""
+}
+
+func (x *ContextCompressedEvent) GetMessagesRemoved() int32 {
+	if x != nil {
+		return x.MessagesRemoved
+	}
+	return 0
+}
+
+func (x *ContextCompressedEvent) GetMessagesKept() int32 {
+	if x != nil {
+		return x.MessagesKept
+	}
+	return 0
+}
+
 type TokenDelta struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Content       string                 `protobuf:"bytes,1,opt,name=content,proto3" json:"content,omitempty"`
@@ -658,7 +790,7 @@ type TokenDelta struct {
 
 func (x *TokenDelta) Reset() {
 	*x = TokenDelta{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[9]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -670,7 +802,7 @@ func (x *TokenDelta) String() string {
 func (*TokenDelta) ProtoMessage() {}
 
 func (x *TokenDelta) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[9]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -683,7 +815,7 @@ func (x *TokenDelta) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TokenDelta.ProtoReflect.Descriptor instead.
 func (*TokenDelta) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{9}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *TokenDelta) GetContent() string {
@@ -704,7 +836,7 @@ type ToolCallStart struct {
 
 func (x *ToolCallStart) Reset() {
 	*x = ToolCallStart{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[10]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -716,7 +848,7 @@ func (x *ToolCallStart) String() string {
 func (*ToolCallStart) ProtoMessage() {}
 
 func (x *ToolCallStart) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[10]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -729,7 +861,7 @@ func (x *ToolCallStart) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ToolCallStart.ProtoReflect.Descriptor instead.
 func (*ToolCallStart) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{10}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ToolCallStart) GetToolName() string {
@@ -764,7 +896,7 @@ type ToolCallResult struct {
 
 func (x *ToolCallResult) Reset() {
 	*x = ToolCallResult{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[11]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -776,7 +908,7 @@ func (x *ToolCallResult) String() string {
 func (*ToolCallResult) ProtoMessage() {}
 
 func (x *ToolCallResult) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[11]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -789,7 +921,7 @@ func (x *ToolCallResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ToolCallResult.ProtoReflect.Descriptor instead.
 func (*ToolCallResult) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{11}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ToolCallResult) GetCallId() string {
@@ -825,7 +957,7 @@ type PermissionRequest struct {
 
 func (x *PermissionRequest) Reset() {
 	*x = PermissionRequest{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[12]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -837,7 +969,7 @@ func (x *PermissionRequest) String() string {
 func (*PermissionRequest) ProtoMessage() {}
 
 func (x *PermissionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[12]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -850,7 +982,7 @@ func (x *PermissionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PermissionRequest.ProtoReflect.Descriptor instead.
 func (*PermissionRequest) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{12}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *PermissionRequest) GetRequestId() string {
@@ -892,7 +1024,7 @@ type PermissionResponse struct {
 
 func (x *PermissionResponse) Reset() {
 	*x = PermissionResponse{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[13]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -904,7 +1036,7 @@ func (x *PermissionResponse) String() string {
 func (*PermissionResponse) ProtoMessage() {}
 
 func (x *PermissionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[13]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -917,7 +1049,7 @@ func (x *PermissionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PermissionResponse.ProtoReflect.Descriptor instead.
 func (*PermissionResponse) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{13}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *PermissionResponse) GetRequestId() string {
@@ -952,7 +1084,7 @@ type AgentSpawned struct {
 
 func (x *AgentSpawned) Reset() {
 	*x = AgentSpawned{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[14]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -964,7 +1096,7 @@ func (x *AgentSpawned) String() string {
 func (*AgentSpawned) ProtoMessage() {}
 
 func (x *AgentSpawned) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[14]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -977,7 +1109,7 @@ func (x *AgentSpawned) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentSpawned.ProtoReflect.Descriptor instead.
 func (*AgentSpawned) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{14}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *AgentSpawned) GetAgentId() string {
@@ -1012,7 +1144,7 @@ type AgentMessage struct {
 
 func (x *AgentMessage) Reset() {
 	*x = AgentMessage{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[15]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1024,7 +1156,7 @@ func (x *AgentMessage) String() string {
 func (*AgentMessage) ProtoMessage() {}
 
 func (x *AgentMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[15]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1037,7 +1169,7 @@ func (x *AgentMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentMessage.ProtoReflect.Descriptor instead.
 func (*AgentMessage) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{15}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *AgentMessage) GetFromAgent() string {
@@ -1071,7 +1203,7 @@ type SessionComplete struct {
 
 func (x *SessionComplete) Reset() {
 	*x = SessionComplete{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[16]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1083,7 +1215,7 @@ func (x *SessionComplete) String() string {
 func (*SessionComplete) ProtoMessage() {}
 
 func (x *SessionComplete) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[16]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1096,7 +1228,7 @@ func (x *SessionComplete) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionComplete.ProtoReflect.Descriptor instead.
 func (*SessionComplete) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{16}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *SessionComplete) GetSummary() string {
@@ -1123,7 +1255,7 @@ type ErrorEvent struct {
 
 func (x *ErrorEvent) Reset() {
 	*x = ErrorEvent{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[17]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1135,7 +1267,7 @@ func (x *ErrorEvent) String() string {
 func (*ErrorEvent) ProtoMessage() {}
 
 func (x *ErrorEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[17]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1148,7 +1280,7 @@ func (x *ErrorEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ErrorEvent.ProtoReflect.Descriptor instead.
 func (*ErrorEvent) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{17}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ErrorEvent) GetMessage() string {
@@ -1174,7 +1306,7 @@ type SessionHistory struct {
 
 func (x *SessionHistory) Reset() {
 	*x = SessionHistory{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[18]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1186,7 +1318,7 @@ func (x *SessionHistory) String() string {
 func (*SessionHistory) ProtoMessage() {}
 
 func (x *SessionHistory) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[18]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1199,7 +1331,7 @@ func (x *SessionHistory) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionHistory.ProtoReflect.Descriptor instead.
 func (*SessionHistory) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{18}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *SessionHistory) GetMessages() []*HistoryMessage {
@@ -1222,7 +1354,7 @@ type HistoryMessage struct {
 
 func (x *HistoryMessage) Reset() {
 	*x = HistoryMessage{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[19]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1234,7 +1366,7 @@ func (x *HistoryMessage) String() string {
 func (*HistoryMessage) ProtoMessage() {}
 
 func (x *HistoryMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[19]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1247,7 +1379,7 @@ func (x *HistoryMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HistoryMessage.ProtoReflect.Descriptor instead.
 func (*HistoryMessage) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{19}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *HistoryMessage) GetRole() string {
@@ -1301,7 +1433,7 @@ type AddProviderReq struct {
 
 func (x *AddProviderReq) Reset() {
 	*x = AddProviderReq{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[20]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1313,7 +1445,7 @@ func (x *AddProviderReq) String() string {
 func (*AddProviderReq) ProtoMessage() {}
 
 func (x *AddProviderReq) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[20]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1326,7 +1458,7 @@ func (x *AddProviderReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AddProviderReq.ProtoReflect.Descriptor instead.
 func (*AddProviderReq) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{20}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *AddProviderReq) GetAlias() string {
@@ -1391,7 +1523,7 @@ type Provider struct {
 
 func (x *Provider) Reset() {
 	*x = Provider{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[21]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1403,7 +1535,7 @@ func (x *Provider) String() string {
 func (*Provider) ProtoMessage() {}
 
 func (x *Provider) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[21]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1416,7 +1548,7 @@ func (x *Provider) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Provider.ProtoReflect.Descriptor instead.
 func (*Provider) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{21}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *Provider) GetAlias() string {
@@ -1463,7 +1595,7 @@ type ProviderList struct {
 
 func (x *ProviderList) Reset() {
 	*x = ProviderList{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[22]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1475,7 +1607,7 @@ func (x *ProviderList) String() string {
 func (*ProviderList) ProtoMessage() {}
 
 func (x *ProviderList) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[22]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1488,7 +1620,7 @@ func (x *ProviderList) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProviderList.ProtoReflect.Descriptor instead.
 func (*ProviderList) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{22}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *ProviderList) GetProviders() []*Provider {
@@ -1507,7 +1639,7 @@ type TestProviderReq struct {
 
 func (x *TestProviderReq) Reset() {
 	*x = TestProviderReq{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[23]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1519,7 +1651,7 @@ func (x *TestProviderReq) String() string {
 func (*TestProviderReq) ProtoMessage() {}
 
 func (x *TestProviderReq) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[23]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1532,7 +1664,7 @@ func (x *TestProviderReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TestProviderReq.ProtoReflect.Descriptor instead.
 func (*TestProviderReq) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{23}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *TestProviderReq) GetAlias() string {
@@ -1553,7 +1685,7 @@ type TestProviderResult struct {
 
 func (x *TestProviderResult) Reset() {
 	*x = TestProviderResult{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[24]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1565,7 +1697,7 @@ func (x *TestProviderResult) String() string {
 func (*TestProviderResult) ProtoMessage() {}
 
 func (x *TestProviderResult) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[24]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1578,7 +1710,7 @@ func (x *TestProviderResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TestProviderResult.ProtoReflect.Descriptor instead.
 func (*TestProviderResult) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{24}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *TestProviderResult) GetSuccess() bool {
@@ -1611,7 +1743,7 @@ type RemoveProviderReq struct {
 
 func (x *RemoveProviderReq) Reset() {
 	*x = RemoveProviderReq{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[25]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1623,7 +1755,7 @@ func (x *RemoveProviderReq) String() string {
 func (*RemoveProviderReq) ProtoMessage() {}
 
 func (x *RemoveProviderReq) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[25]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1636,7 +1768,7 @@ func (x *RemoveProviderReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveProviderReq.ProtoReflect.Descriptor instead.
 func (*RemoveProviderReq) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{25}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *RemoveProviderReq) GetAlias() string {
@@ -1655,7 +1787,7 @@ type SetDefaultProviderReq struct {
 
 func (x *SetDefaultProviderReq) Reset() {
 	*x = SetDefaultProviderReq{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[26]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1667,7 +1799,7 @@ func (x *SetDefaultProviderReq) String() string {
 func (*SetDefaultProviderReq) ProtoMessage() {}
 
 func (x *SetDefaultProviderReq) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[26]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1680,7 +1812,7 @@ func (x *SetDefaultProviderReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetDefaultProviderReq.ProtoReflect.Descriptor instead.
 func (*SetDefaultProviderReq) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{26}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *SetDefaultProviderReq) GetAlias() string {
@@ -1707,7 +1839,7 @@ type Agent struct {
 
 func (x *Agent) Reset() {
 	*x = Agent{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[27]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1719,7 +1851,7 @@ func (x *Agent) String() string {
 func (*Agent) ProtoMessage() {}
 
 func (x *Agent) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[27]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1732,7 +1864,7 @@ func (x *Agent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Agent.ProtoReflect.Descriptor instead.
 func (*Agent) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{27}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *Agent) GetId() string {
@@ -1800,7 +1932,7 @@ type AgentList struct {
 
 func (x *AgentList) Reset() {
 	*x = AgentList{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[28]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1812,7 +1944,7 @@ func (x *AgentList) String() string {
 func (*AgentList) ProtoMessage() {}
 
 func (x *AgentList) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[28]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1825,7 +1957,7 @@ func (x *AgentList) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentList.ProtoReflect.Descriptor instead.
 func (*AgentList) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{28}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *AgentList) GetAgents() []*Agent {
@@ -1844,7 +1976,7 @@ type AgentStatusReq struct {
 
 func (x *AgentStatusReq) Reset() {
 	*x = AgentStatusReq{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[29]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1856,7 +1988,7 @@ func (x *AgentStatusReq) String() string {
 func (*AgentStatusReq) ProtoMessage() {}
 
 func (x *AgentStatusReq) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[29]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1869,7 +2001,7 @@ func (x *AgentStatusReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentStatusReq.ProtoReflect.Descriptor instead.
 func (*AgentStatusReq) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{29}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *AgentStatusReq) GetAgentId() string {
@@ -1891,7 +2023,7 @@ type StartTeamReq struct {
 
 func (x *StartTeamReq) Reset() {
 	*x = StartTeamReq{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[30]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1903,7 +2035,7 @@ func (x *StartTeamReq) String() string {
 func (*StartTeamReq) ProtoMessage() {}
 
 func (x *StartTeamReq) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[30]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1916,7 +2048,7 @@ func (x *StartTeamReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StartTeamReq.ProtoReflect.Descriptor instead.
 func (*StartTeamReq) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{30}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *StartTeamReq) GetTask() string {
@@ -1959,7 +2091,7 @@ type TeamEvent struct {
 
 func (x *TeamEvent) Reset() {
 	*x = TeamEvent{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[31]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1971,7 +2103,7 @@ func (x *TeamEvent) String() string {
 func (*TeamEvent) ProtoMessage() {}
 
 func (x *TeamEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[31]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1984,7 +2116,7 @@ func (x *TeamEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TeamEvent.ProtoReflect.Descriptor instead.
 func (*TeamEvent) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{31}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *TeamEvent) GetEvent() isTeamEvent_Event {
@@ -2127,7 +2259,7 @@ type TeamStatusReq struct {
 
 func (x *TeamStatusReq) Reset() {
 	*x = TeamStatusReq{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[32]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2139,7 +2271,7 @@ func (x *TeamStatusReq) String() string {
 func (*TeamStatusReq) ProtoMessage() {}
 
 func (x *TeamStatusReq) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[32]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2152,7 +2284,7 @@ func (x *TeamStatusReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TeamStatusReq.ProtoReflect.Descriptor instead.
 func (*TeamStatusReq) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{32}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *TeamStatusReq) GetTeamId() string {
@@ -2174,7 +2306,7 @@ type TeamStatus struct {
 
 func (x *TeamStatus) Reset() {
 	*x = TeamStatus{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[33]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2186,7 +2318,7 @@ func (x *TeamStatus) String() string {
 func (*TeamStatus) ProtoMessage() {}
 
 func (x *TeamStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[33]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2199,7 +2331,7 @@ func (x *TeamStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TeamStatus.ProtoReflect.Descriptor instead.
 func (*TeamStatus) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{33}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *TeamStatus) GetTeamId() string {
@@ -2230,6 +2362,1066 @@ func (x *TeamStatus) GetStatus() string {
 	return ""
 }
 
+// Plan mode
+type PlanStep struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Description   string                 `protobuf:"bytes,2,opt,name=description,proto3" json:"description,omitempty"`
+	Status        string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"` // pending, in_progress, completed, failed, skipped
+	Files         []string               `protobuf:"bytes,4,rep,name=files,proto3" json:"files,omitempty"`
+	Error         string                 `protobuf:"bytes,5,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PlanStep) Reset() {
+	*x = PlanStep{}
+	mi := &file_internal_proto_ratchet_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PlanStep) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PlanStep) ProtoMessage() {}
+
+func (x *PlanStep) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_ratchet_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PlanStep.ProtoReflect.Descriptor instead.
+func (*PlanStep) Descriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *PlanStep) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *PlanStep) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *PlanStep) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *PlanStep) GetFiles() []string {
+	if x != nil {
+		return x.Files
+	}
+	return nil
+}
+
+func (x *PlanStep) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+type Plan struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	SessionId     string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Goal          string                 `protobuf:"bytes,3,opt,name=goal,proto3" json:"goal,omitempty"`
+	Steps         []*PlanStep            `protobuf:"bytes,4,rep,name=steps,proto3" json:"steps,omitempty"`
+	Status        string                 `protobuf:"bytes,5,opt,name=status,proto3" json:"status,omitempty"` // proposed, approved, executing, completed, rejected
+	CreatedAt     string                 `protobuf:"bytes,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	Feedback      string                 `protobuf:"bytes,7,opt,name=feedback,proto3" json:"feedback,omitempty"` // rejection feedback from user
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Plan) Reset() {
+	*x = Plan{}
+	mi := &file_internal_proto_ratchet_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Plan) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Plan) ProtoMessage() {}
+
+func (x *Plan) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_ratchet_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Plan.ProtoReflect.Descriptor instead.
+func (*Plan) Descriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *Plan) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *Plan) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *Plan) GetGoal() string {
+	if x != nil {
+		return x.Goal
+	}
+	return ""
+}
+
+func (x *Plan) GetSteps() []*PlanStep {
+	if x != nil {
+		return x.Steps
+	}
+	return nil
+}
+
+func (x *Plan) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *Plan) GetCreatedAt() string {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return ""
+}
+
+func (x *Plan) GetFeedback() string {
+	if x != nil {
+		return x.Feedback
+	}
+	return ""
+}
+
+type ApprovePlanReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	PlanId        string                 `protobuf:"bytes,2,opt,name=plan_id,json=planId,proto3" json:"plan_id,omitempty"`
+	SkipSteps     []string               `protobuf:"bytes,3,rep,name=skip_steps,json=skipSteps,proto3" json:"skip_steps,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ApprovePlanReq) Reset() {
+	*x = ApprovePlanReq{}
+	mi := &file_internal_proto_ratchet_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ApprovePlanReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ApprovePlanReq) ProtoMessage() {}
+
+func (x *ApprovePlanReq) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_ratchet_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ApprovePlanReq.ProtoReflect.Descriptor instead.
+func (*ApprovePlanReq) Descriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *ApprovePlanReq) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *ApprovePlanReq) GetPlanId() string {
+	if x != nil {
+		return x.PlanId
+	}
+	return ""
+}
+
+func (x *ApprovePlanReq) GetSkipSteps() []string {
+	if x != nil {
+		return x.SkipSteps
+	}
+	return nil
+}
+
+type RejectPlanReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	PlanId        string                 `protobuf:"bytes,2,opt,name=plan_id,json=planId,proto3" json:"plan_id,omitempty"`
+	Feedback      string                 `protobuf:"bytes,3,opt,name=feedback,proto3" json:"feedback,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RejectPlanReq) Reset() {
+	*x = RejectPlanReq{}
+	mi := &file_internal_proto_ratchet_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RejectPlanReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RejectPlanReq) ProtoMessage() {}
+
+func (x *RejectPlanReq) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_ratchet_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RejectPlanReq.ProtoReflect.Descriptor instead.
+func (*RejectPlanReq) Descriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{38}
+}
+
+func (x *RejectPlanReq) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *RejectPlanReq) GetPlanId() string {
+	if x != nil {
+		return x.PlanId
+	}
+	return ""
+}
+
+func (x *RejectPlanReq) GetFeedback() string {
+	if x != nil {
+		return x.Feedback
+	}
+	return ""
+}
+
+// Cron scheduling
+type CronJob struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	SessionId     string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Schedule      string                 `protobuf:"bytes,3,opt,name=schedule,proto3" json:"schedule,omitempty"` // duration ("5m") or cron expr ("*/10 * * * *")
+	Command       string                 `protobuf:"bytes,4,opt,name=command,proto3" json:"command,omitempty"`   // slash command or prompt
+	Status        string                 `protobuf:"bytes,5,opt,name=status,proto3" json:"status,omitempty"`     // active, paused, stopped
+	LastRun       string                 `protobuf:"bytes,6,opt,name=last_run,json=lastRun,proto3" json:"last_run,omitempty"`
+	NextRun       string                 `protobuf:"bytes,7,opt,name=next_run,json=nextRun,proto3" json:"next_run,omitempty"`
+	RunCount      int32                  `protobuf:"varint,8,opt,name=run_count,json=runCount,proto3" json:"run_count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CronJob) Reset() {
+	*x = CronJob{}
+	mi := &file_internal_proto_ratchet_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CronJob) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CronJob) ProtoMessage() {}
+
+func (x *CronJob) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_ratchet_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CronJob.ProtoReflect.Descriptor instead.
+func (*CronJob) Descriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{39}
+}
+
+func (x *CronJob) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *CronJob) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *CronJob) GetSchedule() string {
+	if x != nil {
+		return x.Schedule
+	}
+	return ""
+}
+
+func (x *CronJob) GetCommand() string {
+	if x != nil {
+		return x.Command
+	}
+	return ""
+}
+
+func (x *CronJob) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *CronJob) GetLastRun() string {
+	if x != nil {
+		return x.LastRun
+	}
+	return ""
+}
+
+func (x *CronJob) GetNextRun() string {
+	if x != nil {
+		return x.NextRun
+	}
+	return ""
+}
+
+func (x *CronJob) GetRunCount() int32 {
+	if x != nil {
+		return x.RunCount
+	}
+	return 0
+}
+
+type CreateCronReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Schedule      string                 `protobuf:"bytes,2,opt,name=schedule,proto3" json:"schedule,omitempty"`
+	Command       string                 `protobuf:"bytes,3,opt,name=command,proto3" json:"command,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateCronReq) Reset() {
+	*x = CreateCronReq{}
+	mi := &file_internal_proto_ratchet_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateCronReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateCronReq) ProtoMessage() {}
+
+func (x *CreateCronReq) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_ratchet_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateCronReq.ProtoReflect.Descriptor instead.
+func (*CreateCronReq) Descriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{40}
+}
+
+func (x *CreateCronReq) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *CreateCronReq) GetSchedule() string {
+	if x != nil {
+		return x.Schedule
+	}
+	return ""
+}
+
+func (x *CreateCronReq) GetCommand() string {
+	if x != nil {
+		return x.Command
+	}
+	return ""
+}
+
+type CronJobList struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Jobs          []*CronJob             `protobuf:"bytes,1,rep,name=jobs,proto3" json:"jobs,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CronJobList) Reset() {
+	*x = CronJobList{}
+	mi := &file_internal_proto_ratchet_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CronJobList) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CronJobList) ProtoMessage() {}
+
+func (x *CronJobList) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_ratchet_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CronJobList.ProtoReflect.Descriptor instead.
+func (*CronJobList) Descriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *CronJobList) GetJobs() []*CronJob {
+	if x != nil {
+		return x.Jobs
+	}
+	return nil
+}
+
+type CronJobReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	JobId         string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CronJobReq) Reset() {
+	*x = CronJobReq{}
+	mi := &file_internal_proto_ratchet_proto_msgTypes[42]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CronJobReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CronJobReq) ProtoMessage() {}
+
+func (x *CronJobReq) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_ratchet_proto_msgTypes[42]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CronJobReq.ProtoReflect.Descriptor instead.
+func (*CronJobReq) Descriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{42}
+}
+
+func (x *CronJobReq) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+// Fleet mode
+type StartFleetReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	PlanId        string                 `protobuf:"bytes,2,opt,name=plan_id,json=planId,proto3" json:"plan_id,omitempty"`
+	MaxWorkers    int32                  `protobuf:"varint,3,opt,name=max_workers,json=maxWorkers,proto3" json:"max_workers,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StartFleetReq) Reset() {
+	*x = StartFleetReq{}
+	mi := &file_internal_proto_ratchet_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StartFleetReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StartFleetReq) ProtoMessage() {}
+
+func (x *StartFleetReq) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_ratchet_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StartFleetReq.ProtoReflect.Descriptor instead.
+func (*StartFleetReq) Descriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{43}
+}
+
+func (x *StartFleetReq) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *StartFleetReq) GetPlanId() string {
+	if x != nil {
+		return x.PlanId
+	}
+	return ""
+}
+
+func (x *StartFleetReq) GetMaxWorkers() int32 {
+	if x != nil {
+		return x.MaxWorkers
+	}
+	return 0
+}
+
+type FleetWorker struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	StepId        string                 `protobuf:"bytes,3,opt,name=step_id,json=stepId,proto3" json:"step_id,omitempty"`
+	Status        string                 `protobuf:"bytes,4,opt,name=status,proto3" json:"status,omitempty"` // pending, running, completed, failed
+	Model         string                 `protobuf:"bytes,5,opt,name=model,proto3" json:"model,omitempty"`
+	Provider      string                 `protobuf:"bytes,6,opt,name=provider,proto3" json:"provider,omitempty"`
+	Error         string                 `protobuf:"bytes,7,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FleetWorker) Reset() {
+	*x = FleetWorker{}
+	mi := &file_internal_proto_ratchet_proto_msgTypes[44]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FleetWorker) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FleetWorker) ProtoMessage() {}
+
+func (x *FleetWorker) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_ratchet_proto_msgTypes[44]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FleetWorker.ProtoReflect.Descriptor instead.
+func (*FleetWorker) Descriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{44}
+}
+
+func (x *FleetWorker) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *FleetWorker) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *FleetWorker) GetStepId() string {
+	if x != nil {
+		return x.StepId
+	}
+	return ""
+}
+
+func (x *FleetWorker) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *FleetWorker) GetModel() string {
+	if x != nil {
+		return x.Model
+	}
+	return ""
+}
+
+func (x *FleetWorker) GetProvider() string {
+	if x != nil {
+		return x.Provider
+	}
+	return ""
+}
+
+func (x *FleetWorker) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+type FleetStatus struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	FleetId       string                 `protobuf:"bytes,1,opt,name=fleet_id,json=fleetId,proto3" json:"fleet_id,omitempty"`
+	SessionId     string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Workers       []*FleetWorker         `protobuf:"bytes,3,rep,name=workers,proto3" json:"workers,omitempty"`
+	Status        string                 `protobuf:"bytes,4,opt,name=status,proto3" json:"status,omitempty"` // running, completed, failed
+	Completed     int32                  `protobuf:"varint,5,opt,name=completed,proto3" json:"completed,omitempty"`
+	Total         int32                  `protobuf:"varint,6,opt,name=total,proto3" json:"total,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FleetStatus) Reset() {
+	*x = FleetStatus{}
+	mi := &file_internal_proto_ratchet_proto_msgTypes[45]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FleetStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FleetStatus) ProtoMessage() {}
+
+func (x *FleetStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_ratchet_proto_msgTypes[45]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FleetStatus.ProtoReflect.Descriptor instead.
+func (*FleetStatus) Descriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{45}
+}
+
+func (x *FleetStatus) GetFleetId() string {
+	if x != nil {
+		return x.FleetId
+	}
+	return ""
+}
+
+func (x *FleetStatus) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *FleetStatus) GetWorkers() []*FleetWorker {
+	if x != nil {
+		return x.Workers
+	}
+	return nil
+}
+
+func (x *FleetStatus) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *FleetStatus) GetCompleted() int32 {
+	if x != nil {
+		return x.Completed
+	}
+	return 0
+}
+
+func (x *FleetStatus) GetTotal() int32 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+type FleetStatusReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	FleetId       string                 `protobuf:"bytes,1,opt,name=fleet_id,json=fleetId,proto3" json:"fleet_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FleetStatusReq) Reset() {
+	*x = FleetStatusReq{}
+	mi := &file_internal_proto_ratchet_proto_msgTypes[46]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FleetStatusReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FleetStatusReq) ProtoMessage() {}
+
+func (x *FleetStatusReq) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_ratchet_proto_msgTypes[46]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FleetStatusReq.ProtoReflect.Descriptor instead.
+func (*FleetStatusReq) Descriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{46}
+}
+
+func (x *FleetStatusReq) GetFleetId() string {
+	if x != nil {
+		return x.FleetId
+	}
+	return ""
+}
+
+type KillFleetWorkerReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	FleetId       string                 `protobuf:"bytes,1,opt,name=fleet_id,json=fleetId,proto3" json:"fleet_id,omitempty"`
+	WorkerId      string                 `protobuf:"bytes,2,opt,name=worker_id,json=workerId,proto3" json:"worker_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *KillFleetWorkerReq) Reset() {
+	*x = KillFleetWorkerReq{}
+	mi := &file_internal_proto_ratchet_proto_msgTypes[47]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *KillFleetWorkerReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*KillFleetWorkerReq) ProtoMessage() {}
+
+func (x *KillFleetWorkerReq) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_ratchet_proto_msgTypes[47]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use KillFleetWorkerReq.ProtoReflect.Descriptor instead.
+func (*KillFleetWorkerReq) Descriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{47}
+}
+
+func (x *KillFleetWorkerReq) GetFleetId() string {
+	if x != nil {
+		return x.FleetId
+	}
+	return ""
+}
+
+func (x *KillFleetWorkerReq) GetWorkerId() string {
+	if x != nil {
+		return x.WorkerId
+	}
+	return ""
+}
+
+// Job control
+type Job struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Type          string                 `protobuf:"bytes,2,opt,name=type,proto3" json:"type,omitempty"` // session, fleet_worker, team_agent, cron, tool_exec
+	Name          string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	Status        string                 `protobuf:"bytes,4,opt,name=status,proto3" json:"status,omitempty"` // running, paused, completed, failed, pending
+	SessionId     string                 `protobuf:"bytes,5,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	StartedAt     string                 `protobuf:"bytes,6,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	Elapsed       string                 `protobuf:"bytes,7,opt,name=elapsed,proto3" json:"elapsed,omitempty"`
+	Metadata      map[string]string      `protobuf:"bytes,8,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Job) Reset() {
+	*x = Job{}
+	mi := &file_internal_proto_ratchet_proto_msgTypes[48]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Job) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Job) ProtoMessage() {}
+
+func (x *Job) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_ratchet_proto_msgTypes[48]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Job.ProtoReflect.Descriptor instead.
+func (*Job) Descriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{48}
+}
+
+func (x *Job) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *Job) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *Job) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *Job) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *Job) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *Job) GetStartedAt() string {
+	if x != nil {
+		return x.StartedAt
+	}
+	return ""
+}
+
+func (x *Job) GetElapsed() string {
+	if x != nil {
+		return x.Elapsed
+	}
+	return ""
+}
+
+func (x *Job) GetMetadata() map[string]string {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
+}
+
+type JobList struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Jobs          []*Job                 `protobuf:"bytes,1,rep,name=jobs,proto3" json:"jobs,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *JobList) Reset() {
+	*x = JobList{}
+	mi := &file_internal_proto_ratchet_proto_msgTypes[49]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *JobList) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*JobList) ProtoMessage() {}
+
+func (x *JobList) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_ratchet_proto_msgTypes[49]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use JobList.ProtoReflect.Descriptor instead.
+func (*JobList) Descriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{49}
+}
+
+func (x *JobList) GetJobs() []*Job {
+	if x != nil {
+		return x.Jobs
+	}
+	return nil
+}
+
+type JobReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	JobId         string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *JobReq) Reset() {
+	*x = JobReq{}
+	mi := &file_internal_proto_ratchet_proto_msgTypes[50]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *JobReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*JobReq) ProtoMessage() {}
+
+func (x *JobReq) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_ratchet_proto_msgTypes[50]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use JobReq.ProtoReflect.Descriptor instead.
+func (*JobReq) Descriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{50}
+}
+
+func (x *JobReq) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
 // Daemon health
 type HealthResponse struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
@@ -2243,7 +3435,7 @@ type HealthResponse struct {
 
 func (x *HealthResponse) Reset() {
 	*x = HealthResponse{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[34]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2255,7 +3447,7 @@ func (x *HealthResponse) String() string {
 func (*HealthResponse) ProtoMessage() {}
 
 func (x *HealthResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[34]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2268,7 +3460,7 @@ func (x *HealthResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthResponse.ProtoReflect.Descriptor instead.
 func (*HealthResponse) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{34}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *HealthResponse) GetHealthy() bool {
@@ -2336,7 +3528,7 @@ const file_internal_proto_ratchet_proto_rawDesc = "" +
 	"\x0eSendMessageReq\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x18\n" +
-	"\acontent\x18\x02 \x01(\tR\acontent\"\x8a\x04\n" +
+	"\acontent\x18\x02 \x01(\tR\acontent\"\x8c\x06\n" +
 	"\tChatEvent\x12+\n" +
 	"\x05token\x18\x01 \x01(\v2\x13.ratchet.TokenDeltaH\x00R\x05token\x127\n" +
 	"\n" +
@@ -2350,8 +3542,19 @@ const file_internal_proto_ratchet_proto_rawDesc = "" +
 	"\ragent_message\x18\x06 \x01(\v2\x15.ratchet.AgentMessageH\x00R\fagentMessage\x126\n" +
 	"\bcomplete\x18\a \x01(\v2\x18.ratchet.SessionCompleteH\x00R\bcomplete\x12+\n" +
 	"\x05error\x18\b \x01(\v2\x13.ratchet.ErrorEventH\x00R\x05error\x123\n" +
-	"\ahistory\x18\t \x01(\v2\x17.ratchet.SessionHistoryH\x00R\ahistoryB\a\n" +
-	"\x05event\"&\n" +
+	"\ahistory\x18\t \x01(\v2\x17.ratchet.SessionHistoryH\x00R\ahistory\x124\n" +
+	"\rplan_proposed\x18\n" +
+	" \x01(\v2\r.ratchet.PlanH\x00R\fplanProposed\x12=\n" +
+	"\x10plan_step_update\x18\v \x01(\v2\x11.ratchet.PlanStepH\x00R\x0eplanStepUpdate\x129\n" +
+	"\ffleet_status\x18\f \x01(\v2\x14.ratchet.FleetStatusH\x00R\vfleetStatus\x12P\n" +
+	"\x12context_compressed\x18\r \x01(\v2\x1f.ratchet.ContextCompressedEventH\x00R\x11contextCompressedB\a\n" +
+	"\x05event\"\xa1\x01\n" +
+	"\x16ContextCompressedEvent\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x18\n" +
+	"\asummary\x18\x02 \x01(\tR\asummary\x12)\n" +
+	"\x10messages_removed\x18\x03 \x01(\x05R\x0fmessagesRemoved\x12#\n" +
+	"\rmessages_kept\x18\x04 \x01(\x05R\fmessagesKept\"&\n" +
 	"\n" +
 	"TokenDelta\x12\x18\n" +
 	"\acontent\x18\x01 \x01(\tR\acontent\"l\n" +
@@ -2471,12 +3674,104 @@ const file_internal_proto_ratchet_proto_rawDesc = "" +
 	"\ateam_id\x18\x01 \x01(\tR\x06teamId\x12\x12\n" +
 	"\x04task\x18\x02 \x01(\tR\x04task\x12&\n" +
 	"\x06agents\x18\x03 \x03(\v2\x0e.ratchet.AgentR\x06agents\x12\x16\n" +
-	"\x06status\x18\x04 \x01(\tR\x06status\"\x90\x01\n" +
+	"\x06status\x18\x04 \x01(\tR\x06status\"\x80\x01\n" +
+	"\bPlanStep\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12 \n" +
+	"\vdescription\x18\x02 \x01(\tR\vdescription\x12\x16\n" +
+	"\x06status\x18\x03 \x01(\tR\x06status\x12\x14\n" +
+	"\x05files\x18\x04 \x03(\tR\x05files\x12\x14\n" +
+	"\x05error\x18\x05 \x01(\tR\x05error\"\xc5\x01\n" +
+	"\x04Plan\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x12\n" +
+	"\x04goal\x18\x03 \x01(\tR\x04goal\x12'\n" +
+	"\x05steps\x18\x04 \x03(\v2\x11.ratchet.PlanStepR\x05steps\x12\x16\n" +
+	"\x06status\x18\x05 \x01(\tR\x06status\x12\x1d\n" +
+	"\n" +
+	"created_at\x18\x06 \x01(\tR\tcreatedAt\x12\x1a\n" +
+	"\bfeedback\x18\a \x01(\tR\bfeedback\"g\n" +
+	"\x0eApprovePlanReq\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x17\n" +
+	"\aplan_id\x18\x02 \x01(\tR\x06planId\x12\x1d\n" +
+	"\n" +
+	"skip_steps\x18\x03 \x03(\tR\tskipSteps\"c\n" +
+	"\rRejectPlanReq\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x17\n" +
+	"\aplan_id\x18\x02 \x01(\tR\x06planId\x12\x1a\n" +
+	"\bfeedback\x18\x03 \x01(\tR\bfeedback\"\xd9\x01\n" +
+	"\aCronJob\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x1a\n" +
+	"\bschedule\x18\x03 \x01(\tR\bschedule\x12\x18\n" +
+	"\acommand\x18\x04 \x01(\tR\acommand\x12\x16\n" +
+	"\x06status\x18\x05 \x01(\tR\x06status\x12\x19\n" +
+	"\blast_run\x18\x06 \x01(\tR\alastRun\x12\x19\n" +
+	"\bnext_run\x18\a \x01(\tR\anextRun\x12\x1b\n" +
+	"\trun_count\x18\b \x01(\x05R\brunCount\"d\n" +
+	"\rCreateCronReq\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x1a\n" +
+	"\bschedule\x18\x02 \x01(\tR\bschedule\x12\x18\n" +
+	"\acommand\x18\x03 \x01(\tR\acommand\"3\n" +
+	"\vCronJobList\x12$\n" +
+	"\x04jobs\x18\x01 \x03(\v2\x10.ratchet.CronJobR\x04jobs\"#\n" +
+	"\n" +
+	"CronJobReq\x12\x15\n" +
+	"\x06job_id\x18\x01 \x01(\tR\x05jobId\"h\n" +
+	"\rStartFleetReq\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x17\n" +
+	"\aplan_id\x18\x02 \x01(\tR\x06planId\x12\x1f\n" +
+	"\vmax_workers\x18\x03 \x01(\x05R\n" +
+	"maxWorkers\"\xaa\x01\n" +
+	"\vFleetWorker\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x17\n" +
+	"\astep_id\x18\x03 \x01(\tR\x06stepId\x12\x16\n" +
+	"\x06status\x18\x04 \x01(\tR\x06status\x12\x14\n" +
+	"\x05model\x18\x05 \x01(\tR\x05model\x12\x1a\n" +
+	"\bprovider\x18\x06 \x01(\tR\bprovider\x12\x14\n" +
+	"\x05error\x18\a \x01(\tR\x05error\"\xc3\x01\n" +
+	"\vFleetStatus\x12\x19\n" +
+	"\bfleet_id\x18\x01 \x01(\tR\afleetId\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12.\n" +
+	"\aworkers\x18\x03 \x03(\v2\x14.ratchet.FleetWorkerR\aworkers\x12\x16\n" +
+	"\x06status\x18\x04 \x01(\tR\x06status\x12\x1c\n" +
+	"\tcompleted\x18\x05 \x01(\x05R\tcompleted\x12\x14\n" +
+	"\x05total\x18\x06 \x01(\x05R\x05total\"+\n" +
+	"\x0eFleetStatusReq\x12\x19\n" +
+	"\bfleet_id\x18\x01 \x01(\tR\afleetId\"L\n" +
+	"\x12KillFleetWorkerReq\x12\x19\n" +
+	"\bfleet_id\x18\x01 \x01(\tR\afleetId\x12\x1b\n" +
+	"\tworker_id\x18\x02 \x01(\tR\bworkerId\"\xa2\x02\n" +
+	"\x03Job\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04type\x18\x02 \x01(\tR\x04type\x12\x12\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\x12\x16\n" +
+	"\x06status\x18\x04 \x01(\tR\x06status\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x05 \x01(\tR\tsessionId\x12\x1d\n" +
+	"\n" +
+	"started_at\x18\x06 \x01(\tR\tstartedAt\x12\x18\n" +
+	"\aelapsed\x18\a \x01(\tR\aelapsed\x126\n" +
+	"\bmetadata\x18\b \x03(\v2\x1a.ratchet.Job.MetadataEntryR\bmetadata\x1a;\n" +
+	"\rMetadataEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"+\n" +
+	"\aJobList\x12 \n" +
+	"\x04jobs\x18\x01 \x03(\v2\f.ratchet.JobR\x04jobs\"\x1f\n" +
+	"\x06JobReq\x12\x15\n" +
+	"\x06job_id\x18\x01 \x01(\tR\x05jobId\"\x90\x01\n" +
 	"\x0eHealthResponse\x12\x18\n" +
 	"\ahealthy\x18\x01 \x01(\bR\ahealthy\x12'\n" +
 	"\x0factive_sessions\x18\x02 \x01(\x05R\x0eactiveSessions\x12#\n" +
 	"\ractive_agents\x18\x03 \x01(\x05R\factiveAgents\x12\x16\n" +
-	"\x06uptime\x18\x04 \x01(\tR\x06uptime2\xa8\b\n" +
+	"\x06uptime\x18\x04 \x01(\tR\x06uptime2\x8f\x0e\n" +
 	"\rRatchetDaemon\x12<\n" +
 	"\rCreateSession\x12\x19.ratchet.CreateSessionReq\x1a\x10.ratchet.Session\x124\n" +
 	"\fListSessions\x12\x0e.ratchet.Empty\x1a\x14.ratchet.SessionList\x129\n" +
@@ -2494,7 +3789,25 @@ const file_internal_proto_ratchet_proto_rawDesc = "" +
 	"ListAgents\x12\x0e.ratchet.Empty\x1a\x12.ratchet.AgentList\x129\n" +
 	"\x0eGetAgentStatus\x12\x17.ratchet.AgentStatusReq\x1a\x0e.ratchet.Agent\x128\n" +
 	"\tStartTeam\x12\x15.ratchet.StartTeamReq\x1a\x12.ratchet.TeamEvent0\x01\x12<\n" +
-	"\rGetTeamStatus\x12\x16.ratchet.TeamStatusReq\x1a\x13.ratchet.TeamStatus\x121\n" +
+	"\rGetTeamStatus\x12\x16.ratchet.TeamStatusReq\x1a\x13.ratchet.TeamStatus\x12<\n" +
+	"\vApprovePlan\x12\x17.ratchet.ApprovePlanReq\x1a\x12.ratchet.ChatEvent0\x01\x124\n" +
+	"\n" +
+	"RejectPlan\x12\x16.ratchet.RejectPlanReq\x1a\x0e.ratchet.Empty\x12:\n" +
+	"\n" +
+	"StartFleet\x12\x16.ratchet.StartFleetReq\x1a\x12.ratchet.ChatEvent0\x01\x12?\n" +
+	"\x0eGetFleetStatus\x12\x17.ratchet.FleetStatusReq\x1a\x14.ratchet.FleetStatus\x12>\n" +
+	"\x0fKillFleetWorker\x12\x1b.ratchet.KillFleetWorkerReq\x1a\x0e.ratchet.Empty\x126\n" +
+	"\n" +
+	"CreateCron\x12\x16.ratchet.CreateCronReq\x1a\x10.ratchet.CronJob\x121\n" +
+	"\tListCrons\x12\x0e.ratchet.Empty\x1a\x14.ratchet.CronJobList\x120\n" +
+	"\tPauseCron\x12\x13.ratchet.CronJobReq\x1a\x0e.ratchet.Empty\x121\n" +
+	"\n" +
+	"ResumeCron\x12\x13.ratchet.CronJobReq\x1a\x0e.ratchet.Empty\x12/\n" +
+	"\bStopCron\x12\x13.ratchet.CronJobReq\x1a\x0e.ratchet.Empty\x12,\n" +
+	"\bListJobs\x12\x0e.ratchet.Empty\x1a\x10.ratchet.JobList\x12+\n" +
+	"\bPauseJob\x12\x0f.ratchet.JobReq\x1a\x0e.ratchet.Empty\x12,\n" +
+	"\tResumeJob\x12\x0f.ratchet.JobReq\x1a\x0e.ratchet.Empty\x12*\n" +
+	"\aKillJob\x12\x0f.ratchet.JobReq\x1a\x0e.ratchet.Empty\x121\n" +
 	"\x06Health\x12\x0e.ratchet.Empty\x1a\x17.ratchet.HealthResponse\x12*\n" +
 	"\bShutdown\x12\x0e.ratchet.Empty\x1a\x0e.ratchet.EmptyB3Z1github.com/GoCodeAlone/ratchet-cli/internal/protob\x06proto3"
 
@@ -2510,111 +3823,166 @@ func file_internal_proto_ratchet_proto_rawDescGZIP() []byte {
 	return file_internal_proto_ratchet_proto_rawDescData
 }
 
-var file_internal_proto_ratchet_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
+var file_internal_proto_ratchet_proto_msgTypes = make([]protoimpl.MessageInfo, 53)
 var file_internal_proto_ratchet_proto_goTypes = []any{
-	(*Empty)(nil),                 // 0: ratchet.Empty
-	(*Session)(nil),               // 1: ratchet.Session
-	(*CreateSessionReq)(nil),      // 2: ratchet.CreateSessionReq
-	(*SessionList)(nil),           // 3: ratchet.SessionList
-	(*AttachReq)(nil),             // 4: ratchet.AttachReq
-	(*DetachReq)(nil),             // 5: ratchet.DetachReq
-	(*KillReq)(nil),               // 6: ratchet.KillReq
-	(*SendMessageReq)(nil),        // 7: ratchet.SendMessageReq
-	(*ChatEvent)(nil),             // 8: ratchet.ChatEvent
-	(*TokenDelta)(nil),            // 9: ratchet.TokenDelta
-	(*ToolCallStart)(nil),         // 10: ratchet.ToolCallStart
-	(*ToolCallResult)(nil),        // 11: ratchet.ToolCallResult
-	(*PermissionRequest)(nil),     // 12: ratchet.PermissionRequest
-	(*PermissionResponse)(nil),    // 13: ratchet.PermissionResponse
-	(*AgentSpawned)(nil),          // 14: ratchet.AgentSpawned
-	(*AgentMessage)(nil),          // 15: ratchet.AgentMessage
-	(*SessionComplete)(nil),       // 16: ratchet.SessionComplete
-	(*ErrorEvent)(nil),            // 17: ratchet.ErrorEvent
-	(*SessionHistory)(nil),        // 18: ratchet.SessionHistory
-	(*HistoryMessage)(nil),        // 19: ratchet.HistoryMessage
-	(*AddProviderReq)(nil),        // 20: ratchet.AddProviderReq
-	(*Provider)(nil),              // 21: ratchet.Provider
-	(*ProviderList)(nil),          // 22: ratchet.ProviderList
-	(*TestProviderReq)(nil),       // 23: ratchet.TestProviderReq
-	(*TestProviderResult)(nil),    // 24: ratchet.TestProviderResult
-	(*RemoveProviderReq)(nil),     // 25: ratchet.RemoveProviderReq
-	(*SetDefaultProviderReq)(nil), // 26: ratchet.SetDefaultProviderReq
-	(*Agent)(nil),                 // 27: ratchet.Agent
-	(*AgentList)(nil),             // 28: ratchet.AgentList
-	(*AgentStatusReq)(nil),        // 29: ratchet.AgentStatusReq
-	(*StartTeamReq)(nil),          // 30: ratchet.StartTeamReq
-	(*TeamEvent)(nil),             // 31: ratchet.TeamEvent
-	(*TeamStatusReq)(nil),         // 32: ratchet.TeamStatusReq
-	(*TeamStatus)(nil),            // 33: ratchet.TeamStatus
-	(*HealthResponse)(nil),        // 34: ratchet.HealthResponse
-	(*timestamppb.Timestamp)(nil), // 35: google.protobuf.Timestamp
+	(*Empty)(nil),                  // 0: ratchet.Empty
+	(*Session)(nil),                // 1: ratchet.Session
+	(*CreateSessionReq)(nil),       // 2: ratchet.CreateSessionReq
+	(*SessionList)(nil),            // 3: ratchet.SessionList
+	(*AttachReq)(nil),              // 4: ratchet.AttachReq
+	(*DetachReq)(nil),              // 5: ratchet.DetachReq
+	(*KillReq)(nil),                // 6: ratchet.KillReq
+	(*SendMessageReq)(nil),         // 7: ratchet.SendMessageReq
+	(*ChatEvent)(nil),              // 8: ratchet.ChatEvent
+	(*ContextCompressedEvent)(nil), // 9: ratchet.ContextCompressedEvent
+	(*TokenDelta)(nil),             // 10: ratchet.TokenDelta
+	(*ToolCallStart)(nil),          // 11: ratchet.ToolCallStart
+	(*ToolCallResult)(nil),         // 12: ratchet.ToolCallResult
+	(*PermissionRequest)(nil),      // 13: ratchet.PermissionRequest
+	(*PermissionResponse)(nil),     // 14: ratchet.PermissionResponse
+	(*AgentSpawned)(nil),           // 15: ratchet.AgentSpawned
+	(*AgentMessage)(nil),           // 16: ratchet.AgentMessage
+	(*SessionComplete)(nil),        // 17: ratchet.SessionComplete
+	(*ErrorEvent)(nil),             // 18: ratchet.ErrorEvent
+	(*SessionHistory)(nil),         // 19: ratchet.SessionHistory
+	(*HistoryMessage)(nil),         // 20: ratchet.HistoryMessage
+	(*AddProviderReq)(nil),         // 21: ratchet.AddProviderReq
+	(*Provider)(nil),               // 22: ratchet.Provider
+	(*ProviderList)(nil),           // 23: ratchet.ProviderList
+	(*TestProviderReq)(nil),        // 24: ratchet.TestProviderReq
+	(*TestProviderResult)(nil),     // 25: ratchet.TestProviderResult
+	(*RemoveProviderReq)(nil),      // 26: ratchet.RemoveProviderReq
+	(*SetDefaultProviderReq)(nil),  // 27: ratchet.SetDefaultProviderReq
+	(*Agent)(nil),                  // 28: ratchet.Agent
+	(*AgentList)(nil),              // 29: ratchet.AgentList
+	(*AgentStatusReq)(nil),         // 30: ratchet.AgentStatusReq
+	(*StartTeamReq)(nil),           // 31: ratchet.StartTeamReq
+	(*TeamEvent)(nil),              // 32: ratchet.TeamEvent
+	(*TeamStatusReq)(nil),          // 33: ratchet.TeamStatusReq
+	(*TeamStatus)(nil),             // 34: ratchet.TeamStatus
+	(*PlanStep)(nil),               // 35: ratchet.PlanStep
+	(*Plan)(nil),                   // 36: ratchet.Plan
+	(*ApprovePlanReq)(nil),         // 37: ratchet.ApprovePlanReq
+	(*RejectPlanReq)(nil),          // 38: ratchet.RejectPlanReq
+	(*CronJob)(nil),                // 39: ratchet.CronJob
+	(*CreateCronReq)(nil),          // 40: ratchet.CreateCronReq
+	(*CronJobList)(nil),            // 41: ratchet.CronJobList
+	(*CronJobReq)(nil),             // 42: ratchet.CronJobReq
+	(*StartFleetReq)(nil),          // 43: ratchet.StartFleetReq
+	(*FleetWorker)(nil),            // 44: ratchet.FleetWorker
+	(*FleetStatus)(nil),            // 45: ratchet.FleetStatus
+	(*FleetStatusReq)(nil),         // 46: ratchet.FleetStatusReq
+	(*KillFleetWorkerReq)(nil),     // 47: ratchet.KillFleetWorkerReq
+	(*Job)(nil),                    // 48: ratchet.Job
+	(*JobList)(nil),                // 49: ratchet.JobList
+	(*JobReq)(nil),                 // 50: ratchet.JobReq
+	(*HealthResponse)(nil),         // 51: ratchet.HealthResponse
+	nil,                            // 52: ratchet.Job.MetadataEntry
+	(*timestamppb.Timestamp)(nil),  // 53: google.protobuf.Timestamp
 }
 var file_internal_proto_ratchet_proto_depIdxs = []int32{
-	35, // 0: ratchet.Session.created_at:type_name -> google.protobuf.Timestamp
+	53, // 0: ratchet.Session.created_at:type_name -> google.protobuf.Timestamp
 	1,  // 1: ratchet.SessionList.sessions:type_name -> ratchet.Session
-	9,  // 2: ratchet.ChatEvent.token:type_name -> ratchet.TokenDelta
-	10, // 3: ratchet.ChatEvent.tool_start:type_name -> ratchet.ToolCallStart
-	11, // 4: ratchet.ChatEvent.tool_result:type_name -> ratchet.ToolCallResult
-	12, // 5: ratchet.ChatEvent.permission:type_name -> ratchet.PermissionRequest
-	14, // 6: ratchet.ChatEvent.agent_spawned:type_name -> ratchet.AgentSpawned
-	15, // 7: ratchet.ChatEvent.agent_message:type_name -> ratchet.AgentMessage
-	16, // 8: ratchet.ChatEvent.complete:type_name -> ratchet.SessionComplete
-	17, // 9: ratchet.ChatEvent.error:type_name -> ratchet.ErrorEvent
-	18, // 10: ratchet.ChatEvent.history:type_name -> ratchet.SessionHistory
-	19, // 11: ratchet.SessionHistory.messages:type_name -> ratchet.HistoryMessage
-	35, // 12: ratchet.HistoryMessage.timestamp:type_name -> google.protobuf.Timestamp
-	21, // 13: ratchet.ProviderList.providers:type_name -> ratchet.Provider
-	27, // 14: ratchet.AgentList.agents:type_name -> ratchet.Agent
-	14, // 15: ratchet.TeamEvent.agent_spawned:type_name -> ratchet.AgentSpawned
-	15, // 16: ratchet.TeamEvent.agent_message:type_name -> ratchet.AgentMessage
-	9,  // 17: ratchet.TeamEvent.token:type_name -> ratchet.TokenDelta
-	10, // 18: ratchet.TeamEvent.tool_start:type_name -> ratchet.ToolCallStart
-	11, // 19: ratchet.TeamEvent.tool_result:type_name -> ratchet.ToolCallResult
-	12, // 20: ratchet.TeamEvent.permission:type_name -> ratchet.PermissionRequest
-	16, // 21: ratchet.TeamEvent.complete:type_name -> ratchet.SessionComplete
-	17, // 22: ratchet.TeamEvent.error:type_name -> ratchet.ErrorEvent
-	27, // 23: ratchet.TeamStatus.agents:type_name -> ratchet.Agent
-	2,  // 24: ratchet.RatchetDaemon.CreateSession:input_type -> ratchet.CreateSessionReq
-	0,  // 25: ratchet.RatchetDaemon.ListSessions:input_type -> ratchet.Empty
-	4,  // 26: ratchet.RatchetDaemon.AttachSession:input_type -> ratchet.AttachReq
-	5,  // 27: ratchet.RatchetDaemon.DetachSession:input_type -> ratchet.DetachReq
-	6,  // 28: ratchet.RatchetDaemon.KillSession:input_type -> ratchet.KillReq
-	7,  // 29: ratchet.RatchetDaemon.SendMessage:input_type -> ratchet.SendMessageReq
-	13, // 30: ratchet.RatchetDaemon.RespondToPermission:input_type -> ratchet.PermissionResponse
-	20, // 31: ratchet.RatchetDaemon.AddProvider:input_type -> ratchet.AddProviderReq
-	0,  // 32: ratchet.RatchetDaemon.ListProviders:input_type -> ratchet.Empty
-	23, // 33: ratchet.RatchetDaemon.TestProvider:input_type -> ratchet.TestProviderReq
-	25, // 34: ratchet.RatchetDaemon.RemoveProvider:input_type -> ratchet.RemoveProviderReq
-	26, // 35: ratchet.RatchetDaemon.SetDefaultProvider:input_type -> ratchet.SetDefaultProviderReq
-	0,  // 36: ratchet.RatchetDaemon.ListAgents:input_type -> ratchet.Empty
-	29, // 37: ratchet.RatchetDaemon.GetAgentStatus:input_type -> ratchet.AgentStatusReq
-	30, // 38: ratchet.RatchetDaemon.StartTeam:input_type -> ratchet.StartTeamReq
-	32, // 39: ratchet.RatchetDaemon.GetTeamStatus:input_type -> ratchet.TeamStatusReq
-	0,  // 40: ratchet.RatchetDaemon.Health:input_type -> ratchet.Empty
-	0,  // 41: ratchet.RatchetDaemon.Shutdown:input_type -> ratchet.Empty
-	1,  // 42: ratchet.RatchetDaemon.CreateSession:output_type -> ratchet.Session
-	3,  // 43: ratchet.RatchetDaemon.ListSessions:output_type -> ratchet.SessionList
-	8,  // 44: ratchet.RatchetDaemon.AttachSession:output_type -> ratchet.ChatEvent
-	0,  // 45: ratchet.RatchetDaemon.DetachSession:output_type -> ratchet.Empty
-	0,  // 46: ratchet.RatchetDaemon.KillSession:output_type -> ratchet.Empty
-	8,  // 47: ratchet.RatchetDaemon.SendMessage:output_type -> ratchet.ChatEvent
-	0,  // 48: ratchet.RatchetDaemon.RespondToPermission:output_type -> ratchet.Empty
-	21, // 49: ratchet.RatchetDaemon.AddProvider:output_type -> ratchet.Provider
-	22, // 50: ratchet.RatchetDaemon.ListProviders:output_type -> ratchet.ProviderList
-	24, // 51: ratchet.RatchetDaemon.TestProvider:output_type -> ratchet.TestProviderResult
-	0,  // 52: ratchet.RatchetDaemon.RemoveProvider:output_type -> ratchet.Empty
-	0,  // 53: ratchet.RatchetDaemon.SetDefaultProvider:output_type -> ratchet.Empty
-	28, // 54: ratchet.RatchetDaemon.ListAgents:output_type -> ratchet.AgentList
-	27, // 55: ratchet.RatchetDaemon.GetAgentStatus:output_type -> ratchet.Agent
-	31, // 56: ratchet.RatchetDaemon.StartTeam:output_type -> ratchet.TeamEvent
-	33, // 57: ratchet.RatchetDaemon.GetTeamStatus:output_type -> ratchet.TeamStatus
-	34, // 58: ratchet.RatchetDaemon.Health:output_type -> ratchet.HealthResponse
-	0,  // 59: ratchet.RatchetDaemon.Shutdown:output_type -> ratchet.Empty
-	42, // [42:60] is the sub-list for method output_type
-	24, // [24:42] is the sub-list for method input_type
-	24, // [24:24] is the sub-list for extension type_name
-	24, // [24:24] is the sub-list for extension extendee
-	0,  // [0:24] is the sub-list for field type_name
+	10, // 2: ratchet.ChatEvent.token:type_name -> ratchet.TokenDelta
+	11, // 3: ratchet.ChatEvent.tool_start:type_name -> ratchet.ToolCallStart
+	12, // 4: ratchet.ChatEvent.tool_result:type_name -> ratchet.ToolCallResult
+	13, // 5: ratchet.ChatEvent.permission:type_name -> ratchet.PermissionRequest
+	15, // 6: ratchet.ChatEvent.agent_spawned:type_name -> ratchet.AgentSpawned
+	16, // 7: ratchet.ChatEvent.agent_message:type_name -> ratchet.AgentMessage
+	17, // 8: ratchet.ChatEvent.complete:type_name -> ratchet.SessionComplete
+	18, // 9: ratchet.ChatEvent.error:type_name -> ratchet.ErrorEvent
+	19, // 10: ratchet.ChatEvent.history:type_name -> ratchet.SessionHistory
+	36, // 11: ratchet.ChatEvent.plan_proposed:type_name -> ratchet.Plan
+	35, // 12: ratchet.ChatEvent.plan_step_update:type_name -> ratchet.PlanStep
+	45, // 13: ratchet.ChatEvent.fleet_status:type_name -> ratchet.FleetStatus
+	9,  // 14: ratchet.ChatEvent.context_compressed:type_name -> ratchet.ContextCompressedEvent
+	20, // 15: ratchet.SessionHistory.messages:type_name -> ratchet.HistoryMessage
+	53, // 16: ratchet.HistoryMessage.timestamp:type_name -> google.protobuf.Timestamp
+	22, // 17: ratchet.ProviderList.providers:type_name -> ratchet.Provider
+	28, // 18: ratchet.AgentList.agents:type_name -> ratchet.Agent
+	15, // 19: ratchet.TeamEvent.agent_spawned:type_name -> ratchet.AgentSpawned
+	16, // 20: ratchet.TeamEvent.agent_message:type_name -> ratchet.AgentMessage
+	10, // 21: ratchet.TeamEvent.token:type_name -> ratchet.TokenDelta
+	11, // 22: ratchet.TeamEvent.tool_start:type_name -> ratchet.ToolCallStart
+	12, // 23: ratchet.TeamEvent.tool_result:type_name -> ratchet.ToolCallResult
+	13, // 24: ratchet.TeamEvent.permission:type_name -> ratchet.PermissionRequest
+	17, // 25: ratchet.TeamEvent.complete:type_name -> ratchet.SessionComplete
+	18, // 26: ratchet.TeamEvent.error:type_name -> ratchet.ErrorEvent
+	28, // 27: ratchet.TeamStatus.agents:type_name -> ratchet.Agent
+	35, // 28: ratchet.Plan.steps:type_name -> ratchet.PlanStep
+	39, // 29: ratchet.CronJobList.jobs:type_name -> ratchet.CronJob
+	44, // 30: ratchet.FleetStatus.workers:type_name -> ratchet.FleetWorker
+	52, // 31: ratchet.Job.metadata:type_name -> ratchet.Job.MetadataEntry
+	48, // 32: ratchet.JobList.jobs:type_name -> ratchet.Job
+	2,  // 33: ratchet.RatchetDaemon.CreateSession:input_type -> ratchet.CreateSessionReq
+	0,  // 34: ratchet.RatchetDaemon.ListSessions:input_type -> ratchet.Empty
+	4,  // 35: ratchet.RatchetDaemon.AttachSession:input_type -> ratchet.AttachReq
+	5,  // 36: ratchet.RatchetDaemon.DetachSession:input_type -> ratchet.DetachReq
+	6,  // 37: ratchet.RatchetDaemon.KillSession:input_type -> ratchet.KillReq
+	7,  // 38: ratchet.RatchetDaemon.SendMessage:input_type -> ratchet.SendMessageReq
+	14, // 39: ratchet.RatchetDaemon.RespondToPermission:input_type -> ratchet.PermissionResponse
+	21, // 40: ratchet.RatchetDaemon.AddProvider:input_type -> ratchet.AddProviderReq
+	0,  // 41: ratchet.RatchetDaemon.ListProviders:input_type -> ratchet.Empty
+	24, // 42: ratchet.RatchetDaemon.TestProvider:input_type -> ratchet.TestProviderReq
+	26, // 43: ratchet.RatchetDaemon.RemoveProvider:input_type -> ratchet.RemoveProviderReq
+	27, // 44: ratchet.RatchetDaemon.SetDefaultProvider:input_type -> ratchet.SetDefaultProviderReq
+	0,  // 45: ratchet.RatchetDaemon.ListAgents:input_type -> ratchet.Empty
+	30, // 46: ratchet.RatchetDaemon.GetAgentStatus:input_type -> ratchet.AgentStatusReq
+	31, // 47: ratchet.RatchetDaemon.StartTeam:input_type -> ratchet.StartTeamReq
+	33, // 48: ratchet.RatchetDaemon.GetTeamStatus:input_type -> ratchet.TeamStatusReq
+	37, // 49: ratchet.RatchetDaemon.ApprovePlan:input_type -> ratchet.ApprovePlanReq
+	38, // 50: ratchet.RatchetDaemon.RejectPlan:input_type -> ratchet.RejectPlanReq
+	43, // 51: ratchet.RatchetDaemon.StartFleet:input_type -> ratchet.StartFleetReq
+	46, // 52: ratchet.RatchetDaemon.GetFleetStatus:input_type -> ratchet.FleetStatusReq
+	47, // 53: ratchet.RatchetDaemon.KillFleetWorker:input_type -> ratchet.KillFleetWorkerReq
+	40, // 54: ratchet.RatchetDaemon.CreateCron:input_type -> ratchet.CreateCronReq
+	0,  // 55: ratchet.RatchetDaemon.ListCrons:input_type -> ratchet.Empty
+	42, // 56: ratchet.RatchetDaemon.PauseCron:input_type -> ratchet.CronJobReq
+	42, // 57: ratchet.RatchetDaemon.ResumeCron:input_type -> ratchet.CronJobReq
+	42, // 58: ratchet.RatchetDaemon.StopCron:input_type -> ratchet.CronJobReq
+	0,  // 59: ratchet.RatchetDaemon.ListJobs:input_type -> ratchet.Empty
+	50, // 60: ratchet.RatchetDaemon.PauseJob:input_type -> ratchet.JobReq
+	50, // 61: ratchet.RatchetDaemon.ResumeJob:input_type -> ratchet.JobReq
+	50, // 62: ratchet.RatchetDaemon.KillJob:input_type -> ratchet.JobReq
+	0,  // 63: ratchet.RatchetDaemon.Health:input_type -> ratchet.Empty
+	0,  // 64: ratchet.RatchetDaemon.Shutdown:input_type -> ratchet.Empty
+	1,  // 65: ratchet.RatchetDaemon.CreateSession:output_type -> ratchet.Session
+	3,  // 66: ratchet.RatchetDaemon.ListSessions:output_type -> ratchet.SessionList
+	8,  // 67: ratchet.RatchetDaemon.AttachSession:output_type -> ratchet.ChatEvent
+	0,  // 68: ratchet.RatchetDaemon.DetachSession:output_type -> ratchet.Empty
+	0,  // 69: ratchet.RatchetDaemon.KillSession:output_type -> ratchet.Empty
+	8,  // 70: ratchet.RatchetDaemon.SendMessage:output_type -> ratchet.ChatEvent
+	0,  // 71: ratchet.RatchetDaemon.RespondToPermission:output_type -> ratchet.Empty
+	22, // 72: ratchet.RatchetDaemon.AddProvider:output_type -> ratchet.Provider
+	23, // 73: ratchet.RatchetDaemon.ListProviders:output_type -> ratchet.ProviderList
+	25, // 74: ratchet.RatchetDaemon.TestProvider:output_type -> ratchet.TestProviderResult
+	0,  // 75: ratchet.RatchetDaemon.RemoveProvider:output_type -> ratchet.Empty
+	0,  // 76: ratchet.RatchetDaemon.SetDefaultProvider:output_type -> ratchet.Empty
+	29, // 77: ratchet.RatchetDaemon.ListAgents:output_type -> ratchet.AgentList
+	28, // 78: ratchet.RatchetDaemon.GetAgentStatus:output_type -> ratchet.Agent
+	32, // 79: ratchet.RatchetDaemon.StartTeam:output_type -> ratchet.TeamEvent
+	34, // 80: ratchet.RatchetDaemon.GetTeamStatus:output_type -> ratchet.TeamStatus
+	8,  // 81: ratchet.RatchetDaemon.ApprovePlan:output_type -> ratchet.ChatEvent
+	0,  // 82: ratchet.RatchetDaemon.RejectPlan:output_type -> ratchet.Empty
+	8,  // 83: ratchet.RatchetDaemon.StartFleet:output_type -> ratchet.ChatEvent
+	45, // 84: ratchet.RatchetDaemon.GetFleetStatus:output_type -> ratchet.FleetStatus
+	0,  // 85: ratchet.RatchetDaemon.KillFleetWorker:output_type -> ratchet.Empty
+	39, // 86: ratchet.RatchetDaemon.CreateCron:output_type -> ratchet.CronJob
+	41, // 87: ratchet.RatchetDaemon.ListCrons:output_type -> ratchet.CronJobList
+	0,  // 88: ratchet.RatchetDaemon.PauseCron:output_type -> ratchet.Empty
+	0,  // 89: ratchet.RatchetDaemon.ResumeCron:output_type -> ratchet.Empty
+	0,  // 90: ratchet.RatchetDaemon.StopCron:output_type -> ratchet.Empty
+	49, // 91: ratchet.RatchetDaemon.ListJobs:output_type -> ratchet.JobList
+	0,  // 92: ratchet.RatchetDaemon.PauseJob:output_type -> ratchet.Empty
+	0,  // 93: ratchet.RatchetDaemon.ResumeJob:output_type -> ratchet.Empty
+	0,  // 94: ratchet.RatchetDaemon.KillJob:output_type -> ratchet.Empty
+	51, // 95: ratchet.RatchetDaemon.Health:output_type -> ratchet.HealthResponse
+	0,  // 96: ratchet.RatchetDaemon.Shutdown:output_type -> ratchet.Empty
+	65, // [65:97] is the sub-list for method output_type
+	33, // [33:65] is the sub-list for method input_type
+	33, // [33:33] is the sub-list for extension type_name
+	33, // [33:33] is the sub-list for extension extendee
+	0,  // [0:33] is the sub-list for field type_name
 }
 
 func init() { file_internal_proto_ratchet_proto_init() }
@@ -2632,8 +4000,12 @@ func file_internal_proto_ratchet_proto_init() {
 		(*ChatEvent_Complete)(nil),
 		(*ChatEvent_Error)(nil),
 		(*ChatEvent_History)(nil),
+		(*ChatEvent_PlanProposed)(nil),
+		(*ChatEvent_PlanStepUpdate)(nil),
+		(*ChatEvent_FleetStatus)(nil),
+		(*ChatEvent_ContextCompressed)(nil),
 	}
-	file_internal_proto_ratchet_proto_msgTypes[31].OneofWrappers = []any{
+	file_internal_proto_ratchet_proto_msgTypes[32].OneofWrappers = []any{
 		(*TeamEvent_AgentSpawned)(nil),
 		(*TeamEvent_AgentMessage)(nil),
 		(*TeamEvent_Token)(nil),
@@ -2649,7 +4021,7 @@ func file_internal_proto_ratchet_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_internal_proto_ratchet_proto_rawDesc), len(file_internal_proto_ratchet_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   35,
+			NumMessages:   53,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

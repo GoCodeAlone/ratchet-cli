@@ -14,6 +14,31 @@ type Config struct {
 	InstructionCompat []string         `yaml:"instruction_compat"`
 	Permissions       PermissionConfig `yaml:"permissions"`
 	Daemon            DaemonConfig     `yaml:"daemon"`
+	ModelRouting      ModelRouting     `yaml:"model_routing"`
+	Context           ContextConfig    `yaml:"context"`
+}
+
+// ContextConfig controls automatic context-window compression behaviour.
+type ContextConfig struct {
+	// CompressionThreshold is the fraction of the model's context limit at which
+	// auto-compression triggers (default 0.9).
+	CompressionThreshold float64 `yaml:"compression_threshold"`
+	// PreserveMessages is how many recent messages to keep verbatim after compression
+	// (default 10).
+	PreserveMessages int `yaml:"preserve_messages"`
+	// CompressionModel overrides the model used for summarisation. Empty means
+	// auto-select the cheapest available model.
+	CompressionModel string `yaml:"compression_model"`
+}
+
+// ModelRouting controls which model handles which class of task.
+type ModelRouting struct {
+	// SimpleTaskModel is used for lightweight steps (set, log, validate, etc.).
+	SimpleTaskModel string `yaml:"simple_task_model"`
+	// ComplexTaskModel is used for heavy steps (http_call, db_query, code execution, etc.).
+	ComplexTaskModel string `yaml:"complex_task_model"`
+	// ReviewModel is used for code review / plan review tasks.
+	ReviewModel string `yaml:"review_model"`
 }
 
 type PermissionConfig struct {
@@ -39,6 +64,11 @@ func DefaultConfig() *Config {
 		Daemon: DaemonConfig{
 			AutoStart:   true,
 			IdleTimeout: "30m",
+		},
+		Context: ContextConfig{
+			CompressionThreshold: 0.9,
+			PreserveMessages:     10,
+			CompressionModel:     "",
 		},
 	}
 }

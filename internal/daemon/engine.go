@@ -9,6 +9,8 @@ import (
 
 	"path/filepath"
 
+	"github.com/GoCodeAlone/ratchet-cli/internal/config"
+	"github.com/GoCodeAlone/ratchet-cli/internal/mcp"
 	"github.com/GoCodeAlone/ratchet-cli/internal/plugins"
 	"github.com/GoCodeAlone/ratchet/ratchetplugin"
 	"github.com/GoCodeAlone/workflow/secrets"
@@ -23,9 +25,13 @@ type EngineContext struct {
 	MemoryStore      *ratchetplugin.MemoryStore
 	SecretGuard      *ratchetplugin.SecretGuard
 	SecretsProvider  secrets.Provider
+	MCPDiscoverer    *mcp.Discoverer
+	ModelRouting     config.ModelRouting
+	Actors           *ActorManager
 }
 
-func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error) {
+func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error) { //nolint:unparam
+
 	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
@@ -33,21 +39,26 @@ func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error
 	db.SetMaxOpenConns(1)
 
 	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("enable foreign keys: %w", err)
 	}
 
 	if err := initDB(db); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("init db: %w", err)
 	}
 
+	// Load config for model routing settings (non-fatal on error).
+	cfg, _ := config.Load()
 	ec := &EngineContext{DB: db}
+	if cfg != nil {
+		ec.ModelRouting = cfg.ModelRouting
+	}
 
 	// Memory store
 	ec.MemoryStore = ratchetplugin.NewMemoryStore(db)
 	if err := ec.MemoryStore.InitTables(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("memory tables: %w", err)
 	}
 
@@ -67,6 +78,15 @@ func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error
 	// Tool registry
 	ec.ToolRegistry = ratchetplugin.NewToolRegistry()
 
+	// MCP CLI discovery (runs in background; errors are non-fatal)
+	ec.MCPDiscoverer = mcp.NewDiscoverer(ec.ToolRegistry)
+	go func() {
+		result := ec.MCPDiscoverer.Discover()
+		for cli, tools := range result.Registered {
+			log.Printf("mcp: discovered %s (%d tools)", cli, len(tools))
+		}
+	}()
+
 	// Load external plugins from ~/.ratchet/plugins/
 	pluginLoader := plugins.NewLoader(filepath.Join(DataDir(), "plugins"))
 	loaded, err := pluginLoader.LoadAll()
@@ -77,13 +97,24 @@ func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error
 		log.Printf("loaded plugin: %s (%s)", p.Name, p.Path)
 	}
 
+	// Actor system (non-fatal on error; actors are optional middleware).
+	actors, err := NewActorManager(ctx, db)
+	if err != nil {
+		log.Printf("warning: actor system init: %v", err)
+	} else {
+		ec.Actors = actors
+	}
+
 	log.Println("engine context initialized")
 	return ec, nil
 }
 
 func (ec *EngineContext) Close() {
+	if ec.Actors != nil {
+		_ = ec.Actors.Close(context.Background())
+	}
 	if ec.DB != nil {
-		ec.DB.Close()
+		_ = ec.DB.Close()
 	}
 }
 
@@ -125,6 +156,16 @@ func initDB(db *sql.DB) error {
 			allowed INTEGER NOT NULL,
 			session_id TEXT,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS cron_jobs (
+			id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			schedule TEXT NOT NULL,
+			command TEXT NOT NULL,
+			status TEXT DEFAULT 'active',
+			last_run TEXT,
+			next_run TEXT,
+			run_count INTEGER DEFAULT 0
 		)`,
 	}
 	for _, ddl := range tables {

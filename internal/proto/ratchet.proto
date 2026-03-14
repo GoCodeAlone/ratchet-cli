@@ -61,7 +61,18 @@ message ChatEvent {
     SessionComplete complete = 7;
     ErrorEvent error = 8;
     SessionHistory history = 9;
+    Plan plan_proposed = 10;
+    PlanStep plan_step_update = 11;
+    FleetStatus fleet_status = 12;
+    ContextCompressedEvent context_compressed = 13;
   }
+}
+
+message ContextCompressedEvent {
+  string session_id = 1;
+  string summary = 2;      // short text summary of compressed messages
+  int32 messages_removed = 3;
+  int32 messages_kept = 4;
 }
 
 message TokenDelta {
@@ -219,6 +230,102 @@ message TeamStatus {
   string status = 4;
 }
 
+// Plan mode
+message PlanStep {
+  string id = 1;
+  string description = 2;
+  string status = 3;  // pending, in_progress, completed, failed, skipped
+  repeated string files = 4;
+  string error = 5;
+}
+
+message Plan {
+  string id = 1;
+  string session_id = 2;
+  string goal = 3;
+  repeated PlanStep steps = 4;
+  string status = 5;  // proposed, approved, executing, completed, rejected
+  string created_at = 6;
+  string feedback = 7;  // rejection feedback from user
+}
+
+message ApprovePlanReq {
+  string session_id = 1;
+  string plan_id = 2;
+  repeated string skip_steps = 3;
+}
+
+message RejectPlanReq {
+  string session_id = 1;
+  string plan_id = 2;
+  string feedback = 3;
+}
+
+// Cron scheduling
+message CronJob {
+  string id = 1;
+  string session_id = 2;
+  string schedule = 3;     // duration ("5m") or cron expr ("*/10 * * * *")
+  string command = 4;      // slash command or prompt
+  string status = 5;       // active, paused, stopped
+  string last_run = 6;
+  string next_run = 7;
+  int32 run_count = 8;
+}
+
+message CreateCronReq {
+  string session_id = 1;
+  string schedule = 2;
+  string command = 3;
+}
+
+message CronJobList { repeated CronJob jobs = 1; }
+message CronJobReq { string job_id = 1; }
+
+// Fleet mode
+message StartFleetReq {
+  string session_id = 1;
+  string plan_id = 2;
+  int32 max_workers = 3;
+}
+
+message FleetWorker {
+  string id = 1;
+  string name = 2;
+  string step_id = 3;
+  string status = 4;  // pending, running, completed, failed
+  string model = 5;
+  string provider = 6;
+  string error = 7;
+}
+
+message FleetStatus {
+  string fleet_id = 1;
+  string session_id = 2;
+  repeated FleetWorker workers = 3;
+  string status = 4;  // running, completed, failed
+  int32 completed = 5;
+  int32 total = 6;
+}
+
+message FleetStatusReq { string fleet_id = 1; }
+message KillFleetWorkerReq { string fleet_id = 1; string worker_id = 2; }
+
+// Job control
+message Job {
+  string id = 1;
+  string type = 2;      // session, fleet_worker, team_agent, cron, tool_exec
+  string name = 3;
+  string status = 4;    // running, paused, completed, failed, pending
+  string session_id = 5;
+  string started_at = 6;
+  string elapsed = 7;
+  map<string, string> metadata = 8;
+}
+
+message JobList { repeated Job jobs = 1; }
+message JobReq { string job_id = 1; }
+
 // Daemon health
 message HealthResponse {
   bool healthy = 1;
@@ -257,6 +364,28 @@ service RatchetDaemon {
   // Teams
   rpc StartTeam(StartTeamReq) returns (stream TeamEvent);
   rpc GetTeamStatus(TeamStatusReq) returns (TeamStatus);
+
+  // Plan mode
+  rpc ApprovePlan(ApprovePlanReq) returns (stream ChatEvent);
+  rpc RejectPlan(RejectPlanReq) returns (Empty);
+
+  // Fleet mode
+  rpc StartFleet(StartFleetReq) returns (stream ChatEvent);
+  rpc GetFleetStatus(FleetStatusReq) returns (FleetStatus);
+  rpc KillFleetWorker(KillFleetWorkerReq) returns (Empty);
+
+  // Cron scheduling
+  rpc CreateCron(CreateCronReq) returns (CronJob);
+  rpc ListCrons(Empty) returns (CronJobList);
+  rpc PauseCron(CronJobReq) returns (Empty);
+  rpc ResumeCron(CronJobReq) returns (Empty);
+  rpc StopCron(CronJobReq) returns (Empty);
+
+  // Job control
+  rpc ListJobs(Empty) returns (JobList);
+  rpc PauseJob(JobReq) returns (Empty);
+  rpc ResumeJob(JobReq) returns (Empty);
+  rpc KillJob(JobReq) returns (Empty);
 
   // Daemon
   rpc Health(Empty) returns (HealthResponse);

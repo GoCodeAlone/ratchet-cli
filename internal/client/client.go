@@ -198,3 +198,149 @@ func (c *Client) StartTeam(ctx context.Context, req *pb.StartTeamReq) (<-chan *p
 func (c *Client) GetTeamStatus(ctx context.Context, teamID string) (*pb.TeamStatus, error) {
 	return c.daemon.GetTeamStatus(ctx, &pb.TeamStatusReq{TeamId: teamID})
 }
+
+// CompactSession requests immediate context compression for the given session.
+// It sends a special sentinel message that handleChat recognises as a compression
+// request rather than a user turn — the daemon compresses history and responds
+// with a ContextCompressed event.
+func (c *Client) CompactSession(ctx context.Context, sessionID string) (<-chan *pb.ChatEvent, error) {
+	return c.SendMessage(ctx, sessionID, "\x00compact\x00")
+}
+
+func (c *Client) CreateCron(ctx context.Context, sessionID, schedule, command string) (*pb.CronJob, error) {
+	return c.daemon.CreateCron(ctx, &pb.CreateCronReq{
+		SessionId: sessionID,
+		Schedule:  schedule,
+		Command:   command,
+	})
+}
+
+func (c *Client) ListCrons(ctx context.Context) (*pb.CronJobList, error) {
+	return c.daemon.ListCrons(ctx, &pb.Empty{})
+}
+
+func (c *Client) PauseCron(ctx context.Context, jobID string) error {
+	_, err := c.daemon.PauseCron(ctx, &pb.CronJobReq{JobId: jobID})
+	return err
+}
+
+func (c *Client) ResumeCron(ctx context.Context, jobID string) error {
+	_, err := c.daemon.ResumeCron(ctx, &pb.CronJobReq{JobId: jobID})
+	return err
+}
+
+func (c *Client) StopCron(ctx context.Context, jobID string) error {
+	_, err := c.daemon.StopCron(ctx, &pb.CronJobReq{JobId: jobID})
+	return err
+}
+
+// StartFleet starts a fleet execution and returns a channel of ChatEvents containing FleetStatus updates.
+func (c *Client) StartFleet(ctx context.Context, req *pb.StartFleetReq) (<-chan *pb.ChatEvent, error) {
+	stream, err := c.daemon.StartFleet(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	ch := make(chan *pb.ChatEvent, 64)
+	go func() {
+		defer close(ch)
+		for {
+			event, err := stream.Recv()
+			if err == io.EOF {
+				return
+			}
+			if err != nil {
+				ch <- &pb.ChatEvent{
+					Event: &pb.ChatEvent_Error{Error: &pb.ErrorEvent{Message: err.Error()}},
+				}
+				return
+			}
+			ch <- event
+		}
+	}()
+	return ch, nil
+}
+
+// GetFleetStatus returns the current status of a fleet.
+func (c *Client) GetFleetStatus(ctx context.Context, fleetID string) (*pb.FleetStatus, error) {
+	return c.daemon.GetFleetStatus(ctx, &pb.FleetStatusReq{FleetId: fleetID})
+}
+
+// KillFleetWorker cancels a specific worker within a fleet.
+func (c *Client) KillFleetWorker(ctx context.Context, fleetID, workerID string) error {
+	_, err := c.daemon.KillFleetWorker(ctx, &pb.KillFleetWorkerReq{
+		FleetId:  fleetID,
+		WorkerId: workerID,
+	})
+	return err
+}
+
+// ApprovePlan approves a proposed plan and returns a channel of ChatEvents.
+func (c *Client) ApprovePlan(ctx context.Context, sessionID, planID string, skipSteps []string) (<-chan *pb.ChatEvent, error) {
+	stream, err := c.daemon.ApprovePlan(ctx, &pb.ApprovePlanReq{
+		SessionId: sessionID,
+		PlanId:    planID,
+		SkipSteps: skipSteps,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	ch := make(chan *pb.ChatEvent, 16)
+	go func() {
+		defer close(ch)
+		for {
+			event, err := stream.Recv()
+			if err == io.EOF {
+				return
+			}
+			if err != nil {
+				ch <- &pb.ChatEvent{
+					Event: &pb.ChatEvent_Error{
+						Error: &pb.ErrorEvent{Message: err.Error()},
+					},
+				}
+				return
+			}
+			ch <- event
+		}
+	}()
+	return ch, nil
+}
+
+// RejectPlan rejects a proposed plan with optional feedback.
+func (c *Client) RejectPlan(ctx context.Context, sessionID, planID, feedback string) error {
+	_, err := c.daemon.RejectPlan(ctx, &pb.RejectPlanReq{
+		SessionId: sessionID,
+		PlanId:    planID,
+		Feedback:  feedback,
+	})
+	return err
+}
+
+// ListJobs returns all active jobs from the daemon's job registry.
+func (c *Client) ListJobs(ctx context.Context) (*pb.JobList, error) {
+	return c.daemon.ListJobs(ctx, &pb.Empty{})
+}
+
+// PauseJob pauses the job with the given ID.
+func (c *Client) PauseJob(ctx context.Context, jobID string) error {
+	_, err := c.daemon.PauseJob(ctx, &pb.JobReq{JobId: jobID})
+	return err
+}
+
+// ResumeJob resumes a paused job.
+func (c *Client) ResumeJob(ctx context.Context, jobID string) error {
+	_, err := c.daemon.ResumeJob(ctx, &pb.JobReq{JobId: jobID})
+	return err
+}
+
+// KillJob kills the job with the given ID.
+func (c *Client) KillJob(ctx context.Context, jobID string) error {
+	_, err := c.daemon.KillJob(ctx, &pb.JobReq{JobId: jobID})
+	return err
+}
+
+// KillAgent kills a team agent by routing through the job control system.
+func (c *Client) KillAgent(ctx context.Context, agentID string) error {
+	return c.KillJob(ctx, agentID)
+}

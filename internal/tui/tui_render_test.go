@@ -94,7 +94,7 @@ func TestInputSubmit(t *testing.T) {
 
 	// Press Enter to submit
 	var cmd tea.Cmd
-	input, cmd = input.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	_, cmd = input.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("expected SubmitMsg cmd after Enter")
 	}

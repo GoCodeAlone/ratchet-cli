@@ -64,8 +64,17 @@ func (g *permissionGate) Respond(resp *pb.PermissionResponse) bool {
 	return true
 }
 
+// compactSentinel is a special marker sent by the client's CompactSession call.
+// When handleChat detects it, it runs compression immediately without an AI turn.
+const compactSentinel = "\x00compact\x00"
+
 // handleChat executes a chat turn: loads session, resolves provider, streams tokens, handles tools.
 func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string, stream pb.RatchetDaemon_SendMessageServer) error {
+	// Manual compression request: skip the AI turn and compress history directly.
+	if userMessage == compactSentinel {
+		return s.handleCompact(ctx, sessionID, stream)
+	}
+
 	// Load session
 	session, err := s.sessions.Get(ctx, sessionID)
 	if err != nil {
@@ -216,6 +225,47 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 		log.Printf("save assistant message: %v", err)
 	}
 
+	// Track token usage (approximate: 1 token ≈ 4 chars).
+	// Uses rune count so multi-byte UTF-8 characters don't inflate the estimate.
+	inputTokens := (len([]rune(userMessage)) + 3) / 4
+	outputTokens := (len([]rune(fullResponse)) + 3) / 4
+	s.tokens.AddTokens(sessionID, inputTokens, outputTokens)
+
+	// Auto-compress when context window fills
+	contextCfg := cfg.Context
+	if contextCfg.CompressionThreshold <= 0 {
+		contextCfg.CompressionThreshold = 0.9
+	}
+	if contextCfg.PreserveMessages <= 0 {
+		contextCfg.PreserveMessages = 10
+	}
+	const defaultModelLimit = 200000 // conservative default (Claude Sonnet)
+	if s.tokens.ShouldCompress(sessionID, contextCfg.CompressionThreshold, defaultModelLimit) {
+		history, loadErr := s.loadHistory(ctx, sessionID)
+		if loadErr == nil && len(history) > contextCfg.PreserveMessages {
+			compressed, summary, compErr := Compress(ctx, history, contextCfg.PreserveMessages, prov)
+			if compErr == nil {
+				removed := len(history) - len(compressed)
+				// Persist compressed history by replacing messages in DB
+				if dbErr := s.replaceHistory(ctx, sessionID, compressed); dbErr != nil {
+					log.Printf("replace history after compression: %v", dbErr)
+				} else {
+					s.tokens.Reset(sessionID)
+					_ = stream.Send(&pb.ChatEvent{
+						Event: &pb.ChatEvent_ContextCompressed{
+							ContextCompressed: &pb.ContextCompressedEvent{
+								SessionId:       sessionID,
+								Summary:         summary,
+								MessagesRemoved: int32(removed),
+								MessagesKept:    int32(len(compressed)),
+							},
+						},
+					})
+				}
+			}
+		}
+	}
+
 	// Send completion
 	return stream.Send(&pb.ChatEvent{
 		Event: &pb.ChatEvent_Complete{
@@ -283,6 +333,94 @@ func (s *Service) saveMessage(ctx context.Context, sessionID, role, content, too
 		id, sessionID, role, content, toolName, toolCallID,
 	)
 	return err
+}
+
+// replaceHistory deletes all messages for a session and re-inserts the compressed set.
+func (s *Service) replaceHistory(ctx context.Context, sessionID string, messages []provider.Message) error {
+	tx, err := s.engine.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE session_id = ?`, sessionID); err != nil {
+		return err
+	}
+	for _, m := range messages {
+		id := uuid.New().String()
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO messages (id, session_id, role, content, tool_name, tool_call_id) VALUES (?, ?, ?, ?, ?, ?)`,
+			id, sessionID, string(m.Role), m.Content, "", "",
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// handleCompact immediately compresses the session's conversation history and
+// sends a ContextCompressed event to the stream. No AI provider call is made.
+func (s *Service) handleCompact(ctx context.Context, sessionID string, stream pb.RatchetDaemon_SendMessageServer) error {
+	history, err := s.loadHistory(ctx, sessionID)
+	if err != nil {
+		return sendError(stream, "load history: "+err.Error())
+	}
+
+	cfg, _ := config.Load()
+	if cfg == nil {
+		cfg = config.DefaultConfig()
+	}
+	preserveCount := cfg.Context.PreserveMessages
+	if preserveCount <= 0 {
+		preserveCount = 10
+	}
+
+	var prov provider.Provider
+	session, sessErr := s.sessions.Get(ctx, sessionID)
+	if sessErr == nil {
+		if session.Provider != "" {
+			prov, _ = s.engine.ProviderRegistry.GetByAlias(ctx, session.Provider)
+		} else {
+			prov, _ = s.engine.ProviderRegistry.GetDefault(ctx)
+		}
+	}
+
+	compressed, summary, compErr := Compress(ctx, history, preserveCount, prov)
+	if compErr != nil {
+		return sendError(stream, "compress: "+compErr.Error())
+	}
+
+	removed := len(history) - len(compressed)
+	if removed <= 0 {
+		// Nothing to compress; still send a completion event.
+		return stream.Send(&pb.ChatEvent{
+			Event: &pb.ChatEvent_Complete{
+				Complete: &pb.SessionComplete{Summary: "Nothing to compress."},
+			},
+		})
+	}
+
+	if dbErr := s.replaceHistory(ctx, sessionID, compressed); dbErr != nil {
+		return sendError(stream, "persist compressed history: "+dbErr.Error())
+	}
+	s.tokens.Reset(sessionID)
+
+	if err := stream.Send(&pb.ChatEvent{
+		Event: &pb.ChatEvent_ContextCompressed{
+			ContextCompressed: &pb.ContextCompressedEvent{
+				SessionId:       sessionID,
+				Summary:         summary,
+				MessagesRemoved: int32(removed),
+				MessagesKept:    int32(len(compressed)),
+			},
+		},
+	}); err != nil {
+		return err
+	}
+	return stream.Send(&pb.ChatEvent{
+		Event: &pb.ChatEvent_Complete{
+			Complete: &pb.SessionComplete{Summary: "compressed"},
+		},
+	})
 }
 
 // sendError sends an error event to the stream.

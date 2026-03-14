@@ -19,7 +19,7 @@ func handleAgent(args []string) {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	switch args[0] {
 	case "list":

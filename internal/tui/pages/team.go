@@ -13,6 +13,7 @@ import (
 
 // AgentCard represents an agent's current state in the team view.
 type AgentCard struct {
+	ID          string
 	Name        string
 	Role        string
 	Model       string
@@ -71,11 +72,37 @@ func (m TeamModel) ApplyEvent(ev *pb.TeamEvent) TeamModel {
 	return m
 }
 
+// TeamStatusMsg carries a refreshed TeamStatus from the daemon.
+type TeamStatusMsg struct {
+	Status *pb.TeamStatus
+	Err    error
+}
+
+// KillAgentMsg signals that the selected agent should be killed.
+type KillAgentMsg struct {
+	TeamID string
+	AgentID string
+}
+
 func (m TeamModel) Update(msg tea.Msg) (TeamModel, tea.Cmd) {
 	switch msg := msg.(type) {
+	case TeamStatusMsg:
+		if msg.Err == nil && msg.Status != nil {
+			m.agents = nil
+			for _, a := range msg.Status.Agents {
+				m.agents = append(m.agents, AgentCard{
+					ID:          a.Id,
+					Name:        a.Name,
+					Role:        a.Role,
+					Model:       a.Model,
+					Status:      a.Status,
+					CurrentTask: a.CurrentTask,
+				})
+			}
+		}
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "up", "k":
+		case "up":
 			if m.cursor > 0 {
 				m.cursor--
 			}
@@ -86,6 +113,18 @@ func (m TeamModel) Update(msg tea.Msg) (TeamModel, tea.Cmd) {
 		case "enter":
 			if m.cursor < len(m.agents) {
 				m.agents[m.cursor].expanded = !m.agents[m.cursor].expanded
+			}
+		case "k":
+			if m.cursor < len(m.agents) {
+				idx := m.cursor
+				agentID := m.agents[idx].ID
+				if agentID == "" {
+					// ID not yet populated from daemon status; skip.
+					break
+				}
+				return m, func() tea.Msg {
+					return KillAgentMsg{AgentID: agentID}
+				}
 			}
 		}
 	}
@@ -154,7 +193,7 @@ func (m TeamModel) View(t theme.Theme) string {
 	lines = append(lines, "")
 	lines = append(lines, lipgloss.NewStyle().
 		Foreground(t.Muted).
-		Render("  ↑↓ navigate  Enter: expand"))
+		Render("  ↑↓ navigate  Enter: expand  k: kill agent"))
 
 	return strings.Join(lines, "\n")
 }
