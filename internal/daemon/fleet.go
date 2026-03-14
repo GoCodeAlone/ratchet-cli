@@ -153,8 +153,7 @@ func (fm *FleetManager) GetStatus(fleetID string) (*pb.FleetStatus, error) {
 
 	fi.mu.RLock()
 	defer fi.mu.RUnlock()
-	s := *fi.status
-	return &s, nil
+	return deepCopyFleetStatus(fi.status), nil
 }
 
 // KillWorker cancels a specific worker within a fleet.
@@ -176,15 +175,33 @@ func (fm *FleetManager) KillWorker(fleetID, workerID string) error {
 	return nil
 }
 
+// deepCopyFleetStatus returns a new FleetStatus with deep-copied Workers so
+// the returned value shares no pointers with the live fleet goroutines.
+func deepCopyFleetStatus(src *pb.FleetStatus) *pb.FleetStatus {
+	dst := &pb.FleetStatus{
+		FleetId:   src.FleetId,
+		SessionId: src.SessionId,
+		Status:    src.Status,
+		Completed: src.Completed,
+		Total:     src.Total,
+		Workers:   make([]*pb.FleetWorker, len(src.Workers)),
+	}
+	for i, w := range src.Workers {
+		wCopy := *w
+		dst.Workers[i] = &wCopy
+	}
+	return dst
+}
+
 func sendFleetStatus(ch chan<- *pb.FleetStatus, fi *fleetInstance) {
 	if ch == nil {
 		return
 	}
 	fi.mu.RLock()
-	s := *fi.status
+	s := deepCopyFleetStatus(fi.status)
 	fi.mu.RUnlock()
 	select {
-	case ch <- &s:
+	case ch <- s:
 	default:
 	}
 }

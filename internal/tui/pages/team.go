@@ -112,6 +112,13 @@ func (m TeamModel) Update(msg tea.Msg) (TeamModel, tea.Cmd) {
 			if m.cursor < len(m.agents) {
 				m.agents[m.cursor].expanded = !m.agents[m.cursor].expanded
 			}
+		case "k":
+			if m.cursor < len(m.agents) {
+				idx := m.cursor
+				return m, func() tea.Msg {
+					return KillAgentMsg{AgentID: m.agents[idx].Name}
+				}
+			}
 		}
 	}
 	return m, nil

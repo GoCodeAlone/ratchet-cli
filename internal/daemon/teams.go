@@ -81,7 +81,7 @@ func (tm *TeamManager) run(ctx context.Context, ti *teamInstance, req *pb.StartT
 
 	// Default agent roster when none specified: orchestrator + worker.
 	specs := []struct{ name, role, model, provider string }{
-		{"orchestrator", "orchestrator", req.OrchestratorProvider, req.OrchestratorProvider},
+		{"orchestrator", "orchestrator", "", req.OrchestratorProvider},
 		{"worker-1", "worker", "", ""},
 	}
 
@@ -133,11 +133,13 @@ func (tm *TeamManager) run(ctx context.Context, ti *teamInstance, req *pb.StartT
 	}
 
 	// Mark all agents complete.
-	ti.mu.Lock()
+	ti.mu.RLock()
 	for _, ag := range ti.agents {
+		ag.mu.Lock()
 		ag.status = "completed"
+		ag.mu.Unlock()
 	}
-	ti.mu.Unlock()
+	ti.mu.RUnlock()
 
 	ti.eventCh <- &pb.TeamEvent{
 		Event: &pb.TeamEvent_Complete{
