@@ -424,7 +424,7 @@ func (m OnboardingModel) updateAnthropicAuthChoice(msg tea.Msg) (OnboardingModel
 			m.step = stepSelectProvider
 			return m, nil
 		case "j", "down":
-			if m.cursor < 1 {
+			if m.cursor < 2 {
 				m.cursor++
 			}
 		case "k", "up":
@@ -435,8 +435,11 @@ func (m OnboardingModel) updateAnthropicAuthChoice(msg tea.Msg) (OnboardingModel
 			m.cursor = 0
 		case "2":
 			m.cursor = 1
+		case "3":
+			m.cursor = 2
 		case "enter", " ":
-			if m.cursor == 0 {
+			switch m.cursor {
+			case 0:
 				// Claude subscription OAuth
 				m.step = stepBrowserAuth
 				m.authing = true
@@ -444,11 +447,17 @@ func (m OnboardingModel) updateAnthropicAuthChoice(msg tea.Msg) (OnboardingModel
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				m.authCancel = cancel
 				return m, tea.Batch(m.spinner.Tick, m.startAnthropicAuth(ctx))
+			case 1:
+				// Setup-token paste (from `claude setup-token`)
+				m.step = stepEnterAPIKey
+				m.apiKeyInput.Placeholder = "Paste setup-token from: claude setup-token"
+				return m, m.apiKeyInput.Focus()
+			case 2:
+				// Manual API key
+				m.step = stepEnterAPIKey
+				m.apiKeyInput.Placeholder = "sk-ant-..."
+				return m, m.apiKeyInput.Focus()
 			}
-			// Manual API key
-			m.step = stepEnterAPIKey
-			m.apiKeyInput.Placeholder = "sk-ant-..."
-			return m, m.apiKeyInput.Focus()
 		}
 	}
 	return m, nil
@@ -710,6 +719,7 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 		sb.WriteString("Sign in with Anthropic\n\n")
 		choices := []string{
 			"Sign in with Claude account (Pro/Team/Enterprise)",
+			"Paste setup-token (from claude setup-token)",
 			"Enter API key manually",
 		}
 		for i, label := range choices {
@@ -721,7 +731,7 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 			}
 			sb.WriteString(style.Render(fmt.Sprintf("%s%d. %s", cursor, i+1, label)) + "\n")
 		}
-		sb.WriteString("\n" + mutedStyle.Render("↑/↓ or 1-2: select  Enter: confirm  Esc: back"))
+		sb.WriteString("\n" + mutedStyle.Render("↑/↓ or 1-3: select  Enter: confirm  Esc: back"))
 
 	case stepBrowserAuth:
 		p := m.selectedProvider()
