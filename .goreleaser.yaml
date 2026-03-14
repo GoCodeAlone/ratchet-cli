@@ -37,12 +37,12 @@ changelog:
       - "^test:"
       - "^chore:"
 
-homebrew_casks:
-  - name: ratchet
-    binaries:
-      - ratchet
+brews:
+  - name: ratchet-cli
+    ids: [ratchet]
     homepage: "https://github.com/GoCodeAlone/ratchet-cli"
     description: "Interactive AI agent CLI"
+    license: "Apache-2.0"
     repository:
       owner: GoCodeAlone
       name: homebrew-tap
@@ -51,3 +51,5 @@ homebrew_casks:
     commit_author:
       name: goreleaserbot
       email: bot@goreleaser.com
+    install: |
+      bin.install "ratchet"
