@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -129,6 +130,9 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 	// Stream from provider
 	eventCh, err := prov.Stream(ctx, messages, nil) // tools will be added in later task
 	if err != nil {
+		if isAuthError(err) {
+			return sendAuthError(stream, session.Provider, err.Error())
+		}
 		return sendError(stream, "provider stream: "+err.Error())
 	}
 
@@ -216,6 +220,9 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 		case "done":
 			// Stream complete
 		case "error":
+			if isAuthError(fmt.Errorf("%s", event.Error)) {
+				return sendAuthError(stream, session.Provider, event.Error)
+			}
 			return sendError(stream, event.Error)
 		}
 	}
@@ -430,4 +437,33 @@ func sendError(stream pb.RatchetDaemon_SendMessageServer, msg string) error {
 			Error: &pb.ErrorEvent{Message: msg},
 		},
 	})
+}
+
+// sendAuthError sends an AuthError event to the stream.
+func sendAuthError(stream pb.RatchetDaemon_SendMessageServer, providerAlias, msg string) error {
+	return stream.Send(&pb.ChatEvent{
+		Event: &pb.ChatEvent_AuthError{
+			AuthError: &pb.AuthError{
+				Provider: providerAlias,
+				Alias:    providerAlias,
+				Message:  msg,
+			},
+		},
+	})
+}
+
+// isAuthError returns true if the error looks like an authentication failure.
+func isAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "status 401") ||
+		strings.Contains(msg, "status 403") ||
+		strings.Contains(msg, "unauthorized") ||
+		strings.Contains(msg, "authentication_error") ||
+		strings.Contains(msg, "invalid api key") ||
+		strings.Contains(msg, "invalid x-api-key") ||
+		strings.Contains(msg, "permission_error") ||
+		strings.Contains(msg, "could not resolve api key")
 }

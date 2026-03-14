@@ -422,6 +422,23 @@ func (m *ChatModel) handleChatEvent(msg ChatEventMsg) []tea.Cmd {
 		m.cancelChat = nil
 		return cmds // don't schedule next read — stream is done
 
+	case *pb.ChatEvent_AuthError:
+		provName := e.AuthError.Alias
+		if provName == "" {
+			provName = e.AuthError.Provider
+		}
+		if provName == "" {
+			provName = "current provider"
+		}
+		m.messages = append(m.messages, components.Message{
+			Role:    components.RoleTool,
+			Content: "Authentication expired for " + provName + ". Run /login to re-authenticate.",
+		})
+		m.streaming = ""
+		m.refreshViewport()
+		m.cancelChat = nil
+		return cmds // don't schedule next read — stream is done
+
 	case *pb.ChatEvent_PlanProposed:
 		m.planView = m.planView.SetPlan(e.PlanProposed)
 		m.planView = m.planView.SetSize(m.width)

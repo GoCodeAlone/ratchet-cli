@@ -472,6 +472,7 @@ type ChatEvent struct {
 	//	*ChatEvent_PlanStepUpdate
 	//	*ChatEvent_FleetStatus
 	//	*ChatEvent_ContextCompressed
+	//	*ChatEvent_AuthError
 	Event         isChatEvent_Event `protobuf_oneof:"event"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -631,6 +632,15 @@ func (x *ChatEvent) GetContextCompressed() *ContextCompressedEvent {
 	return nil
 }
 
+func (x *ChatEvent) GetAuthError() *AuthError {
+	if x != nil {
+		if x, ok := x.Event.(*ChatEvent_AuthError); ok {
+			return x.AuthError
+		}
+	}
+	return nil
+}
+
 type isChatEvent_Event interface {
 	isChatEvent_Event()
 }
@@ -687,6 +697,10 @@ type ChatEvent_ContextCompressed struct {
 	ContextCompressed *ContextCompressedEvent `protobuf:"bytes,13,opt,name=context_compressed,json=contextCompressed,proto3,oneof"`
 }
 
+type ChatEvent_AuthError struct {
+	AuthError *AuthError `protobuf:"bytes,14,opt,name=auth_error,json=authError,proto3,oneof"`
+}
+
 func (*ChatEvent_Token) isChatEvent_Event() {}
 
 func (*ChatEvent_ToolStart) isChatEvent_Event() {}
@@ -713,6 +727,68 @@ func (*ChatEvent_FleetStatus) isChatEvent_Event() {}
 
 func (*ChatEvent_ContextCompressed) isChatEvent_Event() {}
 
+func (*ChatEvent_AuthError) isChatEvent_Event() {}
+
+type AuthError struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Provider      string                 `protobuf:"bytes,1,opt,name=provider,proto3" json:"provider,omitempty"`
+	Alias         string                 `protobuf:"bytes,2,opt,name=alias,proto3" json:"alias,omitempty"`
+	Message       string                 `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AuthError) Reset() {
+	*x = AuthError{}
+	mi := &file_internal_proto_ratchet_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AuthError) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AuthError) ProtoMessage() {}
+
+func (x *AuthError) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_ratchet_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AuthError.ProtoReflect.Descriptor instead.
+func (*AuthError) Descriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *AuthError) GetProvider() string {
+	if x != nil {
+		return x.Provider
+	}
+	return ""
+}
+
+func (x *AuthError) GetAlias() string {
+	if x != nil {
+		return x.Alias
+	}
+	return ""
+}
+
+func (x *AuthError) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
 type ContextCompressedEvent struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	SessionId       string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -725,7 +801,7 @@ type ContextCompressedEvent struct {
 
 func (x *ContextCompressedEvent) Reset() {
 	*x = ContextCompressedEvent{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[9]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -737,7 +813,7 @@ func (x *ContextCompressedEvent) String() string {
 func (*ContextCompressedEvent) ProtoMessage() {}
 
 func (x *ContextCompressedEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[9]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -750,7 +826,7 @@ func (x *ContextCompressedEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ContextCompressedEvent.ProtoReflect.Descriptor instead.
 func (*ContextCompressedEvent) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{9}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ContextCompressedEvent) GetSessionId() string {
@@ -790,7 +866,7 @@ type TokenDelta struct {
 
 func (x *TokenDelta) Reset() {
 	*x = TokenDelta{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[10]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -802,7 +878,7 @@ func (x *TokenDelta) String() string {
 func (*TokenDelta) ProtoMessage() {}
 
 func (x *TokenDelta) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[10]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -815,7 +891,7 @@ func (x *TokenDelta) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TokenDelta.ProtoReflect.Descriptor instead.
 func (*TokenDelta) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{10}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *TokenDelta) GetContent() string {
@@ -836,7 +912,7 @@ type ToolCallStart struct {
 
 func (x *ToolCallStart) Reset() {
 	*x = ToolCallStart{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[11]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -848,7 +924,7 @@ func (x *ToolCallStart) String() string {
 func (*ToolCallStart) ProtoMessage() {}
 
 func (x *ToolCallStart) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[11]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -861,7 +937,7 @@ func (x *ToolCallStart) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ToolCallStart.ProtoReflect.Descriptor instead.
 func (*ToolCallStart) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{11}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ToolCallStart) GetToolName() string {
@@ -896,7 +972,7 @@ type ToolCallResult struct {
 
 func (x *ToolCallResult) Reset() {
 	*x = ToolCallResult{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[12]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -908,7 +984,7 @@ func (x *ToolCallResult) String() string {
 func (*ToolCallResult) ProtoMessage() {}
 
 func (x *ToolCallResult) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[12]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -921,7 +997,7 @@ func (x *ToolCallResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ToolCallResult.ProtoReflect.Descriptor instead.
 func (*ToolCallResult) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{12}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ToolCallResult) GetCallId() string {
@@ -957,7 +1033,7 @@ type PermissionRequest struct {
 
 func (x *PermissionRequest) Reset() {
 	*x = PermissionRequest{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[13]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -969,7 +1045,7 @@ func (x *PermissionRequest) String() string {
 func (*PermissionRequest) ProtoMessage() {}
 
 func (x *PermissionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[13]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -982,7 +1058,7 @@ func (x *PermissionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PermissionRequest.ProtoReflect.Descriptor instead.
 func (*PermissionRequest) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{13}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *PermissionRequest) GetRequestId() string {
@@ -1024,7 +1100,7 @@ type PermissionResponse struct {
 
 func (x *PermissionResponse) Reset() {
 	*x = PermissionResponse{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[14]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1036,7 +1112,7 @@ func (x *PermissionResponse) String() string {
 func (*PermissionResponse) ProtoMessage() {}
 
 func (x *PermissionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[14]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1049,7 +1125,7 @@ func (x *PermissionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PermissionResponse.ProtoReflect.Descriptor instead.
 func (*PermissionResponse) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{14}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *PermissionResponse) GetRequestId() string {
@@ -1084,7 +1160,7 @@ type AgentSpawned struct {
 
 func (x *AgentSpawned) Reset() {
 	*x = AgentSpawned{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[15]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1096,7 +1172,7 @@ func (x *AgentSpawned) String() string {
 func (*AgentSpawned) ProtoMessage() {}
 
 func (x *AgentSpawned) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[15]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1109,7 +1185,7 @@ func (x *AgentSpawned) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentSpawned.ProtoReflect.Descriptor instead.
 func (*AgentSpawned) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{15}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *AgentSpawned) GetAgentId() string {
@@ -1144,7 +1220,7 @@ type AgentMessage struct {
 
 func (x *AgentMessage) Reset() {
 	*x = AgentMessage{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[16]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1156,7 +1232,7 @@ func (x *AgentMessage) String() string {
 func (*AgentMessage) ProtoMessage() {}
 
 func (x *AgentMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[16]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1169,7 +1245,7 @@ func (x *AgentMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentMessage.ProtoReflect.Descriptor instead.
 func (*AgentMessage) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{16}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *AgentMessage) GetFromAgent() string {
@@ -1203,7 +1279,7 @@ type SessionComplete struct {
 
 func (x *SessionComplete) Reset() {
 	*x = SessionComplete{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[17]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1215,7 +1291,7 @@ func (x *SessionComplete) String() string {
 func (*SessionComplete) ProtoMessage() {}
 
 func (x *SessionComplete) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[17]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1228,7 +1304,7 @@ func (x *SessionComplete) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionComplete.ProtoReflect.Descriptor instead.
 func (*SessionComplete) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{17}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *SessionComplete) GetSummary() string {
@@ -1255,7 +1331,7 @@ type ErrorEvent struct {
 
 func (x *ErrorEvent) Reset() {
 	*x = ErrorEvent{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[18]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1267,7 +1343,7 @@ func (x *ErrorEvent) String() string {
 func (*ErrorEvent) ProtoMessage() {}
 
 func (x *ErrorEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[18]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1280,7 +1356,7 @@ func (x *ErrorEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ErrorEvent.ProtoReflect.Descriptor instead.
 func (*ErrorEvent) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{18}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ErrorEvent) GetMessage() string {
@@ -1306,7 +1382,7 @@ type SessionHistory struct {
 
 func (x *SessionHistory) Reset() {
 	*x = SessionHistory{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[19]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1318,7 +1394,7 @@ func (x *SessionHistory) String() string {
 func (*SessionHistory) ProtoMessage() {}
 
 func (x *SessionHistory) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[19]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1331,7 +1407,7 @@ func (x *SessionHistory) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionHistory.ProtoReflect.Descriptor instead.
 func (*SessionHistory) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{19}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *SessionHistory) GetMessages() []*HistoryMessage {
@@ -1354,7 +1430,7 @@ type HistoryMessage struct {
 
 func (x *HistoryMessage) Reset() {
 	*x = HistoryMessage{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[20]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1366,7 +1442,7 @@ func (x *HistoryMessage) String() string {
 func (*HistoryMessage) ProtoMessage() {}
 
 func (x *HistoryMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[20]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1379,7 +1455,7 @@ func (x *HistoryMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HistoryMessage.ProtoReflect.Descriptor instead.
 func (*HistoryMessage) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{20}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *HistoryMessage) GetRole() string {
@@ -1433,7 +1509,7 @@ type AddProviderReq struct {
 
 func (x *AddProviderReq) Reset() {
 	*x = AddProviderReq{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[21]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1445,7 +1521,7 @@ func (x *AddProviderReq) String() string {
 func (*AddProviderReq) ProtoMessage() {}
 
 func (x *AddProviderReq) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[21]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1458,7 +1534,7 @@ func (x *AddProviderReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AddProviderReq.ProtoReflect.Descriptor instead.
 func (*AddProviderReq) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{21}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *AddProviderReq) GetAlias() string {
@@ -1523,7 +1599,7 @@ type Provider struct {
 
 func (x *Provider) Reset() {
 	*x = Provider{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[22]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1535,7 +1611,7 @@ func (x *Provider) String() string {
 func (*Provider) ProtoMessage() {}
 
 func (x *Provider) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[22]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1548,7 +1624,7 @@ func (x *Provider) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Provider.ProtoReflect.Descriptor instead.
 func (*Provider) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{22}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *Provider) GetAlias() string {
@@ -1595,7 +1671,7 @@ type ProviderList struct {
 
 func (x *ProviderList) Reset() {
 	*x = ProviderList{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[23]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1607,7 +1683,7 @@ func (x *ProviderList) String() string {
 func (*ProviderList) ProtoMessage() {}
 
 func (x *ProviderList) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[23]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1620,7 +1696,7 @@ func (x *ProviderList) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProviderList.ProtoReflect.Descriptor instead.
 func (*ProviderList) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{23}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *ProviderList) GetProviders() []*Provider {
@@ -1639,7 +1715,7 @@ type TestProviderReq struct {
 
 func (x *TestProviderReq) Reset() {
 	*x = TestProviderReq{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[24]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1651,7 +1727,7 @@ func (x *TestProviderReq) String() string {
 func (*TestProviderReq) ProtoMessage() {}
 
 func (x *TestProviderReq) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[24]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1664,7 +1740,7 @@ func (x *TestProviderReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TestProviderReq.ProtoReflect.Descriptor instead.
 func (*TestProviderReq) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{24}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *TestProviderReq) GetAlias() string {
@@ -1685,7 +1761,7 @@ type TestProviderResult struct {
 
 func (x *TestProviderResult) Reset() {
 	*x = TestProviderResult{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[25]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1697,7 +1773,7 @@ func (x *TestProviderResult) String() string {
 func (*TestProviderResult) ProtoMessage() {}
 
 func (x *TestProviderResult) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[25]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1710,7 +1786,7 @@ func (x *TestProviderResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TestProviderResult.ProtoReflect.Descriptor instead.
 func (*TestProviderResult) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{25}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *TestProviderResult) GetSuccess() bool {
@@ -1743,7 +1819,7 @@ type RemoveProviderReq struct {
 
 func (x *RemoveProviderReq) Reset() {
 	*x = RemoveProviderReq{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[26]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1755,7 +1831,7 @@ func (x *RemoveProviderReq) String() string {
 func (*RemoveProviderReq) ProtoMessage() {}
 
 func (x *RemoveProviderReq) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[26]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1768,7 +1844,7 @@ func (x *RemoveProviderReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RemoveProviderReq.ProtoReflect.Descriptor instead.
 func (*RemoveProviderReq) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{26}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *RemoveProviderReq) GetAlias() string {
@@ -1787,7 +1863,7 @@ type SetDefaultProviderReq struct {
 
 func (x *SetDefaultProviderReq) Reset() {
 	*x = SetDefaultProviderReq{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[27]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1799,7 +1875,7 @@ func (x *SetDefaultProviderReq) String() string {
 func (*SetDefaultProviderReq) ProtoMessage() {}
 
 func (x *SetDefaultProviderReq) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[27]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1812,7 +1888,7 @@ func (x *SetDefaultProviderReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetDefaultProviderReq.ProtoReflect.Descriptor instead.
 func (*SetDefaultProviderReq) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{27}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *SetDefaultProviderReq) GetAlias() string {
@@ -1839,7 +1915,7 @@ type Agent struct {
 
 func (x *Agent) Reset() {
 	*x = Agent{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[28]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1851,7 +1927,7 @@ func (x *Agent) String() string {
 func (*Agent) ProtoMessage() {}
 
 func (x *Agent) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[28]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1864,7 +1940,7 @@ func (x *Agent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Agent.ProtoReflect.Descriptor instead.
 func (*Agent) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{28}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *Agent) GetId() string {
@@ -1932,7 +2008,7 @@ type AgentList struct {
 
 func (x *AgentList) Reset() {
 	*x = AgentList{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[29]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1944,7 +2020,7 @@ func (x *AgentList) String() string {
 func (*AgentList) ProtoMessage() {}
 
 func (x *AgentList) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[29]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1957,7 +2033,7 @@ func (x *AgentList) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentList.ProtoReflect.Descriptor instead.
 func (*AgentList) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{29}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *AgentList) GetAgents() []*Agent {
@@ -1976,7 +2052,7 @@ type AgentStatusReq struct {
 
 func (x *AgentStatusReq) Reset() {
 	*x = AgentStatusReq{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[30]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1988,7 +2064,7 @@ func (x *AgentStatusReq) String() string {
 func (*AgentStatusReq) ProtoMessage() {}
 
 func (x *AgentStatusReq) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[30]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2001,7 +2077,7 @@ func (x *AgentStatusReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentStatusReq.ProtoReflect.Descriptor instead.
 func (*AgentStatusReq) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{30}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *AgentStatusReq) GetAgentId() string {
@@ -2023,7 +2099,7 @@ type StartTeamReq struct {
 
 func (x *StartTeamReq) Reset() {
 	*x = StartTeamReq{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[31]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2035,7 +2111,7 @@ func (x *StartTeamReq) String() string {
 func (*StartTeamReq) ProtoMessage() {}
 
 func (x *StartTeamReq) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[31]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2048,7 +2124,7 @@ func (x *StartTeamReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StartTeamReq.ProtoReflect.Descriptor instead.
 func (*StartTeamReq) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{31}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *StartTeamReq) GetTask() string {
@@ -2091,7 +2167,7 @@ type TeamEvent struct {
 
 func (x *TeamEvent) Reset() {
 	*x = TeamEvent{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[32]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2103,7 +2179,7 @@ func (x *TeamEvent) String() string {
 func (*TeamEvent) ProtoMessage() {}
 
 func (x *TeamEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[32]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2116,7 +2192,7 @@ func (x *TeamEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TeamEvent.ProtoReflect.Descriptor instead.
 func (*TeamEvent) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{32}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *TeamEvent) GetEvent() isTeamEvent_Event {
@@ -2259,7 +2335,7 @@ type TeamStatusReq struct {
 
 func (x *TeamStatusReq) Reset() {
 	*x = TeamStatusReq{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[33]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2271,7 +2347,7 @@ func (x *TeamStatusReq) String() string {
 func (*TeamStatusReq) ProtoMessage() {}
 
 func (x *TeamStatusReq) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[33]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2284,7 +2360,7 @@ func (x *TeamStatusReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TeamStatusReq.ProtoReflect.Descriptor instead.
 func (*TeamStatusReq) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{33}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *TeamStatusReq) GetTeamId() string {
@@ -2306,7 +2382,7 @@ type TeamStatus struct {
 
 func (x *TeamStatus) Reset() {
 	*x = TeamStatus{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[34]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2318,7 +2394,7 @@ func (x *TeamStatus) String() string {
 func (*TeamStatus) ProtoMessage() {}
 
 func (x *TeamStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[34]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2331,7 +2407,7 @@ func (x *TeamStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TeamStatus.ProtoReflect.Descriptor instead.
 func (*TeamStatus) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{34}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *TeamStatus) GetTeamId() string {
@@ -2376,7 +2452,7 @@ type PlanStep struct {
 
 func (x *PlanStep) Reset() {
 	*x = PlanStep{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[35]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2388,7 +2464,7 @@ func (x *PlanStep) String() string {
 func (*PlanStep) ProtoMessage() {}
 
 func (x *PlanStep) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[35]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2401,7 +2477,7 @@ func (x *PlanStep) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlanStep.ProtoReflect.Descriptor instead.
 func (*PlanStep) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{35}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *PlanStep) GetId() string {
@@ -2454,7 +2530,7 @@ type Plan struct {
 
 func (x *Plan) Reset() {
 	*x = Plan{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[36]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2466,7 +2542,7 @@ func (x *Plan) String() string {
 func (*Plan) ProtoMessage() {}
 
 func (x *Plan) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[36]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2479,7 +2555,7 @@ func (x *Plan) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Plan.ProtoReflect.Descriptor instead.
 func (*Plan) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{36}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *Plan) GetId() string {
@@ -2542,7 +2618,7 @@ type ApprovePlanReq struct {
 
 func (x *ApprovePlanReq) Reset() {
 	*x = ApprovePlanReq{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[37]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2554,7 +2630,7 @@ func (x *ApprovePlanReq) String() string {
 func (*ApprovePlanReq) ProtoMessage() {}
 
 func (x *ApprovePlanReq) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[37]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2567,7 +2643,7 @@ func (x *ApprovePlanReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApprovePlanReq.ProtoReflect.Descriptor instead.
 func (*ApprovePlanReq) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{37}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *ApprovePlanReq) GetSessionId() string {
@@ -2602,7 +2678,7 @@ type RejectPlanReq struct {
 
 func (x *RejectPlanReq) Reset() {
 	*x = RejectPlanReq{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[38]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2614,7 +2690,7 @@ func (x *RejectPlanReq) String() string {
 func (*RejectPlanReq) ProtoMessage() {}
 
 func (x *RejectPlanReq) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[38]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2627,7 +2703,7 @@ func (x *RejectPlanReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RejectPlanReq.ProtoReflect.Descriptor instead.
 func (*RejectPlanReq) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{38}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *RejectPlanReq) GetSessionId() string {
@@ -2668,7 +2744,7 @@ type CronJob struct {
 
 func (x *CronJob) Reset() {
 	*x = CronJob{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[39]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2680,7 +2756,7 @@ func (x *CronJob) String() string {
 func (*CronJob) ProtoMessage() {}
 
 func (x *CronJob) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[39]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2693,7 +2769,7 @@ func (x *CronJob) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CronJob.ProtoReflect.Descriptor instead.
 func (*CronJob) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{39}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *CronJob) GetId() string {
@@ -2763,7 +2839,7 @@ type CreateCronReq struct {
 
 func (x *CreateCronReq) Reset() {
 	*x = CreateCronReq{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[40]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2775,7 +2851,7 @@ func (x *CreateCronReq) String() string {
 func (*CreateCronReq) ProtoMessage() {}
 
 func (x *CreateCronReq) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[40]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2788,7 +2864,7 @@ func (x *CreateCronReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateCronReq.ProtoReflect.Descriptor instead.
 func (*CreateCronReq) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{40}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *CreateCronReq) GetSessionId() string {
@@ -2821,7 +2897,7 @@ type CronJobList struct {
 
 func (x *CronJobList) Reset() {
 	*x = CronJobList{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[41]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2833,7 +2909,7 @@ func (x *CronJobList) String() string {
 func (*CronJobList) ProtoMessage() {}
 
 func (x *CronJobList) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[41]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2846,7 +2922,7 @@ func (x *CronJobList) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CronJobList.ProtoReflect.Descriptor instead.
 func (*CronJobList) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{41}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *CronJobList) GetJobs() []*CronJob {
@@ -2865,7 +2941,7 @@ type CronJobReq struct {
 
 func (x *CronJobReq) Reset() {
 	*x = CronJobReq{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[42]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2877,7 +2953,7 @@ func (x *CronJobReq) String() string {
 func (*CronJobReq) ProtoMessage() {}
 
 func (x *CronJobReq) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[42]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2890,7 +2966,7 @@ func (x *CronJobReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CronJobReq.ProtoReflect.Descriptor instead.
 func (*CronJobReq) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{42}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *CronJobReq) GetJobId() string {
@@ -2912,7 +2988,7 @@ type StartFleetReq struct {
 
 func (x *StartFleetReq) Reset() {
 	*x = StartFleetReq{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[43]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2924,7 +3000,7 @@ func (x *StartFleetReq) String() string {
 func (*StartFleetReq) ProtoMessage() {}
 
 func (x *StartFleetReq) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[43]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2937,7 +3013,7 @@ func (x *StartFleetReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StartFleetReq.ProtoReflect.Descriptor instead.
 func (*StartFleetReq) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{43}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *StartFleetReq) GetSessionId() string {
@@ -2976,7 +3052,7 @@ type FleetWorker struct {
 
 func (x *FleetWorker) Reset() {
 	*x = FleetWorker{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[44]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2988,7 +3064,7 @@ func (x *FleetWorker) String() string {
 func (*FleetWorker) ProtoMessage() {}
 
 func (x *FleetWorker) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[44]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3001,7 +3077,7 @@ func (x *FleetWorker) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetWorker.ProtoReflect.Descriptor instead.
 func (*FleetWorker) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{44}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *FleetWorker) GetId() string {
@@ -3067,7 +3143,7 @@ type FleetStatus struct {
 
 func (x *FleetStatus) Reset() {
 	*x = FleetStatus{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[45]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3079,7 +3155,7 @@ func (x *FleetStatus) String() string {
 func (*FleetStatus) ProtoMessage() {}
 
 func (x *FleetStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[45]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3092,7 +3168,7 @@ func (x *FleetStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetStatus.ProtoReflect.Descriptor instead.
 func (*FleetStatus) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{45}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *FleetStatus) GetFleetId() string {
@@ -3146,7 +3222,7 @@ type FleetStatusReq struct {
 
 func (x *FleetStatusReq) Reset() {
 	*x = FleetStatusReq{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[46]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3158,7 +3234,7 @@ func (x *FleetStatusReq) String() string {
 func (*FleetStatusReq) ProtoMessage() {}
 
 func (x *FleetStatusReq) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[46]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3171,7 +3247,7 @@ func (x *FleetStatusReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetStatusReq.ProtoReflect.Descriptor instead.
 func (*FleetStatusReq) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{46}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *FleetStatusReq) GetFleetId() string {
@@ -3191,7 +3267,7 @@ type KillFleetWorkerReq struct {
 
 func (x *KillFleetWorkerReq) Reset() {
 	*x = KillFleetWorkerReq{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[47]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3203,7 +3279,7 @@ func (x *KillFleetWorkerReq) String() string {
 func (*KillFleetWorkerReq) ProtoMessage() {}
 
 func (x *KillFleetWorkerReq) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[47]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3216,7 +3292,7 @@ func (x *KillFleetWorkerReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KillFleetWorkerReq.ProtoReflect.Descriptor instead.
 func (*KillFleetWorkerReq) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{47}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *KillFleetWorkerReq) GetFleetId() string {
@@ -3250,7 +3326,7 @@ type Job struct {
 
 func (x *Job) Reset() {
 	*x = Job{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[48]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3262,7 +3338,7 @@ func (x *Job) String() string {
 func (*Job) ProtoMessage() {}
 
 func (x *Job) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[48]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3275,7 +3351,7 @@ func (x *Job) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Job.ProtoReflect.Descriptor instead.
 func (*Job) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{48}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *Job) GetId() string {
@@ -3343,7 +3419,7 @@ type JobList struct {
 
 func (x *JobList) Reset() {
 	*x = JobList{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[49]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3355,7 +3431,7 @@ func (x *JobList) String() string {
 func (*JobList) ProtoMessage() {}
 
 func (x *JobList) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[49]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3368,7 +3444,7 @@ func (x *JobList) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JobList.ProtoReflect.Descriptor instead.
 func (*JobList) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{49}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *JobList) GetJobs() []*Job {
@@ -3387,7 +3463,7 @@ type JobReq struct {
 
 func (x *JobReq) Reset() {
 	*x = JobReq{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[50]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3399,7 +3475,7 @@ func (x *JobReq) String() string {
 func (*JobReq) ProtoMessage() {}
 
 func (x *JobReq) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[50]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3412,7 +3488,7 @@ func (x *JobReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use JobReq.ProtoReflect.Descriptor instead.
 func (*JobReq) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{50}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *JobReq) GetJobId() string {
@@ -3435,7 +3511,7 @@ type HealthResponse struct {
 
 func (x *HealthResponse) Reset() {
 	*x = HealthResponse{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[51]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3447,7 +3523,7 @@ func (x *HealthResponse) String() string {
 func (*HealthResponse) ProtoMessage() {}
 
 func (x *HealthResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[51]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3460,7 +3536,7 @@ func (x *HealthResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthResponse.ProtoReflect.Descriptor instead.
 func (*HealthResponse) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{51}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *HealthResponse) GetHealthy() bool {
@@ -3528,7 +3604,7 @@ const file_internal_proto_ratchet_proto_rawDesc = "" +
 	"\x0eSendMessageReq\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x18\n" +
-	"\acontent\x18\x02 \x01(\tR\acontent\"\x8c\x06\n" +
+	"\acontent\x18\x02 \x01(\tR\acontent\"\xc1\x06\n" +
 	"\tChatEvent\x12+\n" +
 	"\x05token\x18\x01 \x01(\v2\x13.ratchet.TokenDeltaH\x00R\x05token\x127\n" +
 	"\n" +
@@ -3547,8 +3623,14 @@ const file_internal_proto_ratchet_proto_rawDesc = "" +
 	" \x01(\v2\r.ratchet.PlanH\x00R\fplanProposed\x12=\n" +
 	"\x10plan_step_update\x18\v \x01(\v2\x11.ratchet.PlanStepH\x00R\x0eplanStepUpdate\x129\n" +
 	"\ffleet_status\x18\f \x01(\v2\x14.ratchet.FleetStatusH\x00R\vfleetStatus\x12P\n" +
-	"\x12context_compressed\x18\r \x01(\v2\x1f.ratchet.ContextCompressedEventH\x00R\x11contextCompressedB\a\n" +
-	"\x05event\"\xa1\x01\n" +
+	"\x12context_compressed\x18\r \x01(\v2\x1f.ratchet.ContextCompressedEventH\x00R\x11contextCompressed\x123\n" +
+	"\n" +
+	"auth_error\x18\x0e \x01(\v2\x12.ratchet.AuthErrorH\x00R\tauthErrorB\a\n" +
+	"\x05event\"W\n" +
+	"\tAuthError\x12\x1a\n" +
+	"\bprovider\x18\x01 \x01(\tR\bprovider\x12\x14\n" +
+	"\x05alias\x18\x02 \x01(\tR\x05alias\x12\x18\n" +
+	"\amessage\x18\x03 \x01(\tR\amessage\"\xa1\x01\n" +
 	"\x16ContextCompressedEvent\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x18\n" +
@@ -3823,7 +3905,7 @@ func file_internal_proto_ratchet_proto_rawDescGZIP() []byte {
 	return file_internal_proto_ratchet_proto_rawDescData
 }
 
-var file_internal_proto_ratchet_proto_msgTypes = make([]protoimpl.MessageInfo, 53)
+var file_internal_proto_ratchet_proto_msgTypes = make([]protoimpl.MessageInfo, 54)
 var file_internal_proto_ratchet_proto_goTypes = []any{
 	(*Empty)(nil),                  // 0: ratchet.Empty
 	(*Session)(nil),                // 1: ratchet.Session
@@ -3834,155 +3916,157 @@ var file_internal_proto_ratchet_proto_goTypes = []any{
 	(*KillReq)(nil),                // 6: ratchet.KillReq
 	(*SendMessageReq)(nil),         // 7: ratchet.SendMessageReq
 	(*ChatEvent)(nil),              // 8: ratchet.ChatEvent
-	(*ContextCompressedEvent)(nil), // 9: ratchet.ContextCompressedEvent
-	(*TokenDelta)(nil),             // 10: ratchet.TokenDelta
-	(*ToolCallStart)(nil),          // 11: ratchet.ToolCallStart
-	(*ToolCallResult)(nil),         // 12: ratchet.ToolCallResult
-	(*PermissionRequest)(nil),      // 13: ratchet.PermissionRequest
-	(*PermissionResponse)(nil),     // 14: ratchet.PermissionResponse
-	(*AgentSpawned)(nil),           // 15: ratchet.AgentSpawned
-	(*AgentMessage)(nil),           // 16: ratchet.AgentMessage
-	(*SessionComplete)(nil),        // 17: ratchet.SessionComplete
-	(*ErrorEvent)(nil),             // 18: ratchet.ErrorEvent
-	(*SessionHistory)(nil),         // 19: ratchet.SessionHistory
-	(*HistoryMessage)(nil),         // 20: ratchet.HistoryMessage
-	(*AddProviderReq)(nil),         // 21: ratchet.AddProviderReq
-	(*Provider)(nil),               // 22: ratchet.Provider
-	(*ProviderList)(nil),           // 23: ratchet.ProviderList
-	(*TestProviderReq)(nil),        // 24: ratchet.TestProviderReq
-	(*TestProviderResult)(nil),     // 25: ratchet.TestProviderResult
-	(*RemoveProviderReq)(nil),      // 26: ratchet.RemoveProviderReq
-	(*SetDefaultProviderReq)(nil),  // 27: ratchet.SetDefaultProviderReq
-	(*Agent)(nil),                  // 28: ratchet.Agent
-	(*AgentList)(nil),              // 29: ratchet.AgentList
-	(*AgentStatusReq)(nil),         // 30: ratchet.AgentStatusReq
-	(*StartTeamReq)(nil),           // 31: ratchet.StartTeamReq
-	(*TeamEvent)(nil),              // 32: ratchet.TeamEvent
-	(*TeamStatusReq)(nil),          // 33: ratchet.TeamStatusReq
-	(*TeamStatus)(nil),             // 34: ratchet.TeamStatus
-	(*PlanStep)(nil),               // 35: ratchet.PlanStep
-	(*Plan)(nil),                   // 36: ratchet.Plan
-	(*ApprovePlanReq)(nil),         // 37: ratchet.ApprovePlanReq
-	(*RejectPlanReq)(nil),          // 38: ratchet.RejectPlanReq
-	(*CronJob)(nil),                // 39: ratchet.CronJob
-	(*CreateCronReq)(nil),          // 40: ratchet.CreateCronReq
-	(*CronJobList)(nil),            // 41: ratchet.CronJobList
-	(*CronJobReq)(nil),             // 42: ratchet.CronJobReq
-	(*StartFleetReq)(nil),          // 43: ratchet.StartFleetReq
-	(*FleetWorker)(nil),            // 44: ratchet.FleetWorker
-	(*FleetStatus)(nil),            // 45: ratchet.FleetStatus
-	(*FleetStatusReq)(nil),         // 46: ratchet.FleetStatusReq
-	(*KillFleetWorkerReq)(nil),     // 47: ratchet.KillFleetWorkerReq
-	(*Job)(nil),                    // 48: ratchet.Job
-	(*JobList)(nil),                // 49: ratchet.JobList
-	(*JobReq)(nil),                 // 50: ratchet.JobReq
-	(*HealthResponse)(nil),         // 51: ratchet.HealthResponse
-	nil,                            // 52: ratchet.Job.MetadataEntry
-	(*timestamppb.Timestamp)(nil),  // 53: google.protobuf.Timestamp
+	(*AuthError)(nil),              // 9: ratchet.AuthError
+	(*ContextCompressedEvent)(nil), // 10: ratchet.ContextCompressedEvent
+	(*TokenDelta)(nil),             // 11: ratchet.TokenDelta
+	(*ToolCallStart)(nil),          // 12: ratchet.ToolCallStart
+	(*ToolCallResult)(nil),         // 13: ratchet.ToolCallResult
+	(*PermissionRequest)(nil),      // 14: ratchet.PermissionRequest
+	(*PermissionResponse)(nil),     // 15: ratchet.PermissionResponse
+	(*AgentSpawned)(nil),           // 16: ratchet.AgentSpawned
+	(*AgentMessage)(nil),           // 17: ratchet.AgentMessage
+	(*SessionComplete)(nil),        // 18: ratchet.SessionComplete
+	(*ErrorEvent)(nil),             // 19: ratchet.ErrorEvent
+	(*SessionHistory)(nil),         // 20: ratchet.SessionHistory
+	(*HistoryMessage)(nil),         // 21: ratchet.HistoryMessage
+	(*AddProviderReq)(nil),         // 22: ratchet.AddProviderReq
+	(*Provider)(nil),               // 23: ratchet.Provider
+	(*ProviderList)(nil),           // 24: ratchet.ProviderList
+	(*TestProviderReq)(nil),        // 25: ratchet.TestProviderReq
+	(*TestProviderResult)(nil),     // 26: ratchet.TestProviderResult
+	(*RemoveProviderReq)(nil),      // 27: ratchet.RemoveProviderReq
+	(*SetDefaultProviderReq)(nil),  // 28: ratchet.SetDefaultProviderReq
+	(*Agent)(nil),                  // 29: ratchet.Agent
+	(*AgentList)(nil),              // 30: ratchet.AgentList
+	(*AgentStatusReq)(nil),         // 31: ratchet.AgentStatusReq
+	(*StartTeamReq)(nil),           // 32: ratchet.StartTeamReq
+	(*TeamEvent)(nil),              // 33: ratchet.TeamEvent
+	(*TeamStatusReq)(nil),          // 34: ratchet.TeamStatusReq
+	(*TeamStatus)(nil),             // 35: ratchet.TeamStatus
+	(*PlanStep)(nil),               // 36: ratchet.PlanStep
+	(*Plan)(nil),                   // 37: ratchet.Plan
+	(*ApprovePlanReq)(nil),         // 38: ratchet.ApprovePlanReq
+	(*RejectPlanReq)(nil),          // 39: ratchet.RejectPlanReq
+	(*CronJob)(nil),                // 40: ratchet.CronJob
+	(*CreateCronReq)(nil),          // 41: ratchet.CreateCronReq
+	(*CronJobList)(nil),            // 42: ratchet.CronJobList
+	(*CronJobReq)(nil),             // 43: ratchet.CronJobReq
+	(*StartFleetReq)(nil),          // 44: ratchet.StartFleetReq
+	(*FleetWorker)(nil),            // 45: ratchet.FleetWorker
+	(*FleetStatus)(nil),            // 46: ratchet.FleetStatus
+	(*FleetStatusReq)(nil),         // 47: ratchet.FleetStatusReq
+	(*KillFleetWorkerReq)(nil),     // 48: ratchet.KillFleetWorkerReq
+	(*Job)(nil),                    // 49: ratchet.Job
+	(*JobList)(nil),                // 50: ratchet.JobList
+	(*JobReq)(nil),                 // 51: ratchet.JobReq
+	(*HealthResponse)(nil),         // 52: ratchet.HealthResponse
+	nil,                            // 53: ratchet.Job.MetadataEntry
+	(*timestamppb.Timestamp)(nil),  // 54: google.protobuf.Timestamp
 }
 var file_internal_proto_ratchet_proto_depIdxs = []int32{
-	53, // 0: ratchet.Session.created_at:type_name -> google.protobuf.Timestamp
+	54, // 0: ratchet.Session.created_at:type_name -> google.protobuf.Timestamp
 	1,  // 1: ratchet.SessionList.sessions:type_name -> ratchet.Session
-	10, // 2: ratchet.ChatEvent.token:type_name -> ratchet.TokenDelta
-	11, // 3: ratchet.ChatEvent.tool_start:type_name -> ratchet.ToolCallStart
-	12, // 4: ratchet.ChatEvent.tool_result:type_name -> ratchet.ToolCallResult
-	13, // 5: ratchet.ChatEvent.permission:type_name -> ratchet.PermissionRequest
-	15, // 6: ratchet.ChatEvent.agent_spawned:type_name -> ratchet.AgentSpawned
-	16, // 7: ratchet.ChatEvent.agent_message:type_name -> ratchet.AgentMessage
-	17, // 8: ratchet.ChatEvent.complete:type_name -> ratchet.SessionComplete
-	18, // 9: ratchet.ChatEvent.error:type_name -> ratchet.ErrorEvent
-	19, // 10: ratchet.ChatEvent.history:type_name -> ratchet.SessionHistory
-	36, // 11: ratchet.ChatEvent.plan_proposed:type_name -> ratchet.Plan
-	35, // 12: ratchet.ChatEvent.plan_step_update:type_name -> ratchet.PlanStep
-	45, // 13: ratchet.ChatEvent.fleet_status:type_name -> ratchet.FleetStatus
-	9,  // 14: ratchet.ChatEvent.context_compressed:type_name -> ratchet.ContextCompressedEvent
-	20, // 15: ratchet.SessionHistory.messages:type_name -> ratchet.HistoryMessage
-	53, // 16: ratchet.HistoryMessage.timestamp:type_name -> google.protobuf.Timestamp
-	22, // 17: ratchet.ProviderList.providers:type_name -> ratchet.Provider
-	28, // 18: ratchet.AgentList.agents:type_name -> ratchet.Agent
-	15, // 19: ratchet.TeamEvent.agent_spawned:type_name -> ratchet.AgentSpawned
-	16, // 20: ratchet.TeamEvent.agent_message:type_name -> ratchet.AgentMessage
-	10, // 21: ratchet.TeamEvent.token:type_name -> ratchet.TokenDelta
-	11, // 22: ratchet.TeamEvent.tool_start:type_name -> ratchet.ToolCallStart
-	12, // 23: ratchet.TeamEvent.tool_result:type_name -> ratchet.ToolCallResult
-	13, // 24: ratchet.TeamEvent.permission:type_name -> ratchet.PermissionRequest
-	17, // 25: ratchet.TeamEvent.complete:type_name -> ratchet.SessionComplete
-	18, // 26: ratchet.TeamEvent.error:type_name -> ratchet.ErrorEvent
-	28, // 27: ratchet.TeamStatus.agents:type_name -> ratchet.Agent
-	35, // 28: ratchet.Plan.steps:type_name -> ratchet.PlanStep
-	39, // 29: ratchet.CronJobList.jobs:type_name -> ratchet.CronJob
-	44, // 30: ratchet.FleetStatus.workers:type_name -> ratchet.FleetWorker
-	52, // 31: ratchet.Job.metadata:type_name -> ratchet.Job.MetadataEntry
-	48, // 32: ratchet.JobList.jobs:type_name -> ratchet.Job
-	2,  // 33: ratchet.RatchetDaemon.CreateSession:input_type -> ratchet.CreateSessionReq
-	0,  // 34: ratchet.RatchetDaemon.ListSessions:input_type -> ratchet.Empty
-	4,  // 35: ratchet.RatchetDaemon.AttachSession:input_type -> ratchet.AttachReq
-	5,  // 36: ratchet.RatchetDaemon.DetachSession:input_type -> ratchet.DetachReq
-	6,  // 37: ratchet.RatchetDaemon.KillSession:input_type -> ratchet.KillReq
-	7,  // 38: ratchet.RatchetDaemon.SendMessage:input_type -> ratchet.SendMessageReq
-	14, // 39: ratchet.RatchetDaemon.RespondToPermission:input_type -> ratchet.PermissionResponse
-	21, // 40: ratchet.RatchetDaemon.AddProvider:input_type -> ratchet.AddProviderReq
-	0,  // 41: ratchet.RatchetDaemon.ListProviders:input_type -> ratchet.Empty
-	24, // 42: ratchet.RatchetDaemon.TestProvider:input_type -> ratchet.TestProviderReq
-	26, // 43: ratchet.RatchetDaemon.RemoveProvider:input_type -> ratchet.RemoveProviderReq
-	27, // 44: ratchet.RatchetDaemon.SetDefaultProvider:input_type -> ratchet.SetDefaultProviderReq
-	0,  // 45: ratchet.RatchetDaemon.ListAgents:input_type -> ratchet.Empty
-	30, // 46: ratchet.RatchetDaemon.GetAgentStatus:input_type -> ratchet.AgentStatusReq
-	31, // 47: ratchet.RatchetDaemon.StartTeam:input_type -> ratchet.StartTeamReq
-	33, // 48: ratchet.RatchetDaemon.GetTeamStatus:input_type -> ratchet.TeamStatusReq
-	37, // 49: ratchet.RatchetDaemon.ApprovePlan:input_type -> ratchet.ApprovePlanReq
-	38, // 50: ratchet.RatchetDaemon.RejectPlan:input_type -> ratchet.RejectPlanReq
-	43, // 51: ratchet.RatchetDaemon.StartFleet:input_type -> ratchet.StartFleetReq
-	46, // 52: ratchet.RatchetDaemon.GetFleetStatus:input_type -> ratchet.FleetStatusReq
-	47, // 53: ratchet.RatchetDaemon.KillFleetWorker:input_type -> ratchet.KillFleetWorkerReq
-	40, // 54: ratchet.RatchetDaemon.CreateCron:input_type -> ratchet.CreateCronReq
-	0,  // 55: ratchet.RatchetDaemon.ListCrons:input_type -> ratchet.Empty
-	42, // 56: ratchet.RatchetDaemon.PauseCron:input_type -> ratchet.CronJobReq
-	42, // 57: ratchet.RatchetDaemon.ResumeCron:input_type -> ratchet.CronJobReq
-	42, // 58: ratchet.RatchetDaemon.StopCron:input_type -> ratchet.CronJobReq
-	0,  // 59: ratchet.RatchetDaemon.ListJobs:input_type -> ratchet.Empty
-	50, // 60: ratchet.RatchetDaemon.PauseJob:input_type -> ratchet.JobReq
-	50, // 61: ratchet.RatchetDaemon.ResumeJob:input_type -> ratchet.JobReq
-	50, // 62: ratchet.RatchetDaemon.KillJob:input_type -> ratchet.JobReq
-	0,  // 63: ratchet.RatchetDaemon.Health:input_type -> ratchet.Empty
-	0,  // 64: ratchet.RatchetDaemon.Shutdown:input_type -> ratchet.Empty
-	1,  // 65: ratchet.RatchetDaemon.CreateSession:output_type -> ratchet.Session
-	3,  // 66: ratchet.RatchetDaemon.ListSessions:output_type -> ratchet.SessionList
-	8,  // 67: ratchet.RatchetDaemon.AttachSession:output_type -> ratchet.ChatEvent
-	0,  // 68: ratchet.RatchetDaemon.DetachSession:output_type -> ratchet.Empty
-	0,  // 69: ratchet.RatchetDaemon.KillSession:output_type -> ratchet.Empty
-	8,  // 70: ratchet.RatchetDaemon.SendMessage:output_type -> ratchet.ChatEvent
-	0,  // 71: ratchet.RatchetDaemon.RespondToPermission:output_type -> ratchet.Empty
-	22, // 72: ratchet.RatchetDaemon.AddProvider:output_type -> ratchet.Provider
-	23, // 73: ratchet.RatchetDaemon.ListProviders:output_type -> ratchet.ProviderList
-	25, // 74: ratchet.RatchetDaemon.TestProvider:output_type -> ratchet.TestProviderResult
-	0,  // 75: ratchet.RatchetDaemon.RemoveProvider:output_type -> ratchet.Empty
-	0,  // 76: ratchet.RatchetDaemon.SetDefaultProvider:output_type -> ratchet.Empty
-	29, // 77: ratchet.RatchetDaemon.ListAgents:output_type -> ratchet.AgentList
-	28, // 78: ratchet.RatchetDaemon.GetAgentStatus:output_type -> ratchet.Agent
-	32, // 79: ratchet.RatchetDaemon.StartTeam:output_type -> ratchet.TeamEvent
-	34, // 80: ratchet.RatchetDaemon.GetTeamStatus:output_type -> ratchet.TeamStatus
-	8,  // 81: ratchet.RatchetDaemon.ApprovePlan:output_type -> ratchet.ChatEvent
-	0,  // 82: ratchet.RatchetDaemon.RejectPlan:output_type -> ratchet.Empty
-	8,  // 83: ratchet.RatchetDaemon.StartFleet:output_type -> ratchet.ChatEvent
-	45, // 84: ratchet.RatchetDaemon.GetFleetStatus:output_type -> ratchet.FleetStatus
-	0,  // 85: ratchet.RatchetDaemon.KillFleetWorker:output_type -> ratchet.Empty
-	39, // 86: ratchet.RatchetDaemon.CreateCron:output_type -> ratchet.CronJob
-	41, // 87: ratchet.RatchetDaemon.ListCrons:output_type -> ratchet.CronJobList
-	0,  // 88: ratchet.RatchetDaemon.PauseCron:output_type -> ratchet.Empty
-	0,  // 89: ratchet.RatchetDaemon.ResumeCron:output_type -> ratchet.Empty
-	0,  // 90: ratchet.RatchetDaemon.StopCron:output_type -> ratchet.Empty
-	49, // 91: ratchet.RatchetDaemon.ListJobs:output_type -> ratchet.JobList
-	0,  // 92: ratchet.RatchetDaemon.PauseJob:output_type -> ratchet.Empty
-	0,  // 93: ratchet.RatchetDaemon.ResumeJob:output_type -> ratchet.Empty
-	0,  // 94: ratchet.RatchetDaemon.KillJob:output_type -> ratchet.Empty
-	51, // 95: ratchet.RatchetDaemon.Health:output_type -> ratchet.HealthResponse
-	0,  // 96: ratchet.RatchetDaemon.Shutdown:output_type -> ratchet.Empty
-	65, // [65:97] is the sub-list for method output_type
-	33, // [33:65] is the sub-list for method input_type
-	33, // [33:33] is the sub-list for extension type_name
-	33, // [33:33] is the sub-list for extension extendee
-	0,  // [0:33] is the sub-list for field type_name
+	11, // 2: ratchet.ChatEvent.token:type_name -> ratchet.TokenDelta
+	12, // 3: ratchet.ChatEvent.tool_start:type_name -> ratchet.ToolCallStart
+	13, // 4: ratchet.ChatEvent.tool_result:type_name -> ratchet.ToolCallResult
+	14, // 5: ratchet.ChatEvent.permission:type_name -> ratchet.PermissionRequest
+	16, // 6: ratchet.ChatEvent.agent_spawned:type_name -> ratchet.AgentSpawned
+	17, // 7: ratchet.ChatEvent.agent_message:type_name -> ratchet.AgentMessage
+	18, // 8: ratchet.ChatEvent.complete:type_name -> ratchet.SessionComplete
+	19, // 9: ratchet.ChatEvent.error:type_name -> ratchet.ErrorEvent
+	20, // 10: ratchet.ChatEvent.history:type_name -> ratchet.SessionHistory
+	37, // 11: ratchet.ChatEvent.plan_proposed:type_name -> ratchet.Plan
+	36, // 12: ratchet.ChatEvent.plan_step_update:type_name -> ratchet.PlanStep
+	46, // 13: ratchet.ChatEvent.fleet_status:type_name -> ratchet.FleetStatus
+	10, // 14: ratchet.ChatEvent.context_compressed:type_name -> ratchet.ContextCompressedEvent
+	9,  // 15: ratchet.ChatEvent.auth_error:type_name -> ratchet.AuthError
+	21, // 16: ratchet.SessionHistory.messages:type_name -> ratchet.HistoryMessage
+	54, // 17: ratchet.HistoryMessage.timestamp:type_name -> google.protobuf.Timestamp
+	23, // 18: ratchet.ProviderList.providers:type_name -> ratchet.Provider
+	29, // 19: ratchet.AgentList.agents:type_name -> ratchet.Agent
+	16, // 20: ratchet.TeamEvent.agent_spawned:type_name -> ratchet.AgentSpawned
+	17, // 21: ratchet.TeamEvent.agent_message:type_name -> ratchet.AgentMessage
+	11, // 22: ratchet.TeamEvent.token:type_name -> ratchet.TokenDelta
+	12, // 23: ratchet.TeamEvent.tool_start:type_name -> ratchet.ToolCallStart
+	13, // 24: ratchet.TeamEvent.tool_result:type_name -> ratchet.ToolCallResult
+	14, // 25: ratchet.TeamEvent.permission:type_name -> ratchet.PermissionRequest
+	18, // 26: ratchet.TeamEvent.complete:type_name -> ratchet.SessionComplete
+	19, // 27: ratchet.TeamEvent.error:type_name -> ratchet.ErrorEvent
+	29, // 28: ratchet.TeamStatus.agents:type_name -> ratchet.Agent
+	36, // 29: ratchet.Plan.steps:type_name -> ratchet.PlanStep
+	40, // 30: ratchet.CronJobList.jobs:type_name -> ratchet.CronJob
+	45, // 31: ratchet.FleetStatus.workers:type_name -> ratchet.FleetWorker
+	53, // 32: ratchet.Job.metadata:type_name -> ratchet.Job.MetadataEntry
+	49, // 33: ratchet.JobList.jobs:type_name -> ratchet.Job
+	2,  // 34: ratchet.RatchetDaemon.CreateSession:input_type -> ratchet.CreateSessionReq
+	0,  // 35: ratchet.RatchetDaemon.ListSessions:input_type -> ratchet.Empty
+	4,  // 36: ratchet.RatchetDaemon.AttachSession:input_type -> ratchet.AttachReq
+	5,  // 37: ratchet.RatchetDaemon.DetachSession:input_type -> ratchet.DetachReq
+	6,  // 38: ratchet.RatchetDaemon.KillSession:input_type -> ratchet.KillReq
+	7,  // 39: ratchet.RatchetDaemon.SendMessage:input_type -> ratchet.SendMessageReq
+	15, // 40: ratchet.RatchetDaemon.RespondToPermission:input_type -> ratchet.PermissionResponse
+	22, // 41: ratchet.RatchetDaemon.AddProvider:input_type -> ratchet.AddProviderReq
+	0,  // 42: ratchet.RatchetDaemon.ListProviders:input_type -> ratchet.Empty
+	25, // 43: ratchet.RatchetDaemon.TestProvider:input_type -> ratchet.TestProviderReq
+	27, // 44: ratchet.RatchetDaemon.RemoveProvider:input_type -> ratchet.RemoveProviderReq
+	28, // 45: ratchet.RatchetDaemon.SetDefaultProvider:input_type -> ratchet.SetDefaultProviderReq
+	0,  // 46: ratchet.RatchetDaemon.ListAgents:input_type -> ratchet.Empty
+	31, // 47: ratchet.RatchetDaemon.GetAgentStatus:input_type -> ratchet.AgentStatusReq
+	32, // 48: ratchet.RatchetDaemon.StartTeam:input_type -> ratchet.StartTeamReq
+	34, // 49: ratchet.RatchetDaemon.GetTeamStatus:input_type -> ratchet.TeamStatusReq
+	38, // 50: ratchet.RatchetDaemon.ApprovePlan:input_type -> ratchet.ApprovePlanReq
+	39, // 51: ratchet.RatchetDaemon.RejectPlan:input_type -> ratchet.RejectPlanReq
+	44, // 52: ratchet.RatchetDaemon.StartFleet:input_type -> ratchet.StartFleetReq
+	47, // 53: ratchet.RatchetDaemon.GetFleetStatus:input_type -> ratchet.FleetStatusReq
+	48, // 54: ratchet.RatchetDaemon.KillFleetWorker:input_type -> ratchet.KillFleetWorkerReq
+	41, // 55: ratchet.RatchetDaemon.CreateCron:input_type -> ratchet.CreateCronReq
+	0,  // 56: ratchet.RatchetDaemon.ListCrons:input_type -> ratchet.Empty
+	43, // 57: ratchet.RatchetDaemon.PauseCron:input_type -> ratchet.CronJobReq
+	43, // 58: ratchet.RatchetDaemon.ResumeCron:input_type -> ratchet.CronJobReq
+	43, // 59: ratchet.RatchetDaemon.StopCron:input_type -> ratchet.CronJobReq
+	0,  // 60: ratchet.RatchetDaemon.ListJobs:input_type -> ratchet.Empty
+	51, // 61: ratchet.RatchetDaemon.PauseJob:input_type -> ratchet.JobReq
+	51, // 62: ratchet.RatchetDaemon.ResumeJob:input_type -> ratchet.JobReq
+	51, // 63: ratchet.RatchetDaemon.KillJob:input_type -> ratchet.JobReq
+	0,  // 64: ratchet.RatchetDaemon.Health:input_type -> ratchet.Empty
+	0,  // 65: ratchet.RatchetDaemon.Shutdown:input_type -> ratchet.Empty
+	1,  // 66: ratchet.RatchetDaemon.CreateSession:output_type -> ratchet.Session
+	3,  // 67: ratchet.RatchetDaemon.ListSessions:output_type -> ratchet.SessionList
+	8,  // 68: ratchet.RatchetDaemon.AttachSession:output_type -> ratchet.ChatEvent
+	0,  // 69: ratchet.RatchetDaemon.DetachSession:output_type -> ratchet.Empty
+	0,  // 70: ratchet.RatchetDaemon.KillSession:output_type -> ratchet.Empty
+	8,  // 71: ratchet.RatchetDaemon.SendMessage:output_type -> ratchet.ChatEvent
+	0,  // 72: ratchet.RatchetDaemon.RespondToPermission:output_type -> ratchet.Empty
+	23, // 73: ratchet.RatchetDaemon.AddProvider:output_type -> ratchet.Provider
+	24, // 74: ratchet.RatchetDaemon.ListProviders:output_type -> ratchet.ProviderList
+	26, // 75: ratchet.RatchetDaemon.TestProvider:output_type -> ratchet.TestProviderResult
+	0,  // 76: ratchet.RatchetDaemon.RemoveProvider:output_type -> ratchet.Empty
+	0,  // 77: ratchet.RatchetDaemon.SetDefaultProvider:output_type -> ratchet.Empty
+	30, // 78: ratchet.RatchetDaemon.ListAgents:output_type -> ratchet.AgentList
+	29, // 79: ratchet.RatchetDaemon.GetAgentStatus:output_type -> ratchet.Agent
+	33, // 80: ratchet.RatchetDaemon.StartTeam:output_type -> ratchet.TeamEvent
+	35, // 81: ratchet.RatchetDaemon.GetTeamStatus:output_type -> ratchet.TeamStatus
+	8,  // 82: ratchet.RatchetDaemon.ApprovePlan:output_type -> ratchet.ChatEvent
+	0,  // 83: ratchet.RatchetDaemon.RejectPlan:output_type -> ratchet.Empty
+	8,  // 84: ratchet.RatchetDaemon.StartFleet:output_type -> ratchet.ChatEvent
+	46, // 85: ratchet.RatchetDaemon.GetFleetStatus:output_type -> ratchet.FleetStatus
+	0,  // 86: ratchet.RatchetDaemon.KillFleetWorker:output_type -> ratchet.Empty
+	40, // 87: ratchet.RatchetDaemon.CreateCron:output_type -> ratchet.CronJob
+	42, // 88: ratchet.RatchetDaemon.ListCrons:output_type -> ratchet.CronJobList
+	0,  // 89: ratchet.RatchetDaemon.PauseCron:output_type -> ratchet.Empty
+	0,  // 90: ratchet.RatchetDaemon.ResumeCron:output_type -> ratchet.Empty
+	0,  // 91: ratchet.RatchetDaemon.StopCron:output_type -> ratchet.Empty
+	50, // 92: ratchet.RatchetDaemon.ListJobs:output_type -> ratchet.JobList
+	0,  // 93: ratchet.RatchetDaemon.PauseJob:output_type -> ratchet.Empty
+	0,  // 94: ratchet.RatchetDaemon.ResumeJob:output_type -> ratchet.Empty
+	0,  // 95: ratchet.RatchetDaemon.KillJob:output_type -> ratchet.Empty
+	52, // 96: ratchet.RatchetDaemon.Health:output_type -> ratchet.HealthResponse
+	0,  // 97: ratchet.RatchetDaemon.Shutdown:output_type -> ratchet.Empty
+	66, // [66:98] is the sub-list for method output_type
+	34, // [34:66] is the sub-list for method input_type
+	34, // [34:34] is the sub-list for extension type_name
+	34, // [34:34] is the sub-list for extension extendee
+	0,  // [0:34] is the sub-list for field type_name
 }
 
 func init() { file_internal_proto_ratchet_proto_init() }
@@ -4004,8 +4088,9 @@ func file_internal_proto_ratchet_proto_init() {
 		(*ChatEvent_PlanStepUpdate)(nil),
 		(*ChatEvent_FleetStatus)(nil),
 		(*ChatEvent_ContextCompressed)(nil),
+		(*ChatEvent_AuthError)(nil),
 	}
-	file_internal_proto_ratchet_proto_msgTypes[32].OneofWrappers = []any{
+	file_internal_proto_ratchet_proto_msgTypes[33].OneofWrappers = []any{
 		(*TeamEvent_AgentSpawned)(nil),
 		(*TeamEvent_AgentMessage)(nil),
 		(*TeamEvent_Token)(nil),
@@ -4021,7 +4106,7 @@ func file_internal_proto_ratchet_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_internal_proto_ratchet_proto_rawDesc), len(file_internal_proto_ratchet_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   53,
+			NumMessages:   54,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

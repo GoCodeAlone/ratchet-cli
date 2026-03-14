@@ -106,6 +106,8 @@ func Parse(input string, c *client.Client, sessionID ...string) *Result {
 		return rejectPlanCmd(parts[1], strings.Join(parts[2:], " "), c)
 	case "/jobs":
 		return jobsCmd(c)
+	case "/login":
+		return loginCmd(parts[1:], c)
 	default:
 		return &Result{Lines: []string{
 			fmt.Sprintf("Unknown command: %s — type /help for available commands", cmd),
@@ -142,6 +144,7 @@ func helpCmd() *Result {
 		"  /jobs                      Show unified job control panel (or use Ctrl+J)",
 		"  /compact                   Manually compress conversation context",
 		"  /review                    Run built-in code-reviewer on current git diff",
+		"  /login [alias]             Re-authenticate the current (or named) provider",
 		"  /exit                      Quit ratchet",
 	}}
 }
@@ -205,6 +208,9 @@ func providerRemove(alias string, c *client.Client) *Result {
 	if c == nil {
 		return &Result{Lines: []string{"Not connected to daemon"}}
 	}
+	// NOTE: sessions currently using this provider will receive auth errors until
+	// they are restarted or a new provider is configured. Consider clearing or
+	// migrating active sessions when provider removal is implemented fully.
 	if err := c.RemoveProvider(context.Background(), alias); err != nil {
 		return &Result{Lines: []string{fmt.Sprintf("Error removing %s: %v", alias, err)}}
 	}
@@ -496,6 +502,40 @@ func costCmd(args []string, c *client.Client) *Result {
 		"Token usage is shown in the status bar below the input.",
 		"For per-worker breakdown: /cost <fleet_id>",
 	}}
+}
+
+// loginCmd handles /login [alias]: triggers re-authentication for the current
+// session's provider or a specific provider alias.
+func loginCmd(args []string, c *client.Client) *Result {
+	if len(args) == 0 {
+		return &Result{
+			Lines:                []string{"Opening provider setup wizard for re-authentication..."},
+			NavigateToOnboarding: true,
+		}
+	}
+	alias := args[0]
+	// Verify the provider exists before navigating to onboarding.
+	if c != nil {
+		resp, err := c.ListProviders(context.Background())
+		if err == nil {
+			found := false
+			for _, p := range resp.Providers {
+				if p.Alias == alias {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return &Result{Lines: []string{
+					fmt.Sprintf("Provider %q not found. Use /provider list to see configured providers.", alias),
+				}}
+			}
+		}
+	}
+	return &Result{
+		Lines:                []string{fmt.Sprintf("Opening provider setup wizard to re-authenticate %q...", alias)},
+		NavigateToOnboarding: true,
+	}
 }
 
 // mcpCmd handles /mcp subcommands. MCP discovery runs on the daemon side;

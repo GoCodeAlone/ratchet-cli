@@ -65,7 +65,14 @@ message ChatEvent {
     PlanStep plan_step_update = 11;
     FleetStatus fleet_status = 12;
     ContextCompressedEvent context_compressed = 13;
+    AuthError auth_error = 14;
   }
+}
+
+message AuthError {
+  string provider = 1;
+  string alias = 2;
+  string message = 3;
 }
 
 message ContextCompressedEvent {
