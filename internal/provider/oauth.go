@@ -1,6 +1,7 @@
 package providerauth
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -36,10 +37,10 @@ type DeviceCodeResult struct {
 
 // Anthropic OAuth constants.
 const (
-	anthropicAuthURL  = "https://console.anthropic.com/oauth/authorize"
-	anthropicTokenURL = "https://console.anthropic.com/oauth/token"
-	anthropicClientID = "ratchet-cli"
-	anthropicKeysURL  = "https://console.anthropic.com/settings/keys"
+	anthropicAuthURL      = "https://console.anthropic.com/oauth/authorize"
+	anthropicTokenURL     = "https://console.anthropic.com/v1/oauth/token"
+	anthropicClientID     = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+	anthropicCreateKeyURL = "https://api.anthropic.com/api/oauth/claude_cli/create_api_key"
 )
 
 // GitHub device flow constants.
@@ -49,17 +50,6 @@ const (
 	// GithubCopilotClientID is GitHub Copilot's official OAuth App client ID.
 	GithubCopilotClientID = "Iv1.b507a08c87ecfe98"
 )
-
-// TryGHToken attempts to get a GitHub token from the gh CLI.
-// Returns the token if gh is installed and authenticated, empty string otherwise.
-func TryGHToken() string {
-	cmd := exec.Command("gh", "auth", "token")
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}
 
 // StartAnthropicOAuth runs the OAuth PKCE flow for Anthropic/Claude.
 // It starts a local HTTP server, opens the browser to the auth URL,
@@ -153,19 +143,23 @@ func StartAnthropicOAuth(ctx context.Context) <-chan OAuthResult {
 }
 
 func exchangeAnthropicCode(ctx context.Context, code, verifier, redirectURI string) (string, error) {
-	data := url.Values{
-		"grant_type":    {"authorization_code"},
-		"client_id":     {anthropicClientID},
-		"code":          {code},
-		"redirect_uri":  {redirectURI},
-		"code_verifier": {verifier},
+	// Step 1: Exchange authorization code for access token (JSON body, not form-encoded)
+	tokenReqBody, err := json.Marshal(map[string]any{
+		"grant_type":    "authorization_code",
+		"client_id":     anthropicClientID,
+		"code":          code,
+		"redirect_uri":  redirectURI,
+		"code_verifier": verifier,
+	})
+	if err != nil {
+		return "", fmt.Errorf("marshal token request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", anthropicTokenURL, strings.NewReader(data.Encode()))
+	req, err := http.NewRequestWithContext(ctx, "POST", anthropicTokenURL, bytes.NewReader(tokenReqBody))
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
@@ -179,26 +173,61 @@ func exchangeAnthropicCode(ctx context.Context, code, verifier, redirectURI stri
 		return "", fmt.Errorf("token exchange failed (%d): %s", resp.StatusCode, string(body))
 	}
 
-	var result struct {
+	var tokenResult struct {
 		AccessToken string `json:"access_token"`
-		APIKey      string `json:"api_key"`
 		Error       string `json:"error"`
 	}
-	if err := json.Unmarshal(body, &result); err != nil {
+	if err := json.Unmarshal(body, &tokenResult); err != nil {
 		return "", fmt.Errorf("parse token response: %w", err)
 	}
-	if result.Error != "" {
-		return "", fmt.Errorf("token error: %s", result.Error)
+	if tokenResult.Error != "" {
+		return "", fmt.Errorf("token error: %s", tokenResult.Error)
 	}
-	// Anthropic may return either access_token or api_key
-	token := result.AccessToken
-	if token == "" {
-		token = result.APIKey
+	if tokenResult.AccessToken == "" {
+		return "", fmt.Errorf("no access_token in response")
 	}
-	if token == "" {
-		return "", fmt.Errorf("no token in response")
+
+	// Step 2: Exchange access token for a permanent API key
+	keyReqBody, err := json.Marshal(map[string]any{
+		"name": "ratchet-cli",
+	})
+	if err != nil {
+		return "", fmt.Errorf("marshal key request: %w", err)
 	}
-	return token, nil
+
+	keyReq, err := http.NewRequestWithContext(ctx, "POST", anthropicCreateKeyURL, bytes.NewReader(keyReqBody))
+	if err != nil {
+		return "", err
+	}
+	keyReq.Header.Set("Authorization", "Bearer "+tokenResult.AccessToken)
+	keyReq.Header.Set("Content-Type", "application/json")
+	keyReq.Header.Set("Accept", "application/json")
+
+	keyResp, err := http.DefaultClient.Do(keyReq)
+	if err != nil {
+		return "", fmt.Errorf("create api key: %w", err)
+	}
+	defer keyResp.Body.Close()
+
+	keyBody, _ := io.ReadAll(keyResp.Body)
+	if keyResp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("create api key failed (%d): %s", keyResp.StatusCode, string(keyBody))
+	}
+
+	var keyResult struct {
+		RawKey string `json:"raw_key"`
+		Error  string `json:"error"`
+	}
+	if err := json.Unmarshal(keyBody, &keyResult); err != nil {
+		return "", fmt.Errorf("parse api key response: %w", err)
+	}
+	if keyResult.Error != "" {
+		return "", fmt.Errorf("api key error: %s", keyResult.Error)
+	}
+	if keyResult.RawKey == "" {
+		return "", fmt.Errorf("no raw_key in api key response")
+	}
+	return keyResult.RawKey, nil
 }
 
 // StartGitHubDeviceFlow initiates the GitHub device code flow.

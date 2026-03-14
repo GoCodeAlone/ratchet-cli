@@ -41,11 +41,6 @@ type browserAuthResultMsg struct {
 	err   error
 }
 
-// ghTokenMsg carries the result of a `gh auth token` check.
-type ghTokenMsg struct {
-	token string // empty if gh not available
-}
-
 // deviceCodeMsg carries the result of a GitHub device code request.
 type deviceCodeMsg struct {
 	result *providerauth.DeviceCodeResult
@@ -62,6 +57,7 @@ type onboardingStep int
 
 const (
 	stepSelectProvider onboardingStep = iota
+	stepAnthropicAuthChoice
 	stepBrowserAuth
 	stepEnterAPIKey
 	stepEnterBaseURL
@@ -195,21 +191,27 @@ func (m OnboardingModel) selectedModelID() string {
 }
 
 func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
+	// Global Esc: cancel any in-progress auth and return to provider selection.
+	// This fires regardless of the current step, so error screens and browser-wait
+	// screens all dismiss properly.
+	if keyMsg, ok := msg.(tea.KeyPressMsg); ok && keyMsg.String() == "escape" {
+		if m.step != stepSelectProvider {
+			if m.authCancel != nil {
+				m.authCancel()
+				m.authCancel = nil
+			}
+			m.authing = false
+			m.authError = ""
+			m.step = stepSelectProvider
+			return m, nil
+		}
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		return m, nil
-
-	case ghTokenMsg:
-		if msg.token != "" {
-			// gh CLI provided a token — fetch models
-			m.authing = false
-			m.authToken = msg.token
-			return m.transitionToFetchModels()
-		}
-		// gh not available — start GitHub device flow
-		return m, m.startDeviceFlow()
 
 	case deviceCodeMsg:
 		if msg.err != nil {
@@ -291,6 +293,8 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 	switch m.step {
 	case stepSelectProvider:
 		return m.updateSelectProvider(msg)
+	case stepAnthropicAuthChoice:
+		return m.updateAnthropicAuthChoice(msg)
 	case stepBrowserAuth:
 		return m.updateBrowserAuth(msg)
 	case stepEnterAPIKey:
@@ -345,21 +349,16 @@ func (m OnboardingModel) advanceFromProvider() (OnboardingModel, tea.Cmd) {
 
 	switch p.auth {
 	case authBrowser:
-		// Anthropic: try OAuth first, open browser
-		m.step = stepBrowserAuth
-		m.authing = true
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		m.authCancel = cancel
-		// Open API keys page as fallback context
-		go providerauth.OpenBrowserURL("https://console.anthropic.com/settings/keys") //nolint:errcheck
-		m.browserOpened = true
-		return m, tea.Batch(m.spinner.Tick, m.startAnthropicAuth(ctx))
+		// Anthropic: let user choose between Claude subscription OAuth or API key
+		m.step = stepAnthropicAuthChoice
+		m.cursor = 0
+		return m, nil
 
 	case authGHCLI:
-		// Copilot: try gh auth token first, then device flow
+		// Copilot: always use explicit device flow (never auto-detect gh CLI token)
 		m.step = stepBrowserAuth
 		m.authing = true
-		return m, tea.Batch(m.spinner.Tick, m.tryGHToken())
+		return m, tea.Batch(m.spinner.Tick, m.startDeviceFlow())
 
 	case authAPIKey:
 		m.step = stepEnterAPIKey
@@ -395,13 +394,6 @@ func (m OnboardingModel) fetchModels() tea.Cmd {
 	}
 }
 
-func (m OnboardingModel) tryGHToken() tea.Cmd {
-	return func() tea.Msg {
-		token := providerauth.TryGHToken()
-		return ghTokenMsg{token: token}
-	}
-}
-
 func (m OnboardingModel) startDeviceFlow() tea.Cmd {
 	return func() tea.Msg {
 		result, err := providerauth.StartGitHubDeviceFlow(context.Background(), providerauth.GithubCopilotClientID)
@@ -423,6 +415,43 @@ func (m OnboardingModel) startAnthropicAuth(ctx context.Context) tea.Cmd {
 		result := <-ch
 		return browserAuthResultMsg{token: result.Token, err: result.Err}
 	}
+}
+
+func (m OnboardingModel) updateAnthropicAuthChoice(msg tea.Msg) (OnboardingModel, tea.Cmd) {
+	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+		switch keyMsg.String() {
+		case "escape":
+			m.step = stepSelectProvider
+			return m, nil
+		case "j", "down":
+			if m.cursor < 1 {
+				m.cursor++
+			}
+		case "k", "up":
+			if m.cursor > 0 {
+				m.cursor--
+			}
+		case "1":
+			m.cursor = 0
+		case "2":
+			m.cursor = 1
+		case "enter", " ":
+			if m.cursor == 0 {
+				// Claude subscription OAuth
+				m.step = stepBrowserAuth
+				m.authing = true
+				m.browserOpened = true
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+				m.authCancel = cancel
+				return m, tea.Batch(m.spinner.Tick, m.startAnthropicAuth(ctx))
+			}
+			// Manual API key
+			m.step = stepEnterAPIKey
+			m.apiKeyInput.Placeholder = "sk-ant-..."
+			return m, m.apiKeyInput.Focus()
+		}
+	}
+	return m, nil
 }
 
 func (m OnboardingModel) updateBrowserAuth(msg tea.Msg) (OnboardingModel, tea.Cmd) {
@@ -677,6 +706,23 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 		}
 		sb.WriteString("\n" + mutedStyle.Render(fmt.Sprintf("↑/↓ or 1-%d: select  Enter: confirm", len(providerTypes))))
 
+	case stepAnthropicAuthChoice:
+		sb.WriteString("Sign in with Anthropic\n\n")
+		choices := []string{
+			"Sign in with Claude account (Pro/Team/Enterprise)",
+			"Enter API key manually",
+		}
+		for i, label := range choices {
+			cursor := "  "
+			style := mutedStyle
+			if i == m.cursor {
+				cursor = "▶ "
+				style = lipgloss.NewStyle().Foreground(t.Foreground).Bold(true)
+			}
+			sb.WriteString(style.Render(fmt.Sprintf("%s%d. %s", cursor, i+1, label)) + "\n")
+		}
+		sb.WriteString("\n" + mutedStyle.Render("↑/↓ or 1-2: select  Enter: confirm  Esc: back"))
+
 	case stepBrowserAuth:
 		p := m.selectedProvider()
 		if m.authing {
@@ -817,6 +863,8 @@ func (m OnboardingModel) currentStepIndex() int {
 	switch m.step {
 	case stepSelectProvider:
 		return 0
+	case stepAnthropicAuthChoice:
+		return 1
 	case stepBrowserAuth, stepEnterAPIKey:
 		return 1
 	case stepEnterBaseURL:
