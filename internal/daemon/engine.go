@@ -27,6 +27,7 @@ type EngineContext struct {
 	SecretsProvider  secrets.Provider
 	MCPDiscoverer    *mcp.Discoverer
 	ModelRouting     config.ModelRouting
+	Actors           *ActorManager
 }
 
 func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error) { //nolint:unparam
@@ -96,11 +97,22 @@ func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error
 		log.Printf("loaded plugin: %s (%s)", p.Name, p.Path)
 	}
 
+	// Actor system (non-fatal on error; actors are optional middleware).
+	actors, err := NewActorManager(db)
+	if err != nil {
+		log.Printf("warning: actor system init: %v", err)
+	} else {
+		ec.Actors = actors
+	}
+
 	log.Println("engine context initialized")
 	return ec, nil
 }
 
 func (ec *EngineContext) Close() {
+	if ec.Actors != nil {
+		_ = ec.Actors.Close(context.Background())
+	}
 	if ec.DB != nil {
 		ec.DB.Close()
 	}
