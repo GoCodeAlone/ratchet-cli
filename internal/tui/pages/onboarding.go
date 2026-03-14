@@ -114,7 +114,11 @@ type OnboardingModel struct {
 	step   onboardingStep
 
 	// Provider selection
-	cursor int
+	// cursor is used for navigation within the current step (provider list,
+	// auth choice list, model list, etc.). providerIdx is set once the user
+	// confirms a provider and never changes until a new provider is selected.
+	cursor      int
+	providerIdx int
 
 	// API key input (used for manual key entry and browser auth fallback)
 	apiKeyInput textinput.Model
@@ -180,7 +184,7 @@ func (m OnboardingModel) Init() tea.Cmd {
 }
 
 func (m OnboardingModel) selectedProvider() providerTypeInfo {
-	return providerTypes[m.cursor]
+	return providerTypes[m.providerIdx]
 }
 
 // selectedModelID returns the ID of the currently selected model.
@@ -206,6 +210,9 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 			m.authError = ""
 			m.setupTokenMode = false
 			m.step = stepSelectProvider
+			// Restore cursor to the previously-selected provider so the list
+			// highlights the right row when returning to the selection screen.
+			m.cursor = m.providerIdx
 			return m, nil
 		}
 	}
@@ -255,8 +262,6 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		m.fetchingModels = false
 		if msg.err != nil {
 			m.modelsError = msg.err.Error()
-			m.step = stepSelectModel
-			return m, nil
 		}
 		m.fetchedModels = msg.models
 		m.modelCursor = 0
@@ -340,6 +345,8 @@ func (m OnboardingModel) updateSelectProvider(msg tea.Msg) (OnboardingModel, tea
 }
 
 func (m OnboardingModel) advanceFromProvider() (OnboardingModel, tea.Cmd) {
+	// Lock in the selected provider index before cursor gets repurposed for sub-steps.
+	m.providerIdx = m.cursor
 	p := m.selectedProvider()
 	// Reset state
 	m.authToken = ""
@@ -389,7 +396,7 @@ func (m OnboardingModel) transitionToFetchModels() (OnboardingModel, tea.Cmd) {
 
 func (m OnboardingModel) fetchModels() tea.Cmd {
 	return func() tea.Msg {
-		p := providerTypes[m.cursor]
+		p := providerTypes[m.providerIdx]
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		models, err := providerauth.ListModels(ctx, p.name, m.authToken, m.baseURLInput.Value())
@@ -425,6 +432,7 @@ func (m OnboardingModel) updateAnthropicAuthChoice(msg tea.Msg) (OnboardingModel
 		switch keyMsg.String() {
 		case "escape":
 			m.step = stepSelectProvider
+			m.cursor = m.providerIdx
 			return m, nil
 		case "j", "down":
 			if m.cursor < 2 {
@@ -479,6 +487,7 @@ func (m OnboardingModel) updateBrowserAuth(msg tea.Msg) (OnboardingModel, tea.Cm
 			m.authing = false
 			m.authError = ""
 			m.step = stepSelectProvider
+			m.cursor = m.providerIdx
 			return m, nil
 		}
 	}
@@ -496,9 +505,10 @@ func (m OnboardingModel) updateEnterAPIKey(msg tea.Msg) (OnboardingModel, tea.Cm
 			p := m.selectedProvider()
 			if p.auth == authBrowser {
 				m.step = stepAnthropicAuthChoice
-				m.cursor = 0
+				m.cursor = 0 // reset auth choice cursor
 			} else {
 				m.step = stepSelectProvider
+				m.cursor = m.providerIdx // restore provider list cursor
 			}
 			return m, nil
 		case "enter":
@@ -531,6 +541,7 @@ func (m OnboardingModel) updateEnterBaseURL(msg tea.Msg) (OnboardingModel, tea.C
 				return m, m.apiKeyInput.Focus()
 			}
 			m.step = stepSelectProvider
+			m.cursor = m.providerIdx
 			return m, nil
 		case "enter":
 			if m.baseURLInput.Value() == "" {
@@ -550,6 +561,7 @@ func (m OnboardingModel) updateFetchModels(msg tea.Msg) (OnboardingModel, tea.Cm
 		if keyMsg.String() == "escape" {
 			m.fetchingModels = false
 			m.step = stepSelectProvider
+			m.cursor = m.providerIdx
 			return m, nil
 		}
 	}
@@ -568,6 +580,7 @@ func (m OnboardingModel) updateSelectModel(msg tea.Msg) (OnboardingModel, tea.Cm
 			}
 			// For browser/gh_cli auth, go back to provider selection
 			m.step = stepSelectProvider
+			m.cursor = m.providerIdx
 			return m, nil
 		case "j", "down":
 			if m.modelCursor < len(models)-1 {

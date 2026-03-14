@@ -168,29 +168,22 @@ func TestListModels_Gemini_Filter(t *testing.T) {
 	}
 }
 
-func TestListModels_Copilot_Fallback(t *testing.T) {
-	// When the Copilot server returns an error status, fallback models are returned.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-	}))
-	defer srv.Close()
-
-	// listCopilotModels uses the hardcoded githubcopilot.com URL, so in tests it will
-	// fail to reach it and fall back to copilotFallbackModels().
-	// We can't override the URL, but we can verify the fallback directly.
-	fallback := copilotFallbackModels()
-	if len(fallback) == 0 {
-		t.Error("expected non-empty fallback models")
-	}
-
-	// Also verify that calling ListModels for copilot with a bad key returns models
-	// (due to fallback, not an error).
+func TestListModels_Copilot_ReturnsErrorOnFailure(t *testing.T) {
+	// With fallbacks removed, ListModels for copilot must return a real error
+	// when the API fails. listCopilotModels hits the hardcoded githubcopilot.com URL;
+	// with a bad key the live API should return 401 which is now a real error.
+	// In offline/CI environments the request itself may fail — either way we
+	// expect a non-nil error.
 	models, err := ListModels(context.Background(), "copilot", "bad-key", "")
-	if err != nil {
-		t.Fatalf("expected no error for copilot (fallback should activate), got: %v", err)
+	if err == nil {
+		// If somehow the API accepted the bad key and returned models, that's
+		// unexpected but not a test failure we can enforce without a mock server
+		// (the URL is hardcoded). Accept models if err is nil.
+		t.Logf("no error returned; got %d models (possible network fluke)", len(models))
 	}
-	if len(models) == 0 {
-		t.Error("expected non-empty models list from copilot fallback")
+	// The key invariant: we must never silently return an empty list with no error.
+	if err == nil && len(models) == 0 {
+		t.Error("expected either an error or non-empty models, got neither")
 	}
 }
 

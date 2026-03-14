@@ -137,24 +137,20 @@ func listOpenAIModels(ctx context.Context, apiKey, baseURL string) ([]ModelInfo,
 func listCopilotModels(ctx context.Context, apiKey string) ([]ModelInfo, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.githubcopilot.com/models", nil)
 	if err != nil {
-		return copilotFallbackModels(), nil
+		return nil, fmt.Errorf("could not create request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Copilot-Integration-Id", "ratchet")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return copilotFallbackModels(), nil
+		return nil, fmt.Errorf("API unreachable: %w", err)
 	}
 	defer resp.Body.Close()
 
+	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return copilotFallbackModels(), nil
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return copilotFallbackModels(), nil
+		return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, truncateStr(body, 200))
 	}
 
 	var result struct {
@@ -164,7 +160,7 @@ func listCopilotModels(ctx context.Context, apiKey string) ([]ModelInfo, error) 
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
-		return copilotFallbackModels(), nil
+		return nil, fmt.Errorf("bad response: %w", err)
 	}
 
 	var models []ModelInfo
@@ -176,20 +172,10 @@ func listCopilotModels(ctx context.Context, apiKey string) ([]ModelInfo, error) 
 		models = append(models, ModelInfo{ID: m.ID, Name: name})
 	}
 	if len(models) == 0 {
-		return copilotFallbackModels(), nil
+		return nil, fmt.Errorf("API returned empty model list")
 	}
 	sortModels(models)
 	return models, nil
-}
-
-func copilotFallbackModels() []ModelInfo {
-	return []ModelInfo{
-		{ID: "claude-sonnet-4", Name: "Claude Sonnet 4"},
-		{ID: "gpt-4.1", Name: "GPT-4.1"},
-		{ID: "gpt-4o", Name: "GPT-4o"},
-		{ID: "gpt-4o-mini", Name: "GPT-4o Mini"},
-		{ID: "o3-mini", Name: "o3-mini"},
-	}
 }
 
 func listOllamaModels(ctx context.Context, baseURL string) ([]ModelInfo, error) {

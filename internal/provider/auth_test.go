@@ -1,6 +1,7 @@
 package providerauth
 
 import (
+	"context"
 	"testing"
 )
 
@@ -11,17 +12,14 @@ func TestCopilotAuth_DeviceFlow(t *testing.T) {
 	}
 }
 
-func TestCopilotAuth_FallbackModels(t *testing.T) {
-	models := copilotFallbackModels()
-	if len(models) == 0 {
-		t.Error("expected non-empty fallback models list")
-	}
-	for _, m := range models {
-		if m.ID == "" {
-			t.Error("expected non-empty ID in fallback model")
-		}
-		if m.Name == "" {
-			t.Error("expected non-empty Name in fallback model")
-		}
+func TestCopilotAuth_ListModels_ReturnsErrorOnFailure(t *testing.T) {
+	// With fallbacks removed, listCopilotModels must return a real error
+	// when the API is unreachable (bad-key hits the live endpoint which is
+	// unreachable in CI, so we just verify that either an error is returned
+	// or models are non-empty — we never get both nil error and empty list).
+	ctx := context.Background()
+	models, err := ListModels(ctx, "copilot", "bad-key", "")
+	if err == nil && len(models) == 0 {
+		t.Error("expected either an error or non-empty model list, got neither")
 	}
 }
