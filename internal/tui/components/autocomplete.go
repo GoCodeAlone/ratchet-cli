@@ -1,6 +1,7 @@
 package components
 
 import (
+	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -29,6 +30,9 @@ type AutocompleteSelectedMsg struct {
 	Command string
 }
 
+// maxVisibleItems is the maximum number of autocomplete items shown at once.
+const maxVisibleItems = 10
+
 // NewAutocomplete creates an autocomplete model with all known commands.
 func NewAutocomplete() AutocompleteModel {
 	commands := []CommandEntry{
@@ -40,6 +44,18 @@ func NewAutocomplete() AutocompleteModel {
 		{Name: "/sessions", Desc: "List sessions"},
 		{Name: "/provider", Desc: "Provider management"},
 		{Name: "/exit", Desc: "Quit ratchet"},
+		{Name: "/plan", Desc: "Show plan mode info"},
+		{Name: "/approve", Desc: "Approve a proposed plan"},
+		{Name: "/reject", Desc: "Reject a proposed plan"},
+		{Name: "/fleet", Desc: "Start fleet execution for a plan"},
+		{Name: "/team", Desc: "Team management"},
+		{Name: "/review", Desc: "Run code-reviewer on current git diff"},
+		{Name: "/compact", Desc: "Compress conversation context"},
+		{Name: "/loop", Desc: "Schedule a recurring command"},
+		{Name: "/cron", Desc: "Schedule with cron expression"},
+		{Name: "/mcp", Desc: "MCP tool management"},
+		{Name: "/jobs", Desc: "Show job control panel"},
+		{Name: "/login", Desc: "Re-authenticate provider"},
 	}
 	return AutocompleteModel{commands: commands}
 }
@@ -109,7 +125,7 @@ func (m AutocompleteModel) Update(msg tea.Msg) (AutocompleteModel, tea.Cmd) {
 	return m, nil
 }
 
-// View renders the autocomplete dropdown.
+// View renders the autocomplete dropdown, capped at maxVisibleItems rows.
 func (m AutocompleteModel) View(t theme.Theme, width int) string {
 	if !m.visible || len(m.matches) == 0 {
 		return ""
@@ -130,17 +146,50 @@ func (m AutocompleteModel) View(t theme.Theme, width int) string {
 		Foreground(lipgloss.Color("#FFFFFF")).
 		Width(maxWidth)
 
+	mutedStyle := lipgloss.NewStyle().
+		Foreground(t.Muted).
+		Width(maxWidth)
+
+	total := len(m.matches)
+
+	// Compute a window of maxVisibleItems around the cursor.
+	start := m.cursor - maxVisibleItems/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + maxVisibleItems
+	if end > total {
+		end = total
+		start = end - maxVisibleItems
+		if start < 0 {
+			start = 0
+		}
+	}
+
 	var sb strings.Builder
-	for i, cmd := range m.matches {
-		line := " " + cmd.Name + "  " + cmd.Desc
+	first := true
+
+	if start > 0 {
+		sb.WriteString(mutedStyle.Render(fmt.Sprintf(" ↑ %d more", start)))
+		first = false
+	}
+
+	for i := start; i < end; i++ {
+		if !first {
+			sb.WriteString("\n")
+		}
+		first = false
+		line := " " + m.matches[i].Name + "  " + m.matches[i].Desc
 		if i == m.cursor {
 			sb.WriteString(selectedStyle.Render(line))
 		} else {
 			sb.WriteString(style.Render(line))
 		}
-		if i < len(m.matches)-1 {
-			sb.WriteString("\n")
-		}
+	}
+
+	if end < total {
+		sb.WriteString("\n")
+		sb.WriteString(mutedStyle.Render(fmt.Sprintf(" ↓ %d more", total-end)))
 	}
 
 	return lipgloss.NewStyle().

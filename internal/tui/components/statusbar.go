@@ -35,8 +35,12 @@ func (s StatusBar) View(t theme.Theme) string {
 	elapsed := formatElapsed(time.Since(s.SessionStart))
 
 	segments := []string{" " + dir}
-	if s.Model != "" {
+	if s.Provider != "" && s.Model != "" {
+		segments = append(segments, s.Provider+"/"+s.Model)
+	} else if s.Model != "" {
 		segments = append(segments, s.Model)
+	} else if s.Provider != "" {
+		segments = append(segments, s.Provider)
 	}
 	if s.ActiveAgents > 0 {
 		segments = append(segments, fmt.Sprintf("agents: %d", s.ActiveAgents))
