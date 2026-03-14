@@ -98,7 +98,7 @@ func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error
 	}
 
 	// Actor system (non-fatal on error; actors are optional middleware).
-	actors, err := NewActorManager(db)
+	actors, err := NewActorManager(ctx, db)
 	if err != nil {
 		log.Printf("warning: actor system init: %v", err)
 	} else {

@@ -14,28 +14,31 @@ import (
 type ActorManager struct {
 	system actor.ActorSystem
 	db     *sql.DB
+	ctx    context.Context
 
 	mu       sync.RWMutex
 	sessions map[string]*actor.PID // sessionID → PID
 }
 
 // NewActorManager creates and starts an actor system with SQLite-backed state.
-func NewActorManager(db *sql.DB) (*ActorManager, error) {
+// The provided context is stored and propagated to the actor system and rehydration.
+func NewActorManager(ctx context.Context, db *sql.DB) (*ActorManager, error) {
 	sys, err := actor.NewActorSystem("ratchet",
 		actor.WithActorInitMaxRetries(3),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create actor system: %w", err)
 	}
-	if err := sys.Start(context.Background()); err != nil {
+	if err := sys.Start(ctx); err != nil {
 		return nil, fmt.Errorf("start actor system: %w", err)
 	}
 	am := &ActorManager{
 		system:   sys,
 		db:       db,
+		ctx:      ctx,
 		sessions: make(map[string]*actor.PID),
 	}
-	if err := am.rehydrateSessions(context.Background()); err != nil {
+	if err := am.rehydrateSessions(ctx); err != nil {
 		// Non-fatal: log and continue — actors will be spawned on first use.
 		_ = err
 	}

@@ -13,6 +13,7 @@ import (
 type JobProvider interface {
 	ActiveJobs() []*pb.Job
 	PauseJob(id string) error
+	ResumeJob(id string) error
 	KillJob(id string) error
 }
 
@@ -58,12 +59,13 @@ func (jr *JobRegistry) KillJob(id string) error {
 	return p.KillJob(id)
 }
 
-// ResumeJob is a best-effort resume — not all providers support pause/resume.
+// ResumeJob routes to the correct provider by job type prefix.
 func (jr *JobRegistry) ResumeJob(id string) error {
-	// Only CronProvider exposes Resume; others just re-use KillJob → re-spawn (not needed here).
-	// For now delegate to the provider's KillJob as a no-op for non-pausable types.
-	_, err := jr.providerFor(id)
-	return err
+	p, err := jr.providerFor(id)
+	if err != nil {
+		return err
+	}
+	return p.ResumeJob(id)
 }
 
 func (jr *JobRegistry) providerFor(id string) (JobProvider, error) {
@@ -116,6 +118,10 @@ func (p *SessionJobProvider) PauseJob(id string) error {
 	return fmt.Errorf("session jobs cannot be paused")
 }
 
+func (p *SessionJobProvider) ResumeJob(id string) error {
+	return fmt.Errorf("session jobs cannot be resumed")
+}
+
 func (p *SessionJobProvider) KillJob(id string) error {
 	sessionID := strings.TrimPrefix(id, "session:")
 	return p.sm.Kill(context.Background(), sessionID)
@@ -161,6 +167,10 @@ func (p *FleetJobProvider) ActiveJobs() []*pb.Job {
 
 func (p *FleetJobProvider) PauseJob(id string) error {
 	return fmt.Errorf("fleet worker jobs cannot be paused")
+}
+
+func (p *FleetJobProvider) ResumeJob(id string) error {
+	return fmt.Errorf("fleet worker jobs cannot be resumed")
 }
 
 func (p *FleetJobProvider) KillJob(id string) error {
@@ -219,6 +229,10 @@ func (p *TeamJobProvider) ActiveJobs() []*pb.Job {
 
 func (p *TeamJobProvider) PauseJob(id string) error {
 	return fmt.Errorf("team agent jobs cannot be paused")
+}
+
+func (p *TeamJobProvider) ResumeJob(id string) error {
+	return fmt.Errorf("team agent jobs cannot be resumed")
 }
 
 func (p *TeamJobProvider) KillJob(id string) error {
@@ -283,6 +297,10 @@ func (p *CronJobProvider) ActiveJobs() []*pb.Job {
 
 func (p *CronJobProvider) PauseJob(id string) error {
 	return p.cs.Pause(context.Background(), strings.TrimPrefix(id, "cron:"))
+}
+
+func (p *CronJobProvider) ResumeJob(id string) error {
+	return p.cs.Resume(context.Background(), strings.TrimPrefix(id, "cron:"))
 }
 
 func (p *CronJobProvider) KillJob(id string) error {

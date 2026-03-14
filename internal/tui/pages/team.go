@@ -13,6 +13,7 @@ import (
 
 // AgentCard represents an agent's current state in the team view.
 type AgentCard struct {
+	ID          string
 	Name        string
 	Role        string
 	Model       string
@@ -90,6 +91,7 @@ func (m TeamModel) Update(msg tea.Msg) (TeamModel, tea.Cmd) {
 			m.agents = nil
 			for _, a := range msg.Status.Agents {
 				m.agents = append(m.agents, AgentCard{
+					ID:          a.Id,
 					Name:        a.Name,
 					Role:        a.Role,
 					Model:       a.Model,
@@ -116,7 +118,7 @@ func (m TeamModel) Update(msg tea.Msg) (TeamModel, tea.Cmd) {
 			if m.cursor < len(m.agents) {
 				idx := m.cursor
 				return m, func() tea.Msg {
-					return KillAgentMsg{AgentID: m.agents[idx].Name}
+					return KillAgentMsg{AgentID: "team_agent:" + m.agents[idx].ID}
 				}
 			}
 		}

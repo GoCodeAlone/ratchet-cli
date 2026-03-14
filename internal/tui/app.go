@@ -247,7 +247,7 @@ func (a App) transitionToChat() (tea.Model, tea.Cmd) {
 	a.team = team
 	a.jobPanel = components.NewJobPanel(a.client)
 	a.page = pageChat
-	return a, a.chat.Init()
+	return a, tea.Batch(a.chat.Init(), a.jobPanel.Init())
 }
 
 func (a App) View() tea.View {

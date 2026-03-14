@@ -26,7 +26,7 @@ func openTestDB(t *testing.T) *sql.DB {
 
 func TestActorManager_Init(t *testing.T) {
 	db := openTestDB(t)
-	am, err := NewActorManager(db)
+	am, err := NewActorManager(context.Background(), db)
 	if err != nil {
 		t.Fatalf("NewActorManager: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestActorManager_Init(t *testing.T) {
 
 func TestActorManager_SessionActor_Create(t *testing.T) {
 	db := openTestDB(t)
-	am, err := NewActorManager(db)
+	am, err := NewActorManager(context.Background(), db)
 	if err != nil {
 		t.Fatalf("NewActorManager: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestActorManager_SessionActor_Persistence(t *testing.T) {
 		t.Fatalf("insert session: %v", err)
 	}
 
-	am, err := NewActorManager(db)
+	am, err := NewActorManager(context.Background(), db)
 	if err != nil {
 		t.Fatalf("NewActorManager: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestActorManager_SessionActor_Persistence(t *testing.T) {
 
 func TestActorManager_ApprovalFlow(t *testing.T) {
 	db := openTestDB(t)
-	am, err := NewActorManager(db)
+	am, err := NewActorManager(context.Background(), db)
 	if err != nil {
 		t.Fatalf("NewActorManager: %v", err)
 	}

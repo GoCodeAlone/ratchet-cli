@@ -20,6 +20,7 @@ func (p *staticProvider) PauseJob(id string) error {
 	p.paused = id
 	return p.pauseErr
 }
+func (p *staticProvider) ResumeJob(id string) error { return nil }
 func (p *staticProvider) KillJob(id string) error {
 	p.killed = id
 	return p.killErr
