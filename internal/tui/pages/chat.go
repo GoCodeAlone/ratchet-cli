@@ -260,6 +260,9 @@ func (m *ChatModel) relayout() {
 	m.viewport.SetWidth(m.width)
 	m.statusBar.Width = m.width
 	m.input.SetWidth(m.width)
+	// Autocomplete height = space above the input (viewport + 1 newline).
+	acHeight := vpHeight + 1
+	m.autocomplete = m.autocomplete.SetHeight(acHeight)
 	m.refreshViewport()
 }
 

@@ -23,6 +23,7 @@ type AutocompleteModel struct {
 	filter   string
 	cursor   int
 	visible  bool
+	height   int
 }
 
 // AutocompleteSelectedMsg is sent when a command is selected from the dropdown.
@@ -30,8 +31,8 @@ type AutocompleteSelectedMsg struct {
 	Command string
 }
 
-// maxVisibleItems is the maximum number of autocomplete items shown at once.
-const maxVisibleItems = 10
+// defaultMaxVisibleItems is the default maximum number of autocomplete items shown at once.
+const defaultMaxVisibleItems = 10
 
 // NewAutocomplete creates an autocomplete model with all known commands.
 func NewAutocomplete() AutocompleteModel {
@@ -62,6 +63,12 @@ func NewAutocomplete() AutocompleteModel {
 
 // Visible returns whether the autocomplete dropdown is showing.
 func (m AutocompleteModel) Visible() bool { return m.visible }
+
+// SetHeight sets the available height so View() can cap the dropdown size.
+func (m AutocompleteModel) SetHeight(h int) AutocompleteModel {
+	m.height = h
+	return m
+}
 
 // SetFilter updates the autocomplete based on current input text.
 func (m AutocompleteModel) SetFilter(input string) AutocompleteModel {
@@ -152,15 +159,27 @@ func (m AutocompleteModel) View(t theme.Theme, width int) string {
 
 	total := len(m.matches)
 
-	// Compute a window of maxVisibleItems around the cursor.
-	start := m.cursor - maxVisibleItems/2
+	// Cap visible items based on available height (leaving room for borders + input + status bar).
+	maxVisible := defaultMaxVisibleItems
+	if m.height > 0 {
+		heightCap := m.height - 4
+		if heightCap < 1 {
+			heightCap = 1
+		}
+		if heightCap < maxVisible {
+			maxVisible = heightCap
+		}
+	}
+
+	// Compute a window of maxVisible around the cursor.
+	start := m.cursor - maxVisible/2
 	if start < 0 {
 		start = 0
 	}
-	end := start + maxVisibleItems
+	end := start + maxVisible
 	if end > total {
 		end = total
-		start = end - maxVisibleItems
+		start = end - maxVisible
 		if start < 0 {
 			start = 0
 		}

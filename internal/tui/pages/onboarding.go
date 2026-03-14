@@ -134,7 +134,6 @@ type OnboardingModel struct {
 	authCancel            context.CancelFunc
 	deviceUserCode        string // device flow: code to display to user
 	deviceVerificationURI string // device flow: URL to open
-	setupTokenMode        bool   // true when user chose "Paste setup-token" for Anthropic
 
 	// Model listing
 	fetchingModels bool
@@ -208,7 +207,6 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 			}
 			m.authing = false
 			m.authError = ""
-			m.setupTokenMode = false
 			m.step = stepSelectProvider
 			// Restore cursor to the previously-selected provider so the list
 			// highlights the right row when returning to the selection screen.
@@ -435,7 +433,7 @@ func (m OnboardingModel) updateAnthropicAuthChoice(msg tea.Msg) (OnboardingModel
 			m.cursor = m.providerIdx
 			return m, nil
 		case "j", "down":
-			if m.cursor < 2 {
+			if m.cursor < 1 {
 				m.cursor++
 			}
 		case "k", "up":
@@ -446,30 +444,21 @@ func (m OnboardingModel) updateAnthropicAuthChoice(msg tea.Msg) (OnboardingModel
 			m.cursor = 0
 		case "2":
 			m.cursor = 1
-		case "3":
-			m.cursor = 2
 		case "enter", " ":
 			switch m.cursor {
 			case 0:
-				// Claude subscription OAuth
+				// Manual API key (recommended)
+				m.step = stepEnterAPIKey
+				m.apiKeyInput.Placeholder = "sk-ant-api03-..."
+				return m, m.apiKeyInput.Focus()
+			case 1:
+				// Claude subscription OAuth (may have restrictions)
 				m.step = stepBrowserAuth
 				m.authing = true
 				m.browserOpened = true
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				m.authCancel = cancel
 				return m, tea.Batch(m.spinner.Tick, m.startAnthropicAuth(ctx))
-			case 1:
-				// Setup-token paste (from `claude setup-token`)
-				m.setupTokenMode = true
-				m.step = stepEnterAPIKey
-				m.apiKeyInput.Placeholder = "Paste setup-token here..."
-				return m, m.apiKeyInput.Focus()
-			case 2:
-				// Manual API key
-				m.setupTokenMode = false
-				m.step = stepEnterAPIKey
-				m.apiKeyInput.Placeholder = "sk-ant-..."
-				return m, m.apiKeyInput.Focus()
 			}
 		}
 	}
@@ -500,7 +489,6 @@ func (m OnboardingModel) updateEnterAPIKey(msg tea.Msg) (OnboardingModel, tea.Cm
 		case "escape":
 			m.apiKeyInput.SetValue("")
 			m.authError = ""
-			m.setupTokenMode = false
 			// Go back to Anthropic auth choice if this is an Anthropic provider
 			p := m.selectedProvider()
 			if p.auth == authBrowser {
@@ -744,9 +732,8 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 	case stepAnthropicAuthChoice:
 		sb.WriteString("Sign in with Anthropic\n\n")
 		choices := []string{
-			"Sign in with Claude account (Pro/Team/Enterprise)",
-			"Paste setup-token (from claude setup-token)",
-			"Enter API key manually",
+			"Enter API key (recommended)",
+			"Sign in with Claude account (OAuth — may have restrictions)",
 		}
 		for i, label := range choices {
 			cursor := "  "
@@ -757,7 +744,7 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 			}
 			sb.WriteString(style.Render(fmt.Sprintf("%s%d. %s", cursor, i+1, label)) + "\n")
 		}
-		sb.WriteString("\n" + mutedStyle.Render("↑/↓ or 1-3: select  Enter: confirm  Esc: back"))
+		sb.WriteString("\n" + mutedStyle.Render("↑/↓ or 1-2: select  Enter: confirm  Esc: back"))
 
 	case stepBrowserAuth:
 		p := m.selectedProvider()
@@ -786,26 +773,20 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 
 	case stepEnterAPIKey:
 		p := m.selectedProvider()
-		if m.setupTokenMode {
-			sb.WriteString("Paste your Claude setup-token:\n\n")
-			sb.WriteString(mutedStyle.Render("Generate one by running:") + "\n")
-			sb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(t.Accent).Render("  claude setup-token") + "\n\n")
-			sb.WriteString(mutedStyle.Render("This uses your Claude Pro/Team/Enterprise subscription.") + "\n\n")
-		} else {
-			switch p.auth {
-			case authBrowser:
-				sb.WriteString("Paste your Anthropic API key:\n\n")
-				sb.WriteString(mutedStyle.Render("Get one at console.anthropic.com/settings/keys") + "\n\n")
-			case authGHCLI:
-				sb.WriteString("Paste your GitHub token:\n\n")
-				sb.WriteString(mutedStyle.Render("Run: gh auth token") + "\n")
-				sb.WriteString(mutedStyle.Render("Or create a PAT at github.com/settings/tokens") + "\n\n")
-			default:
-				fmt.Fprintf(&sb, "Enter your %s API key:\n\n", p.displayName)
-			}
+		switch p.auth {
+		case authBrowser:
+			sb.WriteString("Enter your Anthropic API key:\n\n")
+			sb.WriteString(mutedStyle.Render("Get one at console.anthropic.com/settings/keys") + "\n")
+			sb.WriteString(mutedStyle.Render("Keys start with sk-ant-api03-...") + "\n\n")
+		case authGHCLI:
+			sb.WriteString("Paste your GitHub token:\n\n")
+			sb.WriteString(mutedStyle.Render("Run: gh auth token") + "\n")
+			sb.WriteString(mutedStyle.Render("Or create a PAT at github.com/settings/tokens") + "\n\n")
+		default:
+			fmt.Fprintf(&sb, "Enter your %s API key:\n\n", p.displayName)
 		}
 		sb.WriteString("Key: " + m.apiKeyInput.View() + "\n\n")
-		sb.WriteString(mutedStyle.Render("Your key is stored locally and never shared.") + "\n\n")
+		sb.WriteString(mutedStyle.Render("Your key is stored locally and never shared.") + "\n")
 		sb.WriteString(mutedStyle.Render("Enter: continue  Esc: back"))
 
 	case stepEnterBaseURL:
