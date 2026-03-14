@@ -130,6 +130,7 @@ type OnboardingModel struct {
 	authCancel            context.CancelFunc
 	deviceUserCode        string // device flow: code to display to user
 	deviceVerificationURI string // device flow: URL to open
+	setupTokenMode        bool   // true when user chose "Paste setup-token" for Anthropic
 
 	// Model listing
 	fetchingModels bool
@@ -193,15 +194,17 @@ func (m OnboardingModel) selectedModelID() string {
 func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 	// Global Esc: cancel any in-progress auth and return to provider selection.
 	// This fires regardless of the current step, so error screens and browser-wait
-	// screens all dismiss properly.
+	// screens all dismiss properly. For the API key entry step, the step-specific
+	// handler routes back to the Anthropic auth choice when appropriate.
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok && keyMsg.String() == "escape" {
-		if m.step != stepSelectProvider {
+		if m.step != stepSelectProvider && m.step != stepEnterAPIKey && m.step != stepAnthropicAuthChoice {
 			if m.authCancel != nil {
 				m.authCancel()
 				m.authCancel = nil
 			}
 			m.authing = false
 			m.authError = ""
+			m.setupTokenMode = false
 			m.step = stepSelectProvider
 			return m, nil
 		}
@@ -449,11 +452,13 @@ func (m OnboardingModel) updateAnthropicAuthChoice(msg tea.Msg) (OnboardingModel
 				return m, tea.Batch(m.spinner.Tick, m.startAnthropicAuth(ctx))
 			case 1:
 				// Setup-token paste (from `claude setup-token`)
+				m.setupTokenMode = true
 				m.step = stepEnterAPIKey
-				m.apiKeyInput.Placeholder = "Paste setup-token from: claude setup-token"
+				m.apiKeyInput.Placeholder = "Paste setup-token here..."
 				return m, m.apiKeyInput.Focus()
 			case 2:
 				// Manual API key
+				m.setupTokenMode = false
 				m.step = stepEnterAPIKey
 				m.apiKeyInput.Placeholder = "sk-ant-..."
 				return m, m.apiKeyInput.Focus()
@@ -484,9 +489,17 @@ func (m OnboardingModel) updateEnterAPIKey(msg tea.Msg) (OnboardingModel, tea.Cm
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 		switch keyMsg.String() {
 		case "escape":
-			m.step = stepSelectProvider
 			m.apiKeyInput.SetValue("")
 			m.authError = ""
+			m.setupTokenMode = false
+			// Go back to Anthropic auth choice if this is an Anthropic provider
+			p := m.selectedProvider()
+			if p.auth == authBrowser {
+				m.step = stepAnthropicAuthChoice
+				m.cursor = 0
+			} else {
+				m.step = stepSelectProvider
+			}
 			return m, nil
 		case "enter":
 			if m.apiKeyInput.Value() == "" {
@@ -760,16 +773,23 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 
 	case stepEnterAPIKey:
 		p := m.selectedProvider()
-		switch p.auth {
-		case authBrowser:
-			sb.WriteString("Paste your Anthropic API key:\n\n")
-			sb.WriteString(mutedStyle.Render("Get one at console.anthropic.com/settings/keys") + "\n\n")
-		case authGHCLI:
-			sb.WriteString("Paste your GitHub token:\n\n")
-			sb.WriteString(mutedStyle.Render("Run: gh auth token") + "\n")
-			sb.WriteString(mutedStyle.Render("Or create a PAT at github.com/settings/tokens") + "\n\n")
-		default:
-			fmt.Fprintf(&sb, "Enter your %s API key:\n\n", p.displayName)
+		if m.setupTokenMode {
+			sb.WriteString("Paste your Claude setup-token:\n\n")
+			sb.WriteString(mutedStyle.Render("Generate one by running:") + "\n")
+			sb.WriteString(lipgloss.NewStyle().Bold(true).Foreground(t.Accent).Render("  claude setup-token") + "\n\n")
+			sb.WriteString(mutedStyle.Render("This uses your Claude Pro/Team/Enterprise subscription.") + "\n\n")
+		} else {
+			switch p.auth {
+			case authBrowser:
+				sb.WriteString("Paste your Anthropic API key:\n\n")
+				sb.WriteString(mutedStyle.Render("Get one at console.anthropic.com/settings/keys") + "\n\n")
+			case authGHCLI:
+				sb.WriteString("Paste your GitHub token:\n\n")
+				sb.WriteString(mutedStyle.Render("Run: gh auth token") + "\n")
+				sb.WriteString(mutedStyle.Render("Or create a PAT at github.com/settings/tokens") + "\n\n")
+			default:
+				fmt.Fprintf(&sb, "Enter your %s API key:\n\n", p.displayName)
+			}
 		}
 		sb.WriteString("Key: " + m.apiKeyInput.View() + "\n\n")
 		sb.WriteString(mutedStyle.Render("Your key is stored locally and never shared.") + "\n\n")
