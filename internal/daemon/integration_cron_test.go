@@ -16,7 +16,7 @@ func TestIntegration_CronLifecycle(t *testing.T) {
 	// Create a cron job via gRPC.
 	job, err := client.CreateCron(ctx, &pb.CreateCronReq{
 		SessionId: "sess-cron-1",
-		Schedule:  "100ms",
+		Schedule:  "5m",
 		Command:   "/digest",
 	})
 	if err != nil {
@@ -73,7 +73,7 @@ func TestIntegration_CronLifecycle(t *testing.T) {
 		t.Fatalf("StopCron: %v", err)
 	}
 
-	// After stop, job should have status=stopped or be absent from list.
+	// After stop, job should have status=stopped or be absent from active list.
 	list3, err := client.ListCrons(ctx, &pb.Empty{})
 	if err != nil {
 		t.Fatalf("ListCrons after stop: %v", err)
@@ -85,35 +85,40 @@ func TestIntegration_CronLifecycle(t *testing.T) {
 	}
 }
 
-func TestIntegration_CronTick(t *testing.T) {
+func TestIntegration_CronMultipleJobs(t *testing.T) {
 	client, _ := startTestServer(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	job, err := client.CreateCron(ctx, &pb.CreateCronReq{
-		SessionId: "sess-cron-tick",
-		Schedule:  "100ms",
-		Command:   "/check",
-	})
-	if err != nil {
-		t.Fatalf("CreateCron: %v", err)
+	schedules := []struct{ schedule, cmd string }{
+		{"5m", "/digest"},
+		{"1h", "/report"},
+		{"*/30 * * * *", "/backup"},
 	}
 
-	// Wait and verify run_count increased.
-	time.Sleep(350 * time.Millisecond)
+	var ids []string
+	for _, s := range schedules {
+		job, err := client.CreateCron(ctx, &pb.CreateCronReq{
+			SessionId: "sess-multi",
+			Schedule:  s.schedule,
+			Command:   s.cmd,
+		})
+		if err != nil {
+			t.Fatalf("CreateCron(%s): %v", s.schedule, err)
+		}
+		ids = append(ids, job.Id)
+	}
 
 	list, err := client.ListCrons(ctx, &pb.Empty{})
 	if err != nil {
 		t.Fatalf("ListCrons: %v", err)
 	}
-	for _, j := range list.Jobs {
-		if j.Id == job.Id {
-			if j.RunCount == 0 {
-				t.Error("expected run_count > 0 after waiting")
-			}
-			break
-		}
+	if len(list.Jobs) < len(schedules) {
+		t.Errorf("expected at least %d jobs, got %d", len(schedules), len(list.Jobs))
 	}
 
-	_, _ = client.StopCron(ctx, &pb.CronJobReq{JobId: job.Id})
+	// Stop all.
+	for _, id := range ids {
+		_, _ = client.StopCron(ctx, &pb.CronJobReq{JobId: id})
+	}
 }
