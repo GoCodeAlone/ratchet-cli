@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"sync"
+	"time"
 
 	"github.com/tochemey/goakt/v4/actor"
 )
@@ -37,10 +39,15 @@ func NewActorManager(ctx context.Context, db *sql.DB) (*ActorManager, error) {
 		ctx:      ctx,
 		sessions: make(map[string]*actor.PID),
 	}
-	if err := am.rehydrateSessions(ctx); err != nil {
-		// Non-fatal: log and continue — actors will be spawned on first use.
-		_ = err
-	}
+	// Rehydrate sessions asynchronously — don't block daemon startup.
+	// Actors will be spawned lazily on first use if rehydration is slow.
+	go func() {
+		rehydrateCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		if err := am.rehydrateSessions(rehydrateCtx); err != nil {
+			log.Printf("actor: rehydrate sessions: %v", err)
+		}
+	}()
 	return am, nil
 }
 
@@ -96,11 +103,16 @@ func (am *ActorManager) rehydrateSessions(ctx context.Context) error {
 			continue
 		}
 		a := &SessionActor{sessionID: id, workingDir: wd, db: am.db}
-		pid, err := am.system.Spawn(ctx, "session-"+id, a)
+		spawnCtx, spawnCancel := context.WithTimeout(ctx, 5*time.Second)
+		pid, err := am.system.Spawn(spawnCtx, "session-"+id, a)
+		spawnCancel()
 		if err != nil {
+			log.Printf("actor: rehydrate session %s: %v (will spawn lazily)", id, err)
 			continue
 		}
+		am.mu.Lock()
 		am.sessions[id] = pid
+		am.mu.Unlock()
 	}
 	return rows.Err()
 }

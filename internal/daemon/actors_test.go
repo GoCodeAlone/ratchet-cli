@@ -84,15 +84,19 @@ func TestActorManager_SessionActor_Persistence(t *testing.T) {
 	}
 	defer am.Close(context.Background())
 
-	// Verify the session was rehydrated (pid exists in map).
-	am.mu.RLock()
-	pid, ok := am.sessions["sess-persist-1"]
-	am.mu.RUnlock()
-	if !ok {
-		t.Fatal("expected session actor to be rehydrated from SQLite")
+	// Rehydration is async — wait for it to complete (up to 5s).
+	var pid *actor.PID
+	for i := 0; i < 50; i++ {
+		am.mu.RLock()
+		pid = am.sessions["sess-persist-1"]
+		am.mu.RUnlock()
+		if pid != nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 	if pid == nil {
-		t.Fatal("expected non-nil rehydrated PID")
+		t.Fatal("expected session actor to be rehydrated from SQLite within 5s")
 	}
 }
 
