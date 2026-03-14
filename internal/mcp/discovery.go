@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strings"
 	"sync"
 
 	"github.com/GoCodeAlone/ratchet/plugin"
@@ -47,7 +48,11 @@ func (t *cliTool) Execute(ctx context.Context, args map[string]any) (any, error)
 	if v, ok := args["args"]; ok {
 		extra, _ = v.(string)
 	}
-	cmdArgs := append(t.cmdArgs, extra) //nolint:gocritic
+	cmdArgs := make([]string, len(t.cmdArgs))
+	copy(cmdArgs, t.cmdArgs)
+	if extra != "" {
+		cmdArgs = append(cmdArgs, strings.Fields(extra)...)
+	}
 	out, err := exec.CommandContext(ctx, cmdArgs[0], cmdArgs[1:]...).CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w\n%s", t.name, err, out)

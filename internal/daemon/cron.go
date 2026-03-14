@@ -38,19 +38,25 @@ type CronScheduler struct {
 	onTick     func(sessionID, command string)
 	mu         sync.Mutex
 	entries    map[string]*cronEntry
+	parentCtx  context.Context // propagated to goroutines spawned by Resume
 }
 
 // NewCronScheduler creates a scheduler. onTick is called each time a job fires.
 func NewCronScheduler(db *sql.DB, onTick func(sessionID, command string)) *CronScheduler {
 	return &CronScheduler{
-		db:      db,
-		onTick:  onTick,
-		entries: make(map[string]*cronEntry),
+		db:        db,
+		onTick:    onTick,
+		entries:   make(map[string]*cronEntry),
+		parentCtx: context.Background(), // overridden by Start
 	}
 }
 
 // Start reloads persisted active jobs and begins running them.
+// The context is stored so Resume can propagate it to restarted goroutines.
 func (cs *CronScheduler) Start(ctx context.Context) error {
+	cs.mu.Lock()
+	cs.parentCtx = ctx
+	cs.mu.Unlock()
 	rows, err := cs.db.QueryContext(ctx,
 		`SELECT id, session_id, schedule, command, status, COALESCE(last_run,''), COALESCE(next_run,''), run_count
 		 FROM cron_jobs WHERE status = 'active'`)
@@ -161,8 +167,11 @@ func (cs *CronScheduler) Resume(ctx context.Context, jobID string) error {
 		return err
 	}
 
-	// Restart the goroutine with a fresh context.
-	newCtx, cancel := context.WithCancel(context.Background())
+	// Restart the goroutine using the daemon's parent context so it respects shutdown.
+	cs.mu.Lock()
+	parent := cs.parentCtx
+	cs.mu.Unlock()
+	newCtx, cancel := context.WithCancel(parent)
 	entry.cancel = cancel
 	go cs.run(newCtx, entry)
 	return nil

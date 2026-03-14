@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"text/template"
 
 	"gopkg.in/yaml.v3"
@@ -119,8 +120,8 @@ func (hc *HookConfig) Run(event Event, data map[string]string) error {
 			}
 		}
 
-		// Expand command template
-		cmd, err := expandTemplate(h.Command, data)
+		// Expand command template with shell-escaped values to prevent injection.
+		cmd, err := expandTemplate(h.Command, shellEscapeData(data))
 		if err != nil {
 			return fmt.Errorf("expand hook command: %w", err)
 		}
@@ -132,6 +133,17 @@ func (hc *HookConfig) Run(event Event, data map[string]string) error {
 		}
 	}
 	return nil
+}
+
+// shellEscapeData returns a copy of data with each value single-quoted for
+// safe interpolation into sh -c commands, preventing shell injection.
+func shellEscapeData(data map[string]string) map[string]string {
+	escaped := make(map[string]string, len(data))
+	for k, v := range data {
+		// Wrap in single quotes; escape embedded single quotes as '\''
+		escaped[k] = "'" + strings.ReplaceAll(v, "'", "'\\''") + "'"
+	}
+	return escaped
 }
 
 func expandTemplate(tmpl string, data map[string]string) (string, error) {
