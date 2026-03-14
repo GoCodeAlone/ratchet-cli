@@ -142,7 +142,7 @@ func (jp JobPanel) View(t theme.Theme) string {
 			elapsed = "-"
 		}
 		sessionID := job.SessionId
-		if len(sessionID) > 8 && sessionID != "" {
+		if len(sessionID) > 8 {
 			sessionID = sessionID[:8]
 		}
 		if sessionID == "" {

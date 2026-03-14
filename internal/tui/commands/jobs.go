@@ -43,9 +43,3 @@ func jobsCmd(c *client.Client) *Result {
 	return &Result{Lines: lines}
 }
 
-func truncateStr(s string, n int) string {
-	if len([]rune(s)) <= n {
-		return s
-	}
-	return string([]rune(s)[:n-1]) + "…"
-}

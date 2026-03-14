@@ -225,9 +225,10 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 		log.Printf("save assistant message: %v", err)
 	}
 
-	// Track token usage (approximate: 1 token ≈ 4 chars)
-	inputTokens := (len(userMessage) + 3) / 4
-	outputTokens := (len(fullResponse) + 3) / 4
+	// Track token usage (approximate: 1 token ≈ 4 chars).
+	// Uses rune count so multi-byte UTF-8 characters don't inflate the estimate.
+	inputTokens := (len([]rune(userMessage)) + 3) / 4
+	outputTokens := (len([]rune(fullResponse)) + 3) / 4
 	s.tokens.AddTokens(sessionID, inputTokens, outputTokens)
 
 	// Auto-compress when context window fills

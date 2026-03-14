@@ -55,7 +55,6 @@ func (m SplashModel) Update(msg tea.Msg) (SplashModel, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case splashTickMsg:
-		_ = msg
 		m.frame++
 		if m.frame >= splashAutoTimeout {
 			m.done = true
@@ -65,7 +64,6 @@ func (m SplashModel) Update(msg tea.Msg) (SplashModel, tea.Cmd) {
 			return splashTickMsg(t)
 		})
 	case tea.KeyPressMsg:
-		_ = msg
 		m.done = true
 		return m, func() tea.Msg { return SplashDoneMsg{} }
 	case tea.WindowSizeMsg:

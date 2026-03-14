@@ -25,6 +25,10 @@ type ChatEventMsg struct {
 // chatStreamDoneMsg signals the event channel was closed.
 type chatStreamDoneMsg struct{}
 
+// chatCancelSetMsg carries the cancel function for an in-flight stream back to
+// the model so it can be stored on the real model, not a closure-local copy.
+type chatCancelSetMsg struct{ cancel context.CancelFunc }
+
 type ChatModel struct {
 	client    *client.Client
 	sessionID string
@@ -169,7 +173,7 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 
 	case components.SubmitMsg:
 		// Check for slash command first
-		if result := commands.Parse(msg.Content, m.client); result != nil {
+		if result := commands.Parse(msg.Content, m.client, m.sessionID); result != nil {
 			m.messages = append(m.messages, components.Message{
 				Role:    components.RoleUser,
 				Content: msg.Content,
@@ -194,6 +198,11 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 				m.streaming = ""
 				cmds = append(cmds, m.compactSession())
 			}
+			if result.TriggerReview {
+				m.streaming = ""
+				reviewMsg := "You are a code reviewer. Please review the following git diff and provide detailed feedback on correctness, style, and potential issues:\n\n```diff\n" + result.ReviewDiff + "\n```"
+				cmds = append(cmds, m.sendMessage(reviewMsg))
+			}
 			return m, tea.Batch(cmds...)
 		}
 		// Add user message and send to daemon
@@ -207,6 +216,9 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 
 	case ChatEventMsg:
 		cmds = append(cmds, m.handleChatEvent(msg)...)
+
+	case chatCancelSetMsg:
+		m.cancelChat = msg.cancel
 
 	case chatStreamDoneMsg:
 		// Stream channel closed without a Complete event
@@ -279,55 +291,59 @@ func (m *ChatModel) refreshViewport() {
 }
 
 func (m ChatModel) sendMessage(content string) tea.Cmd {
-	return func() tea.Msg {
-		if m.client == nil {
-			return nil
-		}
-		ctx, cancel := context.WithCancel(m.ctx)
-		m.cancelChat = cancel
+	ctx, cancel := context.WithCancel(m.ctx)
+	return tea.Batch(
+		func() tea.Msg { return chatCancelSetMsg{cancel: cancel} },
+		func() tea.Msg {
+			if m.client == nil {
+				cancel()
+				return nil
+			}
+			ch, err := m.client.SendMessage(ctx, m.sessionID, content)
+			if err != nil {
+				return ChatEventMsg{Event: &pb.ChatEvent{
+					Event: &pb.ChatEvent_Error{
+						Error: &pb.ErrorEvent{Message: err.Error()},
+					},
+				}}
+			}
 
-		ch, err := m.client.SendMessage(ctx, m.sessionID, content)
-		if err != nil {
-			return ChatEventMsg{Event: &pb.ChatEvent{
-				Event: &pb.ChatEvent_Error{
-					Error: &pb.ErrorEvent{Message: err.Error()},
-				},
-			}}
-		}
-
-		// Read first event and carry channel for subsequent reads
-		event, ok := <-ch
-		if !ok {
-			return chatStreamDoneMsg{}
-		}
-		return ChatEventMsg{Event: event, ch: ch}
-	}
+			// Read first event and carry channel for subsequent reads
+			event, ok := <-ch
+			if !ok {
+				return chatStreamDoneMsg{}
+			}
+			return ChatEventMsg{Event: event, ch: ch}
+		},
+	)
 }
 
 // compactSession sends a CompactSession request to the daemon and streams the result.
 func (m ChatModel) compactSession() tea.Cmd {
-	return func() tea.Msg {
-		if m.client == nil {
-			return nil
-		}
-		ctx, cancel := context.WithCancel(m.ctx)
-		m.cancelChat = cancel
+	ctx, cancel := context.WithCancel(m.ctx)
+	return tea.Batch(
+		func() tea.Msg { return chatCancelSetMsg{cancel: cancel} },
+		func() tea.Msg {
+			if m.client == nil {
+				cancel()
+				return nil
+			}
+			ch, err := m.client.CompactSession(ctx, m.sessionID)
+			if err != nil {
+				return ChatEventMsg{Event: &pb.ChatEvent{
+					Event: &pb.ChatEvent_Error{
+						Error: &pb.ErrorEvent{Message: err.Error()},
+					},
+				}}
+			}
 
-		ch, err := m.client.CompactSession(ctx, m.sessionID)
-		if err != nil {
-			return ChatEventMsg{Event: &pb.ChatEvent{
-				Event: &pb.ChatEvent_Error{
-					Error: &pb.ErrorEvent{Message: err.Error()},
-				},
-			}}
-		}
-
-		event, ok := <-ch
-		if !ok {
-			return chatStreamDoneMsg{}
-		}
-		return ChatEventMsg{Event: event, ch: ch}
-	}
+			event, ok := <-ch
+			if !ok {
+				return chatStreamDoneMsg{}
+			}
+			return ChatEventMsg{Event: event, ch: ch}
+		},
+	)
 }
 
 // nextEvent returns a Cmd that reads the next event from the channel.

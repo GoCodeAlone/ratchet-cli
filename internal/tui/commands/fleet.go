@@ -11,7 +11,10 @@ import (
 )
 
 // fleetCmd starts fleet execution for a plan.
-func fleetCmd(args []string, c *client.Client) *Result {
+func fleetCmd(args []string, sessionID string, c *client.Client) *Result {
+	if len(args) == 0 {
+		return &Result{Lines: []string{"Usage: /fleet <plan-id> [max-workers]"}}
+	}
 	if c == nil {
 		return &Result{Lines: []string{"Not connected to daemon"}}
 	}
@@ -28,6 +31,7 @@ func fleetCmd(args []string, c *client.Client) *Result {
 	// Status updates are streamed back via ChatEvent.FleetStatus.
 	go func() {
 		_, _ = c.StartFleet(context.Background(), &pb.StartFleetReq{
+			SessionId:  sessionID,
 			PlanId:     planID,
 			MaxWorkers: maxWorkers,
 		})

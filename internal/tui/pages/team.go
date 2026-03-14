@@ -117,8 +117,13 @@ func (m TeamModel) Update(msg tea.Msg) (TeamModel, tea.Cmd) {
 		case "k":
 			if m.cursor < len(m.agents) {
 				idx := m.cursor
+				agentID := m.agents[idx].ID
+				if agentID == "" {
+					// ID not yet populated from daemon status; skip.
+					break
+				}
 				return m, func() tea.Msg {
-					return KillAgentMsg{AgentID: "team_agent:" + m.agents[idx].ID}
+					return KillAgentMsg{AgentID: agentID}
 				}
 			}
 		}

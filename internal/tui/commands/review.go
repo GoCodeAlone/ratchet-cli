@@ -23,6 +23,9 @@ func compactCmd(c *client.Client) *Result {
 
 // reviewCmd runs the built-in code-reviewer agent on the current git diff.
 func reviewCmd(c *client.Client) *Result {
+	if c == nil {
+		return &Result{Lines: []string{"Not connected to daemon"}}
+	}
 	diff, err := gitDiff()
 	if err != nil {
 		return &Result{Lines: []string{fmt.Sprintf("Error getting git diff: %v", err)}}
@@ -30,24 +33,22 @@ func reviewCmd(c *client.Client) *Result {
 	if diff == "" {
 		return &Result{Lines: []string{"No uncommitted changes to review."}}
 	}
-	lines := []string{
-		"Starting code review on current git diff...",
-		"",
-		"Diff summary:",
-	}
-	// Show a trimmed preview of the diff
+
+	// Show a trimmed preview of the diff to the user while the agent runs.
 	diffLines := strings.Split(diff, "\n")
 	preview := diffLines
 	if len(preview) > 20 {
 		preview = diffLines[:20]
 		preview = append(preview, fmt.Sprintf("... (%d more lines)", len(diffLines)-20))
 	}
+	lines := []string{"Starting code-reviewer agent on current git diff...", ""}
 	lines = append(lines, preview...)
-	lines = append(lines,
-		"",
-		"Use the code-reviewer agent via /agents to see full review results.",
-	)
-	return &Result{Lines: lines}
+
+	return &Result{
+		Lines:         lines,
+		TriggerReview: true,
+		ReviewDiff:    diff,
+	}
 }
 
 func gitDiff() (string, error) {

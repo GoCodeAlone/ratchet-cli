@@ -16,12 +16,18 @@ type Result struct {
 	NavigateToOnboarding bool
 	Quit                 bool
 	ClearChat            bool
-	TriggerCompact       bool // ask the caller to compress the current session's context
+	TriggerCompact       bool   // ask the caller to compress the current session's context
+	TriggerReview        bool   // ask the caller to invoke the code-reviewer agent
+	ReviewDiff           string // git diff content to pass to the reviewer
 }
 
 // Parse checks if input is a slash command and executes it.
 // Returns nil if input is not a command.
-func Parse(input string, c *client.Client) *Result {
+func Parse(input string, c *client.Client, sessionID ...string) *Result {
+	sid := ""
+	if len(sessionID) > 0 {
+		sid = sessionID[0]
+	}
 	input = strings.TrimSpace(input)
 	if !strings.HasPrefix(input, "/") {
 		return nil
@@ -74,7 +80,7 @@ func Parse(input string, c *client.Client) *Result {
 		if len(parts) < 2 {
 			return &Result{Lines: []string{"Usage: /fleet <plan_id> [max_workers]"}}
 		}
-		return fleetCmd(parts[1:], c)
+		return fleetCmd(parts[1:], sid, c)
 	case "/mcp":
 		if len(parts) < 2 {
 			return &Result{Lines: []string{"Usage: /mcp <list|enable <name>|disable <name>>"}}
