@@ -199,7 +199,7 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 	// This fires regardless of the current step, so error screens and browser-wait
 	// screens all dismiss properly. For the API key entry step, the step-specific
 	// handler routes back to the Anthropic auth choice when appropriate.
-	if keyMsg, ok := msg.(tea.KeyPressMsg); ok && keyMsg.String() == "escape" {
+	if keyMsg, ok := msg.(tea.KeyPressMsg); ok && keyMsg.String() == "esc" {
 		if m.step != stepSelectProvider && m.step != stepEnterAPIKey && m.step != stepAnthropicAuthChoice {
 			if m.authCancel != nil {
 				m.authCancel()
@@ -428,7 +428,7 @@ func (m OnboardingModel) startAnthropicAuth(ctx context.Context) tea.Cmd {
 func (m OnboardingModel) updateAnthropicAuthChoice(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 		switch keyMsg.String() {
-		case "escape":
+		case "esc":
 			m.step = stepSelectProvider
 			m.cursor = m.providerIdx
 			return m, nil
@@ -468,7 +468,7 @@ func (m OnboardingModel) updateAnthropicAuthChoice(msg tea.Msg) (OnboardingModel
 func (m OnboardingModel) updateBrowserAuth(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 		switch keyMsg.String() {
-		case "escape":
+		case "esc":
 			if m.authCancel != nil {
 				m.authCancel()
 				m.authCancel = nil
@@ -486,7 +486,7 @@ func (m OnboardingModel) updateBrowserAuth(msg tea.Msg) (OnboardingModel, tea.Cm
 func (m OnboardingModel) updateEnterAPIKey(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 		switch keyMsg.String() {
-		case "escape":
+		case "esc":
 			m.apiKeyInput.SetValue("")
 			m.authError = ""
 			// Go back to Anthropic auth choice if this is an Anthropic provider
@@ -522,7 +522,7 @@ func (m OnboardingModel) updateEnterAPIKey(msg tea.Msg) (OnboardingModel, tea.Cm
 func (m OnboardingModel) updateEnterBaseURL(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 		switch keyMsg.String() {
-		case "escape":
+		case "esc":
 			p := m.selectedProvider()
 			if p.auth == authAPIKey {
 				m.step = stepEnterAPIKey
@@ -546,7 +546,7 @@ func (m OnboardingModel) updateEnterBaseURL(msg tea.Msg) (OnboardingModel, tea.C
 
 func (m OnboardingModel) updateFetchModels(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
-		if keyMsg.String() == "escape" {
+		if keyMsg.String() == "esc" {
 			m.fetchingModels = false
 			m.step = stepSelectProvider
 			m.cursor = m.providerIdx
@@ -560,7 +560,7 @@ func (m OnboardingModel) updateSelectModel(msg tea.Msg) (OnboardingModel, tea.Cm
 	models := m.fetchedModels
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 		switch keyMsg.String() {
-		case "escape":
+		case "esc":
 			p := m.selectedProvider()
 			if p.needsBaseURL {
 				m.step = stepEnterBaseURL
@@ -668,7 +668,7 @@ func (m OnboardingModel) updateTestConnection(msg tea.Msg) (OnboardingModel, tea
 				return m, tea.Batch(m.spinner.Tick, m.testProvider(p.name))
 			}
 			return m.startTest()
-		case "b", "escape":
+		case "b", "esc":
 			if m.added {
 				p := m.selectedProvider()
 				go m.client.RemoveProvider(context.Background(), p.name) //nolint:errcheck
