@@ -23,6 +23,7 @@ type Service struct {
 	cron      *CronScheduler
 	fleet     *FleetManager
 	teams     *TeamManager
+	tokens    *TokenTracker
 }
 
 func NewService(ctx context.Context) (*Service, error) {
@@ -51,6 +52,7 @@ func NewService(ctx context.Context) (*Service, error) {
 	}
 	svc.fleet = NewFleetManager(routing)
 	svc.teams = NewTeamManager()
+	svc.tokens = NewTokenTracker()
 	return svc, nil
 }
 

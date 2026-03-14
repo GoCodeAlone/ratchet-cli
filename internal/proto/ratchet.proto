@@ -64,7 +64,15 @@ message ChatEvent {
     Plan plan_proposed = 10;
     PlanStep plan_step_update = 11;
     FleetStatus fleet_status = 12;
+    ContextCompressedEvent context_compressed = 13;
   }
+}
+
+message ContextCompressedEvent {
+  string session_id = 1;
+  string summary = 2;      // short text summary of compressed messages
+  int32 messages_removed = 3;
+  int32 messages_kept = 4;
 }
 
 message TokenDelta {

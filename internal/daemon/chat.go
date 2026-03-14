@@ -216,6 +216,46 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 		log.Printf("save assistant message: %v", err)
 	}
 
+	// Track token usage (approximate: 1 token ≈ 4 chars)
+	inputTokens := (len(userMessage) + 3) / 4
+	outputTokens := (len(fullResponse) + 3) / 4
+	s.tokens.AddTokens(sessionID, inputTokens, outputTokens)
+
+	// Auto-compress when context window fills
+	contextCfg := cfg.Context
+	if contextCfg.CompressionThreshold <= 0 {
+		contextCfg.CompressionThreshold = 0.9
+	}
+	if contextCfg.PreserveMessages <= 0 {
+		contextCfg.PreserveMessages = 10
+	}
+	const defaultModelLimit = 200000 // conservative default (Claude Sonnet)
+	if s.tokens.ShouldCompress(sessionID, contextCfg.CompressionThreshold, defaultModelLimit) {
+		history, loadErr := s.loadHistory(ctx, sessionID)
+		if loadErr == nil && len(history) > contextCfg.PreserveMessages {
+			compressed, summary, compErr := Compress(ctx, history, contextCfg.PreserveMessages, prov)
+			if compErr == nil {
+				removed := len(history) - len(compressed)
+				// Persist compressed history by replacing messages in DB
+				if dbErr := s.replaceHistory(ctx, sessionID, compressed); dbErr != nil {
+					log.Printf("replace history after compression: %v", dbErr)
+				} else {
+					s.tokens.Reset(sessionID)
+					_ = stream.Send(&pb.ChatEvent{
+						Event: &pb.ChatEvent_ContextCompressed{
+							ContextCompressed: &pb.ContextCompressedEvent{
+								SessionId:       sessionID,
+								Summary:         summary,
+								MessagesRemoved: int32(removed),
+								MessagesKept:    int32(len(compressed)),
+							},
+						},
+					})
+				}
+			}
+		}
+	}
+
 	// Send completion
 	return stream.Send(&pb.ChatEvent{
 		Event: &pb.ChatEvent_Complete{
@@ -283,6 +323,28 @@ func (s *Service) saveMessage(ctx context.Context, sessionID, role, content, too
 		id, sessionID, role, content, toolName, toolCallID,
 	)
 	return err
+}
+
+// replaceHistory deletes all messages for a session and re-inserts the compressed set.
+func (s *Service) replaceHistory(ctx context.Context, sessionID string, messages []provider.Message) error {
+	tx, err := s.engine.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE session_id = ?`, sessionID); err != nil {
+		return err
+	}
+	for _, m := range messages {
+		id := uuid.New().String()
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO messages (id, session_id, role, content, tool_name, tool_call_id) VALUES (?, ?, ?, ?, ?, ?)`,
+			id, sessionID, string(m.Role), m.Content, "", "",
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // sendError sends an error event to the stream.
