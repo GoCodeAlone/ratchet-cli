@@ -3233,6 +3233,195 @@ func (x *KillFleetWorkerReq) GetWorkerId() string {
 	return ""
 }
 
+// Job control
+type Job struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Type          string                 `protobuf:"bytes,2,opt,name=type,proto3" json:"type,omitempty"` // session, fleet_worker, team_agent, cron, tool_exec
+	Name          string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	Status        string                 `protobuf:"bytes,4,opt,name=status,proto3" json:"status,omitempty"` // running, paused, completed, failed, pending
+	SessionId     string                 `protobuf:"bytes,5,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	StartedAt     string                 `protobuf:"bytes,6,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	Elapsed       string                 `protobuf:"bytes,7,opt,name=elapsed,proto3" json:"elapsed,omitempty"`
+	Metadata      map[string]string      `protobuf:"bytes,8,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Job) Reset() {
+	*x = Job{}
+	mi := &file_internal_proto_ratchet_proto_msgTypes[48]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Job) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Job) ProtoMessage() {}
+
+func (x *Job) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_ratchet_proto_msgTypes[48]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Job.ProtoReflect.Descriptor instead.
+func (*Job) Descriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{48}
+}
+
+func (x *Job) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *Job) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *Job) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *Job) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *Job) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *Job) GetStartedAt() string {
+	if x != nil {
+		return x.StartedAt
+	}
+	return ""
+}
+
+func (x *Job) GetElapsed() string {
+	if x != nil {
+		return x.Elapsed
+	}
+	return ""
+}
+
+func (x *Job) GetMetadata() map[string]string {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
+}
+
+type JobList struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Jobs          []*Job                 `protobuf:"bytes,1,rep,name=jobs,proto3" json:"jobs,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *JobList) Reset() {
+	*x = JobList{}
+	mi := &file_internal_proto_ratchet_proto_msgTypes[49]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *JobList) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*JobList) ProtoMessage() {}
+
+func (x *JobList) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_ratchet_proto_msgTypes[49]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use JobList.ProtoReflect.Descriptor instead.
+func (*JobList) Descriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{49}
+}
+
+func (x *JobList) GetJobs() []*Job {
+	if x != nil {
+		return x.Jobs
+	}
+	return nil
+}
+
+type JobReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	JobId         string                 `protobuf:"bytes,1,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *JobReq) Reset() {
+	*x = JobReq{}
+	mi := &file_internal_proto_ratchet_proto_msgTypes[50]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *JobReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*JobReq) ProtoMessage() {}
+
+func (x *JobReq) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_ratchet_proto_msgTypes[50]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use JobReq.ProtoReflect.Descriptor instead.
+func (*JobReq) Descriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{50}
+}
+
+func (x *JobReq) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
 // Daemon health
 type HealthResponse struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
@@ -3246,7 +3435,7 @@ type HealthResponse struct {
 
 func (x *HealthResponse) Reset() {
 	*x = HealthResponse{}
-	mi := &file_internal_proto_ratchet_proto_msgTypes[48]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3258,7 +3447,7 @@ func (x *HealthResponse) String() string {
 func (*HealthResponse) ProtoMessage() {}
 
 func (x *HealthResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_ratchet_proto_msgTypes[48]
+	mi := &file_internal_proto_ratchet_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3271,7 +3460,7 @@ func (x *HealthResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthResponse.ProtoReflect.Descriptor instead.
 func (*HealthResponse) Descriptor() ([]byte, []int) {
-	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{48}
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *HealthResponse) GetHealthy() bool {
@@ -3559,12 +3748,30 @@ const file_internal_proto_ratchet_proto_rawDesc = "" +
 	"\bfleet_id\x18\x01 \x01(\tR\afleetId\"L\n" +
 	"\x12KillFleetWorkerReq\x12\x19\n" +
 	"\bfleet_id\x18\x01 \x01(\tR\afleetId\x12\x1b\n" +
-	"\tworker_id\x18\x02 \x01(\tR\bworkerId\"\x90\x01\n" +
+	"\tworker_id\x18\x02 \x01(\tR\bworkerId\"\xa2\x02\n" +
+	"\x03Job\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04type\x18\x02 \x01(\tR\x04type\x12\x12\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\x12\x16\n" +
+	"\x06status\x18\x04 \x01(\tR\x06status\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x05 \x01(\tR\tsessionId\x12\x1d\n" +
+	"\n" +
+	"started_at\x18\x06 \x01(\tR\tstartedAt\x12\x18\n" +
+	"\aelapsed\x18\a \x01(\tR\aelapsed\x126\n" +
+	"\bmetadata\x18\b \x03(\v2\x1a.ratchet.Job.MetadataEntryR\bmetadata\x1a;\n" +
+	"\rMetadataEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"+\n" +
+	"\aJobList\x12 \n" +
+	"\x04jobs\x18\x01 \x03(\v2\f.ratchet.JobR\x04jobs\"\x1f\n" +
+	"\x06JobReq\x12\x15\n" +
+	"\x06job_id\x18\x01 \x01(\tR\x05jobId\"\x90\x01\n" +
 	"\x0eHealthResponse\x12\x18\n" +
 	"\ahealthy\x18\x01 \x01(\bR\ahealthy\x12'\n" +
 	"\x0factive_sessions\x18\x02 \x01(\x05R\x0eactiveSessions\x12#\n" +
 	"\ractive_agents\x18\x03 \x01(\x05R\factiveAgents\x12\x16\n" +
-	"\x06uptime\x18\x04 \x01(\tR\x06uptime2\xda\f\n" +
+	"\x06uptime\x18\x04 \x01(\tR\x06uptime2\x8f\x0e\n" +
 	"\rRatchetDaemon\x12<\n" +
 	"\rCreateSession\x12\x19.ratchet.CreateSessionReq\x1a\x10.ratchet.Session\x124\n" +
 	"\fListSessions\x12\x0e.ratchet.Empty\x1a\x14.ratchet.SessionList\x129\n" +
@@ -3596,7 +3803,11 @@ const file_internal_proto_ratchet_proto_rawDesc = "" +
 	"\tPauseCron\x12\x13.ratchet.CronJobReq\x1a\x0e.ratchet.Empty\x121\n" +
 	"\n" +
 	"ResumeCron\x12\x13.ratchet.CronJobReq\x1a\x0e.ratchet.Empty\x12/\n" +
-	"\bStopCron\x12\x13.ratchet.CronJobReq\x1a\x0e.ratchet.Empty\x121\n" +
+	"\bStopCron\x12\x13.ratchet.CronJobReq\x1a\x0e.ratchet.Empty\x12,\n" +
+	"\bListJobs\x12\x0e.ratchet.Empty\x1a\x10.ratchet.JobList\x12+\n" +
+	"\bPauseJob\x12\x0f.ratchet.JobReq\x1a\x0e.ratchet.Empty\x12,\n" +
+	"\tResumeJob\x12\x0f.ratchet.JobReq\x1a\x0e.ratchet.Empty\x12*\n" +
+	"\aKillJob\x12\x0f.ratchet.JobReq\x1a\x0e.ratchet.Empty\x121\n" +
 	"\x06Health\x12\x0e.ratchet.Empty\x1a\x17.ratchet.HealthResponse\x12*\n" +
 	"\bShutdown\x12\x0e.ratchet.Empty\x1a\x0e.ratchet.EmptyB3Z1github.com/GoCodeAlone/ratchet-cli/internal/protob\x06proto3"
 
@@ -3612,7 +3823,7 @@ func file_internal_proto_ratchet_proto_rawDescGZIP() []byte {
 	return file_internal_proto_ratchet_proto_rawDescData
 }
 
-var file_internal_proto_ratchet_proto_msgTypes = make([]protoimpl.MessageInfo, 49)
+var file_internal_proto_ratchet_proto_msgTypes = make([]protoimpl.MessageInfo, 53)
 var file_internal_proto_ratchet_proto_goTypes = []any{
 	(*Empty)(nil),                  // 0: ratchet.Empty
 	(*Session)(nil),                // 1: ratchet.Session
@@ -3662,11 +3873,15 @@ var file_internal_proto_ratchet_proto_goTypes = []any{
 	(*FleetStatus)(nil),            // 45: ratchet.FleetStatus
 	(*FleetStatusReq)(nil),         // 46: ratchet.FleetStatusReq
 	(*KillFleetWorkerReq)(nil),     // 47: ratchet.KillFleetWorkerReq
-	(*HealthResponse)(nil),         // 48: ratchet.HealthResponse
-	(*timestamppb.Timestamp)(nil),  // 49: google.protobuf.Timestamp
+	(*Job)(nil),                    // 48: ratchet.Job
+	(*JobList)(nil),                // 49: ratchet.JobList
+	(*JobReq)(nil),                 // 50: ratchet.JobReq
+	(*HealthResponse)(nil),         // 51: ratchet.HealthResponse
+	nil,                            // 52: ratchet.Job.MetadataEntry
+	(*timestamppb.Timestamp)(nil),  // 53: google.protobuf.Timestamp
 }
 var file_internal_proto_ratchet_proto_depIdxs = []int32{
-	49, // 0: ratchet.Session.created_at:type_name -> google.protobuf.Timestamp
+	53, // 0: ratchet.Session.created_at:type_name -> google.protobuf.Timestamp
 	1,  // 1: ratchet.SessionList.sessions:type_name -> ratchet.Session
 	10, // 2: ratchet.ChatEvent.token:type_name -> ratchet.TokenDelta
 	11, // 3: ratchet.ChatEvent.tool_start:type_name -> ratchet.ToolCallStart
@@ -3682,7 +3897,7 @@ var file_internal_proto_ratchet_proto_depIdxs = []int32{
 	45, // 13: ratchet.ChatEvent.fleet_status:type_name -> ratchet.FleetStatus
 	9,  // 14: ratchet.ChatEvent.context_compressed:type_name -> ratchet.ContextCompressedEvent
 	20, // 15: ratchet.SessionHistory.messages:type_name -> ratchet.HistoryMessage
-	49, // 16: ratchet.HistoryMessage.timestamp:type_name -> google.protobuf.Timestamp
+	53, // 16: ratchet.HistoryMessage.timestamp:type_name -> google.protobuf.Timestamp
 	22, // 17: ratchet.ProviderList.providers:type_name -> ratchet.Provider
 	28, // 18: ratchet.AgentList.agents:type_name -> ratchet.Agent
 	15, // 19: ratchet.TeamEvent.agent_spawned:type_name -> ratchet.AgentSpawned
@@ -3697,67 +3912,77 @@ var file_internal_proto_ratchet_proto_depIdxs = []int32{
 	35, // 28: ratchet.Plan.steps:type_name -> ratchet.PlanStep
 	39, // 29: ratchet.CronJobList.jobs:type_name -> ratchet.CronJob
 	44, // 30: ratchet.FleetStatus.workers:type_name -> ratchet.FleetWorker
-	2,  // 31: ratchet.RatchetDaemon.CreateSession:input_type -> ratchet.CreateSessionReq
-	0,  // 32: ratchet.RatchetDaemon.ListSessions:input_type -> ratchet.Empty
-	4,  // 33: ratchet.RatchetDaemon.AttachSession:input_type -> ratchet.AttachReq
-	5,  // 34: ratchet.RatchetDaemon.DetachSession:input_type -> ratchet.DetachReq
-	6,  // 35: ratchet.RatchetDaemon.KillSession:input_type -> ratchet.KillReq
-	7,  // 36: ratchet.RatchetDaemon.SendMessage:input_type -> ratchet.SendMessageReq
-	14, // 37: ratchet.RatchetDaemon.RespondToPermission:input_type -> ratchet.PermissionResponse
-	21, // 38: ratchet.RatchetDaemon.AddProvider:input_type -> ratchet.AddProviderReq
-	0,  // 39: ratchet.RatchetDaemon.ListProviders:input_type -> ratchet.Empty
-	24, // 40: ratchet.RatchetDaemon.TestProvider:input_type -> ratchet.TestProviderReq
-	26, // 41: ratchet.RatchetDaemon.RemoveProvider:input_type -> ratchet.RemoveProviderReq
-	27, // 42: ratchet.RatchetDaemon.SetDefaultProvider:input_type -> ratchet.SetDefaultProviderReq
-	0,  // 43: ratchet.RatchetDaemon.ListAgents:input_type -> ratchet.Empty
-	30, // 44: ratchet.RatchetDaemon.GetAgentStatus:input_type -> ratchet.AgentStatusReq
-	31, // 45: ratchet.RatchetDaemon.StartTeam:input_type -> ratchet.StartTeamReq
-	33, // 46: ratchet.RatchetDaemon.GetTeamStatus:input_type -> ratchet.TeamStatusReq
-	37, // 47: ratchet.RatchetDaemon.ApprovePlan:input_type -> ratchet.ApprovePlanReq
-	38, // 48: ratchet.RatchetDaemon.RejectPlan:input_type -> ratchet.RejectPlanReq
-	43, // 49: ratchet.RatchetDaemon.StartFleet:input_type -> ratchet.StartFleetReq
-	46, // 50: ratchet.RatchetDaemon.GetFleetStatus:input_type -> ratchet.FleetStatusReq
-	47, // 51: ratchet.RatchetDaemon.KillFleetWorker:input_type -> ratchet.KillFleetWorkerReq
-	40, // 52: ratchet.RatchetDaemon.CreateCron:input_type -> ratchet.CreateCronReq
-	0,  // 53: ratchet.RatchetDaemon.ListCrons:input_type -> ratchet.Empty
-	42, // 54: ratchet.RatchetDaemon.PauseCron:input_type -> ratchet.CronJobReq
-	42, // 55: ratchet.RatchetDaemon.ResumeCron:input_type -> ratchet.CronJobReq
-	42, // 56: ratchet.RatchetDaemon.StopCron:input_type -> ratchet.CronJobReq
-	0,  // 57: ratchet.RatchetDaemon.Health:input_type -> ratchet.Empty
-	0,  // 58: ratchet.RatchetDaemon.Shutdown:input_type -> ratchet.Empty
-	1,  // 59: ratchet.RatchetDaemon.CreateSession:output_type -> ratchet.Session
-	3,  // 60: ratchet.RatchetDaemon.ListSessions:output_type -> ratchet.SessionList
-	8,  // 61: ratchet.RatchetDaemon.AttachSession:output_type -> ratchet.ChatEvent
-	0,  // 62: ratchet.RatchetDaemon.DetachSession:output_type -> ratchet.Empty
-	0,  // 63: ratchet.RatchetDaemon.KillSession:output_type -> ratchet.Empty
-	8,  // 64: ratchet.RatchetDaemon.SendMessage:output_type -> ratchet.ChatEvent
-	0,  // 65: ratchet.RatchetDaemon.RespondToPermission:output_type -> ratchet.Empty
-	22, // 66: ratchet.RatchetDaemon.AddProvider:output_type -> ratchet.Provider
-	23, // 67: ratchet.RatchetDaemon.ListProviders:output_type -> ratchet.ProviderList
-	25, // 68: ratchet.RatchetDaemon.TestProvider:output_type -> ratchet.TestProviderResult
-	0,  // 69: ratchet.RatchetDaemon.RemoveProvider:output_type -> ratchet.Empty
-	0,  // 70: ratchet.RatchetDaemon.SetDefaultProvider:output_type -> ratchet.Empty
-	29, // 71: ratchet.RatchetDaemon.ListAgents:output_type -> ratchet.AgentList
-	28, // 72: ratchet.RatchetDaemon.GetAgentStatus:output_type -> ratchet.Agent
-	32, // 73: ratchet.RatchetDaemon.StartTeam:output_type -> ratchet.TeamEvent
-	34, // 74: ratchet.RatchetDaemon.GetTeamStatus:output_type -> ratchet.TeamStatus
-	8,  // 75: ratchet.RatchetDaemon.ApprovePlan:output_type -> ratchet.ChatEvent
-	0,  // 76: ratchet.RatchetDaemon.RejectPlan:output_type -> ratchet.Empty
-	8,  // 77: ratchet.RatchetDaemon.StartFleet:output_type -> ratchet.ChatEvent
-	45, // 78: ratchet.RatchetDaemon.GetFleetStatus:output_type -> ratchet.FleetStatus
-	0,  // 79: ratchet.RatchetDaemon.KillFleetWorker:output_type -> ratchet.Empty
-	39, // 80: ratchet.RatchetDaemon.CreateCron:output_type -> ratchet.CronJob
-	41, // 81: ratchet.RatchetDaemon.ListCrons:output_type -> ratchet.CronJobList
-	0,  // 82: ratchet.RatchetDaemon.PauseCron:output_type -> ratchet.Empty
-	0,  // 83: ratchet.RatchetDaemon.ResumeCron:output_type -> ratchet.Empty
-	0,  // 84: ratchet.RatchetDaemon.StopCron:output_type -> ratchet.Empty
-	48, // 85: ratchet.RatchetDaemon.Health:output_type -> ratchet.HealthResponse
-	0,  // 86: ratchet.RatchetDaemon.Shutdown:output_type -> ratchet.Empty
-	59, // [59:87] is the sub-list for method output_type
-	31, // [31:59] is the sub-list for method input_type
-	31, // [31:31] is the sub-list for extension type_name
-	31, // [31:31] is the sub-list for extension extendee
-	0,  // [0:31] is the sub-list for field type_name
+	52, // 31: ratchet.Job.metadata:type_name -> ratchet.Job.MetadataEntry
+	48, // 32: ratchet.JobList.jobs:type_name -> ratchet.Job
+	2,  // 33: ratchet.RatchetDaemon.CreateSession:input_type -> ratchet.CreateSessionReq
+	0,  // 34: ratchet.RatchetDaemon.ListSessions:input_type -> ratchet.Empty
+	4,  // 35: ratchet.RatchetDaemon.AttachSession:input_type -> ratchet.AttachReq
+	5,  // 36: ratchet.RatchetDaemon.DetachSession:input_type -> ratchet.DetachReq
+	6,  // 37: ratchet.RatchetDaemon.KillSession:input_type -> ratchet.KillReq
+	7,  // 38: ratchet.RatchetDaemon.SendMessage:input_type -> ratchet.SendMessageReq
+	14, // 39: ratchet.RatchetDaemon.RespondToPermission:input_type -> ratchet.PermissionResponse
+	21, // 40: ratchet.RatchetDaemon.AddProvider:input_type -> ratchet.AddProviderReq
+	0,  // 41: ratchet.RatchetDaemon.ListProviders:input_type -> ratchet.Empty
+	24, // 42: ratchet.RatchetDaemon.TestProvider:input_type -> ratchet.TestProviderReq
+	26, // 43: ratchet.RatchetDaemon.RemoveProvider:input_type -> ratchet.RemoveProviderReq
+	27, // 44: ratchet.RatchetDaemon.SetDefaultProvider:input_type -> ratchet.SetDefaultProviderReq
+	0,  // 45: ratchet.RatchetDaemon.ListAgents:input_type -> ratchet.Empty
+	30, // 46: ratchet.RatchetDaemon.GetAgentStatus:input_type -> ratchet.AgentStatusReq
+	31, // 47: ratchet.RatchetDaemon.StartTeam:input_type -> ratchet.StartTeamReq
+	33, // 48: ratchet.RatchetDaemon.GetTeamStatus:input_type -> ratchet.TeamStatusReq
+	37, // 49: ratchet.RatchetDaemon.ApprovePlan:input_type -> ratchet.ApprovePlanReq
+	38, // 50: ratchet.RatchetDaemon.RejectPlan:input_type -> ratchet.RejectPlanReq
+	43, // 51: ratchet.RatchetDaemon.StartFleet:input_type -> ratchet.StartFleetReq
+	46, // 52: ratchet.RatchetDaemon.GetFleetStatus:input_type -> ratchet.FleetStatusReq
+	47, // 53: ratchet.RatchetDaemon.KillFleetWorker:input_type -> ratchet.KillFleetWorkerReq
+	40, // 54: ratchet.RatchetDaemon.CreateCron:input_type -> ratchet.CreateCronReq
+	0,  // 55: ratchet.RatchetDaemon.ListCrons:input_type -> ratchet.Empty
+	42, // 56: ratchet.RatchetDaemon.PauseCron:input_type -> ratchet.CronJobReq
+	42, // 57: ratchet.RatchetDaemon.ResumeCron:input_type -> ratchet.CronJobReq
+	42, // 58: ratchet.RatchetDaemon.StopCron:input_type -> ratchet.CronJobReq
+	0,  // 59: ratchet.RatchetDaemon.ListJobs:input_type -> ratchet.Empty
+	50, // 60: ratchet.RatchetDaemon.PauseJob:input_type -> ratchet.JobReq
+	50, // 61: ratchet.RatchetDaemon.ResumeJob:input_type -> ratchet.JobReq
+	50, // 62: ratchet.RatchetDaemon.KillJob:input_type -> ratchet.JobReq
+	0,  // 63: ratchet.RatchetDaemon.Health:input_type -> ratchet.Empty
+	0,  // 64: ratchet.RatchetDaemon.Shutdown:input_type -> ratchet.Empty
+	1,  // 65: ratchet.RatchetDaemon.CreateSession:output_type -> ratchet.Session
+	3,  // 66: ratchet.RatchetDaemon.ListSessions:output_type -> ratchet.SessionList
+	8,  // 67: ratchet.RatchetDaemon.AttachSession:output_type -> ratchet.ChatEvent
+	0,  // 68: ratchet.RatchetDaemon.DetachSession:output_type -> ratchet.Empty
+	0,  // 69: ratchet.RatchetDaemon.KillSession:output_type -> ratchet.Empty
+	8,  // 70: ratchet.RatchetDaemon.SendMessage:output_type -> ratchet.ChatEvent
+	0,  // 71: ratchet.RatchetDaemon.RespondToPermission:output_type -> ratchet.Empty
+	22, // 72: ratchet.RatchetDaemon.AddProvider:output_type -> ratchet.Provider
+	23, // 73: ratchet.RatchetDaemon.ListProviders:output_type -> ratchet.ProviderList
+	25, // 74: ratchet.RatchetDaemon.TestProvider:output_type -> ratchet.TestProviderResult
+	0,  // 75: ratchet.RatchetDaemon.RemoveProvider:output_type -> ratchet.Empty
+	0,  // 76: ratchet.RatchetDaemon.SetDefaultProvider:output_type -> ratchet.Empty
+	29, // 77: ratchet.RatchetDaemon.ListAgents:output_type -> ratchet.AgentList
+	28, // 78: ratchet.RatchetDaemon.GetAgentStatus:output_type -> ratchet.Agent
+	32, // 79: ratchet.RatchetDaemon.StartTeam:output_type -> ratchet.TeamEvent
+	34, // 80: ratchet.RatchetDaemon.GetTeamStatus:output_type -> ratchet.TeamStatus
+	8,  // 81: ratchet.RatchetDaemon.ApprovePlan:output_type -> ratchet.ChatEvent
+	0,  // 82: ratchet.RatchetDaemon.RejectPlan:output_type -> ratchet.Empty
+	8,  // 83: ratchet.RatchetDaemon.StartFleet:output_type -> ratchet.ChatEvent
+	45, // 84: ratchet.RatchetDaemon.GetFleetStatus:output_type -> ratchet.FleetStatus
+	0,  // 85: ratchet.RatchetDaemon.KillFleetWorker:output_type -> ratchet.Empty
+	39, // 86: ratchet.RatchetDaemon.CreateCron:output_type -> ratchet.CronJob
+	41, // 87: ratchet.RatchetDaemon.ListCrons:output_type -> ratchet.CronJobList
+	0,  // 88: ratchet.RatchetDaemon.PauseCron:output_type -> ratchet.Empty
+	0,  // 89: ratchet.RatchetDaemon.ResumeCron:output_type -> ratchet.Empty
+	0,  // 90: ratchet.RatchetDaemon.StopCron:output_type -> ratchet.Empty
+	49, // 91: ratchet.RatchetDaemon.ListJobs:output_type -> ratchet.JobList
+	0,  // 92: ratchet.RatchetDaemon.PauseJob:output_type -> ratchet.Empty
+	0,  // 93: ratchet.RatchetDaemon.ResumeJob:output_type -> ratchet.Empty
+	0,  // 94: ratchet.RatchetDaemon.KillJob:output_type -> ratchet.Empty
+	51, // 95: ratchet.RatchetDaemon.Health:output_type -> ratchet.HealthResponse
+	0,  // 96: ratchet.RatchetDaemon.Shutdown:output_type -> ratchet.Empty
+	65, // [65:97] is the sub-list for method output_type
+	33, // [33:65] is the sub-list for method input_type
+	33, // [33:33] is the sub-list for extension type_name
+	33, // [33:33] is the sub-list for extension extendee
+	0,  // [0:33] is the sub-list for field type_name
 }
 
 func init() { file_internal_proto_ratchet_proto_init() }
@@ -3796,7 +4021,7 @@ func file_internal_proto_ratchet_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_internal_proto_ratchet_proto_rawDesc), len(file_internal_proto_ratchet_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   49,
+			NumMessages:   53,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

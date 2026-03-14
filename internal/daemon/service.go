@@ -24,6 +24,7 @@ type Service struct {
 	fleet     *FleetManager
 	teams     *TeamManager
 	tokens    *TokenTracker
+	jobs      *JobRegistry
 }
 
 func NewService(ctx context.Context) (*Service, error) {
@@ -53,6 +54,11 @@ func NewService(ctx context.Context) (*Service, error) {
 	svc.fleet = NewFleetManager(routing)
 	svc.teams = NewTeamManager()
 	svc.tokens = NewTokenTracker()
+	svc.jobs = NewJobRegistry()
+	svc.jobs.Register("session", NewSessionJobProvider(svc.sessions))
+	svc.jobs.Register("fleet_worker", NewFleetJobProvider(svc.fleet))
+	svc.jobs.Register("team_agent", NewTeamJobProvider(svc.teams))
+	svc.jobs.Register("cron", NewCronJobProvider(svc.cron))
 	return svc, nil
 }
 
@@ -345,6 +351,31 @@ func (s *Service) GetFleetStatus(ctx context.Context, req *pb.FleetStatusReq) (*
 func (s *Service) KillFleetWorker(ctx context.Context, req *pb.KillFleetWorkerReq) (*pb.Empty, error) {
 	if err := s.fleet.KillWorker(req.FleetId, req.WorkerId); err != nil {
 		return nil, status.Errorf(codes.NotFound, "%v", err)
+	}
+	return &pb.Empty{}, nil
+}
+
+func (s *Service) ListJobs(ctx context.Context, _ *pb.Empty) (*pb.JobList, error) {
+	return &pb.JobList{Jobs: s.jobs.ListJobs()}, nil
+}
+
+func (s *Service) PauseJob(ctx context.Context, req *pb.JobReq) (*pb.Empty, error) {
+	if err := s.jobs.PauseJob(req.JobId); err != nil {
+		return nil, status.Errorf(codes.NotFound, "pause job: %v", err)
+	}
+	return &pb.Empty{}, nil
+}
+
+func (s *Service) ResumeJob(ctx context.Context, req *pb.JobReq) (*pb.Empty, error) {
+	if err := s.jobs.ResumeJob(req.JobId); err != nil {
+		return nil, status.Errorf(codes.NotFound, "resume job: %v", err)
+	}
+	return &pb.Empty{}, nil
+}
+
+func (s *Service) KillJob(ctx context.Context, req *pb.JobReq) (*pb.Empty, error) {
+	if err := s.jobs.KillJob(req.JobId); err != nil {
+		return nil, status.Errorf(codes.NotFound, "kill job: %v", err)
 	}
 	return &pb.Empty{}, nil
 }

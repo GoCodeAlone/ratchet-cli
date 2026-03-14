@@ -45,6 +45,10 @@ const (
 	RatchetDaemon_PauseCron_FullMethodName           = "/ratchet.RatchetDaemon/PauseCron"
 	RatchetDaemon_ResumeCron_FullMethodName          = "/ratchet.RatchetDaemon/ResumeCron"
 	RatchetDaemon_StopCron_FullMethodName            = "/ratchet.RatchetDaemon/StopCron"
+	RatchetDaemon_ListJobs_FullMethodName            = "/ratchet.RatchetDaemon/ListJobs"
+	RatchetDaemon_PauseJob_FullMethodName            = "/ratchet.RatchetDaemon/PauseJob"
+	RatchetDaemon_ResumeJob_FullMethodName           = "/ratchet.RatchetDaemon/ResumeJob"
+	RatchetDaemon_KillJob_FullMethodName             = "/ratchet.RatchetDaemon/KillJob"
 	RatchetDaemon_Health_FullMethodName              = "/ratchet.RatchetDaemon/Health"
 	RatchetDaemon_Shutdown_FullMethodName            = "/ratchet.RatchetDaemon/Shutdown"
 )
@@ -88,6 +92,11 @@ type RatchetDaemonClient interface {
 	PauseCron(ctx context.Context, in *CronJobReq, opts ...grpc.CallOption) (*Empty, error)
 	ResumeCron(ctx context.Context, in *CronJobReq, opts ...grpc.CallOption) (*Empty, error)
 	StopCron(ctx context.Context, in *CronJobReq, opts ...grpc.CallOption) (*Empty, error)
+	// Job control
+	ListJobs(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*JobList, error)
+	PauseJob(ctx context.Context, in *JobReq, opts ...grpc.CallOption) (*Empty, error)
+	ResumeJob(ctx context.Context, in *JobReq, opts ...grpc.CallOption) (*Empty, error)
+	KillJob(ctx context.Context, in *JobReq, opts ...grpc.CallOption) (*Empty, error)
 	// Daemon
 	Health(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*HealthResponse, error)
 	Shutdown(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*Empty, error)
@@ -406,6 +415,46 @@ func (c *ratchetDaemonClient) StopCron(ctx context.Context, in *CronJobReq, opts
 	return out, nil
 }
 
+func (c *ratchetDaemonClient) ListJobs(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*JobList, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(JobList)
+	err := c.cc.Invoke(ctx, RatchetDaemon_ListJobs_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ratchetDaemonClient) PauseJob(ctx context.Context, in *JobReq, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, RatchetDaemon_PauseJob_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ratchetDaemonClient) ResumeJob(ctx context.Context, in *JobReq, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, RatchetDaemon_ResumeJob_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ratchetDaemonClient) KillJob(ctx context.Context, in *JobReq, opts ...grpc.CallOption) (*Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Empty)
+	err := c.cc.Invoke(ctx, RatchetDaemon_KillJob_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *ratchetDaemonClient) Health(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*HealthResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(HealthResponse)
@@ -465,6 +514,11 @@ type RatchetDaemonServer interface {
 	PauseCron(context.Context, *CronJobReq) (*Empty, error)
 	ResumeCron(context.Context, *CronJobReq) (*Empty, error)
 	StopCron(context.Context, *CronJobReq) (*Empty, error)
+	// Job control
+	ListJobs(context.Context, *Empty) (*JobList, error)
+	PauseJob(context.Context, *JobReq) (*Empty, error)
+	ResumeJob(context.Context, *JobReq) (*Empty, error)
+	KillJob(context.Context, *JobReq) (*Empty, error)
 	// Daemon
 	Health(context.Context, *Empty) (*HealthResponse, error)
 	Shutdown(context.Context, *Empty) (*Empty, error)
@@ -555,6 +609,18 @@ func (UnimplementedRatchetDaemonServer) ResumeCron(context.Context, *CronJobReq)
 }
 func (UnimplementedRatchetDaemonServer) StopCron(context.Context, *CronJobReq) (*Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method StopCron not implemented")
+}
+func (UnimplementedRatchetDaemonServer) ListJobs(context.Context, *Empty) (*JobList, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListJobs not implemented")
+}
+func (UnimplementedRatchetDaemonServer) PauseJob(context.Context, *JobReq) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method PauseJob not implemented")
+}
+func (UnimplementedRatchetDaemonServer) ResumeJob(context.Context, *JobReq) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method ResumeJob not implemented")
+}
+func (UnimplementedRatchetDaemonServer) KillJob(context.Context, *JobReq) (*Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method KillJob not implemented")
 }
 func (UnimplementedRatchetDaemonServer) Health(context.Context, *Empty) (*HealthResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Health not implemented")
@@ -1016,6 +1082,78 @@ func _RatchetDaemon_StopCron_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RatchetDaemon_ListJobs_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RatchetDaemonServer).ListJobs(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RatchetDaemon_ListJobs_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RatchetDaemonServer).ListJobs(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RatchetDaemon_PauseJob_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(JobReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RatchetDaemonServer).PauseJob(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RatchetDaemon_PauseJob_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RatchetDaemonServer).PauseJob(ctx, req.(*JobReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RatchetDaemon_ResumeJob_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(JobReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RatchetDaemonServer).ResumeJob(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RatchetDaemon_ResumeJob_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RatchetDaemonServer).ResumeJob(ctx, req.(*JobReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RatchetDaemon_KillJob_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(JobReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RatchetDaemonServer).KillJob(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RatchetDaemon_KillJob_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RatchetDaemonServer).KillJob(ctx, req.(*JobReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _RatchetDaemon_Health_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(Empty)
 	if err := dec(in); err != nil {
@@ -1142,6 +1280,22 @@ var RatchetDaemon_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "StopCron",
 			Handler:    _RatchetDaemon_StopCron_Handler,
+		},
+		{
+			MethodName: "ListJobs",
+			Handler:    _RatchetDaemon_ListJobs_Handler,
+		},
+		{
+			MethodName: "PauseJob",
+			Handler:    _RatchetDaemon_PauseJob_Handler,
+		},
+		{
+			MethodName: "ResumeJob",
+			Handler:    _RatchetDaemon_ResumeJob_Handler,
+		},
+		{
+			MethodName: "KillJob",
+			Handler:    _RatchetDaemon_KillJob_Handler,
 		},
 		{
 			MethodName: "Health",
