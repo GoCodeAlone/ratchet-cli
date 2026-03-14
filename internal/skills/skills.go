@@ -83,7 +83,7 @@ func Inject(systemPrompt string, skills []Skill) string {
 	sb.WriteString(systemPrompt)
 	sb.WriteString("\n\n## Available Skills\n\n")
 	for _, s := range skills {
-		sb.WriteString(fmt.Sprintf("### %s\n\n%s\n\n", s.Name, s.Content))
+		fmt.Fprintf(&sb, "### %s\n\n%s\n\n", s.Name, s.Content)
 	}
 	return sb.String()
 }

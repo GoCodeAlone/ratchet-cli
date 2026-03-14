@@ -187,8 +187,15 @@ func deepCopyFleetStatus(src *pb.FleetStatus) *pb.FleetStatus {
 		Workers:   make([]*pb.FleetWorker, len(src.Workers)),
 	}
 	for i, w := range src.Workers {
-		wCopy := *w
-		dst.Workers[i] = &wCopy
+		dst.Workers[i] = &pb.FleetWorker{
+			Id:       w.Id,
+			Name:     w.Name,
+			StepId:   w.StepId,
+			Status:   w.Status,
+			Model:    w.Model,
+			Provider: w.Provider,
+			Error:    w.Error,
+		}
 	}
 	return dst
 }

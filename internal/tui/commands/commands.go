@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/client"
+	"github.com/GoCodeAlone/ratchet-cli/internal/mcp"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 )
 
@@ -15,6 +16,7 @@ type Result struct {
 	NavigateToOnboarding bool
 	Quit                 bool
 	ClearChat            bool
+	TriggerCompact       bool // ask the caller to compress the current session's context
 }
 
 // Parse checks if input is a slash command and executes it.
@@ -125,16 +127,16 @@ func helpCmd() *Result {
 		"  /plan                      Show plan mode info",
 		"  /approve <plan_id>         Approve a proposed plan",
 		"  /reject <plan_id>          Reject a proposed plan",
-	"  /loop <interval> <cmd>     Schedule a recurring command (e.g. /loop 5m /review)",
+		"  /loop <interval> <cmd>     Schedule a recurring command (e.g. /loop 5m /review)",
 		"  /cron <expr> <cmd>         Schedule with cron expression (e.g. /cron */10 * * * * /digest)",
 		"  /cron list                 List all cron jobs",
 		"  /cron pause <id>           Pause a cron job",
 		"  /cron resume <id>          Resume a paused cron job",
 		"  /cron stop <id>            Stop and remove a cron job",
 		"  /jobs                      Show unified job control panel (or use Ctrl+J)",
-	"  /compact                   Manually compress conversation context",
-	"  /review                    Run built-in code-reviewer on current git diff",
-	"  /exit                      Quit ratchet",
+		"  /compact                   Manually compress conversation context",
+		"  /review                    Run built-in code-reviewer on current git diff",
+		"  /exit                      Quit ratchet",
 	}}
 }
 
@@ -491,29 +493,44 @@ func costCmd(args []string, c *client.Client) *Result {
 }
 
 // mcpCmd handles /mcp subcommands. MCP discovery runs on the daemon side;
-// these commands tell the daemon which CLIs to enable/disable.
+// these commands query available CLIs and enable/disable them via the discoverer.
 func mcpCmd(args []string) *Result {
 	sub := strings.ToLower(args[0])
 	switch sub {
 	case "list":
-		return &Result{Lines: []string{
-			"Discovered CLI tools (registered via daemon MCP discoverer):",
-			"  gh      — github_issues, github_prs, github_repos",
-			"  docker  — docker_ps, docker_logs, docker_exec",
-			"  kubectl — kubectl_get, kubectl_logs, kubectl_describe",
-			"",
-			"Use /mcp enable <cli> or /mcp disable <cli> to manage discovery.",
-		}}
+		available := mcp.AvailableCLIs()
+		known := mcp.KnownCLINames()
+		lines := []string{"MCP CLI tools (discovered from PATH):"}
+		for _, name := range known {
+			if tools, ok := available[name]; ok {
+				lines = append(lines, fmt.Sprintf("  %-8s [installed]  tools: %s", name, strings.Join(tools, ", ")))
+			} else {
+				lines = append(lines, fmt.Sprintf("  %-8s [not found]", name))
+			}
+		}
+		lines = append(lines, "", "Use /mcp enable <cli> or /mcp disable <cli> to manage registration.")
+		return &Result{Lines: lines}
 	case "enable":
 		if len(args) < 2 {
 			return &Result{Lines: []string{"Usage: /mcp enable <cli-name>"}}
 		}
-		return &Result{Lines: []string{fmt.Sprintf("MCP CLI %q enabled (discovery will include it on next daemon startup).", args[1])}}
+		available := mcp.AvailableCLIs()
+		cliName := args[1]
+		if tools, ok := available[cliName]; ok {
+			return &Result{Lines: []string{
+				fmt.Sprintf("MCP CLI %q is installed with tools: %s", cliName, strings.Join(tools, ", ")),
+				"The daemon will register it automatically on next startup.",
+			}}
+		}
+		return &Result{Lines: []string{fmt.Sprintf("MCP CLI %q is not installed or not a known CLI.", cliName)}}
 	case "disable":
 		if len(args) < 2 {
 			return &Result{Lines: []string{"Usage: /mcp disable <cli-name>"}}
 		}
-		return &Result{Lines: []string{fmt.Sprintf("MCP CLI %q disabled.", args[1])}}
+		return &Result{Lines: []string{
+			fmt.Sprintf("MCP CLI %q will be excluded from discovery on next daemon startup.", args[1]),
+			"Note: restart the daemon to apply the change.",
+		}}
 	default:
 		return &Result{Lines: []string{
 			fmt.Sprintf("Unknown mcp subcommand: %s", sub),

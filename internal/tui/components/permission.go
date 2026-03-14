@@ -98,16 +98,16 @@ func (p PermissionPrompt) View(t theme.Theme, width int) string {
 	title := lipgloss.NewStyle().Foreground(t.Warning).Bold(true).Render("⚠ Permission Required")
 	sb.WriteString(title + "\n\n")
 
-	sb.WriteString(fmt.Sprintf("Tool: %s\n", p.ToolName))
+	fmt.Fprintf(&sb, "Tool: %s\n", p.ToolName)
 	if p.Desc != "" {
-		sb.WriteString(fmt.Sprintf("Description: %s\n", p.Desc))
+		fmt.Fprintf(&sb, "Description: %s\n", p.Desc)
 	}
 	if p.ArgsJSON != "" {
 		args := p.ArgsJSON
 		if len(args) > 200 {
 			args = args[:197] + "..."
 		}
-		sb.WriteString(fmt.Sprintf("Arguments: %s\n", args))
+		fmt.Fprintf(&sb, "Arguments: %s\n", args)
 	}
 	sb.WriteString("\n")
 

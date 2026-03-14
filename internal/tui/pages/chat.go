@@ -190,7 +190,11 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 			if result.Quit {
 				return m, tea.Quit
 			}
-			return m, nil
+			if result.TriggerCompact {
+				m.streaming = ""
+				cmds = append(cmds, m.compactSession())
+			}
+			return m, tea.Batch(cmds...)
 		}
 		// Add user message and send to daemon
 		m.messages = append(m.messages, components.Message{
@@ -292,6 +296,32 @@ func (m ChatModel) sendMessage(content string) tea.Cmd {
 		}
 
 		// Read first event and carry channel for subsequent reads
+		event, ok := <-ch
+		if !ok {
+			return chatStreamDoneMsg{}
+		}
+		return ChatEventMsg{Event: event, ch: ch}
+	}
+}
+
+// compactSession sends a CompactSession request to the daemon and streams the result.
+func (m ChatModel) compactSession() tea.Cmd {
+	return func() tea.Msg {
+		if m.client == nil {
+			return nil
+		}
+		ctx, cancel := context.WithCancel(m.ctx)
+		m.cancelChat = cancel
+
+		ch, err := m.client.CompactSession(ctx, m.sessionID)
+		if err != nil {
+			return ChatEventMsg{Event: &pb.ChatEvent{
+				Event: &pb.ChatEvent_Error{
+					Error: &pb.ErrorEvent{Message: err.Error()},
+				},
+			}}
+		}
+
 		event, ok := <-ch
 		if !ok {
 			return chatStreamDoneMsg{}

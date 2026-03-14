@@ -39,12 +39,12 @@ func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error
 	db.SetMaxOpenConns(1)
 
 	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("enable foreign keys: %w", err)
 	}
 
 	if err := initDB(db); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("init db: %w", err)
 	}
 
@@ -58,7 +58,7 @@ func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error
 	// Memory store
 	ec.MemoryStore = ratchetplugin.NewMemoryStore(db)
 	if err := ec.MemoryStore.InitTables(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("memory tables: %w", err)
 	}
 
@@ -114,7 +114,7 @@ func (ec *EngineContext) Close() {
 		_ = ec.Actors.Close(context.Background())
 	}
 	if ec.DB != nil {
-		ec.DB.Close()
+		_ = ec.DB.Close()
 	}
 }
 

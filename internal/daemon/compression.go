@@ -109,7 +109,7 @@ func summarize(ctx context.Context, messages []provider.Message, prov provider.P
 	var sb strings.Builder
 	sb.WriteString("Summarize this conversation history concisely in 2-3 sentences. Focus on key decisions, context, and outcomes. Do not include greetings or pleasantries.\n\nConversation:\n")
 	for _, m := range messages {
-		sb.WriteString(fmt.Sprintf("[%s]: %s\n", m.Role, m.Content))
+		fmt.Fprintf(&sb, "[%s]: %s\n", m.Role, m.Content)
 	}
 
 	req := []provider.Message{
@@ -142,7 +142,7 @@ func buildFallbackSummary(messages []provider.Message) string {
 		return "(no prior context)"
 	}
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Compressed %d messages. Topics covered: ", len(messages)))
+	fmt.Fprintf(&sb, "Compressed %d messages. Topics covered: ", len(messages))
 	seen := make(map[string]bool)
 	var topics []string
 	for _, m := range messages {

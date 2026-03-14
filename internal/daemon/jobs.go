@@ -237,9 +237,19 @@ func (p *TeamJobProvider) ResumeJob(id string) error {
 
 func (p *TeamJobProvider) KillJob(id string) error {
 	agentID := strings.TrimPrefix(id, "team_agent:")
+
+	// Collect candidate team instances under the outer read lock, then
+	// release it before acquiring the inner write lock. Holding p.tm.mu.RLock
+	// while calling ti.mu.Lock would invert the lock order if any other
+	// goroutine takes the locks in the opposite order, risking deadlock.
 	p.tm.mu.RLock()
-	defer p.tm.mu.RUnlock()
+	candidates := make([]*teamInstance, 0, len(p.tm.teams))
 	for _, ti := range p.tm.teams {
+		candidates = append(candidates, ti)
+	}
+	p.tm.mu.RUnlock()
+
+	for _, ti := range candidates {
 		ti.mu.RLock()
 		_, ok := ti.agents[agentID]
 		ti.mu.RUnlock()

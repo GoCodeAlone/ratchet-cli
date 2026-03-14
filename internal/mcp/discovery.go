@@ -43,6 +43,24 @@ func (t *cliTool) Definition() provider.ToolDef {
 		},
 	}
 }
+// shellMetachars contains characters that have special meaning in shells.
+// These are rejected in AI-supplied args as a defence-in-depth measure.
+// Note: exec.Command does NOT invoke a shell, so these characters are not
+// interpreted as shell operators — they would be passed as literal argv
+// elements. However, some CLIs (e.g. docker exec) forward their own argv to
+// a shell inside the container, so rejecting metacharacters here prevents
+// unexpected escalation in those cases.
+const shellMetachars = ";|&$`()"
+
+func validateArgs(extra string) error {
+	for _, ch := range shellMetachars {
+		if strings.ContainsRune(extra, ch) {
+			return fmt.Errorf("args contain disallowed character %q", ch)
+		}
+	}
+	return nil
+}
+
 func (t *cliTool) Execute(ctx context.Context, args map[string]any) (any, error) {
 	extra := ""
 	if v, ok := args["args"]; ok {
@@ -51,6 +69,9 @@ func (t *cliTool) Execute(ctx context.Context, args map[string]any) (any, error)
 	cmdArgs := make([]string, len(t.cmdArgs))
 	copy(cmdArgs, t.cmdArgs)
 	if extra != "" {
+		if err := validateArgs(extra); err != nil {
+			return nil, fmt.Errorf("%s: %w", t.name, err)
+		}
 		cmdArgs = append(cmdArgs, strings.Fields(extra)...)
 	}
 	out, err := exec.CommandContext(ctx, cmdArgs[0], cmdArgs[1:]...).CombinedOutput()
@@ -228,4 +249,26 @@ func toolNames(tools []cliTool) []string {
 		names[i] = t.name
 	}
 	return names
+}
+
+// KnownCLINames returns the names of all CLIs that can be discovered.
+func KnownCLINames() []string {
+	names := make([]string, len(knownCLIs))
+	for i, spec := range knownCLIs {
+		names[i] = spec.Name
+	}
+	return names
+}
+
+// AvailableCLIs returns the subset of known CLIs that are present in PATH.
+// It performs an exec.LookPath check for each CLI and returns a map of
+// CLI name → tool names for those that are installed.
+func AvailableCLIs() map[string][]string {
+	result := make(map[string][]string)
+	for _, spec := range knownCLIs {
+		if _, err := exec.LookPath(spec.Name); err == nil {
+			result[spec.Name] = toolNames(spec.Tools)
+		}
+	}
+	return result
 }

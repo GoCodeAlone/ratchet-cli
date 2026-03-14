@@ -199,6 +199,14 @@ func (c *Client) GetTeamStatus(ctx context.Context, teamID string) (*pb.TeamStat
 	return c.daemon.GetTeamStatus(ctx, &pb.TeamStatusReq{TeamId: teamID})
 }
 
+// CompactSession requests immediate context compression for the given session.
+// It sends a special sentinel message that handleChat recognises as a compression
+// request rather than a user turn — the daemon compresses history and responds
+// with a ContextCompressed event.
+func (c *Client) CompactSession(ctx context.Context, sessionID string) (<-chan *pb.ChatEvent, error) {
+	return c.SendMessage(ctx, sessionID, "\x00compact\x00")
+}
+
 func (c *Client) CreateCron(ctx context.Context, sessionID, schedule, command string) (*pb.CronJob, error) {
 	return c.daemon.CreateCron(ctx, &pb.CreateCronReq{
 		SessionId: sessionID,

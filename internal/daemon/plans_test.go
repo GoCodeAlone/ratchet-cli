@@ -191,10 +191,8 @@ func TestPlanManager_UpdateStep_SkipDoesNotBlock(t *testing.T) {
 	plan := pm.Create("sess1", "goal", makePlanSteps("s1", "s2"))
 	plan.Status = "executing"
 
-	// Skip s2 first
-	if err := pm.Approve(plan.Id, nil); err == nil {
-		// plan is already executing, approve would fail — set status manually for this test
-	}
+	// Skip s2 first (approve fails when already executing; status set manually below)
+	_ = pm.Approve(plan.Id, nil)
 	// Reset to executing with s2 skipped
 	for _, step := range plan.Steps {
 		if step.Id == "s2" {

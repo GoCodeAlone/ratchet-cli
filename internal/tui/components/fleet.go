@@ -25,7 +25,6 @@ type FleetStatusUpdatedMsg struct {
 
 type fleetRow struct {
 	worker  *pb.FleetWorker
-	elapsed time.Duration
 	started time.Time
 }
 
@@ -193,9 +192,3 @@ func truncate(s string, n int) string {
 	return string(runes[:n-1]) + "…"
 }
 
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}

@@ -713,7 +713,7 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 			sb.WriteString(mutedStyle.Render("Run: gh auth token") + "\n")
 			sb.WriteString(mutedStyle.Render("Or create a PAT at github.com/settings/tokens") + "\n\n")
 		default:
-			sb.WriteString(fmt.Sprintf("Enter your %s API key:\n\n", p.displayName))
+			fmt.Fprintf(&sb, "Enter your %s API key:\n\n", p.displayName)
 		}
 		sb.WriteString("Key: " + m.apiKeyInput.View() + "\n\n")
 		sb.WriteString(mutedStyle.Render("Your key is stored locally and never shared.") + "\n\n")
@@ -721,7 +721,7 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 
 	case stepEnterBaseURL:
 		p := m.selectedProvider()
-		sb.WriteString(fmt.Sprintf("Enter the %s server URL:\n\n", p.displayName))
+		fmt.Fprintf(&sb, "Enter the %s server URL:\n\n", p.displayName)
 		sb.WriteString("URL: " + m.baseURLInput.View() + "\n\n")
 		sb.WriteString(mutedStyle.Render("Enter: continue  Esc: back"))
 

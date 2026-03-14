@@ -161,7 +161,7 @@ func parseMarkdownAgent(path string) (AgentDefinition, error) {
 	if err != nil {
 		return AgentDefinition{}, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	var frontMatter strings.Builder

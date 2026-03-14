@@ -210,7 +210,7 @@ func listOllamaModels(ctx context.Context, baseURL string) ([]ModelInfo, error) 
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Ollama API error (%d): %s", resp.StatusCode, truncateStr(body, 200))
+		return nil, fmt.Errorf("ollama API error (%d): %s", resp.StatusCode, truncateStr(body, 200))
 	}
 
 	var result struct {

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/tochemey/goakt/v4/actor"
 )
@@ -174,8 +173,6 @@ type ApprovalResponse struct {
 	Approved bool
 	Reason   string
 }
-
-const defaultApprovalTimeout = 5 * time.Minute
 
 // ApprovalActor blocks (via actor.Ask) until the TUI user responds to a
 // permission prompt or the timeout elapses.

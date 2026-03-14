@@ -1,0 +1,37 @@
+version: "2"
+
+linters:
+  default: standard
+  settings:
+    errcheck:
+      # Exclude common patterns where ignoring errors is intentional:
+      # deferred Close/Rollback calls, goroutine server Serve calls, and
+      # fire-and-forget writes in HTTP handlers or gRPC streams.
+      exclude-functions:
+        - (io.Closer).Close
+        - (*database/sql.Rows).Close
+        - (*database/sql.Tx).Rollback
+        - (*net.Listener).Close
+        - (*net/http.Server).Close
+        - os.Remove
+        - os.MkdirAll
+        - os.WriteFile
+        - (net.Listener).Close
+        - (*google.golang.org/grpc.Server).Serve
+        - (*google.golang.org/grpc.ClientConn).Close
+        - (net.Conn).Close
+        - (*encoding/json.Encoder).Encode
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - fmt.Fprint
+        - (io.WriteCloser).Close
+
+  exclusions:
+    rules:
+      # Relax errcheck in test files — Close/Cleanup patterns in tests are fine.
+      - linters: [errcheck]
+        path: _test\.go
+      # defer c.Close() / defer f.Close() / defer db.Close() are idiomatic Go;
+      # the error from a deferred Close is not actionable.
+      - linters: [errcheck]
+        text: "Error return value of .*(Close|Rollback|Send|KillSession|KillAgent). is not checked"

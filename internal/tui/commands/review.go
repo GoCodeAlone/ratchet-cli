@@ -9,15 +9,16 @@ import (
 )
 
 // compactCmd triggers manual context compression for the current session.
+// It sets TriggerCompact on the result so the chat view can call CompactSession
+// on the daemon using the session ID it already holds.
 func compactCmd(c *client.Client) *Result {
 	if c == nil {
 		return &Result{Lines: []string{"Not connected to daemon"}}
 	}
-	return &Result{Lines: []string{
-		"Context compression requested.",
-		"The daemon will summarise older messages and preserve the most recent context.",
-		"Compression triggers automatically when the context window reaches 90% capacity.",
-	}}
+	return &Result{
+		Lines:          []string{"Compressing conversation context…"},
+		TriggerCompact: true,
+	}
 }
 
 // reviewCmd runs the built-in code-reviewer agent on the current git diff.
