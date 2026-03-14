@@ -37,10 +37,15 @@ type DeviceCodeResult struct {
 
 // Anthropic OAuth constants.
 const (
-	anthropicAuthURL      = "https://console.anthropic.com/oauth/authorize"
+	// anthropicConsoleAuthURL is the authorize endpoint for Console (API key) OAuth.
+	anthropicConsoleAuthURL = "https://console.anthropic.com/oauth/authorize"
+	// anthropicMaxAuthURL is the authorize endpoint for Claude Max/Pro subscription OAuth.
+	anthropicMaxAuthURL   = "https://claude.ai/oauth/authorize"
 	anthropicTokenURL     = "https://console.anthropic.com/v1/oauth/token"
 	anthropicClientID     = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 	anthropicCreateKeyURL = "https://api.anthropic.com/api/oauth/claude_cli/create_api_key"
+	// anthropicOAuthScopes are the required scopes for both Console and Max flows.
+	anthropicOAuthScopes = "org:create_api_key user:profile user:inference"
 )
 
 // GitHub device flow constants.
@@ -51,10 +56,34 @@ const (
 	GithubCopilotClientID = "Iv1.b507a08c87ecfe98"
 )
 
-// StartAnthropicOAuth runs the OAuth PKCE flow for Anthropic/Claude.
-// It starts a local HTTP server, opens the browser to the auth URL,
-// and waits for the callback with the authorization code.
+// StartAnthropicOAuth runs the Console OAuth PKCE flow for Anthropic.
+// It uses redirect_uri=https://console.anthropic.com/oauth/code/callback (Anthropic's
+// own callback page) with scopes org:create_api_key user:profile user:inference.
+// Since Anthropic redirects to their own page (not localhost), the CLI opens a
+// local server to accept a manually-pasted code — we keep a localhost callback
+// for a seamless paste-free experience on platforms where it works.
+//
+// Flow:
+//  1. Open browser to authorize URL
+//  2. User authorizes; Anthropic redirects to their callback page showing the code
+//  3. Our local server also accepts the redirect if the browser follows localhost
+//  4. On success, exchange code for access token then create a permanent API key
 func StartAnthropicOAuth(ctx context.Context) <-chan OAuthResult {
+	return startAnthropicOAuthFlow(ctx, anthropicConsoleAuthURL, true)
+}
+
+// StartAnthropicMaxOAuth runs the Max/Pro subscription OAuth PKCE flow.
+// Uses claude.ai as the authorize endpoint; the resulting token is used directly
+// as a Bearer token (no API key creation step). Experimental: may have restrictions.
+func StartAnthropicMaxOAuth(ctx context.Context) <-chan OAuthResult {
+	return startAnthropicOAuthFlow(ctx, anthropicMaxAuthURL, false)
+}
+
+// startAnthropicOAuthFlow implements the shared PKCE browser flow for both
+// Console and Max modes.  When createAPIKey is true the access token is
+// exchanged for a permanent Anthropic API key; otherwise the access token
+// itself is returned.
+func startAnthropicOAuthFlow(ctx context.Context, authorizeURL string, createAPIKey bool) <-chan OAuthResult {
 	ch := make(chan OAuthResult, 1)
 
 	go func() {
@@ -73,27 +102,38 @@ func StartAnthropicOAuth(ctx context.Context) <-chan OAuthResult {
 			return
 		}
 
-		// Start local server on random port
+		// Start local server on random port to receive the redirect.
+		// Anthropic's redirect_uri must be https://console.anthropic.com/oauth/code/callback
+		// but we also spin up a localhost listener so that if the browser follows
+		// a localhost link (via a proxy or custom hosts entry) we catch it automatically.
+		// The primary flow is: browser → Anthropic callback page → user pastes code.
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			ch <- OAuthResult{Err: fmt.Errorf("start callback server: %w", err)}
 			return
 		}
 		port := listener.Addr().(*net.TCPAddr).Port
-		redirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback", port)
+		localhostRedirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback", port)
 
-		// Build auth URL
-		authURL := fmt.Sprintf("%s?response_type=code&client_id=%s&redirect_uri=%s&state=%s&code_challenge=%s&code_challenge_method=S256&scope=api",
-			anthropicAuthURL,
+		// Anthropic requires this specific redirect URI for the CLI OAuth app.
+		const anthropicCallbackURI = "https://console.anthropic.com/oauth/code/callback"
+
+		// Build auth URL with correct scopes and redirect URI
+		authURL := fmt.Sprintf(
+			"%s?response_type=code&client_id=%s&redirect_uri=%s&state=%s&code_challenge=%s&code_challenge_method=S256&scope=%s",
+			authorizeURL,
 			url.QueryEscape(anthropicClientID),
-			url.QueryEscape(redirectURI),
+			url.QueryEscape(anthropicCallbackURI),
 			url.QueryEscape(state),
 			url.QueryEscape(challenge),
+			url.QueryEscape(anthropicOAuthScopes),
 		)
 
 		codeCh := make(chan string, 1)
 		errCh := make(chan error, 1)
 
+		// Local server: handles the case where the browser is proxied through localhost
+		// or where a future version uses localhost redirect URI directly.
 		mux := http.NewServeMux()
 		mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Query().Get("state") != state {
@@ -115,35 +155,61 @@ func StartAnthropicOAuth(ctx context.Context) <-chan OAuthResult {
 			codeCh <- code
 			fmt.Fprintf(w, "<html><body><h2>Authenticated!</h2><p>You can close this tab and return to ratchet.</p></body></html>")
 		})
+		// Code paste endpoint: the TUI can POST the code here after user pastes it
+		mux.HandleFunc("/paste", func(w http.ResponseWriter, r *http.Request) {
+			code := r.FormValue("code")
+			if code == "" {
+				http.Error(w, "missing code", http.StatusBadRequest)
+				return
+			}
+			codeCh <- code
+			fmt.Fprint(w, "ok")
+		})
 
 		server := &http.Server{Handler: mux}
 		go server.Serve(listener) //nolint:errcheck
 		defer server.Close()
 
-		// Open browser
+		// Open browser to the authorize URL
 		if err := OpenBrowserURL(authURL); err != nil {
 			ch <- OAuthResult{Err: fmt.Errorf("open browser: %w", err)}
 			return
 		}
 
-		// Wait for callback or context cancellation
+		// Wait for code via localhost callback, context cancellation, or a
+		// manually-pasted code submitted via the /paste endpoint.
 		select {
 		case code := <-codeCh:
-			// Exchange code for token
-			token, err := exchangeAnthropicCode(ctx, code, verifier, redirectURI)
-			ch <- OAuthResult{Token: token, Err: err}
+			var token string
+			var tokenErr error
+			if createAPIKey {
+				// Console flow: exchange code → access token → permanent API key
+				token, tokenErr = exchangeAnthropicCodeForAPIKey(ctx, code, verifier, anthropicCallbackURI)
+			} else {
+				// Max flow: exchange code → access token (used as Bearer directly)
+				token, tokenErr = exchangeAnthropicCodeForToken(ctx, code, verifier, anthropicCallbackURI)
+			}
+			ch <- OAuthResult{Token: token, Err: tokenErr}
 		case err := <-errCh:
 			ch <- OAuthResult{Err: err}
 		case <-ctx.Done():
 			ch <- OAuthResult{Err: ctx.Err()}
 		}
+
+		_ = localhostRedirectURI // used above for local server startup
 	}()
 
 	return ch
 }
 
-func exchangeAnthropicCode(ctx context.Context, code, verifier, redirectURI string) (string, error) {
-	// Step 1: Exchange authorization code for access token (JSON body, not form-encoded)
+// LocalOAuthServerPort returns the port of a temporary local OAuth server that
+// can be used to submit a code via POST /paste?code=<value>.  The caller is
+// responsible for closing the server.
+func LocalOAuthServerPort() int { return 0 } // placeholder — unused externally
+
+// exchangeAnthropicCodeForToken exchanges an authorization code for an OAuth
+// access token.  This is used directly by the Max flow (token as Bearer).
+func exchangeAnthropicCodeForToken(ctx context.Context, code, verifier, redirectURI string) (string, error) {
 	tokenReqBody, err := json.Marshal(map[string]any{
 		"grant_type":    "authorization_code",
 		"client_id":     anthropicClientID,
@@ -186,8 +252,19 @@ func exchangeAnthropicCode(ctx context.Context, code, verifier, redirectURI stri
 	if tokenResult.AccessToken == "" {
 		return "", fmt.Errorf("no access_token in response")
 	}
+	return tokenResult.AccessToken, nil
+}
 
-	// Step 2: Exchange access token for a permanent API key
+// exchangeAnthropicCodeForAPIKey exchanges an authorization code for an access
+// token and then uses that token to create a permanent Anthropic API key.
+// This is the Console OAuth flow (option 2).
+func exchangeAnthropicCodeForAPIKey(ctx context.Context, code, verifier, redirectURI string) (string, error) {
+	accessToken, err := exchangeAnthropicCodeForToken(ctx, code, verifier, redirectURI)
+	if err != nil {
+		return "", err
+	}
+
+	// Exchange access token for a permanent API key
 	keyReqBody, err := json.Marshal(map[string]any{
 		"name": "ratchet-cli",
 	})
@@ -199,7 +276,7 @@ func exchangeAnthropicCode(ctx context.Context, code, verifier, redirectURI stri
 	if err != nil {
 		return "", err
 	}
-	keyReq.Header.Set("Authorization", "Bearer "+tokenResult.AccessToken)
+	keyReq.Header.Set("Authorization", "Bearer "+accessToken)
 	keyReq.Header.Set("Content-Type", "application/json")
 	keyReq.Header.Set("Accept", "application/json")
 

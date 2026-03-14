@@ -75,6 +75,15 @@ const (
 	authNone    authMethod = "none"
 )
 
+// anthropicAuthChoice identifies which Anthropic sign-in option was selected.
+type anthropicAuthChoice int
+
+const (
+	anthropicChoiceAPIKey     anthropicAuthChoice = 0 // Enter API key directly
+	anthropicChoiceConsoleOAuth anthropicAuthChoice = 1 // Console OAuth → creates API key
+	anthropicChoiceMaxOAuth   anthropicAuthChoice = 2 // Max/Pro subscription OAuth
+)
+
 type providerTypeInfo struct {
 	name         string
 	displayName  string
@@ -98,7 +107,7 @@ var providerTypes = []providerTypeInfo{
 		defaultURL: "https://api.openai.com/v1",
 	},
 	{
-		name: "ollama", displayName: "Ollama (Local)",
+		name: "ollama", displayName: "Local models (Ollama / LM Studio / llama.cpp)",
 		auth: authNone, needsBaseURL: true,
 		defaultURL: "http://localhost:11434",
 	},
@@ -127,13 +136,14 @@ type OnboardingModel struct {
 	baseURLInput textinput.Model
 
 	// Browser/device auth state
-	authing               bool   // browser/gh/device auth in progress
+	authing               bool                // browser/gh/device auth in progress
 	authError             string
-	authToken             string // token obtained from auth flow
-	browserOpened         bool   // browser was opened for user
+	authToken             string              // token obtained from auth flow
+	browserOpened         bool                // browser was opened for user
 	authCancel            context.CancelFunc
-	deviceUserCode        string // device flow: code to display to user
-	deviceVerificationURI string // device flow: URL to open
+	deviceUserCode        string              // device flow: code to display to user
+	deviceVerificationURI string              // device flow: URL to open
+	anthropicChoice       anthropicAuthChoice // which Anthropic auth option was selected
 
 	// Model listing
 	fetchingModels bool
@@ -425,6 +435,14 @@ func (m OnboardingModel) startAnthropicAuth(ctx context.Context) tea.Cmd {
 	}
 }
 
+func (m OnboardingModel) startAnthropicMaxAuth(ctx context.Context) tea.Cmd {
+	return func() tea.Msg {
+		ch := providerauth.StartAnthropicMaxOAuth(ctx)
+		result := <-ch
+		return browserAuthResultMsg{token: result.Token, err: result.Err}
+	}
+}
+
 func (m OnboardingModel) updateAnthropicAuthChoice(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 		switch keyMsg.String() {
@@ -433,7 +451,7 @@ func (m OnboardingModel) updateAnthropicAuthChoice(msg tea.Msg) (OnboardingModel
 			m.cursor = m.providerIdx
 			return m, nil
 		case "j", "down":
-			if m.cursor < 1 {
+			if m.cursor < 2 {
 				m.cursor++
 			}
 		case "k", "up":
@@ -444,21 +462,32 @@ func (m OnboardingModel) updateAnthropicAuthChoice(msg tea.Msg) (OnboardingModel
 			m.cursor = 0
 		case "2":
 			m.cursor = 1
+		case "3":
+			m.cursor = 2
 		case "enter", " ":
+			m.anthropicChoice = anthropicAuthChoice(m.cursor)
 			switch m.cursor {
 			case 0:
-				// Manual API key (recommended)
+				// Direct API key entry (recommended)
 				m.step = stepEnterAPIKey
 				m.apiKeyInput.Placeholder = "sk-ant-api03-..."
 				return m, m.apiKeyInput.Focus()
 			case 1:
-				// Claude subscription OAuth (may have restrictions)
+				// Console OAuth — creates permanent API key via browser
 				m.step = stepBrowserAuth
 				m.authing = true
 				m.browserOpened = true
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				m.authCancel = cancel
 				return m, tea.Batch(m.spinner.Tick, m.startAnthropicAuth(ctx))
+			case 2:
+				// Max/Pro subscription OAuth — token used as Bearer directly
+				m.step = stepBrowserAuth
+				m.authing = true
+				m.browserOpened = true
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+				m.authCancel = cancel
+				return m, tea.Batch(m.spinner.Tick, m.startAnthropicMaxAuth(ctx))
 			}
 		}
 	}
@@ -733,7 +762,8 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 		sb.WriteString("Sign in with Anthropic\n\n")
 		choices := []string{
 			"Enter API key (recommended)",
-			"Sign in with Claude account (OAuth — may have restrictions)",
+			"Console OAuth (creates API key via browser)",
+			"Max/Pro subscription OAuth (experimental)",
 		}
 		for i, label := range choices {
 			cursor := "  "
@@ -744,7 +774,7 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 			}
 			sb.WriteString(style.Render(fmt.Sprintf("%s%d. %s", cursor, i+1, label)) + "\n")
 		}
-		sb.WriteString("\n" + mutedStyle.Render("↑/↓ or 1-2: select  Enter: confirm  Esc: back"))
+		sb.WriteString("\n" + mutedStyle.Render("↑/↓ or 1-3: select  Enter: confirm  Esc: back"))
 
 	case stepBrowserAuth:
 		p := m.selectedProvider()
@@ -759,10 +789,17 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 				sb.WriteString(mutedStyle.Render("Esc: cancel"))
 			} else if p.auth == authGHCLI {
 				sb.WriteString(m.spinner.View() + " Checking for GitHub CLI auth...\n")
+			} else if m.anthropicChoice == anthropicChoiceMaxOAuth {
+				sb.WriteString("Sign in with Claude Max / Pro\n\n")
+				sb.WriteString(m.spinner.View() + " Waiting for browser sign-in...\n\n")
+				sb.WriteString(mutedStyle.Render("Authorize at claude.ai — token used as Bearer.") + "\n")
+				sb.WriteString(mutedStyle.Render("Experimental: API access may have restrictions.") + "\n")
+				sb.WriteString(mutedStyle.Render("Esc: cancel and enter key manually"))
 			} else {
 				sb.WriteString("Sign in with " + p.displayName + "\n\n")
 				sb.WriteString(m.spinner.View() + " Waiting for browser sign-in...\n\n")
 				sb.WriteString(mutedStyle.Render("Complete sign-in in your browser.") + "\n")
+				sb.WriteString(mutedStyle.Render("A permanent API key will be created for you.") + "\n")
 				sb.WriteString(mutedStyle.Render("Esc: cancel and enter key manually"))
 			}
 		} else if m.authError != "" {
@@ -781,9 +818,15 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 		case authGHCLI:
 			sb.WriteString("Paste your GitHub token:\n\n")
 			sb.WriteString(mutedStyle.Render("Run: gh auth token") + "\n")
-			sb.WriteString(mutedStyle.Render("Or create a PAT at github.com/settings/tokens") + "\n\n")
+			sb.WriteString(mutedStyle.Render("Or create a fine-grained PAT at github.com/settings/tokens") + "\n\n")
 		default:
 			fmt.Fprintf(&sb, "Enter your %s API key:\n\n", p.displayName)
+			switch p.name {
+			case "openai":
+				sb.WriteString(mutedStyle.Render("Get one at platform.openai.com/api-keys") + "\n\n")
+			case "gemini":
+				sb.WriteString(mutedStyle.Render("Get one at aistudio.google.com/apikey") + "\n\n")
+			}
 		}
 		sb.WriteString("Key: " + m.apiKeyInput.View() + "\n\n")
 		sb.WriteString(mutedStyle.Render("Your key is stored locally and never shared.") + "\n")
@@ -793,6 +836,10 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 		p := m.selectedProvider()
 		fmt.Fprintf(&sb, "Enter the %s server URL:\n\n", p.displayName)
 		sb.WriteString("URL: " + m.baseURLInput.View() + "\n\n")
+		if p.name == "ollama" {
+			sb.WriteString(mutedStyle.Render("Supports any OpenAI-compatible local server") + "\n")
+			sb.WriteString(mutedStyle.Render("(Ollama, LM Studio, vLLM, llama.cpp)") + "\n\n")
+		}
 		sb.WriteString(mutedStyle.Render("Enter: continue  Esc: back"))
 
 	case stepFetchModels:
