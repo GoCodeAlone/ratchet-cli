@@ -8,6 +8,10 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+
+	"github.com/google/generative-ai-go/genai"
+	"google.golang.org/api/iterator"
+	googleoption "google.golang.org/api/option"
 )
 
 // ModelInfo describes an available model from a provider.
@@ -217,48 +221,23 @@ func listOllamaModels(ctx context.Context, baseURL string) ([]ModelInfo, error) 
 }
 
 func listGeminiModels(ctx context.Context, apiKey string) ([]ModelInfo, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		"https://generativelanguage.googleapis.com/v1/models?key="+apiKey, nil)
+	client, err := genai.NewClient(ctx, googleoption.WithAPIKey(apiKey))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("gemini: create client: %w", err)
 	}
+	defer client.Close()
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, truncateStr(body, 200))
-	}
-
-	var result struct {
-		Models []struct {
-			Name        string   `json:"name"`
-			DisplayName string   `json:"displayName"`
-			Methods     []string `json:"supportedGenerationMethods"`
-		} `json:"models"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, err
-	}
-
+	iter := client.ListModels(ctx)
 	var models []ModelInfo
-	for _, m := range result.Models {
-		// Filter to models that support generateContent
-		supportsChat := false
-		for _, method := range m.Methods {
-			if method == "generateContent" {
-				supportsChat = true
-				break
-			}
+	for {
+		m, err := iter.Next()
+		if err == iterator.Done {
+			break
 		}
-		if !supportsChat {
-			continue
+		if err != nil {
+			return nil, fmt.Errorf("gemini: list models: %w", err)
 		}
-		// Strip "models/" prefix from name
+		// Strip "models/" prefix from name for a clean ID.
 		id := strings.TrimPrefix(m.Name, "models/")
 		name := m.DisplayName
 		if name == "" {
