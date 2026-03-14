@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/client"
@@ -18,7 +19,7 @@ func fleetCmd(args []string, c *client.Client) *Result {
 	maxWorkers := int32(0) // 0 = no limit (use all steps)
 	if len(args) > 1 {
 		n, err := strconv.Atoi(args[1])
-		if err == nil && n > 0 {
+		if err == nil && n > 0 && n <= math.MaxInt32 {
 			maxWorkers = int32(n)
 		}
 	}
