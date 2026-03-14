@@ -39,7 +39,7 @@ func Parse(input string, c *client.Client) *Result {
 			ClearChat: true,
 		}
 	case "/cost":
-		return &Result{Lines: []string{"Token usage is shown in the status bar below the input."}}
+		return costCmd(parts[1:], c)
 	case "/agents":
 		return agentsCmd(c)
 	case "/sessions":
@@ -464,6 +464,34 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// costCmd shows token usage and, when a fleet ID is provided, a per-worker
+// model/cost breakdown based on the fleet's worker assignments.
+func costCmd(args []string, c *client.Client) *Result {
+	if len(args) > 0 && c != nil {
+		fleetID := args[0]
+		fs, err := c.GetFleetStatus(context.Background(), fleetID)
+		if err != nil {
+			return &Result{Lines: []string{fmt.Sprintf("Error fetching fleet %s: %v", fleetID, err)}}
+		}
+		lines := []string{
+			fmt.Sprintf("Fleet %s — per-worker model breakdown:", fleetID[:min(8, len(fleetID))]),
+			fmt.Sprintf("  %-20s %-30s %-15s %s", "Worker", "Step", "Model", "Status"),
+			strings.Repeat("─", 70),
+		}
+		for _, w := range fs.Workers {
+			lines = append(lines, fmt.Sprintf("  %-20s %-30s %-15s %s",
+				w.Name, w.StepId, w.Model, w.Status))
+		}
+		lines = append(lines, fmt.Sprintf("\nTotal workers: %d  Completed: %d/%d",
+			len(fs.Workers), fs.Completed, fs.Total))
+		return &Result{Lines: lines}
+	}
+	return &Result{Lines: []string{
+		"Token usage is shown in the status bar below the input.",
+		"For per-worker breakdown: /cost <fleet_id>",
+	}}
 }
 
 // mcpCmd handles /mcp subcommands. MCP discovery runs on the daemon side;

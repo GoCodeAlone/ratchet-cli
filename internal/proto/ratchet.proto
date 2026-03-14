@@ -311,6 +311,21 @@ message FleetStatus {
 message FleetStatusReq { string fleet_id = 1; }
 message KillFleetWorkerReq { string fleet_id = 1; string worker_id = 2; }
 
+// Job control
+message Job {
+  string id = 1;
+  string type = 2;      // session, fleet_worker, team_agent, cron, tool_exec
+  string name = 3;
+  string status = 4;    // running, paused, completed, failed, pending
+  string session_id = 5;
+  string started_at = 6;
+  string elapsed = 7;
+  map<string, string> metadata = 8;
+}
+
+message JobList { repeated Job jobs = 1; }
+message JobReq { string job_id = 1; }
+
 // Daemon health
 message HealthResponse {
   bool healthy = 1;
@@ -365,6 +380,12 @@ service RatchetDaemon {
   rpc PauseCron(CronJobReq) returns (Empty);
   rpc ResumeCron(CronJobReq) returns (Empty);
   rpc StopCron(CronJobReq) returns (Empty);
+
+  // Job control
+  rpc ListJobs(Empty) returns (JobList);
+  rpc PauseJob(JobReq) returns (Empty);
+  rpc ResumeJob(JobReq) returns (Empty);
+  rpc KillJob(JobReq) returns (Empty);
 
   // Daemon
   rpc Health(Empty) returns (HealthResponse);

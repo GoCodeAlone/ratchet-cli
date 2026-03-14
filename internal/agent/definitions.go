@@ -56,6 +56,22 @@ type AgentDefinition struct {
 	MaxIterations int      `yaml:"max_iterations"`
 }
 
+// EffectiveProvider returns the agent's provider, falling back to defaultProvider if unset.
+func (d AgentDefinition) EffectiveProvider(defaultProvider string) string {
+	if d.Provider != "" {
+		return d.Provider
+	}
+	return defaultProvider
+}
+
+// EffectiveModel returns the agent's model, falling back to defaultModel if unset.
+func (d AgentDefinition) EffectiveModel(defaultModel string) string {
+	if d.Model != "" {
+		return d.Model
+	}
+	return defaultModel
+}
+
 // LoadDefinitions discovers agent definitions from standard locations.
 // Searches: ~/.ratchet/agents/*.yaml, .ratchet/agents/*.yaml, .claude/agents/*.md
 func LoadDefinitions(workingDir string) ([]AgentDefinition, error) {

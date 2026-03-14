@@ -67,3 +67,37 @@ func TestModelRouting_EmptyConfig(t *testing.T) {
 		t.Errorf("expected empty string for zero routing config, got %q", model)
 	}
 }
+
+func TestModelRouting_CostBreakdown(t *testing.T) {
+	routing := config.ModelRouting{
+		SimpleTaskModel:  "haiku",
+		ComplexTaskModel: "sonnet",
+		ReviewModel:      "opus",
+	}
+	steps := []string{"log-result", "http_call-api", "code-review-pr"}
+	entries := FleetCostBreakdown(steps, routing)
+
+	if len(entries) != len(steps) {
+		t.Fatalf("expected %d entries, got %d", len(steps), len(entries))
+	}
+
+	want := []struct {
+		model      string
+		complexity string
+	}{
+		{"haiku", "simple"},
+		{"sonnet", "complex"},
+		{"opus", "review"},
+	}
+	for i, e := range entries {
+		if e.Model != want[i].model {
+			t.Errorf("entry[%d] model = %q, want %q", i, e.Model, want[i].model)
+		}
+		if e.Complexity != want[i].complexity {
+			t.Errorf("entry[%d] complexity = %q, want %q", i, e.Complexity, want[i].complexity)
+		}
+		if e.StepID != steps[i] {
+			t.Errorf("entry[%d] StepID = %q, want %q", i, e.StepID, steps[i])
+		}
+	}
+}

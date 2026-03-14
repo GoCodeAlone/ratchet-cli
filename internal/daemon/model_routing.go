@@ -65,3 +65,36 @@ func ModelForStep(stepID string, routing config.ModelRouting) string {
 		return routing.ComplexTaskModel
 	}
 }
+
+// WorkerCostEntry holds the model assignment for a single fleet worker step.
+type WorkerCostEntry struct {
+	WorkerName string
+	StepID     string
+	Model      string
+	Complexity string
+}
+
+// FleetCostBreakdown returns per-worker model assignments for a set of step IDs.
+// This is the basis for estimating per-worker cost when routing to different models.
+func FleetCostBreakdown(steps []string, routing config.ModelRouting) []WorkerCostEntry {
+	entries := make([]WorkerCostEntry, len(steps))
+	for i, stepID := range steps {
+		c := ClassifyStep(stepID)
+		var complexity string
+		switch c {
+		case complexitySimple:
+			complexity = "simple"
+		case complexityReview:
+			complexity = "review"
+		default:
+			complexity = "complex"
+		}
+		entries[i] = WorkerCostEntry{
+			WorkerName: strings.ToLower(strings.ReplaceAll(stepID, " ", "-")),
+			StepID:     stepID,
+			Model:      ModelForStep(stepID, routing),
+			Complexity: complexity,
+		}
+	}
+	return entries
+}
