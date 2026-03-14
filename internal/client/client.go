@@ -331,3 +331,8 @@ func (c *Client) KillJob(ctx context.Context, jobID string) error {
 	_, err := c.daemon.KillJob(ctx, &pb.JobReq{JobId: jobID})
 	return err
 }
+
+// KillAgent kills a team agent by routing through the job control system.
+func (c *Client) KillAgent(ctx context.Context, agentID string) error {
+	return c.KillJob(ctx, agentID)
+}

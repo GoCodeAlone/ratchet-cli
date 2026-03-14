@@ -168,6 +168,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		go func() {
 			a.client.KillSession(context.Background(), msg.SessionID)
 		}()
+
+	case pages.KillAgentMsg:
+		go func() {
+			a.client.KillAgent(context.Background(), msg.AgentID)
+		}()
 	}
 
 	// Route updates to active page
