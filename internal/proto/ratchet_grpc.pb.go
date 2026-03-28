@@ -506,7 +506,7 @@ func (c *ratchetDaemonClient) RequestReload(ctx context.Context, in *ReloadReq, 
 	return x, nil
 }
 
-// This type alias is provided for backwards compatibility.
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type RatchetDaemon_RequestReloadClient = grpc.ServerStreamingClient[ReloadStatus]
 
 // RatchetDaemonServer is the server API for RatchetDaemon service.
@@ -1259,7 +1259,7 @@ func _RatchetDaemon_RequestReload_Handler(srv interface{}, stream grpc.ServerStr
 	return srv.(RatchetDaemonServer).RequestReload(m, &grpc.GenericServerStream[ReloadReq, ReloadStatus]{ServerStream: stream})
 }
 
-// This type alias is provided for backwards compatibility.
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type RatchetDaemon_RequestReloadServer = grpc.ServerStreamingServer[ReloadStatus]
 
 // RatchetDaemon_ServiceDesc is the grpc.ServiceDesc for RatchetDaemon service.

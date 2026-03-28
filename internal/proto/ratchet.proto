@@ -66,7 +66,12 @@ message ChatEvent {
     FleetStatus fleet_status = 12;
     ContextCompressedEvent context_compressed = 13;
     AuthError auth_error = 14;
+    ThinkingBlock thinking = 15;
   }
+}
+
+message ThinkingBlock {
+  string content = 1;
 }
 
 message AuthError {
@@ -339,6 +344,34 @@ message HealthResponse {
   int32 active_sessions = 2;
   int32 active_agents = 3;
   string uptime = 4;
+  string version = 5;
+  string commit = 6;
+  int32 proto_version = 7;
+}
+
+// Version check
+message VersionCheckReq {
+  string cli_version = 1;
+  string cli_commit = 2;
+  int32 cli_proto_version = 3;
+}
+
+message VersionCheckResp {
+  bool compatible = 1;
+  bool reload_recommended = 2;
+  string daemon_version = 3;
+  string message = 4;
+}
+
+// Reload
+message ReloadReq {
+  string new_binary_path = 1;
+  string cli_version = 2;
+}
+
+message ReloadStatus {
+  string status = 1;
+  string message = 2;
 }
 
 // === Service ===
@@ -397,4 +430,8 @@ service RatchetDaemon {
   // Daemon
   rpc Health(Empty) returns (HealthResponse);
   rpc Shutdown(Empty) returns (Empty);
+
+  // Version and reload
+  rpc CheckVersion(VersionCheckReq) returns (VersionCheckResp);
+  rpc RequestReload(ReloadReq) returns (stream ReloadStatus);
 }
