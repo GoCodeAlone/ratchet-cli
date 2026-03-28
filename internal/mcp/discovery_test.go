@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/GoCodeAlone/ratchet/ratchetplugin"
+	ratchetplugin "github.com/GoCodeAlone/workflow-plugin-agent/orchestrator"
 )
 
 func newTestDiscoverer(lookPath func(string) (string, error)) *Discoverer {

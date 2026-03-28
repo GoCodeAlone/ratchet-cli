@@ -8,8 +8,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/GoCodeAlone/ratchet/plugin"
-	"github.com/GoCodeAlone/ratchet/ratchetplugin"
+	"github.com/GoCodeAlone/workflow-plugin-agent/plugin"
+	ratchetplugin "github.com/GoCodeAlone/workflow-plugin-agent/orchestrator"
 	"github.com/GoCodeAlone/workflow-plugin-agent/provider"
 )
 

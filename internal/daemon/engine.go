@@ -12,7 +12,7 @@ import (
 	"github.com/GoCodeAlone/ratchet-cli/internal/config"
 	"github.com/GoCodeAlone/ratchet-cli/internal/mcp"
 	"github.com/GoCodeAlone/ratchet-cli/internal/plugins"
-	"github.com/GoCodeAlone/ratchet/ratchetplugin"
+	ratchetplugin "github.com/GoCodeAlone/workflow-plugin-agent/orchestrator"
 	"github.com/GoCodeAlone/workflow/secrets"
 	_ "modernc.org/sqlite"
 )
