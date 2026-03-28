@@ -137,12 +137,13 @@ func (cs *CronScheduler) Pause(ctx context.Context, jobID string) error {
 	}
 
 	entry.mu.Lock()
-	defer entry.mu.Unlock()
 	if entry.job.Status == "paused" {
+		entry.mu.Unlock()
 		return nil
 	}
 	entry.cancel()
 	entry.job.Status = "paused"
+	entry.mu.Unlock()
 
 	_, err := cs.db.ExecContext(ctx, `UPDATE cron_jobs SET status='paused' WHERE id=?`, jobID)
 	return err
@@ -161,17 +162,24 @@ func (cs *CronScheduler) Resume(ctx context.Context, jobID string) error {
 	}
 
 	entry.mu.Lock()
-	defer entry.mu.Unlock()
 	if entry.job.Status != "paused" {
+		entry.mu.Unlock()
 		return nil
 	}
 	entry.job.Status = "active"
+	entry.mu.Unlock()
+
 	if _, err := cs.db.ExecContext(ctx, `UPDATE cron_jobs SET status='active' WHERE id=?`, jobID); err != nil {
+		entry.mu.Lock()
+		entry.job.Status = "paused"
+		entry.mu.Unlock()
 		return err
 	}
 
 	newCtx, cancel := context.WithCancel(parent)
+	entry.mu.Lock()
 	entry.cancel = cancel
+	entry.mu.Unlock()
 	go cs.run(newCtx, entry)
 	return nil
 }

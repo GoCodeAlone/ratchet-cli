@@ -15,9 +15,10 @@ import (
 
 // fleetInstance tracks a running fleet.
 type fleetInstance struct {
-	mu        sync.RWMutex
-	status    *pb.FleetStatus
-	cancelFns map[string]context.CancelFunc
+	mu          sync.RWMutex
+	status      *pb.FleetStatus
+	cancelFns   map[string]context.CancelFunc
+	completedAt time.Time
 }
 
 // FleetManager manages fleet instances.
@@ -25,13 +26,51 @@ type FleetManager struct {
 	mu      sync.RWMutex
 	fleets  map[string]*fleetInstance
 	routing config.ModelRouting
+	stop    chan struct{}
 }
 
 // NewFleetManager returns an initialized FleetManager with optional model routing config.
 func NewFleetManager(routing config.ModelRouting) *FleetManager {
-	return &FleetManager{
+	fm := &FleetManager{
 		fleets:  make(map[string]*fleetInstance),
 		routing: routing,
+		stop:    make(chan struct{}),
+	}
+	go fm.cleanupLoop()
+	return fm
+}
+
+// cleanupLoop periodically removes fleets that completed more than 10 minutes ago.
+func (fm *FleetManager) cleanupLoop() {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("fleetManager cleanupLoop: panic: %v", r)
+		}
+	}()
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-fm.stop:
+			return
+		case <-ticker.C:
+			fm.purgeCompleted(10 * time.Minute)
+		}
+	}
+}
+
+// purgeCompleted removes fleets that completed more than ttl ago.
+func (fm *FleetManager) purgeCompleted(ttl time.Duration) {
+	now := time.Now()
+	fm.mu.Lock()
+	defer fm.mu.Unlock()
+	for id, fi := range fm.fleets {
+		fi.mu.RLock()
+		completed := fi.completedAt
+		fi.mu.RUnlock()
+		if !completed.IsZero() && now.Sub(completed) > ttl {
+			delete(fm.fleets, id)
+		}
 	}
 }
 
@@ -136,6 +175,7 @@ func (fm *FleetManager) runFleet(ctx context.Context, fi *fleetInstance, maxWork
 
 	fi.mu.Lock()
 	fi.status.Status = "completed"
+	fi.completedAt = time.Now()
 	fi.mu.Unlock()
 
 	sendFleetStatus(eventCh, fi)

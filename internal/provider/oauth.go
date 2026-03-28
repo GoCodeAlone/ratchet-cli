@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -167,7 +168,14 @@ func startAnthropicOAuthFlow(ctx context.Context, authorizeURL string, createAPI
 		})
 
 		server := &http.Server{Handler: mux}
-		go server.Serve(listener) //nolint:errcheck
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("oauth callback server: panic: %v", r)
+				}
+			}()
+			_ = server.Serve(listener)
+		}()
 		defer server.Close()
 
 		// Open browser to the authorize URL

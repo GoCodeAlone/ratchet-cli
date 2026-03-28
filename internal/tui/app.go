@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -33,6 +34,12 @@ type VersionNoticeMsg struct {
 	Compatible        bool
 	ReloadRecommended bool
 	Message           string
+}
+
+// RPCErrorMsg carries an error from an async RPC call.
+type RPCErrorMsg struct {
+	Op  string
+	Err error
 }
 
 // App is the root Bubbletea v2 model.
@@ -193,14 +200,25 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.showSidebar = false
 
 	case components.SessionKillMsg:
-		go func() {
-			a.client.KillSession(context.Background(), msg.SessionID)
-		}()
+		sessionID := msg.SessionID
+		return a, func() tea.Msg {
+			if err := a.client.KillSession(context.Background(), sessionID); err != nil {
+				return RPCErrorMsg{Op: "KillSession", Err: err}
+			}
+			return nil
+		}
 
 	case pages.KillAgentMsg:
-		go func() {
-			a.client.KillAgent(context.Background(), msg.AgentID)
-		}()
+		agentID := msg.AgentID
+		return a, func() tea.Msg {
+			if err := a.client.KillAgent(context.Background(), agentID); err != nil {
+				return RPCErrorMsg{Op: "KillAgent", Err: err}
+			}
+			return nil
+		}
+
+	case RPCErrorMsg:
+		log.Printf("rpc %s error: %v", msg.Op, msg.Err)
 
 	case VersionNoticeMsg:
 		if !msg.Compatible {

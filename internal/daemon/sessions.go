@@ -101,6 +101,19 @@ func (sm *SessionManager) Kill(ctx context.Context, id string) error {
 	}
 	sm.mu.Lock()
 	delete(sm.subscribers, id)
+	for dir, ids := range sm.workspaces {
+		filtered := ids[:0]
+		for _, sid := range ids {
+			if sid != id {
+				filtered = append(filtered, sid)
+			}
+		}
+		if len(filtered) == 0 {
+			delete(sm.workspaces, dir)
+		} else {
+			sm.workspaces[dir] = filtered
+		}
+	}
 	sm.mu.Unlock()
 	return nil
 }

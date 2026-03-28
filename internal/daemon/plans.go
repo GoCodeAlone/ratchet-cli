@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -12,13 +13,51 @@ import (
 
 // PlanManager holds all plans keyed by plan ID.
 type PlanManager struct {
-	mu    sync.RWMutex
-	plans map[string]*pb.Plan
+	mu          sync.RWMutex
+	plans       map[string]*pb.Plan
+	completedAt map[string]time.Time
+	stop        chan struct{}
 }
 
 func NewPlanManager() *PlanManager {
-	return &PlanManager{
-		plans: make(map[string]*pb.Plan),
+	pm := &PlanManager{
+		plans:       make(map[string]*pb.Plan),
+		completedAt: make(map[string]time.Time),
+		stop:        make(chan struct{}),
+	}
+	go pm.cleanupLoop()
+	return pm
+}
+
+// cleanupLoop periodically removes plans in terminal states older than 30 minutes.
+func (pm *PlanManager) cleanupLoop() {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("planManager cleanupLoop: panic: %v", r)
+		}
+	}()
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-pm.stop:
+			return
+		case <-ticker.C:
+			pm.purgeTerminal(30 * time.Minute)
+		}
+	}
+}
+
+// purgeTerminal removes plans in terminal states (approved, rejected) older than ttl.
+func (pm *PlanManager) purgeTerminal(ttl time.Duration) {
+	now := time.Now()
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	for id, ts := range pm.completedAt {
+		if now.Sub(ts) > ttl {
+			delete(pm.plans, id)
+			delete(pm.completedAt, id)
+		}
 	}
 }
 
@@ -80,6 +119,7 @@ func (pm *PlanManager) Approve(planID string, skipSteps []string) error {
 		}
 	}
 	plan.Status = "approved"
+	pm.completedAt[planID] = time.Now()
 	return nil
 }
 
@@ -99,6 +139,7 @@ func (pm *PlanManager) Reject(planID, feedback string) error {
 	}
 	plan.Status = "rejected"
 	plan.Feedback = feedback
+	pm.completedAt[planID] = time.Now()
 	return nil
 }
 

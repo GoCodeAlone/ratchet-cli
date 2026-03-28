@@ -33,24 +33,65 @@ type agentMsg struct {
 
 // teamInstance tracks a running team.
 type teamInstance struct {
-	mu      sync.RWMutex
-	id      string
-	task    string
-	agents  map[string]*teamAgent
-	status  string // running, completed, failed
-	cancel  context.CancelFunc
-	eventCh chan *pb.TeamEvent
+	mu          sync.RWMutex
+	id          string
+	task        string
+	agents      map[string]*teamAgent
+	status      string // running, completed, failed
+	cancel      context.CancelFunc
+	eventCh     chan *pb.TeamEvent
+	completedAt time.Time
 }
 
 // TeamManager manages team instances.
 type TeamManager struct {
 	mu    sync.RWMutex
 	teams map[string]*teamInstance
+	stop  chan struct{}
 }
 
 // NewTeamManager returns an initialized TeamManager.
 func NewTeamManager() *TeamManager {
-	return &TeamManager{teams: make(map[string]*teamInstance)}
+	tm := &TeamManager{
+		teams: make(map[string]*teamInstance),
+		stop:  make(chan struct{}),
+	}
+	go tm.cleanupLoop()
+	return tm
+}
+
+// cleanupLoop periodically removes teams that completed more than 10 minutes ago.
+func (tm *TeamManager) cleanupLoop() {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("teamManager cleanupLoop: panic: %v", r)
+		}
+	}()
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-tm.stop:
+			return
+		case <-ticker.C:
+			tm.purgeCompleted(10 * time.Minute)
+		}
+	}
+}
+
+// purgeCompleted removes teams that completed more than ttl ago.
+func (tm *TeamManager) purgeCompleted(ttl time.Duration) {
+	now := time.Now()
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	for id, ti := range tm.teams {
+		ti.mu.RLock()
+		completed := ti.completedAt
+		ti.mu.RUnlock()
+		if !completed.IsZero() && now.Sub(completed) > ttl {
+			delete(tm.teams, id)
+		}
+	}
 }
 
 // StartTeam creates a team, spawns default agents, and returns the team ID.
@@ -195,6 +236,7 @@ func (tm *TeamManager) routeMessage(ti *teamInstance, from, to, content string) 
 func (tm *TeamManager) markDone(ti *teamInstance, s string) {
 	ti.mu.Lock()
 	ti.status = s
+	ti.completedAt = time.Now()
 	ti.mu.Unlock()
 }
 

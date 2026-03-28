@@ -5,10 +5,18 @@ import (
 	"fmt"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/GoCodeAlone/ratchet-cli/internal/client"
 	"github.com/GoCodeAlone/ratchet-cli/internal/mcp"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 )
+
+// CommandErrorMsg is returned when an async slash command operation fails.
+type CommandErrorMsg struct {
+	Op  string
+	Err error
+}
 
 // Result holds the output of a parsed slash command.
 type Result struct {
@@ -16,9 +24,10 @@ type Result struct {
 	NavigateToOnboarding bool
 	Quit                 bool
 	ClearChat            bool
-	TriggerCompact       bool   // ask the caller to compress the current session's context
-	TriggerReview        bool   // ask the caller to invoke the code-reviewer agent
-	ReviewDiff           string // git diff content to pass to the reviewer
+	TriggerCompact       bool    // ask the caller to compress the current session's context
+	TriggerReview        bool    // ask the caller to invoke the code-reviewer agent
+	ReviewDiff           string  // git diff content to pass to the reviewer
+	Cmd                  tea.Cmd // optional async cmd to batch after command processing
 }
 
 // Parse checks if input is a slash command and executes it.
@@ -466,14 +475,18 @@ func teamStatus(teamID string, c *client.Client) *Result {
 }
 
 func teamStart(task string, c *client.Client) *Result {
-	go func() {
-		// Fire-and-forget: start team async.
-		_, _ = c.StartTeam(context.Background(), &pb.StartTeamReq{Task: task})
-	}()
-	return &Result{Lines: []string{
-		fmt.Sprintf("Starting team for task: %s", task),
-		"Team events will appear in the chat stream.",
-	}}
+	return &Result{
+		Lines: []string{
+			fmt.Sprintf("Starting team for task: %s", task),
+			"Team events will appear in the chat stream.",
+		},
+		Cmd: func() tea.Msg {
+			if _, err := c.StartTeam(context.Background(), &pb.StartTeamReq{Task: task}); err != nil {
+				return CommandErrorMsg{Op: "StartTeam", Err: err}
+			}
+			return nil
+		},
+	}
 }
 
 // costCmd shows token usage and, when a fleet ID is provided, a per-worker

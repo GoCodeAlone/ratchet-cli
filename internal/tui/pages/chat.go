@@ -2,6 +2,7 @@ package pages
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -171,6 +172,13 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 	case components.InputResizedMsg:
 		m.relayout()
 
+	case commands.CommandErrorMsg:
+		m.messages = append(m.messages, components.Message{
+			Role:    components.RoleSystem,
+			Content: fmt.Sprintf("[error] %s: %v", msg.Op, msg.Err),
+		})
+		m.refreshViewport()
+
 	case components.SubmitMsg:
 		// Check for slash command first
 		if result := commands.Parse(msg.Content, m.client, m.sessionID); result != nil {
@@ -202,6 +210,9 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 				m.streaming = ""
 				reviewMsg := "You are a code reviewer. Please review the following git diff and provide detailed feedback on correctness, style, and potential issues:\n\n```diff\n" + result.ReviewDiff + "\n```"
 				cmds = append(cmds, m.sendMessage(reviewMsg))
+			}
+			if result.Cmd != nil {
+				cmds = append(cmds, result.Cmd)
 			}
 			return m, tea.Batch(cmds...)
 		}
