@@ -40,8 +40,9 @@ type ChatModel struct {
 	input        components.InputModel
 	statusBar    components.StatusBar
 	toolCalls    components.ToolCallListModel
-	autocomplete components.AutocompleteModel
-	planView     components.PlanView
+	autocomplete  components.AutocompleteModel
+	planView      components.PlanView
+	thinkingPanel components.ThinkingPanel
 	messages     []components.Message
 	streaming  string // current streaming response
 	width      int
@@ -81,8 +82,9 @@ func NewChat(c *client.Client, sessionID string, t theme.Theme, dark bool) ChatM
 		statusBar:    statusBar,
 		toolCalls:    components.NewToolCallList(),
 		autocomplete: components.NewAutocomplete(),
-		planView:     components.NewPlanView(),
-		ctx:          context.Background(),
+		planView:      components.NewPlanView(),
+		thinkingPanel: components.NewThinkingPanel(80),
+		ctx:           context.Background(),
 	}
 }
 
@@ -122,6 +124,12 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 		if msg.String() == "esc" && m.cancelChat != nil {
 			m.cancelChat()
 			m.cancelChat = nil
+		}
+
+		// Toggle thinking panel with Ctrl+H
+		if msg.String() == "ctrl+h" && m.thinkingPanel.HasContent() {
+			m.thinkingPanel = m.thinkingPanel.ToggleCollapsed()
+			m.refreshViewport()
 		}
 
 		// If autocomplete is visible, route navigation keys to it
@@ -222,6 +230,7 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 			Content: msg.Content,
 		})
 		m.streaming = ""
+		m.thinkingPanel = m.thinkingPanel.Reset()
 		m.refreshViewport()
 		cmds = append(cmds, m.sendMessage(msg.Content))
 
@@ -287,6 +296,10 @@ func (m *ChatModel) refreshViewport() {
 	toolView := m.toolCalls.View(m.theme, m.width)
 	if toolView != "" {
 		sb.WriteString(toolView)
+	}
+	if thinkView := m.thinkingPanel.View(); thinkView != "" {
+		sb.WriteString(thinkView)
+		sb.WriteString("\n")
 	}
 	if m.streaming != "" {
 		assistantMsg := components.Message{
@@ -380,7 +393,15 @@ func (m *ChatModel) handleChatEvent(msg ChatEventMsg) []tea.Cmd {
 	var cmds []tea.Cmd
 
 	switch e := event.Event.(type) {
+	case *pb.ChatEvent_Thinking:
+		m.thinkingPanel = m.thinkingPanel.AppendContent(e.Thinking.Content)
+		m.refreshViewport()
+
 	case *pb.ChatEvent_Token:
+		// Auto-collapse thinking panel when first text token arrives
+		if m.thinkingPanel.HasContent() && !m.thinkingPanel.Collapsed() {
+			m.thinkingPanel = m.thinkingPanel.SetCollapsed(true)
+		}
 		m.streaming += e.Token.Content
 		m.refreshViewport()
 

@@ -50,6 +50,11 @@ func (p ThinkingPanel) HasContent() bool {
 	return p.content != ""
 }
 
+// Collapsed returns true if the panel is currently collapsed.
+func (p ThinkingPanel) Collapsed() bool {
+	return p.collapsed
+}
+
 // SetWidth updates the panel width.
 func (p ThinkingPanel) SetWidth(w int) ThinkingPanel {
 	p.width = w
