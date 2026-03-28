@@ -32,17 +32,34 @@ func handleProvider(args []string) {
 		if len(args) > 2 {
 			alias = args[2]
 		}
-		apiKey, err := providerauth.PromptAPIKey(providerType)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
-		}
-		baseURL := ""
-		if providerType == "ollama" || providerType == "custom" || providerType == "openai" {
+		var apiKey, baseURL string
+		switch providerType {
+		case "ollama":
+			// No API key needed for Ollama
 			baseURL, err = providerauth.PromptBaseURL("http://localhost:11434")
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
 				os.Exit(1)
+			}
+		case "llama_cpp":
+			// No API key needed for llama.cpp
+			baseURL, err = providerauth.PromptBaseURL("http://localhost:8081/v1")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+		default:
+			apiKey, err = providerauth.PromptAPIKey(providerType)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+			if providerType == "custom" || providerType == "openai" {
+				baseURL, err = providerauth.PromptBaseURL("")
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "error: %v\n", err)
+					os.Exit(1)
+				}
 			}
 		}
 		p, err := c.AddProvider(context.Background(), &pb.AddProviderReq{
