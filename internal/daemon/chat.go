@@ -139,6 +139,15 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 	var fullResponse string
 	for event := range eventCh {
 		switch event.Type {
+		case "thinking":
+			if err := stream.Send(&pb.ChatEvent{
+				Event: &pb.ChatEvent_Thinking{
+					Thinking: &pb.ThinkingBlock{Content: event.Thinking},
+				},
+			}); err != nil {
+				return err
+			}
+
 		case "text":
 			fullResponse += event.Text
 			if err := stream.Send(&pb.ChatEvent{
