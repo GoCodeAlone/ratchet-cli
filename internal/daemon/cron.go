@@ -150,8 +150,11 @@ func (cs *CronScheduler) Pause(ctx context.Context, jobID string) error {
 
 // Resume restarts a paused job.
 func (cs *CronScheduler) Resume(ctx context.Context, jobID string) error {
+	// Extract parentCtx before acquiring entry.mu to avoid lock-order inversion
+	// (cs.mu must always be acquired before entry.mu).
 	cs.mu.Lock()
 	entry, ok := cs.entries[jobID]
+	parent := cs.parentCtx
 	cs.mu.Unlock()
 	if !ok {
 		return fmt.Errorf("cron job %s not found", jobID)
@@ -167,10 +170,6 @@ func (cs *CronScheduler) Resume(ctx context.Context, jobID string) error {
 		return err
 	}
 
-	// Restart the goroutine using the daemon's parent context so it respects shutdown.
-	cs.mu.Lock()
-	parent := cs.parentCtx
-	cs.mu.Unlock()
 	newCtx, cancel := context.WithCancel(parent)
 	entry.cancel = cancel
 	go cs.run(newCtx, entry)

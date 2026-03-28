@@ -81,6 +81,11 @@ func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error
 	// MCP CLI discovery (runs in background; errors are non-fatal)
 	ec.MCPDiscoverer = mcp.NewDiscoverer(ec.ToolRegistry)
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("mcp: discover panic: %v", r)
+			}
+		}()
 		result := ec.MCPDiscoverer.Discover()
 		for cli, tools := range result.Registered {
 			log.Printf("mcp: discovered %s (%d tools)", cli, len(tools))

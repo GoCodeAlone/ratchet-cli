@@ -189,7 +189,7 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 				}
 				resp := s.permGate.Wait(reqID)
 				if !resp.Allowed {
-					stream.Send(&pb.ChatEvent{
+					if err := stream.Send(&pb.ChatEvent{
 						Event: &pb.ChatEvent_ToolResult{
 							ToolResult: &pb.ToolCallResult{
 								CallId:     callID,
@@ -197,7 +197,9 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 								Success:    false,
 							},
 						},
-					})
+					}); err != nil {
+						return err
+					}
 					continue
 				}
 			}
@@ -207,7 +209,7 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 			resultJSON, _ := json.Marshal(result)
 			success := execErr == nil
 
-			stream.Send(&pb.ChatEvent{
+			if err := stream.Send(&pb.ChatEvent{
 				Event: &pb.ChatEvent_ToolResult{
 					ToolResult: &pb.ToolCallResult{
 						CallId:     callID,
@@ -215,7 +217,9 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 						Success:    success,
 					},
 				},
-			})
+			}); err != nil {
+				return err
+			}
 
 		case "done":
 			// Stream complete

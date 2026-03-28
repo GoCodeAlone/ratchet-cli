@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -71,7 +72,14 @@ func (tm *TeamManager) StartTeam(ctx context.Context, req *pb.StartTeamReq) (str
 	tm.teams[teamID] = ti
 	tm.mu.Unlock()
 
-	go tm.run(runCtx, ti, req)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("team %s: panic: %v", teamID, r)
+			}
+		}()
+		tm.run(runCtx, ti, req)
+	}()
 	return teamID, ti.eventCh
 }
 

@@ -138,6 +138,11 @@ func (s *Service) RequestReload(req *pb.ReloadReq, stream pb.RatchetDaemon_Reque
 
 	// Trigger reload asynchronously so the stream response can flush first.
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("reload: panic: %v", r)
+			}
+		}()
 		if err := TriggerReload(); err != nil {
 			log.Printf("reload trigger failed: %v", err)
 		}

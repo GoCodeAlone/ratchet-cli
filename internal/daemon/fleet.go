@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -74,7 +75,14 @@ func (fm *FleetManager) StartFleet(ctx context.Context, req *pb.StartFleetReq, s
 	fm.fleets[fleetID] = fi
 	fm.mu.Unlock()
 
-	go fm.runFleet(ctx, fi, maxWorkers, eventCh)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("fleet %s: panic: %v", fleetID, r)
+			}
+		}()
+		fm.runFleet(ctx, fi, maxWorkers, eventCh)
+	}()
 
 	return fleetID
 }
@@ -90,11 +98,15 @@ func (fm *FleetManager) runFleet(ctx context.Context, fi *fleetInstance, maxWork
 		sem <- struct{}{}
 		go func() {
 			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("fleet worker %s: panic: %v", w.Id, r)
+				}
 				<-sem
 				wg.Done()
 			}()
 
 			workerCtx, cancel := context.WithCancel(ctx)
+			defer cancel()
 			fi.mu.Lock()
 			fi.cancelFns[w.Id] = cancel
 			w.Status = "running"

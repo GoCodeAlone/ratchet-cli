@@ -42,6 +42,11 @@ func NewActorManager(ctx context.Context, db *sql.DB) (*ActorManager, error) {
 	// Rehydrate sessions asynchronously — don't block daemon startup.
 	// Actors will be spawned lazily on first use if rehydration is slow.
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("actor: rehydrate panic: %v", r)
+			}
+		}()
 		rehydrateCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
 		if err := am.rehydrateSessions(rehydrateCtx); err != nil {
