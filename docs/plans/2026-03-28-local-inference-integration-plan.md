@@ -428,12 +428,12 @@ For `*pb.ChatEvent_Token`, add auto-collapse on first token if thinking is showi
 		// ... existing token handling ...
 ```
 
-**Step 3: Add Ctrl+T toggle keybinding**
+**Step 3: Add Ctrl+H toggle keybinding**
 
 In the `Update` method's key handling, add:
 
 ```go
-case key.Matches(msg, key.NewBinding(key.WithKeys("ctrl+t"))):
+case key.Matches(msg, key.NewBinding(key.WithKeys("ctrl+h"))):
 	m.thinkingPanel = m.thinkingPanel.ToggleCollapsed()
 ```
 
@@ -465,7 +465,7 @@ Expected: PASS
 ```bash
 cd /Users/jon/workspace/ratchet-cli
 git add internal/tui/pages/chat.go
-git commit -m "feat: integrate thinking panel into chat page with Ctrl+T toggle"
+git commit -m "feat: integrate thinking panel into chat page with Ctrl+H toggle"
 ```
 
 ---

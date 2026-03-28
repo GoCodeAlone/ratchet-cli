@@ -113,7 +113,7 @@ type ThinkingPanel struct {
 ```
 
 - Styled box with "Thinking..." header
-- Toggle with `Ctrl+T` keybinding
+- Toggle with `Ctrl+H` keybinding (Ctrl+T is taken by team view)
 - Collapsed: "Thinking (N lines) ▶"
 - Expanded: full text in dimmed/italic style
 - Auto-starts expanded, auto-collapses when first text token arrives
