@@ -1,0 +1,237 @@
+# ratchet-cli — Multi-Service Platform Config
+#
+# Dogfoods the GoCodeAlone/workflow engine to describe the ratchet-cli
+# system: the background daemon (gRPC over Unix socket) and the TUI client.
+#
+# Services modelled here:
+#   ratchet-daemon  — background gRPC server, auto-started by the TUI client
+#   ratchet         — interactive TUI client (connects to daemon on launch)
+#
+# Run locally:   wfctl run app.yaml
+# Validate:      wfctl validate app.yaml
+
+requires:
+  version: "v0.3.51"
+
+# ---------------------------------------------------------------------------
+# Config — sources, schema, defaults
+# ---------------------------------------------------------------------------
+modules:
+  - name: config-provider
+    type: config.provider
+    config:
+      sources:
+        - type: defaults
+        - type: env
+      schema:
+        data_dir:
+          env: RATCHET_DATA_DIR
+          default: "~/.ratchet"
+          desc: "Directory for SQLite DB, PID file, and Unix socket"
+        socket_path:
+          env: RATCHET_SOCKET_PATH
+          default: "~/.ratchet/ratchet.sock"
+          desc: "Unix socket path for daemon ↔ client gRPC"
+        idle_timeout:
+          env: RATCHET_IDLE_TIMEOUT
+          default: "30m"
+          desc: "Duration before idle daemon auto-exits"
+        default_provider:
+          env: RATCHET_DEFAULT_PROVIDER
+          default: ""
+          desc: "Default AI provider alias (anthropic, openai, gemini, ollama)"
+        log_level:
+          env: RATCHET_LOG_LEVEL
+          default: "info"
+          desc: "Daemon log level (debug, info, warn, error)"
+
+  # ---------------------------------------------------------------------------
+  # Persistence — SQLite (local, no external infra)
+  # ---------------------------------------------------------------------------
+  - name: db
+    type: storage.sqlite
+    config:
+      dbPath: "{{config \"data_dir\"}}/ratchet.db"
+    dependsOn: [config-provider]
+
+  # ---------------------------------------------------------------------------
+  # HTTP management API (daemon status, health)
+  # Daemon exposes gRPC on a Unix socket; this is a supplementary HTTP layer
+  # for ops tooling (health checks, metrics, daemon control).
+  # ---------------------------------------------------------------------------
+  - name: server
+    type: http.server
+    config:
+      address: ":7979"
+
+  - name: router
+    type: http.router
+    dependsOn: [server]
+
+  - name: cors
+    type: http.middleware.cors
+    config:
+      allowedOrigins: ["*"]
+      allowedMethods: ["GET", "POST"]
+      allowedHeaders: ["Content-Type"]
+    dependsOn: [router]
+
+# ---------------------------------------------------------------------------
+# Workflows
+# ---------------------------------------------------------------------------
+workflows:
+  http:
+    router: router
+    server: server
+    routes: []
+
+# ---------------------------------------------------------------------------
+# Pipelines
+# ---------------------------------------------------------------------------
+pipelines:
+
+  # -- Health check ----------------------------------------------------------
+  healthz:
+    trigger:
+      type: http
+      config:
+        path: /healthz
+        method: GET
+    steps:
+      - name: respond
+        type: step.json_response
+        config:
+          body:
+            status: ok
+            service: ratchet-daemon
+
+  # -- Daemon status ---------------------------------------------------------
+  daemon_status:
+    trigger:
+      type: http
+      config:
+        path: /api/v1/daemon/status
+        method: GET
+    steps:
+      - name: check
+        type: step.shell_exec
+        config:
+          command: "ratchet daemon status"
+      - name: respond
+        type: step.json_response
+        config:
+          body:
+            output: "{{ .steps.check.stdout }}"
+            exit_code: "{{ .steps.check.exit_code }}"
+
+  # -- CI: build both binaries -----------------------------------------------
+  # Cross-compile ratchet (TUI client) + ratchetd (daemon) for all targets.
+  # CGO_ENABLED=0 required for static binaries (modernc.org/sqlite pure-Go).
+  ci_build:
+    trigger:
+      type: http
+      config:
+        path: /api/v1/ci/build
+        method: POST
+    steps:
+      - name: parse
+        type: step.request_parse
+
+      - name: build_ratchet_linux_amd64
+        type: step.shell_exec
+        config:
+          command: >
+            GOOS=linux GOARCH=amd64 CGO_ENABLED=0
+            go build -ldflags="-s -w" -o dist/ratchet_linux_amd64 ./cmd/ratchet
+
+      - name: build_ratchet_linux_arm64
+        type: step.shell_exec
+        config:
+          command: >
+            GOOS=linux GOARCH=arm64 CGO_ENABLED=0
+            go build -ldflags="-s -w" -o dist/ratchet_linux_arm64 ./cmd/ratchet
+
+      - name: build_ratchet_darwin_amd64
+        type: step.shell_exec
+        config:
+          command: >
+            GOOS=darwin GOARCH=amd64 CGO_ENABLED=0
+            go build -ldflags="-s -w" -o dist/ratchet_darwin_amd64 ./cmd/ratchet
+
+      - name: build_ratchet_darwin_arm64
+        type: step.shell_exec
+        config:
+          command: >
+            GOOS=darwin GOARCH=arm64 CGO_ENABLED=0
+            go build -ldflags="-s -w" -o dist/ratchet_darwin_arm64 ./cmd/ratchet
+
+      - name: respond
+        type: step.json_response
+        config:
+          body:
+            status: built
+            binaries:
+              - dist/ratchet_linux_amd64
+              - dist/ratchet_linux_arm64
+              - dist/ratchet_darwin_amd64
+              - dist/ratchet_darwin_arm64
+
+  # -- CI: run tests ---------------------------------------------------------
+  ci_test:
+    trigger:
+      type: http
+      config:
+        path: /api/v1/ci/test
+        method: POST
+    steps:
+      - name: test
+        type: step.shell_exec
+        config:
+          command: "go test ./..."
+      - name: respond
+        type: step.json_response
+        config:
+          body:
+            output: "{{ .steps.test.stdout }}"
+            exit_code: "{{ .steps.test.exit_code }}"
+
+# ---------------------------------------------------------------------------
+# Platform — environment metadata
+# GoReleaser handles the official release pipeline (see .goreleaser.yaml).
+# This section documents the local and CI environments.
+# ---------------------------------------------------------------------------
+platform:
+  environments:
+    local:
+      description: "Developer workstation — daemon auto-starts on first TUI launch"
+      services:
+        ratchet-daemon:
+          binary: ./cmd/ratchet
+          runtime: process
+          transport: unix-socket
+          socket: "~/.ratchet/ratchet.sock"
+          persistence: sqlite
+          db: "~/.ratchet/ratchet.db"
+        ratchet:
+          binary: ./cmd/ratchet
+          runtime: process
+          mode: tui-client
+          connects_to: ratchet-daemon
+
+    ci:
+      description: "GitHub Actions — cross-compile + test on ubuntu-latest"
+      services:
+        ratchet-daemon:
+          binary: ./cmd/ratchet
+          build_tags: []
+          cross_targets:
+            - os: linux
+              arch: amd64
+            - os: linux
+              arch: arm64
+            - os: darwin
+              arch: amd64
+            - os: darwin
+              arch: arm64
+          cgo: false
+          release: goreleaser
