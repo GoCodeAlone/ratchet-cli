@@ -67,15 +67,42 @@ func TestPromptYesNo_EOF(t *testing.T) {
 	}
 }
 
-func TestInstallOllama_UnsupportedPlatform(t *testing.T) {
-	// installOllama on the current platform should either succeed (darwin/linux)
-	// or return an "unsupported platform" error (windows/other).
-	// We can't mock runtime.GOOS, but we can verify the function is callable
-	// and returns the expected error type on non-linux/non-darwin platforms.
-	if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
-		t.Skip("installOllama would attempt real install on this platform")
+func TestOllamaInstallCommand_Darwin(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin-only test")
 	}
-	err := installOllama()
+	cmd, err := ollamaInstallCommand()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cmd.Args[0] != "brew" {
+		t.Errorf("expected brew command on darwin, got: %v", cmd.Args)
+	}
+}
+
+func TestOllamaInstallCommand_Linux(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("linux-only test")
+	}
+	cmd, err := ollamaInstallCommand()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cmd.Args[0] != "sh" {
+		t.Errorf("expected sh command on linux, got: %v", cmd.Args)
+	}
+	// Verify it downloads to temp file instead of piping to sh
+	joined := strings.Join(cmd.Args, " ")
+	if !strings.Contains(joined, "mktemp") {
+		t.Errorf("expected mktemp-based download, got: %s", joined)
+	}
+}
+
+func TestOllamaInstallCommand_UnsupportedPlatform(t *testing.T) {
+	if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
+		t.Skip("only runs on unsupported platforms")
+	}
+	_, err := ollamaInstallCommand()
 	if err == nil {
 		t.Error("expected error on unsupported platform")
 	}

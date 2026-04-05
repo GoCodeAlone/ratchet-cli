@@ -248,10 +248,14 @@ func handleOllamaSetup(args []string) {
 			model = recommended[2].ID
 		default:
 			fmt.Print("Model name: ")
-			scanner.Scan() //nolint:staticcheck
-			model = strings.TrimSpace(scanner.Text())
-			if model == "" {
+			if !scanner.Scan() {
+				fmt.Fprintln(os.Stderr, "\nNo input received; using default model.")
 				model = recommended[0].ID
+			} else {
+				model = strings.TrimSpace(scanner.Text())
+				if model == "" {
+					model = recommended[0].ID
+				}
 			}
 		}
 
@@ -320,17 +324,28 @@ func promptYesNo(question string, scanner *bufio.Scanner) bool {
 	return ans == "" || ans == "y" || ans == "yes"
 }
 
-// installOllama installs Ollama using the platform-appropriate method.
-func installOllama() error {
-	var cmd *exec.Cmd
+// ollamaInstallCommand returns the exec.Cmd for installing Ollama on the current platform.
+// Returns an error for unsupported platforms.
+func ollamaInstallCommand() (*exec.Cmd, error) {
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("brew", "install", "ollama")
+		return exec.Command("brew", "install", "ollama"), nil
 	case "linux":
-		cmd = exec.Command("sh", "-c", "curl -fsSL https://ollama.com/install.sh | sh")
+		// Download to temp file and execute explicitly (safer than curl|sh).
+		script := `set -e; t=$(mktemp); curl -fsSL https://ollama.com/install.sh -o "$t"; sh "$t"; rm -f "$t"`
+		return exec.Command("sh", "-c", script), nil
 	default:
-		return fmt.Errorf("automatic Ollama installation is not supported on %s; please install manually from https://ollama.com/download", runtime.GOOS)
+		return nil, fmt.Errorf("automatic Ollama installation is not supported on %s; please install manually from https://ollama.com/download", runtime.GOOS)
 	}
+}
+
+// installOllama installs Ollama using the platform-appropriate method.
+func installOllama() error {
+	cmd, err := ollamaInstallCommand()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Running: %s\n", strings.Join(cmd.Args, " "))
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()

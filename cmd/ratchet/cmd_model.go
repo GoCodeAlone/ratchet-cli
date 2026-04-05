@@ -20,32 +20,36 @@ func handleModel(args []string) {
 		return
 	}
 
+	var err error
 	switch args[0] {
 	case "list":
-		handleModelList()
+		err = handleModelList()
 	case "pull":
-		handleModelPull(args[1:])
+		err = handleModelPull(args[1:])
 	default:
 		fmt.Printf("unknown model command: %s\n", args[0])
 		fmt.Println("Usage: ratchet model <list|pull>")
+		return
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
 	}
 }
 
-func handleModelList() {
+func handleModelList() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	c := wfprovider.NewOllamaClient("")
 	models, err := c.ListModels(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error listing models: %v\n", err)
-		fmt.Fprintln(os.Stderr, "Is Ollama running? Try: ollama serve")
-		os.Exit(1)
+		return fmt.Errorf("listing models: %w\nIs Ollama running? Try: ollama serve", err)
 	}
 	if len(models) == 0 {
 		fmt.Println("No models installed.")
 		fmt.Println("Pull one with: ratchet model pull qwen3:8b")
-		return
+		return nil
 	}
 	fmt.Printf("%-40s %s\n", "NAME", "CONTEXT")
 	for _, m := range models {
@@ -55,25 +59,22 @@ func handleModelList() {
 		}
 		fmt.Printf("%-40s %s\n", m.Name, ctx)
 	}
+	return nil
 }
 
-func handleModelPull(args []string) {
+func handleModelPull(args []string) error {
 	// Check for --from huggingface flag
 	if len(args) >= 3 && args[0] == "--from" && args[1] == "huggingface" {
 		repo := args[2]
 		if len(args) < 4 {
-			fmt.Fprintln(os.Stderr, "Usage: ratchet model pull --from huggingface <repo> <file>")
-			os.Exit(1)
+			return fmt.Errorf("usage: ratchet model pull --from huggingface <repo> <file>")
 		}
 		file := args[3]
-		handleHuggingFacePull(repo, file)
-		return
+		return handleHuggingFacePull(repo, file)
 	}
 
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: ratchet model pull <name>")
-		fmt.Fprintln(os.Stderr, "       ratchet model pull --from huggingface <repo> <file>")
-		os.Exit(1)
+		return fmt.Errorf("usage: ratchet model pull <name>\n       ratchet model pull --from huggingface <repo> <file>")
 	}
 
 	name := args[0]
@@ -82,13 +83,13 @@ func handleModelPull(args []string) {
 
 	fmt.Printf("Pulling %s...\n", name)
 	if err := pullModelWithProgress(ctx, c, name); err != nil {
-		fmt.Fprintf(os.Stderr, "\npull failed: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("pull %s: %w", name, err)
 	}
-	fmt.Printf("\n✓ %s ready\n", name)
+	fmt.Printf("✓ %s ready\n", name)
+	return nil
 }
 
-func handleHuggingFacePull(repo, file string) {
+func handleHuggingFacePull(repo, file string) error {
 	ctx := context.Background()
 	fmt.Printf("Downloading %s/%s from HuggingFace...\n", repo, file)
 	lastPct := -1.0
@@ -98,9 +99,12 @@ func handleHuggingFacePull(repo, file string) {
 			lastPct = pct
 		}
 	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "\ndownload failed: %v\n", err)
-		os.Exit(1)
+	if lastPct >= 0.0 {
+		fmt.Println()
 	}
-	fmt.Printf("\n✓ Saved to: %s\n", path)
+	if err != nil {
+		return fmt.Errorf("download %s/%s: %w", repo, file, err)
+	}
+	fmt.Printf("✓ Saved to: %s\n", path)
+	return nil
 }

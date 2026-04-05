@@ -326,7 +326,13 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 			return m, nil
 		}
 		if msg.err == context.Canceled {
-			// User cancelled — stay on stepPullModel with cleared state.
+			// User cancelled — reset pull state and return to provider selection.
+			m.pullError = ""
+			m.pullModelName = ""
+			m.pullProgress = 0
+			m.pullingModel = false
+			m.step = stepSelectProvider
+			m.cursor = m.providerIdx
 			return m, nil
 		}
 		// Pull succeeded — re-fetch models and proceed to selection.

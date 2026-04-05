@@ -1,7 +1,5 @@
 # Seamless Local Model Setup — Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
-
 **Goal:** Wire up automatic local model setup so first-run users can go from zero to a working local LLM with `ratchet provider setup ollama` or through the TUI onboarding wizard.
 
 **Architecture:** Rewrite `handleOllamaSetup` to auto-install Ollama (with user confirmation), auto-pull a model via `OllamaClient.Pull()`, and auto-register the provider. Enhance TUI onboarding to offer model pulling when Ollama has no models. Add `ratchet model` CLI for ad-hoc model management.
@@ -67,7 +65,7 @@ ratchet model pull --from huggingface <repo> <file> — download GGUF from Huggi
 ```
 
 `handleModel(args []string)`:
-- `list`: call `OllamaClient.ListModels(ctx)`, print table (NAME, SIZE, MODIFIED)
+- `list`: call `OllamaClient.ListModels(ctx)`, print table (NAME, CONTEXT)
 - `pull`: if `--from huggingface`, call `provider.DownloadHuggingFaceFile(ctx, repo, file, "", progressFn)`; else call `OllamaClient.Pull(ctx, name, progressFn)`
 - Default baseURL from config or `http://localhost:11434`
 

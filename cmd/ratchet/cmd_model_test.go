@@ -28,15 +28,39 @@ func TestHandleModel_UnknownSubcommand(t *testing.T) {
 	}
 }
 
-func TestHandleModel_Pull_NoArgs(t *testing.T) {
-	// handleModelPull with no args calls os.Exit(1).
-	// To properly unit-test this, handleModelPull would need to return an error
-	// instead of calling os.Exit. This is a known limitation documented here.
-	// The argument validation is: len(args) == 0 → print usage + exit.
-	// Integration testing with a subprocess would be needed for full coverage.
+func TestHandleModelPull_NoArgs(t *testing.T) {
+	err := handleModelPull([]string{})
+	if err == nil {
+		t.Fatal("expected error for missing model name")
+	}
+	if !strings.Contains(err.Error(), "usage:") {
+		t.Errorf("expected usage error, got: %v", err)
+	}
+}
+
+func TestHandleModelPull_HuggingFace_MissingFile(t *testing.T) {
+	err := handleModelPull([]string{"--from", "huggingface", "org/repo"})
+	if err == nil {
+		t.Fatal("expected error for missing file argument")
+	}
+	if !strings.Contains(err.Error(), "usage:") {
+		t.Errorf("expected usage error, got: %v", err)
+	}
+}
+
+func TestHandleModelList_NoServer(t *testing.T) {
+	// ListModels will fail because Ollama is not running in CI.
+	err := handleModelList()
+	if err == nil {
+		t.Skip("Ollama appears to be running; skipping no-server test")
+	}
+	if !strings.Contains(err.Error(), "listing models") {
+		t.Errorf("expected listing error, got: %v", err)
+	}
 }
 
 // captureStdout redirects os.Stdout to a buffer and returns the captured output.
+// Uses defers to safely restore os.Stdout even if fn panics.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	r, w, err := os.Pipe()
@@ -45,12 +69,14 @@ func captureStdout(t *testing.T, fn func()) string {
 	}
 	old := os.Stdout
 	os.Stdout = w
+	defer func() {
+		os.Stdout = old
+		r.Close()
+	}()
 
 	fn()
 
 	w.Close()
-	os.Stdout = old
-
 	var buf bytes.Buffer
 	buf.ReadFrom(r)
 	return buf.String()
