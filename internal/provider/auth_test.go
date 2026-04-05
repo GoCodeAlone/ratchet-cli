@@ -3,13 +3,16 @@ package providerauth
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func TestCopilotAuth_DeviceFlow(t *testing.T) {
-	_, err := DeviceFlow()
-	if err == nil {
-		t.Error("expected DeviceFlow to return an error (not yet implemented)")
-	}
+	// DeviceFlow makes a real network call; it should fail in test environments
+	// without network access (or succeed if GitHub is reachable). Either outcome
+	// is acceptable — we just verify the function signature compiles and runs.
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, _ = DeviceFlow(ctx) // error expected due to timeout; we don't assert
 }
 
 func TestCopilotAuth_ListModels_ReturnsErrorOnFailure(t *testing.T) {

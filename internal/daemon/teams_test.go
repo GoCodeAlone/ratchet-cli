@@ -9,7 +9,7 @@ import (
 )
 
 func TestTeamManager_Create(t *testing.T) {
-	tm := NewTeamManager(nil, nil)
+	tm := NewTeamManager(newTestEngine(t), nil)
 	teamID, eventCh := tm.StartTeam(context.Background(), &pb.StartTeamReq{
 		Task: "test task",
 	})
@@ -37,7 +37,7 @@ func TestTeamManager_Create(t *testing.T) {
 }
 
 func TestTeamManager_AgentLifecycle(t *testing.T) {
-	tm := NewTeamManager(nil, nil)
+	tm := NewTeamManager(newTestEngine(t), nil)
 	teamID, eventCh := tm.StartTeam(context.Background(), &pb.StartTeamReq{
 		Task: "build something",
 	})
@@ -68,7 +68,7 @@ func TestTeamManager_AgentLifecycle(t *testing.T) {
 }
 
 func TestTeamManager_DirectMessage(t *testing.T) {
-	tm := NewTeamManager(nil, nil)
+	tm := NewTeamManager(newTestEngine(t), nil)
 	_, eventCh := tm.StartTeam(context.Background(), &pb.StartTeamReq{
 		Task: "exchange messages",
 	})

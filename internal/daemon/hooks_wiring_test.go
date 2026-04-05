@@ -92,7 +92,7 @@ func TestHooks_PrePostFleet(t *testing.T) {
 
 func TestHooks_AgentSpawnComplete(t *testing.T) {
 	hc, fired := hookRecorder(t, hooks.OnAgentSpawn, hooks.OnAgentComplete)
-	tm := NewTeamManager(nil, hc)
+	tm := NewTeamManager(newTestEngine(t), hc)
 
 	_, eventCh := tm.StartTeam(context.Background(), &pb.StartTeamReq{
 		Task: "hook agent task",

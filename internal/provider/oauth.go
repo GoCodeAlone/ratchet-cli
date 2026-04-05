@@ -18,8 +18,12 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 )
+
+// oauthServerPort stores the port of the most recently started local OAuth callback server.
+var oauthServerPort atomic.Int32
 
 // OAuthResult is returned when a browser-based auth flow completes.
 type OAuthResult struct {
@@ -114,6 +118,7 @@ func startAnthropicOAuthFlow(ctx context.Context, authorizeURL string, createAPI
 			return
 		}
 		port := listener.Addr().(*net.TCPAddr).Port
+		oauthServerPort.Store(int32(port))
 		localhostRedirectURI := fmt.Sprintf("http://127.0.0.1:%d/callback", port)
 
 		// Anthropic requires this specific redirect URI for the CLI OAuth app.
@@ -210,10 +215,9 @@ func startAnthropicOAuthFlow(ctx context.Context, authorizeURL string, createAPI
 	return ch
 }
 
-// LocalOAuthServerPort returns the port of a temporary local OAuth server that
-// can be used to submit a code via POST /paste?code=<value>.  The caller is
-// responsible for closing the server.
-func LocalOAuthServerPort() int { return 0 } // placeholder — unused externally
+// LocalOAuthServerPort returns the port of the most recently started local OAuth
+// callback server. Returns 0 if no OAuth flow has been started.
+func LocalOAuthServerPort() int { return int(oauthServerPort.Load()) }
 
 // exchangeAnthropicCodeForToken exchanges an authorization code for an OAuth
 // access token.  This is used directly by the Max flow (token as Bearer).
