@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -49,10 +50,36 @@ func TestPromptYesNo_No(t *testing.T) {
 	}
 }
 
-func TestInstallOllama_CommandConstructed(t *testing.T) {
-	// installOllama is not easily unit-testable without exec mocking, but we can
-	// verify the function exists and returns an error when the binary is unavailable
-	// (in CI where brew/curl may fail). Just ensure it compiles and the function
-	// is callable — execution is integration-level.
-	_ = installOllama // ensure it compiles
+func TestPromptYesNo_EOF(t *testing.T) {
+	// When stdin is closed (EOF), promptYesNo should default to false.
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Close() // immediate EOF
+
+	scanner := bufio.NewScanner(r)
+	got := promptYesNo("test?", scanner)
+	r.Close()
+
+	if got {
+		t.Error("promptYesNo on EOF should return false, got true")
+	}
+}
+
+func TestInstallOllama_UnsupportedPlatform(t *testing.T) {
+	// installOllama on the current platform should either succeed (darwin/linux)
+	// or return an "unsupported platform" error (windows/other).
+	// We can't mock runtime.GOOS, but we can verify the function is callable
+	// and returns the expected error type on non-linux/non-darwin platforms.
+	if runtime.GOOS == "darwin" || runtime.GOOS == "linux" {
+		t.Skip("installOllama would attempt real install on this platform")
+	}
+	err := installOllama()
+	if err == nil {
+		t.Error("expected error on unsupported platform")
+	}
+	if !strings.Contains(err.Error(), "not supported on") {
+		t.Errorf("expected 'not supported' error, got: %v", err)
+	}
 }

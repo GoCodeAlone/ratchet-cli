@@ -206,6 +206,9 @@ func handleOllamaSetup(args []string) {
 	models, err := ollamaClient.ListModels(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "could not list models: %v\n", err)
+		fmt.Println("Cannot continue setup until the Ollama server is reachable.")
+		fmt.Println("Please verify Ollama is running, then re-run: ratchet provider setup ollama")
+		return
 	}
 
 	wantNew := true
@@ -302,10 +305,17 @@ func handleOllamaSetup(args []string) {
 }
 
 // promptYesNo prints question + " [Y/n] " and returns true for yes (default).
-// The caller must pass the shared scanner for the current command.
+// Returns false on EOF or read error (safe for non-interactive/piped contexts).
 func promptYesNo(question string, scanner *bufio.Scanner) bool {
 	fmt.Printf("%s [Y/n] ", question)
-	scanner.Scan()
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			fmt.Fprintf(os.Stderr, "\nUnable to read response: %v\n", err)
+		} else {
+			fmt.Fprintln(os.Stderr, "\nNo input received; defaulting to no.")
+		}
+		return false
+	}
 	ans := strings.TrimSpace(strings.ToLower(scanner.Text()))
 	return ans == "" || ans == "y" || ans == "yes"
 }
@@ -327,6 +337,7 @@ func installOllama() error {
 }
 
 // startOllamaServer starts ollama serve in the background and waits up to 15s for it to be healthy.
+// If the server doesn't become healthy, the background process is killed to avoid orphans.
 func startOllamaServer() error {
 	cmd := exec.Command("ollama", "serve")
 	cmd.Stdout = nil
@@ -346,6 +357,8 @@ func startOllamaServer() error {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
+	// Server didn't become healthy — kill the orphaned process.
+	_ = cmd.Process.Kill()
 	return fmt.Errorf("ollama server did not become ready within 15s")
 }
 

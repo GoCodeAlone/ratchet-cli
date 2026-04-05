@@ -295,7 +295,12 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		m.fetchedModels = msg.models
 		m.modelCursor = 0
 		// When Ollama has no models installed, offer to pull one.
-		if len(msg.models) == 0 && msg.err == nil && m.selectedProvider().name == "ollama" {
+		// Only trigger for actual Ollama servers (default base URL or localhost:11434),
+		// not for other OpenAI-compatible servers (LM Studio, vLLM) where the
+		// Ollama pull API won't work.
+		isOllamaServer := m.selectedProvider().name == "ollama" &&
+			(m.baseURLInput.Value() == "" || strings.Contains(m.baseURLInput.Value(), "localhost:11434") || strings.Contains(m.baseURLInput.Value(), "127.0.0.1:11434"))
+		if len(msg.models) == 0 && msg.err == nil && isOllamaServer {
 			m.step = stepPullModel
 			m.pullCursor = 0
 			m.pullError = ""
@@ -731,6 +736,7 @@ func (m OnboardingModel) startPull() (OnboardingModel, tea.Cmd) {
 	baseURL := m.baseURLInput.Value()
 	pullName := m.pullModelName
 	go func() {
+		defer close(progressCh) // signal readPullProgress that no more updates are coming
 		c := wfprovider.NewOllamaClient(baseURL)
 		err := c.Pull(ctx, pullName, func(pct float64) {
 			select {
@@ -751,14 +757,22 @@ func (m OnboardingModel) startPull() (OnboardingModel, tea.Cmd) {
 }
 
 // readPullProgress returns a tea.Cmd that waits for the next pull progress update.
+// Prioritizes doneCh so completion isn't delayed by buffered progress updates.
 func (m OnboardingModel) readPullProgress() tea.Cmd {
 	return func() tea.Msg {
+		// Check doneCh first (non-blocking) to prioritize completion.
+		select {
+		case err := <-m.pullDoneCh:
+			return pullDoneMsg{err: err}
+		default:
+		}
+		// Wait for either progress or done.
 		select {
 		case pct, ok := <-m.pullProgressCh:
 			if ok {
 				return pullProgressMsg{pct: pct}
 			}
-			// Channel closed before done — drain doneCh
+			// progressCh closed — pull goroutine finished, read result.
 			err := <-m.pullDoneCh
 			return pullDoneMsg{err: err}
 		case err := <-m.pullDoneCh:

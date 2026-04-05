@@ -14,6 +14,9 @@ func TestHandleModel_NoArgs(t *testing.T) {
 	if !strings.Contains(out, "Usage: ratchet model") {
 		t.Errorf("expected usage message, got: %s", out)
 	}
+	if !strings.Contains(out, "list") || !strings.Contains(out, "pull") {
+		t.Errorf("expected list and pull in usage, got: %s", out)
+	}
 }
 
 func TestHandleModel_UnknownSubcommand(t *testing.T) {
@@ -25,16 +28,12 @@ func TestHandleModel_UnknownSubcommand(t *testing.T) {
 	}
 }
 
-func TestHandleModel_Pull_NoArgs_PrintsUsage(t *testing.T) {
-	// handleModelPull with no args calls os.Exit(1), which we can't test directly.
-	// Verify the argument validation logic: empty args triggers the usage path.
-	args := []string{}
-	if len(args) != 0 {
-		t.Fatal("expected empty args for this test")
-	}
-	// The actual function calls os.Exit — to fully test this, refactor
-	// handleModelPull to return an error instead of calling os.Exit.
-	// For now we document the expected behavior.
+func TestHandleModel_Pull_NoArgs(t *testing.T) {
+	// handleModelPull with no args calls os.Exit(1).
+	// To properly unit-test this, handleModelPull would need to return an error
+	// instead of calling os.Exit. This is a known limitation documented here.
+	// The argument validation is: len(args) == 0 → print usage + exit.
+	// Integration testing with a subprocess would be needed for full coverage.
 }
 
 // captureStdout redirects os.Stdout to a buffer and returns the captured output.
