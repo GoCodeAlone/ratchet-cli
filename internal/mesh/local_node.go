@@ -77,9 +77,10 @@ func (n *LocalNode) Run(ctx context.Context, task string, bb *Blackboard, inbox 
 	}
 
 	// Convert mesh inbox (Message) to provider inbox (provider.Message).
-	// Use at least capacity 1 so the adapter goroutine can buffer one message
-	// even when inbox comes from an unbuffered mergeInboxes channel (cap == 0),
-	// preventing the adapter from blocking and stalling inbox drainage.
+	// Use at least capacity 1 as a safeguard: single-source inboxes (directly
+	// from router.Register) are already buffered, but defensive sizing here
+	// ensures the adapter never blocks even in edge cases (e.g., future code
+	// paths that pass an unbuffered channel).
 	provInboxSize := cap(inbox)
 	if provInboxSize < 1 {
 		provInboxSize = 1

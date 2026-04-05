@@ -143,14 +143,15 @@ func TestLocalNode_Info(t *testing.T) {
 }
 
 func TestLocalNode_ToolAllowlist(t *testing.T) {
-	// Only blackboard_read is allowed; send_message should NOT be registered.
-	sendAttempted := false
+	// Only blackboard tools are allowed; send_message should NOT be registered.
+	// When send_message is called but not registered, the executor returns a
+	// tool error and no message is placed in the outbox.
 	steps := []provider.ScriptedStep{
 		{
 			ToolCalls: []provider.ToolCall{
 				{
 					ID:   "tc-1",
-					Name: "send_message", // should not be available
+					Name: "send_message", // not in allowlist — should be rejected
 					Arguments: map[string]any{
 						"to":      "other",
 						"type":    "task",
@@ -196,9 +197,6 @@ func TestLocalNode_ToolAllowlist(t *testing.T) {
 	}
 
 	// send_message tool call should have been rejected (no message in outbox).
-	if sendAttempted {
-		t.Fatal("send_message was executed despite not being in allowlist")
-	}
 	if len(outbox) != 0 {
 		t.Fatalf("expected empty outbox, got %d messages", len(outbox))
 	}
