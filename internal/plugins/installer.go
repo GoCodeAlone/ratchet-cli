@@ -146,10 +146,15 @@ func copyFile(src, dst string) error {
 	}
 	defer in.Close()
 
+	info, err := in.Stat()
+	if err != nil {
+		return err
+	}
+
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
-	out, err := os.Create(dst)
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode())
 	if err != nil {
 		return err
 	}
