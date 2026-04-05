@@ -108,27 +108,55 @@ func TestHooks_OnCronTick(t *testing.T) {
 	hc, fired := hookRecorder(t, hooks.OnCronTick)
 	db := setupCronDB(t)
 
-	cs := NewCronScheduler(db, func(_, _ string) {})
+	// Mirror the service's actual cron callback: fire OnCronTick on each tick.
+	cs := NewCronScheduler(db, func(sessionID, command string) {
+		go func() {
+			if hc != nil {
+				_ = hc.Run(hooks.OnCronTick, map[string]string{
+					"session_id": sessionID,
+					"command":    command,
+				})
+			}
+		}()
+	})
 	ctx := context.Background()
 	if err := cs.Start(ctx); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
-	// Simulate what the service's cron callback does: fire OnCronTick
 	job, err := cs.Create(ctx, "sess-hook-cron", "100ms", "ping")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	defer func() { _ = cs.Stop(ctx, job.ID) }()
 
-	// Manually invoke the hook to verify wiring logic
-	if err := hc.Run(hooks.OnCronTick, map[string]string{
-		"session_id": "sess-hook-cron",
-		"command":    "ping",
-	}); err != nil {
-		t.Fatalf("Run OnCronTick: %v", err)
+	waitFor(t, func() bool { return fired(hooks.OnCronTick) }, 3*time.Second, "OnCronTick from cron callback")
+}
+
+func TestHooks_OnTokenLimit(t *testing.T) {
+	hc, fired := hookRecorder(t, hooks.OnTokenLimit)
+	engine := newTestEngine(t)
+	engine.Hooks = hc
+
+	sessionID := "sess-token-limit"
+	_, _ = engine.DB.Exec(
+		`INSERT INTO sessions (id, name, status, provider, working_dir, model) VALUES (?, ?, 'active', 'default', '', '')`,
+		sessionID, sessionID,
+	)
+
+	svc := &Service{
+		engine:   engine,
+		sessions: NewSessionManager(engine.DB),
+		permGate: newPermissionGate(),
+		tokens:   NewTokenTracker(),
 	}
 
-	waitFor(t, func() bool { return fired(hooks.OnCronTick) }, time.Second, "OnCronTick hook")
+	// Pre-load enough tokens to exceed the 90% threshold (200000 * 0.9 = 180000).
+	svc.tokens.AddTokens(sessionID, 180001, 0)
+
+	stream := &captureStream{ctx: context.Background()}
+	_ = svc.handleChat(context.Background(), sessionID, "hello", stream)
+
+	waitFor(t, func() bool { return fired(hooks.OnTokenLimit) }, 2*time.Second, "OnTokenLimit hook")
 }
 

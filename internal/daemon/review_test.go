@@ -48,7 +48,7 @@ func TestReview_ExecutorCalled(t *testing.T) {
 	engine := newTestEngine(t)
 
 	// Create a session so handleReview can look up the provider.
-	engine.DB.Exec(`INSERT INTO sessions (id, name, status, provider) VALUES ('sess-review', 'test', 'active', 'default')`)
+	engine.DB.Exec(`INSERT INTO sessions (id, name, status, provider, working_dir, model) VALUES ('sess-review', 'test', 'active', 'default', '', '')`)
 
 	svc := &Service{
 		engine:   engine,
@@ -62,22 +62,45 @@ func TestReview_ExecutorCalled(t *testing.T) {
 		t.Fatalf("handleChat: %v", err)
 	}
 
-	// Verify we got token events (mock provider returns text).
-	var gotToken bool
+	// executor.Execute calls provider.Chat() and returns a single result.
+	// Verify we got exactly one non-empty token event (the executor result) and a complete event.
+	var tokenContents []string
 	var gotComplete bool
 	for _, ev := range stream.events {
 		if tok, ok := ev.Event.(*pb.ChatEvent_Token); ok && tok.Token.Content != "" {
-			gotToken = true
+			tokenContents = append(tokenContents, tok.Token.Content)
 		}
 		if _, ok := ev.Event.(*pb.ChatEvent_Complete); ok {
 			gotComplete = true
 		}
 	}
-	if !gotToken {
-		t.Error("expected at least one token event from mock provider")
+	if len(tokenContents) != 1 {
+		t.Errorf("expected exactly 1 token event from executor.Execute, got %d", len(tokenContents))
 	}
 	if !gotComplete {
 		t.Error("expected a complete event")
 	}
 
+	// Verify the result was saved to session history (handleReview saves via saveMessage).
+	rows, err := engine.DB.Query(
+		`SELECT role, content FROM messages WHERE session_id = 'sess-review' AND role = 'assistant'`,
+	)
+	if err != nil {
+		t.Fatalf("query messages: %v", err)
+	}
+	defer rows.Close()
+	var savedContent string
+	for rows.Next() {
+		var role, content string
+		if err := rows.Scan(&role, &content); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		savedContent = content
+	}
+	if savedContent == "" {
+		t.Error("expected executor result to be saved to session history")
+	}
+	if len(tokenContents) == 1 && tokenContents[0] != savedContent {
+		t.Errorf("token content %q != saved history content %q", tokenContents[0], savedContent)
+	}
 }
