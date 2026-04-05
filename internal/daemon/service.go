@@ -23,16 +23,17 @@ const ProtoVersion = 1
 
 type Service struct {
 	pb.UnimplementedRatchetDaemonServer
-	startedAt time.Time
-	engine    *EngineContext
-	sessions  *SessionManager
-	permGate  *permissionGate
-	plans     *PlanManager
-	cron      *CronScheduler
-	fleet     *FleetManager
-	teams     *TeamManager
-	tokens    *TokenTracker
-	jobs      *JobRegistry
+	startedAt    time.Time
+	engine       *EngineContext
+	sessions     *SessionManager
+	permGate     *permissionGate
+	approvalGate *ApprovalGate
+	plans        *PlanManager
+	cron         *CronScheduler
+	fleet        *FleetManager
+	teams        *TeamManager
+	tokens       *TokenTracker
+	jobs         *JobRegistry
 }
 
 func NewService(ctx context.Context) (*Service, error) {
@@ -44,11 +45,12 @@ func NewService(ctx context.Context) (*Service, error) {
 		return nil, err
 	}
 	svc := &Service{
-		startedAt: time.Now(),
-		engine:    engine,
-		sessions:  NewSessionManager(engine.DB),
-		permGate:  newPermissionGate(),
-		plans:     NewPlanManager(),
+		startedAt:    time.Now(),
+		engine:       engine,
+		sessions:     NewSessionManager(engine.DB),
+		permGate:     newPermissionGate(),
+		approvalGate: NewApprovalGate(),
+		plans:        NewPlanManager(),
 	}
 	svc.cron = NewCronScheduler(engine.DB, func(sessionID, command string) {
 		// Tick handler: future integration point to inject command into session.
@@ -209,10 +211,13 @@ func (s *Service) SendMessage(req *pb.SendMessageReq, stream pb.RatchetDaemon_Se
 }
 
 func (s *Service) RespondToPermission(ctx context.Context, req *pb.PermissionResponse) (*pb.Empty, error) {
-	if !s.permGate.Respond(req) {
-		return nil, status.Error(codes.NotFound, "no pending permission request with that ID")
+	if s.permGate.Respond(req) {
+		return &pb.Empty{}, nil
 	}
-	return &pb.Empty{}, nil
+	if s.approvalGate.Resolve(req.RequestId, req.Allowed, req.Scope) {
+		return &pb.Empty{}, nil
+	}
+	return nil, status.Error(codes.NotFound, "no pending permission request with that ID")
 }
 
 func (s *Service) AddProvider(ctx context.Context, req *pb.AddProviderReq) (*pb.Provider, error) {

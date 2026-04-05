@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GoCodeAlone/workflow-plugin-agent/executor"
+	"github.com/GoCodeAlone/workflow-plugin-agent/provider"
 	"github.com/google/uuid"
 
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
@@ -45,16 +47,18 @@ type teamInstance struct {
 
 // TeamManager manages team instances.
 type TeamManager struct {
-	mu    sync.RWMutex
-	teams map[string]*teamInstance
-	stop  chan struct{}
+	mu     sync.RWMutex
+	teams  map[string]*teamInstance
+	engine *EngineContext
+	stop   chan struct{}
 }
 
 // NewTeamManager returns an initialized TeamManager.
-func NewTeamManager() *TeamManager {
+func NewTeamManager(engine *EngineContext) *TeamManager {
 	tm := &TeamManager{
-		teams: make(map[string]*teamInstance),
-		stop:  make(chan struct{}),
+		teams:  make(map[string]*teamInstance),
+		engine: engine,
+		stop:   make(chan struct{}),
 	}
 	go tm.cleanupLoop()
 	return tm
@@ -124,7 +128,65 @@ func (tm *TeamManager) StartTeam(ctx context.Context, req *pb.StartTeamReq) (str
 	return teamID, ti.eventCh
 }
 
-// run is the main team goroutine. It spawns agents and simulates their execution.
+// executeAgent runs a single team agent via the real executor loop.
+// orchestratorContext is the output from a prior orchestrator run; empty for the orchestrator itself.
+func (tm *TeamManager) executeAgent(ctx context.Context, ag *teamAgent, task, orchestratorContext string) (string, error) {
+	if tm.engine == nil || tm.engine.ProviderRegistry == nil {
+		// No engine configured; return a stub so team lifecycle proceeds normally.
+		ag.mu.RLock()
+		name := ag.name
+		ag.mu.RUnlock()
+		return fmt.Sprintf("%s completed: %s", name, task), nil
+	}
+
+	ag.mu.RLock()
+	provAlias := ag.provider
+	agName := ag.name
+	role := ag.role
+	ag.mu.RUnlock()
+
+	var prov provider.Provider
+	var err error
+	if provAlias != "" {
+		prov, err = tm.engine.ProviderRegistry.GetByAlias(ctx, provAlias)
+	} else {
+		prov, err = tm.engine.ProviderRegistry.GetDefault(ctx)
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve provider: %w", err)
+	}
+
+	var systemPrompt string
+	switch role {
+	case "orchestrator":
+		systemPrompt = fmt.Sprintf("You are %s, the orchestrator agent. Decompose the task into subtasks and delegate to workers with clear instructions.", agName)
+	default:
+		systemPrompt = fmt.Sprintf("You are %s, a worker agent. Complete the assigned subtask thoroughly and report results.", agName)
+	}
+
+	userMsg := task
+	if orchestratorContext != "" {
+		userMsg = task + "\n\nContext from orchestrator:\n" + orchestratorContext
+	}
+
+	ag.mu.Lock()
+	ag.currentTask = task
+	ag.mu.Unlock()
+
+	result, err := executor.Execute(ctx, executor.Config{
+		Provider:      prov,
+		MaxIterations: 15,
+	}, systemPrompt, userMsg, ag.id)
+	if err != nil {
+		return "", err
+	}
+	if result.Status == "failed" {
+		return "", fmt.Errorf("agent %s failed: %s", agName, result.Error)
+	}
+	return result.Content, nil
+}
+
+// run is the main team goroutine. It executes agents via the real executor loop.
 func (tm *TeamManager) run(ctx context.Context, ti *teamInstance, req *pb.StartTeamReq) {
 	defer close(ti.eventCh)
 
@@ -159,9 +221,6 @@ func (tm *TeamManager) run(ctx context.Context, ti *teamInstance, req *pb.StartT
 		}
 	}
 
-	// Simulate orchestrator → worker message exchange.
-	time.Sleep(50 * time.Millisecond)
-
 	select {
 	case <-ctx.Done():
 		tm.markDone(ti, "failed")
@@ -171,29 +230,56 @@ func (tm *TeamManager) run(ctx context.Context, ti *teamInstance, req *pb.StartT
 
 	orch := tm.agentByRole(ti, "orchestrator")
 	worker := tm.agentByRole(ti, "worker")
-	if orch != nil && worker != nil {
-		msg := fmt.Sprintf("Please work on: %s", req.Task)
-		tm.routeMessage(ti, orch.name, worker.name, msg)
 
-		time.Sleep(50 * time.Millisecond)
-
-		reply := fmt.Sprintf("Task %q acknowledged, starting...", req.Task)
-		tm.routeMessage(ti, worker.name, orch.name, reply)
+	// Execute orchestrator.
+	var orchResult string
+	if orch != nil {
+		result, err := tm.executeAgent(ctx, orch, req.Task, "")
+		if err != nil {
+			log.Printf("team %s: orchestrator failed: %v", ti.id, err)
+			orch.mu.Lock()
+			orch.status = "failed"
+			orch.mu.Unlock()
+		} else {
+			orchResult = result
+			orch.mu.Lock()
+			orch.status = "completed"
+			orch.mu.Unlock()
+			if worker != nil {
+				tm.routeMessage(ti, orch.name, worker.name, orchResult)
+			}
+		}
 	}
 
-	// Mark all agents complete.
-	ti.mu.RLock()
-	for _, ag := range ti.agents {
-		ag.mu.Lock()
-		ag.status = "completed"
-		ag.mu.Unlock()
+	// Execute worker with orchestrator's output as context.
+	var workerResult string
+	if worker != nil {
+		result, err := tm.executeAgent(ctx, worker, req.Task, orchResult)
+		if err != nil {
+			log.Printf("team %s: worker failed: %v", ti.id, err)
+			worker.mu.Lock()
+			worker.status = "failed"
+			worker.mu.Unlock()
+		} else {
+			workerResult = result
+			worker.mu.Lock()
+			worker.status = "completed"
+			worker.mu.Unlock()
+			if orch != nil {
+				tm.routeMessage(ti, worker.name, orch.name, workerResult)
+			}
+		}
 	}
-	ti.mu.RUnlock()
+
+	summary := fmt.Sprintf("Team completed task: %s", req.Task)
+	if workerResult != "" {
+		summary = workerResult
+	}
 
 	ti.eventCh <- &pb.TeamEvent{
 		Event: &pb.TeamEvent_Complete{
 			Complete: &pb.SessionComplete{
-				Summary: fmt.Sprintf("Team completed task: %s", req.Task),
+				Summary: summary,
 			},
 		},
 	}
