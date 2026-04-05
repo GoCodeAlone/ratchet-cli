@@ -12,8 +12,11 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	"encoding/json"
+
 	"github.com/GoCodeAlone/ratchet-cli/internal/config"
 	"github.com/GoCodeAlone/ratchet-cli/internal/hooks"
+	"github.com/GoCodeAlone/ratchet-cli/internal/mesh"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 	"github.com/GoCodeAlone/ratchet-cli/internal/version"
 )
@@ -38,6 +41,8 @@ type Service struct {
 	jobs         *JobRegistry
 	broadcaster  *SessionBroadcaster
 	shutdownFn   func()
+	meshBB       *mesh.Blackboard
+	meshRouter   *mesh.Router
 }
 
 func NewService(ctx context.Context) (*Service, error) {
@@ -66,6 +71,8 @@ func NewService(ctx context.Context) (*Service, error) {
 	svc.tokens = NewTokenTracker()
 	svc.jobs = NewJobRegistry()
 	svc.broadcaster = NewSessionBroadcaster()
+	svc.meshBB = mesh.NewBlackboard()
+	svc.meshRouter = mesh.NewRouter()
 
 	// Create and start cron scheduler AFTER all Service fields are initialized,
 	// since tick callbacks invoke svc.handleChat which depends on svc.tokens etc.
@@ -589,6 +596,77 @@ func (s *Service) RejectPlan(ctx context.Context, req *pb.RejectPlanReq) (*pb.Em
 		return nil, status.Errorf(codes.InvalidArgument, "reject plan: %v", err)
 	}
 	return &pb.Empty{}, nil
+}
+
+// RegisterMeshNode registers a remote node in the service mesh and returns its generated ID.
+func (s *Service) RegisterMeshNode(ctx context.Context, req *pb.RegisterNodeReq) (*pb.RegisterNodeResp, error) {
+	nodeID := uuid.New().String()
+	if _, err := s.meshRouter.Register(nodeID); err != nil {
+		return nil, status.Errorf(codes.Internal, "register mesh node: %v", err)
+	}
+	return &pb.RegisterNodeResp{NodeId: nodeID}, nil
+}
+
+// MeshStream handles bidirectional mesh event exchange with a remote daemon node.
+// Incoming BlackboardSync events are written to the local mesh blackboard.
+// Incoming AgentMessage events are routed via the local mesh router.
+// Outgoing events are forwarded from the router inbox to the remote.
+func (s *Service) MeshStream(stream pb.RatchetDaemon_MeshStreamServer) error {
+	nodeID := uuid.New().String()
+	inbox, err := s.meshRouter.Register(nodeID)
+	if err != nil {
+		return status.Errorf(codes.Internal, "register mesh stream node: %v", err)
+	}
+	defer s.meshRouter.Unregister(nodeID)
+
+	// Forward router inbox messages to the remote node.
+	go func() {
+		for {
+			select {
+			case msg, ok := <-inbox:
+				if !ok {
+					return
+				}
+				_ = stream.Send(&pb.MeshEvent{
+					Event: &pb.MeshEvent_AgentMessage{
+						AgentMessage: &pb.AgentMessage{
+							FromAgent: msg.From,
+							ToAgent:   msg.To,
+							Content:   msg.Content,
+						},
+					},
+				})
+			case <-stream.Context().Done():
+				return
+			}
+		}
+	}()
+
+	// Main loop: receive events from the remote node.
+	for {
+		ev, err := stream.Recv()
+		if err != nil {
+			if stream.Context().Err() != nil {
+				return nil
+			}
+			return err
+		}
+		switch e := ev.Event.(type) {
+		case *pb.MeshEvent_BlackboardSync:
+			sync := e.BlackboardSync
+			var value any
+			_ = json.Unmarshal(sync.Value, &value)
+			s.meshBB.Write(sync.Section, sync.Key, value, sync.Author)
+		case *pb.MeshEvent_AgentMessage:
+			msg := e.AgentMessage
+			_ = s.meshRouter.Send(mesh.Message{
+				From:    msg.FromAgent,
+				To:      msg.ToAgent,
+				Content: msg.Content,
+				Type:    "result",
+			})
+		}
+	}
 }
 
 // noopSendServer discards all events; used for cron tick injection where no gRPC client is connected.
