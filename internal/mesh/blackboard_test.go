@@ -110,20 +110,19 @@ func TestBlackboard_ConcurrentReadWrite(t *testing.T) {
 
 	// writers
 	for g := 0; g < goroutines; g++ {
-		go func(id int) {
+		go func() {
 			defer wg.Done()
 			for i := 0; i < writes; i++ {
 				bb.Write("concurrent", "key", i, "writer")
-				_ = id
 			}
-		}(g)
+		}()
 	}
 
 	// readers
 	for g := 0; g < goroutines; g++ {
 		go func() {
 			defer wg.Done()
-			for i := 0; i < writes; i++ {
+			for range writes {
 				bb.Read("concurrent", "key")
 				bb.List("concurrent")
 				bb.ListSections()
