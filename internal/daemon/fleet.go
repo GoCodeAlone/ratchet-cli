@@ -11,6 +11,8 @@ import (
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/config"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
+	"github.com/GoCodeAlone/workflow-plugin-agent/executor"
+	"github.com/GoCodeAlone/workflow-plugin-agent/provider"
 )
 
 // fleetInstance tracks a running fleet.
@@ -26,14 +28,16 @@ type FleetManager struct {
 	mu      sync.RWMutex
 	fleets  map[string]*fleetInstance
 	routing config.ModelRouting
+	engine  *EngineContext
 	stop    chan struct{}
 }
 
 // NewFleetManager returns an initialized FleetManager with optional model routing config.
-func NewFleetManager(routing config.ModelRouting) *FleetManager {
+func NewFleetManager(routing config.ModelRouting, engine *EngineContext) *FleetManager {
 	fm := &FleetManager{
 		fleets:  make(map[string]*fleetInstance),
 		routing: routing,
+		engine:  engine,
 		stop:    make(chan struct{}),
 	}
 	go fm.cleanupLoop()
@@ -182,16 +186,64 @@ func (fm *FleetManager) runFleet(ctx context.Context, fi *fleetInstance, maxWork
 	close(eventCh)
 }
 
-// executeWorker runs a single fleet worker step.
-func (fm *FleetManager) executeWorker(ctx context.Context, w *pb.FleetWorker) error {
-	// Placeholder: real implementation would create a sub-session and run the step.
-	// For now, simulate a brief execution.
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-time.After(100 * time.Millisecond):
-		return nil
+// secretGuardAdapter adapts *orchestrator.SecretGuard to executor.SecretRedactor.
+// SecretGuard.CheckAndRedact returns bool but the interface requires no return.
+type secretGuardAdapter struct {
+	guard interface {
+		Redact(string) string
+		CheckAndRedact(msg *provider.Message) bool
 	}
+}
+
+func (a *secretGuardAdapter) Redact(text string) string {
+	return a.guard.Redact(text)
+}
+
+func (a *secretGuardAdapter) CheckAndRedact(msg *provider.Message) {
+	a.guard.CheckAndRedact(msg)
+}
+
+// executeWorker runs a single fleet worker step using the real executor.
+func (fm *FleetManager) executeWorker(ctx context.Context, w *pb.FleetWorker) error {
+	if fm.engine == nil || fm.engine.ProviderRegistry == nil {
+		return fmt.Errorf("fleet worker %s: no engine or provider registry configured", w.Id)
+	}
+
+	var prov provider.Provider
+	var err error
+	if w.Provider != "" {
+		prov, err = fm.engine.ProviderRegistry.GetByAlias(ctx, w.Provider)
+	} else {
+		prov, err = fm.engine.ProviderRegistry.GetDefault(ctx)
+	}
+	if err != nil {
+		return fmt.Errorf("fleet worker %s: resolve provider: %w", w.Id, err)
+	}
+
+	var redactor executor.SecretRedactor
+	if fm.engine.SecretGuard != nil {
+		redactor = &secretGuardAdapter{guard: fm.engine.SecretGuard}
+	}
+
+	cfg := executor.Config{
+		Provider:       prov,
+		MaxIterations:  25,
+		SecretRedactor: redactor,
+	}
+
+	systemPrompt := fmt.Sprintf(
+		"You are fleet worker %s. Execute the following task step thoroughly and report results.",
+		w.Name,
+	)
+
+	result, err := executor.Execute(ctx, cfg, systemPrompt, w.StepId, w.Id)
+	if err != nil {
+		return fmt.Errorf("fleet worker %s: execute: %w", w.Id, err)
+	}
+	if result != nil && result.Status == "failed" {
+		return fmt.Errorf("fleet worker %s: %s", w.Id, result.Error)
+	}
+	return nil
 }
 
 // GetStatus returns the current FleetStatus for the given fleet ID.

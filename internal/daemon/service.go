@@ -62,8 +62,8 @@ func NewService(ctx context.Context) (*Service, error) {
 	if cfg != nil {
 		routing = cfg.ModelRouting
 	}
-	svc.fleet = NewFleetManager(routing)
-	svc.teams = NewTeamManager()
+	svc.fleet = NewFleetManager(routing, engine)
+	svc.teams = NewTeamManager(engine)
 	svc.tokens = NewTokenTracker()
 	svc.jobs = NewJobRegistry()
 	svc.jobs.Register("session", NewSessionJobProvider(svc.sessions))
@@ -398,11 +398,21 @@ func (s *Service) StopCron(ctx context.Context, req *pb.CronJobReq) (*pb.Empty, 
 
 // StartFleet starts a fleet of workers for plan execution and streams status events.
 func (s *Service) StartFleet(req *pb.StartFleetReq, stream pb.RatchetDaemon_StartFleetServer) error {
-	// Decompose plan steps — for now use a simple single-step decomposition.
-	// Future: load plan from PlanManager and extract independent steps.
-	steps := []string{req.PlanId}
-	if req.PlanId == "" {
-		steps = []string{"default-step"}
+	// Decompose plan into step descriptions. Fall back to single step if plan not found.
+	var steps []string
+	if plan := s.plans.Get(req.PlanId); plan != nil {
+		for _, step := range plan.Steps {
+			if step.Status != "skipped" {
+				steps = append(steps, step.Description)
+			}
+		}
+	}
+	if len(steps) == 0 {
+		if req.PlanId != "" {
+			steps = []string{req.PlanId}
+		} else {
+			steps = []string{"default-step"}
+		}
 	}
 
 	eventCh := make(chan *pb.FleetStatus, 32)
