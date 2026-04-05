@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/config"
@@ -53,7 +54,14 @@ func NewService(ctx context.Context) (*Service, error) {
 		plans:        NewPlanManager(),
 	}
 	svc.cron = NewCronScheduler(engine.DB, func(sessionID, command string) {
-		// Tick handler: future integration point to inject command into session.
+		go func() {
+			tickCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			ns := &noopSendServer{ctx: tickCtx}
+			if err := svc.handleChat(tickCtx, sessionID, command, ns); err != nil {
+				log.Printf("cron tick session=%s command=%q: %v", sessionID, command, err)
+			}
+		}()
 	})
 	if err := svc.cron.Start(ctx); err != nil {
 		engine.Close()
@@ -511,3 +519,14 @@ func (s *Service) RejectPlan(ctx context.Context, req *pb.RejectPlanReq) (*pb.Em
 	}
 	return &pb.Empty{}, nil
 }
+
+// noopSendServer discards all events; used for cron tick injection where no gRPC client is connected.
+type noopSendServer struct{ ctx context.Context }
+
+func (n *noopSendServer) Send(*pb.ChatEvent) error            { return nil }
+func (n *noopSendServer) Context() context.Context           { return n.ctx }
+func (n *noopSendServer) SetHeader(metadata.MD) error        { return nil }
+func (n *noopSendServer) SendHeader(metadata.MD) error       { return nil }
+func (n *noopSendServer) SetTrailer(metadata.MD)             {}
+func (n *noopSendServer) SendMsg(interface{}) error          { return nil }
+func (n *noopSendServer) RecvMsg(interface{}) error          { return nil }

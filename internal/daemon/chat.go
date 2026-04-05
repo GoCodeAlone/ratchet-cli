@@ -69,11 +69,21 @@ func (g *permissionGate) Respond(resp *pb.PermissionResponse) bool {
 // When handleChat detects it, it runs compression immediately without an AI turn.
 const compactSentinel = "\x00compact\x00"
 
+// reviewSentinel is a prefix sent by the TUI to trigger a code review sub-session.
+// The diff content follows immediately after the sentinel.
+const reviewSentinel = "\x00review\x00"
+
 // handleChat executes a chat turn: loads session, resolves provider, streams tokens, handles tools.
 func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string, stream pb.RatchetDaemon_SendMessageServer) error {
 	// Manual compression request: skip the AI turn and compress history directly.
 	if userMessage == compactSentinel {
 		return s.handleCompact(ctx, sessionID, stream)
+	}
+
+	// Code review request: run a review sub-session against the provided diff.
+	if strings.HasPrefix(userMessage, reviewSentinel) {
+		diff := strings.TrimPrefix(userMessage, reviewSentinel)
+		return s.handleReview(ctx, sessionID, diff, stream)
 	}
 
 	// Load session
@@ -439,6 +449,69 @@ func (s *Service) handleCompact(ctx context.Context, sessionID string, stream pb
 	return stream.Send(&pb.ChatEvent{
 		Event: &pb.ChatEvent_Complete{
 			Complete: &pb.SessionComplete{Summary: "compressed"},
+		},
+	})
+}
+
+// handleReview runs the code-reviewer builtin against the provided diff and streams the result.
+func (s *Service) handleReview(ctx context.Context, sessionID, diff string, stream pb.RatchetDaemon_SendMessageServer) error {
+	var prov provider.Provider
+	var err error
+	session, sessErr := s.sessions.Get(ctx, sessionID)
+	if sessErr == nil && session.Provider != "" {
+		prov, err = s.engine.ProviderRegistry.GetByAlias(ctx, session.Provider)
+	} else {
+		prov, err = s.engine.ProviderRegistry.GetDefault(ctx)
+	}
+	if err != nil {
+		return sendError(stream, "review: no provider: "+err.Error())
+	}
+
+	const reviewerSystemPrompt = `You are a code reviewer. Analyze diffs and files for:
+- Security vulnerabilities (injection, auth bypass, etc.)
+- Logic errors and edge cases
+- Code style and naming conventions
+- Test coverage gaps
+Output structured review: Critical / Important / Minor with file:line refs.`
+
+	userMsg := "Please review the following git diff:\n\n```diff\n" + diff + "\n```"
+
+	messages := []provider.Message{
+		{Role: provider.RoleSystem, Content: reviewerSystemPrompt},
+		{Role: provider.RoleUser, Content: userMsg},
+	}
+
+	eventCh, err := prov.Stream(ctx, messages, nil)
+	if err != nil {
+		return sendError(stream, "review stream: "+err.Error())
+	}
+
+	var fullResponse string
+	for event := range eventCh {
+		switch event.Type {
+		case "text":
+			fullResponse += event.Text
+			if err := stream.Send(&pb.ChatEvent{
+				Event: &pb.ChatEvent_Token{
+					Token: &pb.TokenDelta{Content: event.Text},
+				},
+			}); err != nil {
+				return err
+			}
+		case "error":
+			return sendError(stream, event.Error)
+		}
+	}
+
+	if sessErr == nil && fullResponse != "" {
+		if err := s.saveMessage(ctx, sessionID, "assistant", fullResponse, "", ""); err != nil {
+			log.Printf("save review message: %v", err)
+		}
+	}
+
+	return stream.Send(&pb.ChatEvent{
+		Event: &pb.ChatEvent_Complete{
+			Complete: &pb.SessionComplete{Summary: "review complete"},
 		},
 	})
 }
