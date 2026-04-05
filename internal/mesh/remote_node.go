@@ -37,7 +37,7 @@ func (n *RemoteNode) Info() NodeInfo {
 }
 
 // Run is not yet implemented for remote nodes.
-func (n *RemoteNode) Run(_ context.Context, _ string, _ *Blackboard, _ <-chan Message, _ chan<- Message) error {
+func (n *RemoteNode) Run(ctx context.Context, task string, bb *Blackboard, inbox <-chan Message, outbox chan<- Message) error {
 	log.Printf("remote node %s (%s): execution not yet implemented", n.id, n.address)
 	return ErrNotImplemented
 }

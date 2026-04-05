@@ -95,11 +95,9 @@ func (m *AgentMesh) SpawnTeam(
 			})
 		} else {
 			prov := providerFactory(cfg)
-			onEvent := makeEventForwarder(eventCh, "") // placeholder; ID set after creation
-			node = NewLocalNode(cfg, prov, onEvent)
-			// Now fix up the forwarder with the real node ID.
-			ln := node.(*LocalNode)
-			ln.onEvent = makeEventForwarder(eventCh, ln.ID())
+			node = NewLocalNode(cfg, prov, nil)
+			// Set the event forwarder now that we have the real node ID.
+			node.(*LocalNode).onEvent = makeEventForwarder(eventCh, node.ID())
 		}
 		nodes = append(nodes, node)
 	}
