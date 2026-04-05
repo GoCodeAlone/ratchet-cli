@@ -9,10 +9,12 @@ import (
 
 	"path/filepath"
 
+	"github.com/GoCodeAlone/ratchet-cli/internal/agent"
 	"github.com/GoCodeAlone/ratchet-cli/internal/config"
 	"github.com/GoCodeAlone/ratchet-cli/internal/hooks"
 	"github.com/GoCodeAlone/ratchet-cli/internal/mcp"
 	"github.com/GoCodeAlone/ratchet-cli/internal/plugins"
+	"github.com/GoCodeAlone/ratchet-cli/internal/skills"
 	ratchetplugin "github.com/GoCodeAlone/workflow-plugin-agent/orchestrator"
 	"github.com/GoCodeAlone/workflow/secrets"
 	_ "modernc.org/sqlite"
@@ -30,6 +32,10 @@ type EngineContext struct {
 	ModelRouting     config.ModelRouting
 	Actors           *ActorManager
 	Hooks            *hooks.HookConfig
+	// Plugin-contributed capabilities
+	PluginSkills   []skills.Skill
+	PluginAgents   []agent.AgentDefinition
+	PluginCommands []plugins.Command
 }
 
 func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error) { //nolint:unparam
@@ -94,14 +100,23 @@ func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error
 		}
 	}()
 
-	// Load external plugins from ~/.ratchet/plugins/
+	// Load external plugins from ~/.ratchet/plugins/ and wire capabilities.
 	pluginLoader := plugins.NewLoader(filepath.Join(DataDir(), "plugins"))
-	pluginResult, err := pluginLoader.LoadAll(ctx)
-	if err != nil {
-		log.Printf("warning: plugin loading: %v", err)
+	pluginResult, pluginErr := pluginLoader.LoadAll(ctx)
+	if pluginErr != nil {
+		log.Printf("warning: plugin loading: %v", pluginErr)
 	} else {
-		log.Printf("plugins: %d skills, %d agents, %d tools loaded",
-			len(pluginResult.Skills), len(pluginResult.Agents), len(pluginResult.Tools))
+		// Register plugin tools with the tool registry.
+		for _, t := range pluginResult.Tools {
+			ec.ToolRegistry.Register(t)
+		}
+		// Store skills, agents, commands for later query.
+		ec.PluginSkills = pluginResult.Skills
+		ec.PluginAgents = pluginResult.Agents
+		ec.PluginCommands = pluginResult.Commands
+		log.Printf("plugins: %d skills, %d agents, %d commands, %d tools loaded",
+			len(pluginResult.Skills), len(pluginResult.Agents),
+			len(pluginResult.Commands), len(pluginResult.Tools))
 	}
 
 	// Actor system (non-fatal on error; actors are optional middleware).
@@ -114,6 +129,15 @@ func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error
 
 	// Hooks config (non-fatal; hooks are optional)
 	ec.Hooks, _ = hooks.Load("")
+	if ec.Hooks == nil {
+		ec.Hooks = &hooks.HookConfig{Hooks: make(map[hooks.Event][]hooks.Hook)}
+	}
+	// Merge plugin-contributed hooks.
+	if pluginErr == nil {
+		for event, hookList := range pluginResult.Hooks.Hooks {
+			ec.Hooks.Hooks[event] = append(ec.Hooks.Hooks[event], hookList...)
+		}
+	}
 
 	log.Println("engine context initialized")
 	return ec, nil
