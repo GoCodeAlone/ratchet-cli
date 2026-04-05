@@ -360,17 +360,21 @@ func (s *Service) GetAgentStatus(ctx context.Context, req *pb.AgentStatusReq) (*
 func (s *Service) StartTeam(req *pb.StartTeamReq, stream pb.RatchetDaemon_StartTeamServer) error {
 	teamID, eventCh := s.teams.StartTeam(stream.Context(), req)
 
-	// Emit the team ID as the first event so callers can track it.
-	if err := stream.Send(&pb.TeamEvent{
-		Event: &pb.TeamEvent_AgentSpawned{
-			AgentSpawned: &pb.AgentSpawned{
-				AgentId:   teamID,
-				AgentName: "__team__",
-				Role:      "team",
+	// Only emit the team ID event when a real team was successfully created.
+	// An empty teamID means creation failed; the error event will be streamed
+	// below from eventCh, so we don't want to mislead clients with a fake team.
+	if teamID != "" {
+		if err := stream.Send(&pb.TeamEvent{
+			Event: &pb.TeamEvent_AgentSpawned{
+				AgentSpawned: &pb.AgentSpawned{
+					AgentId:   teamID,
+					AgentName: "__team__",
+					Role:      "team",
+				},
 			},
-		},
-	}); err != nil {
-		return err
+		}); err != nil {
+			return err
+		}
 	}
 
 	for ev := range eventCh {

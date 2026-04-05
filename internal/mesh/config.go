@@ -117,10 +117,15 @@ func ValidateTeamConfig(tc *TeamConfig) error {
 			return fmt.Errorf("invalid timeout %q: %w", tc.Timeout, err)
 		}
 	}
+	names := make(map[string]bool, len(tc.Agents))
 	for i, a := range tc.Agents {
 		if a.Name == "" {
 			return fmt.Errorf("agent %d in team %q: name is required", i, tc.Name)
 		}
+		if names[a.Name] {
+			return fmt.Errorf("agent %d in team %q: duplicate agent name %q", i, tc.Name, a.Name)
+		}
+		names[a.Name] = true
 		for _, tool := range a.Tools {
 			if !knownTools[tool] {
 				return fmt.Errorf("agent %q in team %q: unknown tool %q", a.Name, tc.Name, tool)

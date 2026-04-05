@@ -142,6 +142,68 @@ func TestLocalNode_Info(t *testing.T) {
 	}
 }
 
+func TestLocalNode_ToolAllowlist(t *testing.T) {
+	// Only blackboard_read is allowed; send_message should NOT be registered.
+	sendAttempted := false
+	steps := []provider.ScriptedStep{
+		{
+			ToolCalls: []provider.ToolCall{
+				{
+					ID:   "tc-1",
+					Name: "send_message", // should not be available
+					Arguments: map[string]any{
+						"to":      "other",
+						"type":    "task",
+						"content": "hello",
+					},
+				},
+			},
+		},
+		{
+			ToolCalls: []provider.ToolCall{
+				{
+					ID:   "tc-2",
+					Name: "blackboard_write",
+					Arguments: map[string]any{
+						"section": "status",
+						"key":     "allowlist-node",
+						"value":   "done",
+					},
+				},
+			},
+		},
+	}
+	src := provider.NewScriptedSource(steps, false)
+	prov := provider.NewTestProvider(src)
+
+	// Only allow blackboard tools — NOT send_message.
+	cfg := NodeConfig{
+		Name:          "allowlist-node",
+		Role:          "worker",
+		MaxIterations: 5,
+		Tools:         []string{"blackboard_read", "blackboard_write", "blackboard_list"},
+	}
+	node := NewLocalNode(cfg, prov, nil)
+
+	bb := NewBlackboard()
+	outbox := make(chan Message, 64)
+	inbox := make(chan Message, 64)
+	close(inbox)
+
+	err := node.Run(context.Background(), "test allowlist", bb, inbox, outbox)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	// send_message tool call should have been rejected (no message in outbox).
+	if sendAttempted {
+		t.Fatal("send_message was executed despite not being in allowlist")
+	}
+	if len(outbox) != 0 {
+		t.Fatalf("expected empty outbox, got %d messages", len(outbox))
+	}
+}
+
 func TestLocalNode_ContextCancellation(t *testing.T) {
 	// The agent will keep getting tool calls but context gets cancelled
 	steps := []provider.ScriptedStep{

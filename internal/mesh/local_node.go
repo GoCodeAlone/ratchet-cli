@@ -50,18 +50,41 @@ func (n *LocalNode) Info() NodeInfo {
 //   - MaxIterations is reached
 //   - The context is cancelled
 func (n *LocalNode) Run(ctx context.Context, task string, bb *Blackboard, inbox <-chan Message, outbox chan<- Message) error {
-	// Build tool registry with blackboard and messaging tools
+	// Build tool registry respecting the per-agent allowlist from the config.
+	// If Tools is empty we fall back to registering all mesh tools so that
+	// agents with no explicit restriction still work (backward compatible).
+	allTools := []tools.Tool{
+		&BlackboardReadTool{bb: bb},
+		&BlackboardWriteTool{bb: bb},
+		&BlackboardListTool{bb: bb},
+		&SendMessageTool{outbox: outbox, from: n.id},
+	}
 	reg := tools.NewRegistry()
-	reg.Register(&BlackboardReadTool{bb: bb})
-	reg.Register(&BlackboardWriteTool{bb: bb})
-	reg.Register(&BlackboardListTool{bb: bb})
-	reg.Register(&SendMessageTool{outbox: outbox, from: n.id})
+	if len(n.config.Tools) == 0 {
+		for _, t := range allTools {
+			reg.Register(t)
+		}
+	} else {
+		allowed := make(map[string]bool, len(n.config.Tools))
+		for _, name := range n.config.Tools {
+			allowed[name] = true
+		}
+		for _, t := range allTools {
+			if allowed[t.Name()] {
+				reg.Register(t)
+			}
+		}
+	}
 
 	// Convert mesh inbox (Message) to provider inbox (provider.Message).
-	// The goroutine selects on ctx.Done() so it exits when the executor
-	// stops early (context cancelled or ShouldStop), preventing goroutine
-	// leaks if provInbox fills.
-	provInbox := make(chan provider.Message, cap(inbox))
+	// Use at least capacity 1 so the adapter goroutine can buffer one message
+	// even when inbox comes from an unbuffered mergeInboxes channel (cap == 0),
+	// preventing the adapter from blocking and stalling inbox drainage.
+	provInboxSize := cap(inbox)
+	if provInboxSize < 1 {
+		provInboxSize = 1
+	}
+	provInbox := make(chan provider.Message, provInboxSize)
 	go func() {
 		defer close(provInbox)
 		for {

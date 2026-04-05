@@ -167,9 +167,25 @@ func (tm *TeamManager) startMeshTeamFromConfig(ctx context.Context, req *pb.Star
 
 	configs := mesh.ToNodeConfigs(tc)
 
-	// Build a provider factory that creates Ollama providers based on the
-	// agent config's provider/model fields.
+	// Build a provider factory that resolves providers via the daemon's
+	// ProviderRegistry when available, honouring the per-agent provider/model
+	// settings from the team YAML. Falls back to an Ollama provider using the
+	// agent's model when no registry is configured (e.g., in tests).
 	providerFactory := func(cfg mesh.NodeConfig) provider.Provider {
+		if tm.engine != nil && tm.engine.ProviderRegistry != nil {
+			var prov provider.Provider
+			var provErr error
+			if cfg.Provider != "" {
+				prov, provErr = tm.engine.ProviderRegistry.GetByAlias(ctx, cfg.Provider)
+			}
+			if prov == nil || provErr != nil {
+				prov, provErr = tm.engine.ProviderRegistry.GetDefault(ctx)
+			}
+			if prov != nil && provErr == nil {
+				return prov
+			}
+		}
+		// Fallback: create a local Ollama provider using the agent's model.
 		return provider.NewOllamaProvider(provider.OllamaConfig{
 			Model: cfg.Model,
 		})

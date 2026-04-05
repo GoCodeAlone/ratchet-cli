@@ -101,6 +101,19 @@ func TestValidateTeamConfig_UnknownTool(t *testing.T) {
 	}
 }
 
+func TestValidateTeamConfig_DuplicateName(t *testing.T) {
+	tc := &TeamConfig{
+		Name: "team",
+		Agents: []AgentConfig{
+			{Name: "worker"},
+			{Name: "worker"}, // duplicate
+		},
+	}
+	if err := ValidateTeamConfig(tc); err == nil {
+		t.Fatal("expected error for duplicate agent name")
+	}
+}
+
 func TestValidateTeamConfig_InvalidTimeout(t *testing.T) {
 	tc := &TeamConfig{
 		Name:    "team",

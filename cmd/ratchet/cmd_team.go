@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/client"
@@ -169,29 +170,24 @@ func handleTeamStatus(args []string) {
 }
 
 func handleTeamList() {
-	c, err := client.EnsureDaemon()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-	defer c.Close()
-
-	// List builtin team configs.
+	// List builtin team configs (no daemon connection needed).
 	fmt.Println("Built-in team configs:")
 	builtins, err := mesh.BuiltinTeamConfigs()
 	if err == nil {
-		for name, tc := range builtins {
+		names := make([]string, 0, len(builtins))
+		for name := range builtins {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			tc := builtins[name]
 			fmt.Printf("  %-16s %d agents  timeout: %s\n", name, len(tc.Agents), tc.Timeout)
 		}
 	}
 	fmt.Println()
 
-	// Try to get current team status from daemon.
-	resp, err := c.GetTeamStatus(context.Background(), "")
-	if err == nil && resp != nil {
-		fmt.Println("Active teams:")
-		fmt.Printf("  %-36s %-10s %s\n", resp.TeamId, resp.Status, resp.Task)
-	} else {
-		fmt.Println("No active teams.")
-	}
+	// Active team listing requires a dedicated ListTeams RPC which is not yet
+	// implemented. Direct GetTeamStatus("") calls always return NotFound.
+	fmt.Println("Active team listing is not available via this command.")
+	fmt.Println("Use `ratchet team status <team-id>` for a known team ID.")
 }

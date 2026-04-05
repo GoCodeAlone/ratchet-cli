@@ -141,7 +141,11 @@ func (m *AgentMesh) SpawnTeam(
 		nodes = append(nodes, node)
 	}
 
-	// mergeInboxes fans in multiple inbound channels into a single channel.
+	// mergeInboxes fans in multiple inbound channels into a single buffered
+	// channel. The merged channel is buffered (inboxBuffer capacity) to avoid
+	// blocking forwarder goroutines when the consumer is slow. Each forwarder
+	// also listens on teamCtx.Done() so it exits immediately when the team is
+	// cancelled, preventing goroutine leaks.
 	mergeInboxes := func(chans ...<-chan Message) <-chan Message {
 		switch len(chans) {
 		case 0:
@@ -149,14 +153,26 @@ func (m *AgentMesh) SpawnTeam(
 		case 1:
 			return chans[0]
 		}
-		merged := make(chan Message)
+		merged := make(chan Message, inboxBuffer)
 		var wg sync.WaitGroup
 		wg.Add(len(chans))
 		for _, ch := range chans {
 			go func(c <-chan Message) {
 				defer wg.Done()
-				for msg := range c {
-					merged <- msg
+				for {
+					select {
+					case <-teamCtx.Done():
+						return
+					case msg, ok := <-c:
+						if !ok {
+							return
+						}
+						select {
+						case merged <- msg:
+						case <-teamCtx.Done():
+							return
+						}
+					}
 				}
 			}(ch)
 		}
@@ -318,6 +334,18 @@ func (m *AgentMesh) SpawnTeam(
 				router.Unregister(name)
 			}
 		}
+
+		// Remove completed team and its node references from the mesh
+		// registry to prevent unbounded growth across multiple SpawnTeam calls.
+		m.mu.Lock()
+		delete(m.teams, teamID)
+		for _, nd := range nodes {
+			delete(m.nodes, nd.ID())
+			if name := nd.Info().Name; name != "" {
+				delete(m.nodes, name)
+			}
+		}
+		m.mu.Unlock()
 	}()
 
 	return handle, nil
