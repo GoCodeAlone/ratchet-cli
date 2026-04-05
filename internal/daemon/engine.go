@@ -96,12 +96,12 @@ func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error
 
 	// Load external plugins from ~/.ratchet/plugins/
 	pluginLoader := plugins.NewLoader(filepath.Join(DataDir(), "plugins"))
-	loaded, err := pluginLoader.LoadAll()
+	pluginResult, err := pluginLoader.LoadAll(ctx)
 	if err != nil {
 		log.Printf("warning: plugin loading: %v", err)
-	}
-	for _, p := range loaded {
-		log.Printf("loaded plugin: %s (%s)", p.Name, p.Path)
+	} else {
+		log.Printf("plugins: %d skills, %d agents, %d tools loaded",
+			len(pluginResult.Skills), len(pluginResult.Agents), len(pluginResult.Tools))
 	}
 
 	// Actor system (non-fatal on error; actors are optional middleware).
