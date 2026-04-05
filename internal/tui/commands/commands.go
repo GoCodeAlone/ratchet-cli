@@ -283,10 +283,11 @@ func modelCmd(args []string, c *client.Client) *Result {
 		}}
 	}
 
-	return &Result{Lines: []string{
-		"Model switching requires daemon support (not yet implemented).",
-		"For now, use /provider remove + /provider add to change models.",
-	}}
+	// /model <alias> <model-name>
+	if err := c.UpdateProviderModel(context.Background(), args[0], args[1]); err != nil {
+		return &Result{Lines: []string{fmt.Sprintf("Error: %v", err)}}
+	}
+	return &Result{Lines: []string{fmt.Sprintf("Updated %s model to %s", args[0], args[1])}}
 }
 
 func agentsCmd(c *client.Client) *Result {
