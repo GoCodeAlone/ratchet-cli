@@ -166,7 +166,6 @@ func (fm *FleetManager) runFleet(ctx context.Context, fi *fleetInstance, maxWork
 
 			sendFleetStatus(eventCh, fi)
 
-			// Simulate work — in production this would delegate to an agent/session
 			err := fm.executeWorker(workerCtx, w)
 
 			fi.mu.Lock()

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GoCodeAlone/workflow-plugin-agent/executor"
 	"github.com/tochemey/goakt/v4/actor"
 )
 
@@ -226,11 +227,11 @@ func (a *ApprovalActor) Receive(ctx *actor.ReceiveContext) {
 			})
 			return
 		}
-		approved := record != nil && record.Status == "approved"
+		approved := record != nil && record.Status == executor.ApprovalApproved
 		reason := ""
 		if record != nil {
 			reason = record.ReviewerComment
-			if record.Status == "timeout" {
+			if record.Status == executor.ApprovalTimeout {
 				reason = "approval timed out"
 			}
 		}
