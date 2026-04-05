@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GoCodeAlone/workflow-plugin-agent/executor"
 	"github.com/GoCodeAlone/workflow-plugin-agent/provider"
 	"github.com/google/uuid"
 
@@ -280,7 +281,7 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 	if s.tokens.ShouldCompress(sessionID, contextCfg.CompressionThreshold, modelLimit) {
 		if s.engine.Hooks != nil {
 			_ = s.engine.Hooks.Run(hooks.OnTokenLimit, map[string]string{
-				"session_id":   sessionID,
+				"tokens_used":  fmt.Sprintf("%d", s.tokens.Total(sessionID)),
 				"tokens_limit": fmt.Sprintf("%d", modelLimit),
 			})
 		}
@@ -466,58 +467,76 @@ func (s *Service) handleCompact(ctx context.Context, sessionID string, stream pb
 	})
 }
 
-// handleReview runs the code-reviewer builtin against the provided diff and streams the result.
+// handleReview runs the code-reviewer builtin agent against the provided diff.
 func (s *Service) handleReview(ctx context.Context, sessionID, diff string, stream pb.RatchetDaemon_SendMessageServer) error {
-	var prov provider.Provider
-	var err error
-	session, sessErr := s.sessions.Get(ctx, sessionID)
-	if sessErr == nil && session.Provider != "" {
-		prov, err = s.engine.ProviderRegistry.GetByAlias(ctx, session.Provider)
-	} else {
-		prov, err = s.engine.ProviderRegistry.GetDefault(ctx)
-	}
-	if err != nil {
-		return sendError(stream, "review: no provider: "+err.Error())
+	// Load code-reviewer builtin definition.
+	var reviewerDef agent.AgentDefinition
+	if defs, err := agent.LoadBuiltins(); err == nil {
+		for _, d := range defs {
+			if d.Name == "code-reviewer" {
+				reviewerDef = d
+				break
+			}
+		}
 	}
 
-	const reviewerSystemPrompt = `You are a code reviewer. Analyze diffs and files for:
+	maxIter := reviewerDef.MaxIterations
+	if maxIter <= 0 {
+		maxIter = 5
+	}
+	systemPrompt := reviewerDef.SystemPrompt
+	if systemPrompt == "" {
+		systemPrompt = `You are a code reviewer. Analyze diffs and files for:
 - Security vulnerabilities (injection, auth bypass, etc.)
 - Logic errors and edge cases
 - Code style and naming conventions
 - Test coverage gaps
 Output structured review: Critical / Important / Minor with file:line refs.`
+	}
+
+	// Resolve provider: prefer reviewer's model alias, then session provider, then default.
+	session, sessErr := s.sessions.Get(ctx, sessionID)
+	var prov provider.Provider
+	var provErr error
+	if reviewerDef.Model != "" {
+		prov, provErr = s.engine.ProviderRegistry.GetByAlias(ctx, reviewerDef.Model)
+	}
+	if prov == nil {
+		if sessErr == nil && session.Provider != "" {
+			prov, provErr = s.engine.ProviderRegistry.GetByAlias(ctx, session.Provider)
+		} else {
+			prov, provErr = s.engine.ProviderRegistry.GetDefault(ctx)
+		}
+	}
+	if provErr != nil {
+		return sendError(stream, "review: no provider: "+provErr.Error())
+	}
 
 	userMsg := "Please review the following git diff:\n\n```diff\n" + diff + "\n```"
 
-	messages := []provider.Message{
-		{Role: provider.RoleSystem, Content: reviewerSystemPrompt},
-		{Role: provider.RoleUser, Content: userMsg},
-	}
-
-	eventCh, err := prov.Stream(ctx, messages, nil)
+	result, err := executor.Execute(ctx, executor.Config{
+		Provider:      prov,
+		MaxIterations: maxIter,
+	}, systemPrompt, userMsg, "code-reviewer")
 	if err != nil {
-		return sendError(stream, "review stream: "+err.Error())
+		return sendError(stream, "review execute: "+err.Error())
 	}
 
-	var fullResponse string
-	for event := range eventCh {
-		switch event.Type {
-		case "text":
-			fullResponse += event.Text
-			if err := stream.Send(&pb.ChatEvent{
-				Event: &pb.ChatEvent_Token{
-					Token: &pb.TokenDelta{Content: event.Text},
-				},
-			}); err != nil {
-				return err
-			}
-		case "error":
-			return sendError(stream, event.Error)
-		}
+	content := ""
+	if result != nil {
+		content = result.Content
 	}
 
-	if sessErr == nil && fullResponse != "" {
-		if err := s.saveMessage(ctx, sessionID, "assistant", fullResponse, "", ""); err != nil {
+	if err := stream.Send(&pb.ChatEvent{
+		Event: &pb.ChatEvent_Token{
+			Token: &pb.TokenDelta{Content: content},
+		},
+	}); err != nil {
+		return err
+	}
+
+	if sessErr == nil && content != "" {
+		if err := s.saveMessage(ctx, sessionID, "assistant", content, "", ""); err != nil {
 			log.Printf("save review message: %v", err)
 		}
 	}
