@@ -3,7 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
+	"os/exec"
+	"time"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/client"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
@@ -12,9 +15,25 @@ import (
 
 func handleProvider(args []string) {
 	if len(args) == 0 {
-		fmt.Println("Usage: ratchet provider <add|list|test|remove|default>")
+		fmt.Println("Usage: ratchet provider <add|list|test|remove|default|setup>")
 		return
 	}
+
+	switch args[0] {
+	case "setup":
+		if len(args) < 2 {
+			fmt.Println("Usage: ratchet provider setup <ollama>")
+			return
+		}
+		switch args[1] {
+		case "ollama":
+			handleOllamaSetup(args[2:])
+		default:
+			fmt.Printf("unknown provider to setup: %s\n", args[1])
+		}
+		return
+	}
+
 	c, err := client.EnsureDaemon()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -129,4 +148,53 @@ func handleProvider(args []string) {
 	default:
 		fmt.Printf("unknown provider command: %s\n", args[0])
 	}
+}
+
+func handleOllamaSetup(args []string) {
+	model := "qwen3:8b"
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--model" && i+1 < len(args) {
+			model = args[i+1]
+			i++
+		}
+	}
+
+	fmt.Println("=== Ollama Setup ===")
+
+	// 1. Check if ollama binary exists.
+	ollamaPath, err := exec.LookPath("ollama")
+	if err != nil {
+		fmt.Println("✗ ollama binary not found in PATH")
+		fmt.Println()
+		fmt.Println("Install Ollama:")
+		fmt.Println("  curl -fsSL https://ollama.com/install.sh | sh")
+		fmt.Println()
+		fmt.Println("Then re-run: ratchet provider setup ollama")
+		return
+	}
+	fmt.Printf("✓ ollama found: %s\n", ollamaPath)
+
+	// 2. Check if ollama server is running.
+	fmt.Print("  Checking if Ollama server is running... ")
+	httpClient := &http.Client{Timeout: 3 * time.Second}
+	resp, err := httpClient.Get("http://localhost:11434")
+	if err != nil {
+		fmt.Println("not running")
+		fmt.Println()
+		fmt.Println("Start the Ollama server:")
+		fmt.Println("  ollama serve")
+		fmt.Println()
+		fmt.Println("Then re-run: ratchet provider setup ollama")
+		return
+	}
+	resp.Body.Close()
+	fmt.Println("running ✓")
+
+	// 3. Suggest model to pull.
+	fmt.Printf("\nRecommended model: %s\n", model)
+	fmt.Println()
+	fmt.Println("Next steps:")
+	fmt.Printf("  1. Pull the model:   ollama pull %s\n", model)
+	fmt.Printf("  2. Add to ratchet:   ratchet provider add ollama local-qwen\n")
+	fmt.Printf("  3. Test connection:  ratchet provider test local-qwen\n")
 }
