@@ -374,6 +374,37 @@ message ReloadStatus {
   string message = 2;
 }
 
+// Agent mesh node registration
+message RegisterNodeReq {
+  string name = 1;
+  string role = 2;
+  string model = 3;
+  string provider = 4;
+  repeated string tools = 5;
+}
+
+message RegisterNodeResp {
+  string node_id = 1;
+}
+
+// Blackboard sync between mesh peers
+message BlackboardSync {
+  string section = 1;
+  string key = 2;
+  bytes value = 3;
+  string author = 4;
+  int64 revision = 5;
+}
+
+// MeshEvent carries mesh-related events between daemons
+message MeshEvent {
+  oneof event {
+    BlackboardSync blackboard_sync = 1;
+    AgentMessage agent_message = 2;
+    RegisterNodeResp node_registered = 3;
+  }
+}
+
 // === Service ===
 
 service RatchetDaemon {
@@ -434,4 +465,8 @@ service RatchetDaemon {
   // Version and reload
   rpc CheckVersion(VersionCheckReq) returns (VersionCheckResp);
   rpc RequestReload(ReloadReq) returns (stream ReloadStatus);
+
+  // Agent Mesh (scaffolded — handlers return Unimplemented)
+  rpc RegisterMeshNode(RegisterNodeReq) returns (RegisterNodeResp);
+  rpc MeshStream(stream MeshEvent) returns (stream MeshEvent);
 }

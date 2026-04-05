@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/GoCodeAlone/workflow-plugin-agent/provider"
 	"github.com/GoCodeAlone/workflow-plugin-agent/tools"
+	"github.com/google/uuid"
 )
 
 // ---------------------------------------------------------------------------
@@ -213,10 +215,12 @@ func (t *SendMessageTool) Execute(_ context.Context, args map[string]any) (any, 
 	}
 
 	msg := Message{
-		From:    t.from,
-		To:      to,
-		Type:    msgType,
-		Content: content,
+		ID:        uuid.New().String(),
+		From:      t.from,
+		To:        to,
+		Type:      msgType,
+		Content:   content,
+		Timestamp: time.Now(),
 	}
 
 	b, err := json.Marshal(msg)

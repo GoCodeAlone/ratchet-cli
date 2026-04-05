@@ -10,7 +10,7 @@ import (
 
 func TestSpawnTeam_TwoNodes(t *testing.T) {
 	// Planner: writes a plan to the blackboard, sends a message to the worker,
-	// then marks itself done.
+	// then marks itself done using its name.
 	plannerSteps := []provider.ScriptedStep{
 		{
 			// Write plan to blackboard.
@@ -41,14 +41,14 @@ func TestSpawnTeam_TwoNodes(t *testing.T) {
 			},
 		},
 		{
-			// Mark planner done — placeholder key, set below.
+			// Mark planner done using its name.
 			ToolCalls: []provider.ToolCall{
 				{
 					ID:   "p-3",
 					Name: "blackboard_write",
 					Arguments: map[string]any{
 						"section": "status",
-						"key":     "", // set after node creation
+						"key":     "planner",
 						"value":   "done",
 					},
 				},
@@ -101,14 +101,14 @@ func TestSpawnTeam_TwoNodes(t *testing.T) {
 			},
 		},
 		{
-			// Mark worker done — placeholder key, set below.
+			// Mark worker done using its name.
 			ToolCalls: []provider.ToolCall{
 				{
 					ID:   "w-4",
 					Name: "blackboard_write",
 					Arguments: map[string]any{
 						"section": "status",
-						"key":     "", // set after node creation
+						"key":     "worker",
 						"value":   "done",
 					},
 				},
@@ -159,29 +159,6 @@ func TestSpawnTeam_TwoNodes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SpawnTeam: %v", err)
 	}
-
-	// Fix up the status keys with the real dynamic node IDs.
-	// We need to find the actual node IDs that were generated.
-	mesh.mu.RLock()
-	var plannerID, workerID string
-	for id, node := range mesh.nodes {
-		info := node.Info()
-		if info.Name == "planner" {
-			plannerID = id
-		}
-		if info.Name == "worker" {
-			workerID = id
-		}
-	}
-	mesh.mu.RUnlock()
-
-	if plannerID == "" || workerID == "" {
-		t.Fatal("expected both planner and worker nodes to be registered")
-	}
-
-	// Patch the scripted steps to use real node IDs for the status writes.
-	plannerSteps[2].ToolCalls[0].Arguments["key"] = plannerID
-	workerSteps[3].ToolCalls[0].Arguments["key"] = workerID
 
 	// Wait for completion.
 	select {
@@ -256,7 +233,7 @@ func TestSpawnTeam_Events(t *testing.T) {
 					Name: "blackboard_write",
 					Arguments: map[string]any{
 						"section": "status",
-						"key":     "", // set below
+						"key":     "eventer", // use node name
 						"value":   "done",
 					},
 				},
@@ -286,15 +263,6 @@ func TestSpawnTeam_Events(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SpawnTeam: %v", err)
 	}
-
-	// Fix up status key.
-	mesh.mu.RLock()
-	var nodeID string
-	for id := range mesh.nodes {
-		nodeID = id
-	}
-	mesh.mu.RUnlock()
-	steps[0].ToolCalls[0].Arguments["key"] = nodeID
 
 	// Collect events until done.
 	var events []Event

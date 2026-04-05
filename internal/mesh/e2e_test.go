@@ -12,7 +12,7 @@ import (
 // scripted/mock providers and verifies the blackboard-based coordination.
 func TestE2E_ThreeAgentFlow(t *testing.T) {
 	// --- Architect ---
-	// Writes a plan, then messages the coder, then marks done.
+	// Writes a plan, then messages the coder, then marks done using its name.
 	architectSteps := []provider.ScriptedStep{
 		{
 			ToolCalls: []provider.ToolCall{
@@ -47,7 +47,7 @@ func TestE2E_ThreeAgentFlow(t *testing.T) {
 					Name: "blackboard_write",
 					Arguments: map[string]any{
 						"section": "status",
-						"key":     "", // patched after node creation
+						"key":     "architect",
 						"value":   "done",
 					},
 				},
@@ -104,7 +104,7 @@ func TestE2E_ThreeAgentFlow(t *testing.T) {
 					Name: "blackboard_write",
 					Arguments: map[string]any{
 						"section": "status",
-						"key":     "", // patched after node creation
+						"key":     "coder",
 						"value":   "done",
 					},
 				},
@@ -161,7 +161,7 @@ func TestE2E_ThreeAgentFlow(t *testing.T) {
 					Name: "blackboard_write",
 					Arguments: map[string]any{
 						"section": "status",
-						"key":     "", // patched after node creation
+						"key":     "reviewer",
 						"value":   "done",
 					},
 				},
@@ -221,29 +221,6 @@ func TestE2E_ThreeAgentFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SpawnTeam: %v", err)
 	}
-
-	// Patch status keys with real node IDs.
-	m.mu.RLock()
-	var architectID, coderID, reviewerID string
-	for id, node := range m.nodes {
-		switch node.Info().Name {
-		case "architect":
-			architectID = id
-		case "coder":
-			coderID = id
-		case "reviewer":
-			reviewerID = id
-		}
-	}
-	m.mu.RUnlock()
-
-	if architectID == "" || coderID == "" || reviewerID == "" {
-		t.Fatal("expected all three nodes to be registered")
-	}
-
-	architectSteps[2].ToolCalls[0].Arguments["key"] = architectID
-	coderSteps[3].ToolCalls[0].Arguments["key"] = coderID
-	reviewerSteps[3].ToolCalls[0].Arguments["key"] = reviewerID
 
 	// Collect events.
 	var events []Event

@@ -81,12 +81,17 @@ func (n *LocalNode) Run(ctx context.Context, task string, bb *Blackboard, inbox 
 		Inbox:         provInbox,
 		OnEvent:       n.onEvent,
 		ShouldStop: func() (reason string) {
-			e, ok := bb.Read("status", n.id)
-			if !ok {
-				return ""
+			// Check by node ID
+			if e, ok := bb.Read("status", n.id); ok {
+				if s, _ := e.Value.(string); s == "done" || s == "approved" {
+					return "status: " + s
+				}
 			}
-			if s, _ := e.Value.(string); s == "done" || s == "approved" {
-				return "status: " + s
+			// Also check by node name for convenience
+			if e, ok := bb.Read("status", n.config.Name); ok {
+				if s, _ := e.Value.(string); s == "done" || s == "approved" {
+					return "status: " + s
+				}
 			}
 			return ""
 		},
