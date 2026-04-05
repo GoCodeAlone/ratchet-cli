@@ -75,7 +75,9 @@ func (b *Blackboard) Write(section, key string, value any, author string) Entry 
 	b.mu.Unlock()
 
 	for _, fn := range watchers {
-		fn(section+"/"+key, e)
+		if fn != nil {
+			fn(section+"/"+key, e)
+		}
 	}
 	return e
 }
@@ -108,10 +110,54 @@ func (b *Blackboard) ListSections() []string {
 	return names
 }
 
+// WatcherID is a handle for removing a watcher.
+type WatcherID int
+
 // Watch registers a callback that is invoked after every Write.
 // The callback receives the composite key ("section/key") and the entry.
-func (b *Blackboard) Watch(fn func(key string, val Entry)) {
+// Returns a WatcherID that can be passed to Unwatch to remove the callback.
+func (b *Blackboard) Watch(fn func(key string, val Entry)) WatcherID {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	id := WatcherID(len(b.watchers))
 	b.watchers = append(b.watchers, fn)
+	return id
+}
+
+// Unwatch removes a previously registered watcher by setting it to nil.
+// Safe to call multiple times with the same ID.
+func (b *Blackboard) Unwatch(id WatcherID) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if int(id) < len(b.watchers) {
+		b.watchers[id] = nil
+	}
+}
+
+// WriteFromRemote stores a value without triggering watchers. Used to apply
+// remote blackboard syncs without creating echo loops.
+func (b *Blackboard) WriteFromRemote(section, key string, value any, author string, revision int64) Entry {
+	b.mu.Lock()
+	sec, ok := b.sections[section]
+	if !ok {
+		sec = &Section{Entries: make(map[string]Entry)}
+		b.sections[section] = sec
+	}
+	if revision > b.revision {
+		b.revision = revision
+	} else {
+		b.revision++
+		revision = b.revision
+	}
+	e := Entry{
+		Key:       key,
+		Value:     value,
+		Author:    author,
+		Revision:  revision,
+		Timestamp: time.Now(),
+	}
+	sec.Entries[key] = e
+	b.mu.Unlock()
+	// No watcher notification — prevents echo loops.
+	return e
 }

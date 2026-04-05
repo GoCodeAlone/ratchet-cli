@@ -191,6 +191,11 @@ message SetDefaultProviderReq {
   string alias = 1;
 }
 
+message UpdateProviderModelReq {
+  string alias = 1;
+  string model = 2;
+}
+
 // Agent management
 message Agent {
   string id = 1;
@@ -428,6 +433,7 @@ service RatchetDaemon {
   rpc TestProvider(TestProviderReq) returns (TestProviderResult);
   rpc RemoveProvider(RemoveProviderReq) returns (Empty);
   rpc SetDefaultProvider(SetDefaultProviderReq) returns (Empty);
+  rpc UpdateProviderModel(UpdateProviderModelReq) returns (Empty);
 
   // Agents
   rpc ListAgents(Empty) returns (AgentList);

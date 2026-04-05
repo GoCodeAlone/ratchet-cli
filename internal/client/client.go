@@ -206,6 +206,15 @@ func (c *Client) ListAgents(ctx context.Context) (*pb.AgentList, error) {
 	return c.daemon.ListAgents(ctx, &pb.Empty{})
 }
 
+func (c *Client) GetAgentStatus(ctx context.Context, agentID string) (*pb.Agent, error) {
+	return c.daemon.GetAgentStatus(ctx, &pb.AgentStatusReq{AgentId: agentID})
+}
+
+func (c *Client) UpdateProviderModel(ctx context.Context, alias, model string) error {
+	_, err := c.daemon.UpdateProviderModel(ctx, &pb.UpdateProviderModelReq{Alias: alias, Model: model})
+	return err
+}
+
 func (c *Client) Shutdown(ctx context.Context) error {
 	_, err := c.daemon.Shutdown(ctx, &pb.Empty{})
 	return err

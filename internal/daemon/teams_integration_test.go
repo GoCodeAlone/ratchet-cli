@@ -32,8 +32,7 @@ func TestTeam_RealExecution(t *testing.T) {
 }
 
 func TestTeam_OrchestratorFailure(t *testing.T) {
-	// nil engine triggers stub executeAgent that always succeeds; use nil to test
-	// that a team with nil engine still transitions to completed (not failed).
+	// nil engine causes executeAgent to return an error, so team status is "failed".
 	tm := NewTeamManager(nil, nil)
 	teamID, eventCh := tm.StartTeam(context.Background(), &pb.StartTeamReq{
 		Task: "test task",
@@ -44,14 +43,13 @@ func TestTeam_OrchestratorFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetStatus: %v", err)
 	}
-	// With nil engine, stub returns success so team completes.
-	if st.Status != "completed" {
-		t.Errorf("expected completed, got %s", st.Status)
+	if st.Status != "failed" {
+		t.Errorf("expected failed, got %s", st.Status)
 	}
 }
 
 func TestTeam_MessageRouting(t *testing.T) {
-	engine := newTestEngine(t)
+	engine := newTestEngine(t) // real engine needed for message routing
 	tm := NewTeamManager(engine, nil)
 
 	_, eventCh := tm.StartTeam(context.Background(), &pb.StartTeamReq{

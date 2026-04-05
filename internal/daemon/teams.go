@@ -202,11 +202,10 @@ func (tm *TeamManager) startMeshTeamFromConfig(ctx context.Context, req *pb.Star
 // orchestratorContext is the output from a prior orchestrator run; empty for the orchestrator itself.
 func (tm *TeamManager) executeAgent(ctx context.Context, ag *teamAgent, task, orchestratorContext string) (string, error) {
 	if tm.engine == nil || tm.engine.ProviderRegistry == nil {
-		// No engine configured; return a stub so team lifecycle proceeds normally.
 		ag.mu.RLock()
 		name := ag.name
 		ag.mu.RUnlock()
-		return fmt.Sprintf("%s completed: %s", name, task), nil
+		return "", fmt.Errorf("no engine configured: cannot execute agent %s", name)
 	}
 
 	ag.mu.RLock()
@@ -455,6 +454,59 @@ func (tm *TeamManager) GetStatus(teamID string) (*pb.TeamStatus, error) {
 		Agents: agents,
 		Status: ti.status,
 	}, nil
+}
+
+// ListAllAgents aggregates agents from all active team instances.
+func (tm *TeamManager) ListAllAgents() []*pb.Agent {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
+	var agents []*pb.Agent
+	for _, ti := range tm.teams {
+		ti.mu.RLock()
+		for _, ag := range ti.agents {
+			ag.mu.RLock()
+			agents = append(agents, &pb.Agent{
+				Id:          ag.id,
+				Name:        ag.name,
+				Role:        ag.role,
+				Model:       ag.model,
+				Provider:    ag.provider,
+				Status:      ag.status,
+				CurrentTask: ag.currentTask,
+				SessionId:   ti.id,
+			})
+			ag.mu.RUnlock()
+		}
+		ti.mu.RUnlock()
+	}
+	return agents
+}
+
+// FindAgent looks up an agent by ID across all teams.
+func (tm *TeamManager) FindAgent(agentID string) *pb.Agent {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
+	for _, ti := range tm.teams {
+		ti.mu.RLock()
+		ag, ok := ti.agents[agentID]
+		ti.mu.RUnlock()
+		if ok {
+			ag.mu.RLock()
+			result := &pb.Agent{
+				Id:          ag.id,
+				Name:        ag.name,
+				Role:        ag.role,
+				Model:       ag.model,
+				Provider:    ag.provider,
+				Status:      ag.status,
+				CurrentTask: ag.currentTask,
+				SessionId:   ti.id,
+			}
+			ag.mu.RUnlock()
+			return result
+		}
+	}
+	return nil
 }
 
 // KillAgent cancels the team that owns the given agent (team-level cancel).

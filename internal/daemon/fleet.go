@@ -275,6 +275,57 @@ func (fm *FleetManager) GetStatus(fleetID string) (*pb.FleetStatus, error) {
 	return deepCopyFleetStatus(fi.status), nil
 }
 
+// ListAllWorkers aggregates workers from all active fleet instances as Agent protos.
+func (fm *FleetManager) ListAllWorkers() []*pb.Agent {
+	fm.mu.RLock()
+	defer fm.mu.RUnlock()
+	var agents []*pb.Agent
+	for _, fi := range fm.fleets {
+		fi.mu.RLock()
+		if fi.status != nil {
+			for _, w := range fi.status.Workers {
+				agents = append(agents, &pb.Agent{
+					Id:       w.Id,
+					Name:     w.Name,
+					Status:   w.Status,
+					Model:    w.Model,
+					Provider: w.Provider,
+					SessionId: fi.status.SessionId,
+				})
+			}
+		}
+		fi.mu.RUnlock()
+	}
+	return agents
+}
+
+// FindWorker looks up a worker by ID across all fleets.
+func (fm *FleetManager) FindWorker(workerID string) *pb.Agent {
+	fm.mu.RLock()
+	defer fm.mu.RUnlock()
+	for _, fi := range fm.fleets {
+		fi.mu.RLock()
+		if fi.status != nil {
+			for _, w := range fi.status.Workers {
+				if w.Id == workerID {
+					ag := &pb.Agent{
+						Id:        w.Id,
+						Name:      w.Name,
+						Status:    w.Status,
+						Model:     w.Model,
+						Provider:  w.Provider,
+						SessionId: fi.status.SessionId,
+					}
+					fi.mu.RUnlock()
+					return ag
+				}
+			}
+		}
+		fi.mu.RUnlock()
+	}
+	return nil
+}
+
 // KillWorker cancels a specific worker within a fleet.
 func (fm *FleetManager) KillWorker(fleetID, workerID string) error {
 	fm.mu.RLock()

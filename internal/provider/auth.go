@@ -2,6 +2,7 @@ package providerauth
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -37,7 +38,15 @@ func PromptBaseURL(defaultURL string) (string, error) {
 }
 
 // DeviceFlow implements GitHub's device flow for Copilot auth.
-func DeviceFlow() (string, error) {
-	// TODO: implement GitHub device flow
-	return "", fmt.Errorf("device flow not yet implemented")
+func DeviceFlow(ctx context.Context) (string, error) {
+	deviceResp, err := StartGitHubDeviceFlow(ctx, GithubCopilotClientID)
+	if err != nil {
+		return "", fmt.Errorf("start device flow: %w", err)
+	}
+	fmt.Printf("Open %s and enter code: %s\n", deviceResp.VerificationURI, deviceResp.UserCode)
+	result := <-PollGitHubDeviceFlow(ctx, GithubCopilotClientID, deviceResp.DeviceCode, deviceResp.Interval)
+	if result.Err != nil {
+		return "", fmt.Errorf("poll device flow: %w", result.Err)
+	}
+	return result.Token, nil
 }
