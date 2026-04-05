@@ -11,6 +11,7 @@ import (
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/mesh"
 	"github.com/GoCodeAlone/workflow-plugin-agent/executor"
+	gkprov "github.com/GoCodeAlone/workflow-plugin-agent/genkit"
 	"github.com/GoCodeAlone/workflow-plugin-agent/provider"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/hooks"
@@ -186,9 +187,12 @@ func (tm *TeamManager) startMeshTeamFromConfig(ctx context.Context, req *pb.Star
 			}
 		}
 		// Fallback: create a local Ollama provider using the agent's model.
-		return provider.NewOllamaProvider(provider.OllamaConfig{
-			Model: cfg.Model,
-		})
+		prov, err := gkprov.NewOllamaProvider(ctx, cfg.Model, "", 0)
+		if err != nil {
+			log.Printf("team: fallback ollama provider: %v", err)
+			return nil
+		}
+		return prov
 	}
 
 	return tm.StartMeshTeam(ctx, req.Task, configs, providerFactory)
