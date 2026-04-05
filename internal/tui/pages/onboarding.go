@@ -1036,17 +1036,28 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 
 	case stepEnterBaseURL:
 		p := m.selectedProvider()
-		fmt.Fprintf(&sb, "Enter the %s server URL:\n\n", p.displayName)
-		sb.WriteString("URL: " + m.baseURLInput.View() + "\n\n")
 		if p.name == "ollama" {
-			sb.WriteString(mutedStyle.Render("Supports any OpenAI-compatible local server") + "\n")
-			sb.WriteString(mutedStyle.Render("(Ollama, LM Studio, vLLM, llama.cpp)") + "\n\n")
+			sb.WriteString("Local model server URL:\n\n")
+			sb.WriteString("URL: " + m.baseURLInput.View() + "\n\n")
+			sb.WriteString(mutedStyle.Render("The default (http://localhost:11434) works for Ollama.") + "\n")
+			sb.WriteString(mutedStyle.Render("LM Studio, vLLM, and llama.cpp also work — enter their URL.") + "\n\n")
+			sb.WriteString(mutedStyle.Render("Don't have a local model server yet?") + "\n")
+			sb.WriteString(mutedStyle.Render("Run: ratchet provider setup ollama") + "\n")
+			sb.WriteString(mutedStyle.Render("It will install Ollama, download a model, and set everything up.") + "\n\n")
+			sb.WriteString(mutedStyle.Render("Enter: continue  Esc: back"))
+		} else {
+			fmt.Fprintf(&sb, "Enter the %s server URL:\n\n", p.displayName)
+			sb.WriteString("URL: " + m.baseURLInput.View() + "\n\n")
+			sb.WriteString(mutedStyle.Render("Enter: continue  Esc: back"))
 		}
-		sb.WriteString(mutedStyle.Render("Enter: continue  Esc: back"))
 
 	case stepFetchModels:
 		p := m.selectedProvider()
-		sb.WriteString(successStyle.Render("Authenticated!") + "\n\n")
+		if p.auth != authNone {
+			sb.WriteString(successStyle.Render("Authenticated!") + "\n\n")
+		} else {
+			sb.WriteString(successStyle.Render("Connected!") + "\n\n")
+		}
 		sb.WriteString(m.spinner.View() + " Loading available models from " + p.displayName + "...\n\n")
 		sb.WriteString(mutedStyle.Render("Esc: cancel"))
 
@@ -1091,6 +1102,11 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 			sb.WriteString(errorStyle.Render("Could not fetch models") + "\n\n")
 			if m.modelsError != "" {
 				sb.WriteString(mutedStyle.Render(m.modelsError) + "\n\n")
+			}
+			if m.selectedProvider().name == "ollama" {
+				sb.WriteString(mutedStyle.Render("Is your local model server running?") + "\n")
+				sb.WriteString(mutedStyle.Render("To set up Ollama from scratch, run:") + "\n")
+				sb.WriteString(mutedStyle.Render("  ratchet provider setup ollama") + "\n\n")
 			}
 			sb.WriteString(mutedStyle.Render("Esc: back"))
 		} else {
