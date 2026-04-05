@@ -4,6 +4,10 @@
 **Status:** Proposed
 **Repo:** ratchet-cli
 
+## Prerequisites
+
+**workflow-plugin-agent executor mesh support** — adds `Inbox`, `OnEvent`, and `ShouldStop` fields to `executor.Config` so the mesh can inject messages, stream events, and control termination. See `workflow-plugin-agent/docs/plans/2026-04-04-executor-mesh-support-design.md`. Must be implemented and released before Step 3 of the mesh implementation plan.
+
 ## Goal
 
 Build a multi-agent orchestration mesh into ratchet-cli that supports local (goroutine) and remote (gRPC) agent nodes from day one. Agents collaborate via a shared blackboard and direct messaging, powered by local LLMs (Ollama/Qwen) with future support for remote providers (Claude, GPT, Gemini).

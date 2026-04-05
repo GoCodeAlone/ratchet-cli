@@ -4,6 +4,19 @@
 **Design:** [2026-04-04-agent-mesh-design.md](2026-04-04-agent-mesh-design.md)
 **Repo:** ratchet-cli
 
+## Prerequisites
+
+**workflow-plugin-agent executor mesh support** must be implemented and released first.
+
+See: `workflow-plugin-agent/docs/plans/2026-04-04-executor-mesh-support-plan.md`
+
+That plan adds three features to `executor.Config`:
+- `Inbox <-chan provider.Message` — message injection between loop iterations
+- `OnEvent func(Event)` — real-time event streaming (tool calls, thinking, text)
+- `ShouldStop func() (reason string)` — custom termination (e.g. blackboard status check)
+
+Once released (target: `v0.5.3`), update `go.mod` to reference the new tag before starting Step 3 below.
+
 ## Steps
 
 ### Step 1: Blackboard
@@ -40,6 +53,8 @@ Create `internal/mesh/message.go` and `internal/mesh/router.go`.
 
 ### Step 3: Node Interface and LocalNode
 
+**Requires:** workflow-plugin-agent `v0.5.3`+ with executor mesh support.
+
 Create `internal/mesh/node.go` and `internal/mesh/local_node.go`.
 
 - `Node` interface: `ID()`, `Run(ctx, task, bb, inbox, outbox)`, `Info()`
@@ -47,11 +62,14 @@ Create `internal/mesh/node.go` and `internal/mesh/local_node.go`.
 - `NodeConfig` struct for constructing nodes from team YAML
 - `LocalNode` implementation:
   - Holds a `provider.Provider` reference (from workflow-plugin-agent)
-  - `Run()` creates a chat loop: builds system prompt, registers tools, calls `provider.Chat()` in a loop
-  - Loop terminates when: agent writes "done"/"approved" to `status` section, max iterations reached, or context cancelled
-  - Injects blackboard + messaging tools into the provider's tool list
+  - `Run()` delegates to `executor.Execute()` with:
+    - `cfg.Inbox` wired to the mesh's message-to-provider adapter (converts mesh `Message` to `provider.Message`)
+    - `cfg.OnEvent` wired to forward executor events to the mesh's TeamEvent stream
+    - `cfg.ShouldStop` checks `blackboard["status"][nodeID]` for "done" or "approved"
+  - Registers blackboard + messaging tools into a `tools.Registry` passed to the executor
+  - Loop terminates via ShouldStop, max iterations, or context cancellation
 
-**Tests:** `local_node_test.go` — run with a mock/scripted provider, verify blackboard writes and message sends.
+**Tests:** `local_node_test.go` — run with a scripted provider, verify blackboard writes, message sends, and ShouldStop termination.
 
 **Files:** `internal/mesh/node.go`, `internal/mesh/local_node.go`, `internal/mesh/local_node_test.go`
 
@@ -61,7 +79,7 @@ Create `internal/mesh/node.go` and `internal/mesh/local_node.go`.
 
 Create `internal/mesh/tools.go`.
 
-- `BlackboardReadTool` — implements `provider.ToolDef` interface, reads from blackboard
+- `BlackboardReadTool` — implements `tools.Tool` interface, reads from blackboard
 - `BlackboardWriteTool` — writes to blackboard, stamps author from node context
 - `BlackboardListTool` — lists sections or keys within a section
 - `SendMessageTool` — sends a `Message` via the node's outbox channel
@@ -82,10 +100,13 @@ Create `internal/mesh/mesh.go`.
   1. Initialize blackboard with empty predefined sections
   2. Create nodes from configs (LocalNode or RemoteNode based on `Location`)
   3. Register each node with router
-  4. Start each node's `Run()` in a goroutine
-  5. Start a watcher goroutine monitoring `status` section for all-done
-  6. Return `TeamHandle` with team ID, status channel, cancel func
-- `TeamHandle` struct: `ID string`, `Done <-chan TeamResult`, `Cancel func()`
+  4. Wire each node's outbox to the router (goroutine: read outbox, call `router.Send()`)
+  5. Wire router inbox to each LocalNode's `executor.Config.Inbox` (adapter: mesh Message → provider.Message)
+  6. Forward each node's `executor.Event` via `cfg.OnEvent` to the TeamHandle's event channel
+  7. Start each node's `Run()` in a goroutine
+  8. Start a watcher goroutine monitoring `status` section for all-done
+  9. Return `TeamHandle` with team ID, event channel, cancel func
+- `TeamHandle` struct: `ID string`, `Done <-chan TeamResult`, `Events <-chan mesh.Event`, `Cancel func()`
 - `TeamResult` struct: `Status string`, `Artifacts map[string]Entry`, `Errors []error`
 
 **Tests:** `mesh_test.go` — spawn team with scripted providers, verify full flow (architect writes plan, coder writes code, reviewer approves).
@@ -144,7 +165,8 @@ Modify `internal/daemon/teams.go`.
 
 - `TeamManager` gets an `*mesh.AgentMesh` field
 - `StartTeam()` now calls `mesh.SpawnTeam()` instead of the stub goroutine
-- Map `TeamHandle` events to `pb.TeamEvent` stream events (AgentSpawned, AgentMessage, TokenDelta, Complete)
+- Map `TeamHandle.Events` to `pb.TeamEvent` stream events (AgentSpawned, AgentMessage, TokenDelta, Complete)
+- Map executor `Event` types to proto: `EventToolCallStart` → `ToolCallStart`, `EventText` → `TokenDelta`, etc.
 - `GetTeamStatus()` queries mesh for live node statuses
 - Preserve backward compatibility with existing gRPC contract
 
@@ -175,7 +197,7 @@ Create/extend `cmd/ratchet/cmd_provider.go`.
 
 ### Step 11: Built-in Code-Gen Team Definition
 
-Create `.ratchet/teams/code-gen.yaml` as an embedded default.
+Create `internal/mesh/teams/code-gen.yaml` as an embedded default.
 
 - Architect agent: `qwen3:14b` (or fallback to `qwen3:8b`), planning system prompt, 20 max iterations
 - Coder agent: `qwen3:8b`, implementation system prompt, 40 max iterations
@@ -232,9 +254,10 @@ Create `internal/mesh/e2e_test.go`.
 
 ```mermaid
 graph LR
+    PRE[Prereq: workflow-plugin-agent v0.5.3] --> S3[Step 3: LocalNode]
     S1[Step 1: Blackboard] --> S4[Step 4: Tools]
     S2[Step 2: Router] --> S5[Step 5: Mesh]
-    S3[Step 3: Node + LocalNode] --> S5
+    S3 --> S5
     S4 --> S5
     S1 --> S5
     S5 --> S6[Step 6: RemoteNode]
@@ -251,11 +274,24 @@ graph LR
     S10 --> S14
 ```
 
-**Parallelizable:** Steps 1-3 can be done in parallel. Steps 7-8 can be done in parallel. Steps 10, 12, 13 can be done in parallel after step 9.
+## Implementation Sequence
+
+1. **First:** Implement and release `workflow-plugin-agent` executor mesh support (6 steps, separate plan)
+2. **Then:** Update `ratchet-cli/go.mod` to reference new workflow-plugin-agent tag
+3. **Parallel batch 1:** Steps 1, 2 (no external deps)
+4. **Parallel batch 2:** Steps 3, 4 (after batch 1 + go.mod update)
+5. **Step 5:** Mesh orchestrator (after batch 2)
+6. **Parallel batch 3:** Steps 6, 7, 8 (after step 5)
+7. **Step 9:** Wire TeamManager (after batch 3)
+8. **Parallel batch 4:** Steps 10, 11, 12, 13 (after step 9)
+9. **Step 14:** E2E test (after batch 4)
 
 ## Notes
 
-- All mesh types use `workflow-plugin-agent/provider` types directly — no wrapping or re-exporting
+- LocalNode delegates to `executor.Execute()` from workflow-plugin-agent — no custom chat loop in ratchet-cli
+- Mesh Message → provider.Message adapter needed in LocalNode (converts mesh inbox to executor inbox)
+- Executor OnEvent → mesh Event adapter needed (converts executor events to TeamEvent stream)
+- All mesh types use `workflow-plugin-agent/provider` and `workflow-plugin-agent/tools` types directly
 - LocalNode imports the provider package; the mesh package does NOT import the daemon package (one-way dependency)
 - Team YAML uses the same provider aliases as `ratchet provider list` — no separate config
 - The blackboard is in-memory only for this delivery; persistence is future work
