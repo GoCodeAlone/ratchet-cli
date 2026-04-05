@@ -106,31 +106,43 @@ func TestHooks_AgentSpawnComplete(t *testing.T) {
 
 func TestHooks_OnCronTick(t *testing.T) {
 	hc, fired := hookRecorder(t, hooks.OnCronTick)
-	db := setupCronDB(t)
+	engine := newTestEngine(t)
+	engine.Hooks = hc
 
-	// Mirror the service's actual cron callback: fire OnCronTick on each tick.
-	cs := NewCronScheduler(db, func(sessionID, command string) {
+	// Construct a Service with the same cron wiring as NewService, so OnCronTick
+	// fires through the real service callback (engine.Hooks.Run) on each tick.
+	svc := &Service{
+		engine:   engine,
+		sessions: NewSessionManager(engine.DB),
+		permGate: newPermissionGate(),
+		tokens:   NewTokenTracker(),
+	}
+	svc.cron = NewCronScheduler(engine.DB, func(sessionID, command string) {
 		go func() {
-			if hc != nil {
-				_ = hc.Run(hooks.OnCronTick, map[string]string{
+			tickCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			if engine.Hooks != nil {
+				_ = engine.Hooks.Run(hooks.OnCronTick, map[string]string{
 					"session_id": sessionID,
 					"command":    command,
 				})
 			}
+			ns := &noopSendServer{ctx: tickCtx}
+			_ = svc.handleChat(tickCtx, sessionID, command, ns)
 		}()
 	})
 	ctx := context.Background()
-	if err := cs.Start(ctx); err != nil {
+	if err := svc.cron.Start(ctx); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 
-	job, err := cs.Create(ctx, "sess-hook-cron", "100ms", "ping")
+	job, err := svc.cron.Create(ctx, "sess-hook-cron", "100ms", "ping")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	defer func() { _ = cs.Stop(ctx, job.ID) }()
+	defer func() { _ = svc.cron.Stop(ctx, job.ID) }()
 
-	waitFor(t, func() bool { return fired(hooks.OnCronTick) }, 3*time.Second, "OnCronTick from cron callback")
+	waitFor(t, func() bool { return fired(hooks.OnCronTick) }, 3*time.Second, "OnCronTick from service cron wiring")
 }
 
 func TestHooks_OnTokenLimit(t *testing.T) {
