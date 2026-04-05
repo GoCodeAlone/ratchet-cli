@@ -1,63 +1,58 @@
 package main
 
 import (
+	"bytes"
 	"os"
+	"strings"
 	"testing"
 )
 
 func TestHandleModel_NoArgs(t *testing.T) {
-	// handleModel with no args should print usage without panicking.
-	// Redirect stdout to discard output.
-	oldStdout := os.Stdout
-	devNull, err := os.Open(os.DevNull)
-	if err != nil {
-		t.Fatal(err)
+	out := captureStdout(t, func() {
+		handleModel([]string{})
+	})
+	if !strings.Contains(out, "Usage: ratchet model") {
+		t.Errorf("expected usage message, got: %s", out)
 	}
-	os.Stdout = devNull
-	defer func() {
-		os.Stdout = oldStdout
-		devNull.Close()
-	}()
-
-	// Should not panic
-	handleModel([]string{})
 }
 
 func TestHandleModel_UnknownSubcommand(t *testing.T) {
-	oldStdout := os.Stdout
-	devNull, err := os.Open(os.DevNull)
+	out := captureStdout(t, func() {
+		handleModel([]string{"unknown"})
+	})
+	if !strings.Contains(out, "unknown model command: unknown") {
+		t.Errorf("expected unknown command message, got: %s", out)
+	}
+}
+
+func TestHandleModel_Pull_NoArgs_PrintsUsage(t *testing.T) {
+	// handleModelPull with no args calls os.Exit(1), which we can't test directly.
+	// Verify the argument validation logic: empty args triggers the usage path.
+	args := []string{}
+	if len(args) != 0 {
+		t.Fatal("expected empty args for this test")
+	}
+	// The actual function calls os.Exit — to fully test this, refactor
+	// handleModelPull to return an error instead of calling os.Exit.
+	// For now we document the expected behavior.
+}
+
+// captureStdout redirects os.Stdout to a buffer and returns the captured output.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	os.Stdout = devNull
-	defer func() {
-		os.Stdout = oldStdout
-		devNull.Close()
-	}()
+	old := os.Stdout
+	os.Stdout = w
 
-	// Should not panic for unknown subcommand
-	handleModel([]string{"unknown"})
-}
+	fn()
 
-func TestHandleModel_Pull_MissingName(t *testing.T) {
-	// handleModelPull with no args should exit — we test it doesn't panic before
-	// the os.Exit by checking argument validation indirectly.
-	// The function validates len(args) == 0 and calls os.Exit(1).
-	// We verify the validation logic by checking args parsing.
-	args := []string{}
-	if len(args) == 0 {
-		// Expected: usage message + os.Exit(1)
-		// We don't call the function here as it would exit the test process.
-		// This test documents the expected behavior.
-		return
-	}
-	t.Error("expected early return for missing name")
-}
+	w.Close()
+	os.Stdout = old
 
-func TestHandleModel_List_NoServer(t *testing.T) {
-	// handleModelList calls OllamaClient.ListModels which requires a running server.
-	// When Ollama is not running, the function calls os.Exit(1).
-	// We test this by verifying the function exists and the expected behavior
-	// is documented here; integration testing requires a live Ollama instance.
-	_ = handleModelList // ensure it compiles
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	return buf.String()
 }

@@ -313,10 +313,13 @@ func promptYesNo(question string, scanner *bufio.Scanner) bool {
 // installOllama installs Ollama using the platform-appropriate method.
 func installOllama() error {
 	var cmd *exec.Cmd
-	if runtime.GOOS == "darwin" {
+	switch runtime.GOOS {
+	case "darwin":
 		cmd = exec.Command("brew", "install", "ollama")
-	} else {
+	case "linux":
 		cmd = exec.Command("sh", "-c", "curl -fsSL https://ollama.com/install.sh | sh")
+	default:
+		return fmt.Errorf("automatic Ollama installation is not supported on %s; please install manually from https://ollama.com/download", runtime.GOOS)
 	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -349,12 +352,16 @@ func startOllamaServer() error {
 // pullModelWithProgress pulls a model via Ollama and prints progress to stdout.
 func pullModelWithProgress(ctx context.Context, c *wfprovider.OllamaClient, model string) error {
 	lastPct := -1.0
-	return c.Pull(ctx, model, func(pct float64) {
+	err := c.Pull(ctx, model, func(pct float64) {
 		if pct-lastPct >= 5.0 || pct >= 100.0 {
 			fmt.Printf("\r  %.0f%%", pct)
 			lastPct = pct
 		}
 	})
+	if lastPct >= 0.0 {
+		fmt.Println() // newline after progress output
+	}
+	return err
 }
 
 // promptModelSelection prints a numbered list of models and returns the selected model ID.

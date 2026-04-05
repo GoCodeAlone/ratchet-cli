@@ -734,8 +734,15 @@ func (m OnboardingModel) startPull() (OnboardingModel, tea.Cmd) {
 		c := wfprovider.NewOllamaClient(baseURL)
 		err := c.Pull(ctx, pullName, func(pct float64) {
 			select {
-			case progressCh <- pct:
 			case <-ctx.Done():
+				return
+			default:
+			}
+			// Non-blocking send: drop progress updates if UI can't keep up
+			// to avoid backpressuring the download.
+			select {
+			case progressCh <- pct:
+			default:
 			}
 		})
 		doneCh <- err
