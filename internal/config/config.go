@@ -29,6 +29,10 @@ type ContextConfig struct {
 	// CompressionModel overrides the model used for summarisation. Empty means
 	// auto-select the cheapest available model.
 	CompressionModel string `yaml:"compression_model"`
+	// ModelLimits maps model names to their context window size in tokens.
+	// Used by the chat handler to determine when to trigger compression.
+	// Falls back to 200000 for unknown models.
+	ModelLimits map[string]int `yaml:"model_limits"`
 }
 
 // ModelRouting controls which model handles which class of task.
@@ -69,6 +73,13 @@ func DefaultConfig() *Config {
 			CompressionThreshold: 0.9,
 			PreserveMessages:     10,
 			CompressionModel:     "",
+			ModelLimits: map[string]int{
+				"claude-opus-4-6":   1000000,
+				"claude-sonnet-4-6": 200000,
+				"claude-haiku-4-5":  200000,
+				"gpt-4o":            128000,
+				"gpt-4o-mini":       128000,
+			},
 		},
 	}
 }

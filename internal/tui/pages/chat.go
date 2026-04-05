@@ -216,8 +216,7 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 			}
 			if result.TriggerReview {
 				m.streaming = ""
-				reviewMsg := "You are a code reviewer. Please review the following git diff and provide detailed feedback on correctness, style, and potential issues:\n\n```diff\n" + result.ReviewDiff + "\n```"
-				cmds = append(cmds, m.sendMessage(reviewMsg))
+				cmds = append(cmds, m.sendMessage("\x00review\x00"+result.ReviewDiff))
 			}
 			if result.Cmd != nil {
 				cmds = append(cmds, result.Cmd)

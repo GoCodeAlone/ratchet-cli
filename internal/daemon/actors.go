@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GoCodeAlone/workflow-plugin-agent/executor"
 	"github.com/tochemey/goakt/v4/actor"
 )
 
@@ -80,8 +81,9 @@ func (am *ActorManager) SpawnSession(ctx context.Context, sessionID, workingDir 
 
 // SpawnApproval spawns an ApprovalActor for the given requestID and returns its PID.
 // Callers use actor.Ask to send an ApprovalRequest and receive an ApprovalResponse.
-func (am *ActorManager) SpawnApproval(ctx context.Context, requestID string) (*actor.PID, error) {
-	a := &ApprovalActor{requestID: requestID}
+// gate and timeout are wired through to the actor; pass nil gate to auto-deny.
+func (am *ActorManager) SpawnApproval(ctx context.Context, requestID string, gate *ApprovalGate, timeout time.Duration) (*actor.PID, error) {
+	a := &ApprovalActor{requestID: requestID, gate: gate, timeout: timeout}
 	pid, err := am.system.Spawn(ctx, "approval-"+requestID, a)
 	if err != nil {
 		return nil, fmt.Errorf("spawn approval actor %s: %w", requestID, err)
@@ -195,6 +197,8 @@ type ApprovalResponse struct {
 // permission prompt or the timeout elapses.
 type ApprovalActor struct {
 	requestID string
+	gate      *ApprovalGate
+	timeout   time.Duration
 	responded bool
 }
 
@@ -203,15 +207,36 @@ func (a *ApprovalActor) PreStart(ctx *actor.Context) error { return nil }
 func (a *ApprovalActor) Receive(ctx *actor.ReceiveContext) {
 	switch msg := ctx.Message().(type) {
 	case ApprovalRequest:
-		// Actor parks here; a subsequent ApprovalResponse (sent via Tell) unblocks.
-		// Because Ask waits for Response(), we reply immediately with a pending
-		// indicator and let a second Tell deliver the final answer.
-		// For a simple synchronous pattern: respond denied after timeout.
 		_ = msg
-		ctx.Response(ApprovalResponse{
-			Approved: false,
-			Reason:   "no TUI response within timeout",
-		})
+		if a.gate == nil {
+			ctx.Response(ApprovalResponse{
+				Approved: false,
+				Reason:   "no approval gate configured",
+			})
+			return
+		}
+		timeout := a.timeout
+		if timeout == 0 {
+			timeout = 30 * time.Minute
+		}
+		record, err := a.gate.WaitForResolution(ctx.Context(), a.requestID, timeout)
+		if err != nil {
+			ctx.Response(ApprovalResponse{
+				Approved: false,
+				Reason:   err.Error(),
+			})
+			return
+		}
+		approved := record != nil && record.Status == executor.ApprovalApproved
+		reason := ""
+		if record != nil {
+			reason = record.ReviewerComment
+			if record.Status == executor.ApprovalTimeout {
+				reason = "approval timed out"
+			}
+		}
+		a.responded = true
+		ctx.Response(ApprovalResponse{Approved: approved, Reason: reason})
 	case ApprovalResponse:
 		// Forwarded from the TUI after the user responds.
 		a.responded = true
