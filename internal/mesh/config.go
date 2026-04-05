@@ -1,6 +1,7 @@
 package mesh
 
 import (
+	_ "embed"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,29 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+//go:embed teams/code-gen.yaml
+var defaultCodeGenTeam []byte
+
+// DefaultCodeGenTeamConfig returns the built-in code-gen team configuration.
+func DefaultCodeGenTeamConfig() (*TeamConfig, error) {
+	var tc TeamConfig
+	if err := yaml.Unmarshal(defaultCodeGenTeam, &tc); err != nil {
+		return nil, err
+	}
+	return &tc, nil
+}
+
+// BuiltinTeamConfigs returns all built-in team configurations keyed by name.
+func BuiltinTeamConfigs() (map[string]*TeamConfig, error) {
+	tc, err := DefaultCodeGenTeamConfig()
+	if err != nil {
+		return nil, err
+	}
+	return map[string]*TeamConfig{
+		"code-gen": tc,
+	}, nil
+}
 
 // AgentConfig describes a single agent within a team.
 type AgentConfig struct {

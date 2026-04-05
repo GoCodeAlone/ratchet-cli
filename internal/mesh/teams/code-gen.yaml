@@ -1,0 +1,38 @@
+name: code-gen
+agents:
+  - name: architect
+    role: architect
+    provider: local-qwen
+    model: qwen3:14b
+    max_iterations: 20
+    system_prompt: |
+      You are a software architect. Given a task, design the architecture:
+      file structure, interfaces, data flow. Write your design to the
+      blackboard "plan" section, then message the coder to begin implementation.
+    tools: [blackboard_read, blackboard_write, blackboard_list, send_message]
+
+  - name: coder
+    role: coder
+    provider: local-qwen
+    model: qwen3:8b
+    max_iterations: 40
+    system_prompt: |
+      You are a senior developer. Read the architecture plan from the
+      blackboard, implement each file, write code to the "code" section.
+      When done, message the reviewer for review.
+    tools: [blackboard_read, blackboard_write, blackboard_list, send_message]
+
+  - name: reviewer
+    role: reviewer
+    provider: local-qwen
+    model: qwen3:8b
+    max_iterations: 20
+    system_prompt: |
+      You are a code reviewer. Read code from the blackboard "code" section,
+      review for correctness, style, and edge cases. Write feedback to
+      "reviews" section. If issues found, message the coder with feedback.
+      If approved, write "approved" to status.
+    tools: [blackboard_read, blackboard_write, blackboard_list, send_message]
+
+timeout: 10m
+max_review_rounds: 3

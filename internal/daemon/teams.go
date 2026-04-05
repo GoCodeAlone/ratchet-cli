@@ -7,8 +7,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GoCodeAlone/workflow-plugin-agent/provider"
 	"github.com/google/uuid"
 
+	"github.com/GoCodeAlone/ratchet-cli/internal/mesh"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 )
 
@@ -48,6 +50,7 @@ type TeamManager struct {
 	mu    sync.RWMutex
 	teams map[string]*teamInstance
 	stop  chan struct{}
+	mesh  *mesh.AgentMesh
 }
 
 // NewTeamManager returns an initialized TeamManager.
@@ -55,6 +58,7 @@ func NewTeamManager() *TeamManager {
 	tm := &TeamManager{
 		teams: make(map[string]*teamInstance),
 		stop:  make(chan struct{}),
+		mesh:  mesh.NewAgentMesh(),
 	}
 	go tm.cleanupLoop()
 	return tm
@@ -285,4 +289,149 @@ func (tm *TeamManager) KillAgent(teamID string) error {
 	}
 	ti.cancel()
 	return nil
+}
+
+// StartMeshTeam creates a team via the mesh orchestrator, converts mesh Events
+// to pb.TeamEvents, and returns a channel of events.
+func (tm *TeamManager) StartMeshTeam(
+	ctx context.Context,
+	task string,
+	configs []mesh.NodeConfig,
+	providerFactory func(mesh.NodeConfig) provider.Provider,
+) (string, <-chan *pb.TeamEvent) {
+	handle, err := tm.mesh.SpawnTeam(ctx, task, configs, providerFactory)
+	if err != nil {
+		ch := make(chan *pb.TeamEvent, 1)
+		ch <- &pb.TeamEvent{
+			Event: &pb.TeamEvent_Error{
+				Error: &pb.ErrorEvent{
+					Message: fmt.Sprintf("spawn team: %v", err),
+				},
+			},
+		}
+		close(ch)
+		return "", ch
+	}
+
+	teamID := handle.ID
+	eventCh := make(chan *pb.TeamEvent, 64)
+
+	// Track as a teamInstance so GetStatus works for mesh teams too.
+	ti := &teamInstance{
+		id:      teamID,
+		task:    task,
+		agents:  make(map[string]*teamAgent),
+		status:  "running",
+		cancel:  handle.Cancel,
+		eventCh: eventCh,
+	}
+	tm.mu.Lock()
+	tm.teams[teamID] = ti
+	tm.mu.Unlock()
+
+	// Convert mesh events to pb events in a goroutine.
+	go func() {
+		defer close(eventCh)
+
+		for ev := range handle.Events {
+			switch ev.Type {
+			case "agent_spawned":
+				agentID := ev.AgentID
+				agentName := ev.AgentID
+				role := ""
+				if ev.Data != nil {
+					if n, ok := ev.Data["name"].(string); ok {
+						agentName = n
+					}
+					if r, ok := ev.Data["role"].(string); ok {
+						role = r
+					}
+				}
+				// Extract name from content if available (format: "node <name> (<role>) spawned")
+				if agentName == ev.AgentID && ev.Content != "" {
+					agentName = ev.AgentID
+				}
+
+				ti.mu.Lock()
+				ti.agents[agentID] = &teamAgent{
+					id:     agentID,
+					name:   agentName,
+					role:   role,
+					status: "running",
+				}
+				ti.mu.Unlock()
+
+				eventCh <- &pb.TeamEvent{
+					Event: &pb.TeamEvent_AgentSpawned{
+						AgentSpawned: &pb.AgentSpawned{
+							AgentId:   agentID,
+							AgentName: agentName,
+							Role:      role,
+						},
+					},
+				}
+			case "agent_message":
+				toAgent := ""
+				if ev.Data != nil {
+					if t, ok := ev.Data["to"].(string); ok {
+						toAgent = t
+					}
+				}
+				eventCh <- &pb.TeamEvent{
+					Event: &pb.TeamEvent_AgentMessage{
+						AgentMessage: &pb.AgentMessage{
+							FromAgent: ev.AgentID,
+							ToAgent:   toAgent,
+							Content:   ev.Content,
+						},
+					},
+				}
+			case "text":
+				eventCh <- &pb.TeamEvent{
+					Event: &pb.TeamEvent_Token{
+						Token: &pb.TokenDelta{
+							Content: ev.Content,
+						},
+					},
+				}
+			case "error":
+				eventCh <- &pb.TeamEvent{
+					Event: &pb.TeamEvent_Error{
+						Error: &pb.ErrorEvent{
+							Message: ev.Content,
+						},
+					},
+				}
+			case "complete":
+				// Individual agent complete - track status.
+				ti.mu.Lock()
+				if ag, ok := ti.agents[ev.AgentID]; ok {
+					ag.mu.Lock()
+					ag.status = "completed"
+					ag.mu.Unlock()
+				}
+				ti.mu.Unlock()
+			}
+		}
+
+		// Wait for team result.
+		result := <-handle.Done
+
+		summary := fmt.Sprintf("Team completed task: %s (status: %s)", task, result.Status)
+		if len(result.Errors) > 0 {
+			summary += fmt.Sprintf(" [%d errors]", len(result.Errors))
+		}
+
+		eventCh <- &pb.TeamEvent{
+			Event: &pb.TeamEvent_Complete{
+				Complete: &pb.SessionComplete{
+					Summary: summary,
+				},
+			},
+		}
+
+		tm.markDone(ti, result.Status)
+	}()
+
+	return teamID, eventCh
 }

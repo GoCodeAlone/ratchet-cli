@@ -13,23 +13,25 @@ import (
 
 // AgentCard represents an agent's current state in the team view.
 type AgentCard struct {
-	ID          string
-	Name        string
-	Role        string
-	Model       string
-	Status      string
-	CurrentTask string
-	Messages    []string
-	expanded    bool
+	ID                 string
+	Name               string
+	Role               string
+	Model              string
+	Status             string
+	CurrentTask        string
+	Messages           []string
+	BlackboardSections map[string]int // section name -> entry count
+	expanded           bool
 }
 
 // TeamModel shows the multi-agent team view.
 type TeamModel struct {
-	agents  []AgentCard
-	events  []*pb.TeamEvent
-	cursor  int
-	width   int
-	height  int
+	agents     []AgentCard
+	events     []*pb.TeamEvent
+	messageLog []string
+	cursor     int
+	width      int
+	height     int
 }
 
 func NewTeam() TeamModel {
@@ -52,7 +54,11 @@ func (m TeamModel) ApplyEvent(ev *pb.TeamEvent) TeamModel {
 			Role:   e.AgentSpawned.Role,
 			Status: "active",
 		})
+		m.messageLog = append(m.messageLog,
+			fmt.Sprintf("[spawned] %s (%s)", e.AgentSpawned.AgentName, e.AgentSpawned.Role))
 	case *pb.TeamEvent_AgentMessage:
+		m.messageLog = append(m.messageLog,
+			fmt.Sprintf("[%s → %s] %s", e.AgentMessage.FromAgent, e.AgentMessage.ToAgent, e.AgentMessage.Content))
 		for i, a := range m.agents {
 			if a.Name == e.AgentMessage.FromAgent {
 				m.agents[i].Messages = append(m.agents[i].Messages, e.AgentMessage.Content)
@@ -68,6 +74,12 @@ func (m TeamModel) ApplyEvent(ev *pb.TeamEvent) TeamModel {
 			lastMsg := len(m.agents[last].Messages) - 1
 			m.agents[last].Messages[lastMsg] += e.Token.Content
 		}
+	case *pb.TeamEvent_Complete:
+		m.messageLog = append(m.messageLog,
+			fmt.Sprintf("[complete] %s", e.Complete.Summary))
+	case *pb.TeamEvent_Error:
+		m.messageLog = append(m.messageLog,
+			fmt.Sprintf("[error] %s", e.Error.Message))
 	}
 	return m
 }
@@ -188,6 +200,17 @@ func (m TeamModel) View(t theme.Theme) string {
 				}
 			}
 		}
+
+		if agent.expanded && len(agent.BlackboardSections) > 0 {
+			var bbParts []string
+			for section, count := range agent.BlackboardSections {
+				bbParts = append(bbParts, fmt.Sprintf("%s:%d", section, count))
+			}
+			lines = append(lines, lipgloss.NewStyle().
+				Foreground(t.Muted).
+				Padding(0, 4).
+				Render("bb: "+strings.Join(bbParts, ", ")))
+		}
 	}
 
 	lines = append(lines, "")
@@ -196,4 +219,15 @@ func (m TeamModel) View(t theme.Theme) string {
 		Render("  ↑↓ navigate  Enter: expand  k: kill agent"))
 
 	return strings.Join(lines, "\n")
+}
+
+// SetBlackboardInfo sets the blackboard section data for a given agent.
+func (m TeamModel) SetBlackboardInfo(agentName string, sections map[string]int) TeamModel {
+	for i, a := range m.agents {
+		if a.Name == agentName {
+			m.agents[i].BlackboardSections = sections
+			break
+		}
+	}
+	return m
 }

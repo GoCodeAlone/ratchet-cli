@@ -141,39 +141,54 @@ func (m *AgentMesh) SpawnTeam(
 
 			outbox := make(chan Message, 64)
 
-			// Wire outbox → router.
+			// Wire outbox → router. Wait for this goroutine to finish
+			// before signalling wg.Done so the watcher does not close
+			// eventCh while messages are still being forwarded.
+			var outboxWg sync.WaitGroup
+			outboxWg.Add(1)
 			go func() {
+				defer outboxWg.Done()
 				for msg := range outbox {
 					if err := router.Send(msg); err != nil {
 						log.Printf("mesh: router send error for %s: %v", nd.ID(), err)
 					}
-					eventCh <- Event{
+					select {
+					case eventCh <- Event{
 						Type:    "agent_message",
 						AgentID: nd.ID(),
 						Content: msg.Content,
 						Data:    map[string]any{"to": msg.To, "type": msg.Type},
+					}:
+					default:
 					}
 				}
 			}()
 
 			err := nd.Run(teamCtx, task, bb, inbox, outbox)
 			close(outbox)
+			outboxWg.Wait()
 
 			if err != nil {
 				errMu.Lock()
 				runErrors = append(runErrors, fmt.Errorf("node %s: %w", nd.ID(), err))
 				errMu.Unlock()
 
-				eventCh <- Event{
+				select {
+				case eventCh <- Event{
 					Type:    "error",
 					AgentID: nd.ID(),
 					Content: err.Error(),
+				}:
+				default:
 				}
 			} else {
-				eventCh <- Event{
+				select {
+				case eventCh <- Event{
 					Type:    "complete",
 					AgentID: nd.ID(),
 					Content: "node finished",
+				}:
+				default:
 				}
 			}
 		}(w.node, w.inbox)
