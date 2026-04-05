@@ -9,7 +9,7 @@ import (
 )
 
 func TestTeamManager_Create(t *testing.T) {
-	tm := NewTeamManager()
+	tm := NewTeamManager(nil, nil)
 	teamID, eventCh := tm.StartTeam(context.Background(), &pb.StartTeamReq{
 		Task: "test task",
 	})
@@ -37,7 +37,7 @@ func TestTeamManager_Create(t *testing.T) {
 }
 
 func TestTeamManager_AgentLifecycle(t *testing.T) {
-	tm := NewTeamManager()
+	tm := NewTeamManager(nil, nil)
 	teamID, eventCh := tm.StartTeam(context.Background(), &pb.StartTeamReq{
 		Task: "build something",
 	})
@@ -68,7 +68,7 @@ func TestTeamManager_AgentLifecycle(t *testing.T) {
 }
 
 func TestTeamManager_DirectMessage(t *testing.T) {
-	tm := NewTeamManager()
+	tm := NewTeamManager(nil, nil)
 	_, eventCh := tm.StartTeam(context.Background(), &pb.StartTeamReq{
 		Task: "exchange messages",
 	})
@@ -95,7 +95,7 @@ func TestTeamManager_DirectMessage(t *testing.T) {
 }
 
 func TestTeamManager_KillAgent(t *testing.T) {
-	tm := NewTeamManager()
+	tm := NewTeamManager(nil, nil)
 
 	// Use a context to detect cancellation.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -129,7 +129,7 @@ func TestTeamManager_KillAgent(t *testing.T) {
 }
 
 func TestTeamManager_GetStatus_NotFound(t *testing.T) {
-	tm := NewTeamManager()
+	tm := NewTeamManager(nil, nil)
 	_, err := tm.GetStatus("nonexistent")
 	if err == nil {
 		t.Error("expected error for nonexistent team")

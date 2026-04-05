@@ -252,7 +252,7 @@ func (cs *CronScheduler) run(ctx context.Context, e *cronEntry) {
 			e.mu.Unlock()
 
 			// Persist updated state.
-			if _, err := cs.db.Exec(
+			if _, err := cs.db.ExecContext(ctx,
 				`UPDATE cron_jobs SET last_run=?, next_run=?, run_count=? WHERE id=?`,
 				lastRun, nextRun, runCount, jobID,
 			); err != nil {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/GoCodeAlone/ratchet-cli/internal/hooks"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 )
 
@@ -16,13 +17,15 @@ type PlanManager struct {
 	mu          sync.RWMutex
 	plans       map[string]*pb.Plan
 	completedAt map[string]time.Time
+	hooks       *hooks.HookConfig
 	stop        chan struct{}
 }
 
-func NewPlanManager() *PlanManager {
+func NewPlanManager(hks *hooks.HookConfig) *PlanManager {
 	pm := &PlanManager{
 		plans:       make(map[string]*pb.Plan),
 		completedAt: make(map[string]time.Time),
+		hooks:       hks,
 		stop:        make(chan struct{}),
 	}
 	go pm.cleanupLoop()
@@ -120,6 +123,9 @@ func (pm *PlanManager) Approve(planID string, skipSteps []string) error {
 	}
 	plan.Status = "approved"
 	pm.completedAt[planID] = time.Now()
+	if pm.hooks != nil {
+		_ = pm.hooks.Run(hooks.PrePlan, map[string]string{"plan_id": planID})
+	}
 	return nil
 }
 
@@ -177,6 +183,9 @@ func (pm *PlanManager) UpdateStep(planID, stepID, stepStatus, errMsg string) err
 	}
 	if allDone && plan.Status == "executing" {
 		plan.Status = "completed"
+		if pm.hooks != nil {
+			_ = pm.hooks.Run(hooks.PostPlan, map[string]string{"plan_id": planID})
+		}
 	}
 	return nil
 }

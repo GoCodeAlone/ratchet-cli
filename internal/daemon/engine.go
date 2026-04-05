@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/config"
+	"github.com/GoCodeAlone/ratchet-cli/internal/hooks"
 	"github.com/GoCodeAlone/ratchet-cli/internal/mcp"
 	"github.com/GoCodeAlone/ratchet-cli/internal/plugins"
 	ratchetplugin "github.com/GoCodeAlone/workflow-plugin-agent/orchestrator"
@@ -28,6 +29,7 @@ type EngineContext struct {
 	MCPDiscoverer    *mcp.Discoverer
 	ModelRouting     config.ModelRouting
 	Actors           *ActorManager
+	Hooks            *hooks.HookConfig
 }
 
 func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error) { //nolint:unparam
@@ -109,6 +111,9 @@ func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error
 	} else {
 		ec.Actors = actors
 	}
+
+	// Hooks config (non-fatal; hooks are optional)
+	ec.Hooks, _ = hooks.Load("")
 
 	log.Println("engine context initialized")
 	return ec, nil

@@ -5,15 +5,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/GoCodeAlone/workflow-plugin-agent/executor"
 	"github.com/GoCodeAlone/workflow-plugin-agent/provider"
 	"github.com/google/uuid"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/agent"
 	"github.com/GoCodeAlone/ratchet-cli/internal/config"
+	"github.com/GoCodeAlone/ratchet-cli/internal/hooks"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 )
 
@@ -69,11 +72,20 @@ func (g *permissionGate) Respond(resp *pb.PermissionResponse) bool {
 // When handleChat detects it, it runs compression immediately without an AI turn.
 const compactSentinel = "\x00compact\x00"
 
+// reviewSentinel is a prefix sent by the TUI to trigger a code review sub-session.
+// The diff content follows immediately after the sentinel.
+const reviewSentinel = "\x00review\x00"
+
 // handleChat executes a chat turn: loads session, resolves provider, streams tokens, handles tools.
 func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string, stream pb.RatchetDaemon_SendMessageServer) error {
 	// Manual compression request: skip the AI turn and compress history directly.
 	if userMessage == compactSentinel {
 		return s.handleCompact(ctx, sessionID, stream)
+	}
+
+	// Code review request: run a review sub-session against the provided diff.
+	if diff, ok := strings.CutPrefix(userMessage, reviewSentinel); ok {
+		return s.handleReview(ctx, sessionID, diff, stream)
 	}
 
 	// Load session
@@ -260,7 +272,19 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 		contextCfg.PreserveMessages = 10
 	}
 	const defaultModelLimit = 200000 // conservative default (Claude Sonnet)
-	if s.tokens.ShouldCompress(sessionID, contextCfg.CompressionThreshold, defaultModelLimit) {
+	modelLimit := defaultModelLimit
+	if session.Model != "" && contextCfg.ModelLimits != nil {
+		if limit, ok := contextCfg.ModelLimits[session.Model]; ok {
+			modelLimit = limit
+		}
+	}
+	if s.tokens.ShouldCompress(sessionID, contextCfg.CompressionThreshold, modelLimit) {
+		if s.engine.Hooks != nil {
+			_ = s.engine.Hooks.Run(hooks.OnTokenLimit, map[string]string{
+				"tokens_used":  fmt.Sprintf("%d", s.tokens.Total(sessionID)),
+				"tokens_limit": fmt.Sprintf("%d", modelLimit),
+			})
+		}
 		history, loadErr := s.loadHistory(ctx, sessionID)
 		if loadErr == nil && len(history) > contextCfg.PreserveMessages {
 			compressed, summary, compErr := Compress(ctx, history, contextCfg.PreserveMessages, prov)
@@ -296,12 +320,7 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 
 // isAutoAllowed checks if a tool is in the auto-allow list.
 func (s *Service) isAutoAllowed(cfg *config.Config, toolName string) bool {
-	for _, t := range cfg.Permissions.AutoAllow {
-		if t == toolName {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(cfg.Permissions.AutoAllow, toolName)
 }
 
 // executeTool runs a tool via the tool registry.
@@ -439,6 +458,88 @@ func (s *Service) handleCompact(ctx context.Context, sessionID string, stream pb
 	return stream.Send(&pb.ChatEvent{
 		Event: &pb.ChatEvent_Complete{
 			Complete: &pb.SessionComplete{Summary: "compressed"},
+		},
+	})
+}
+
+// handleReview runs the code-reviewer builtin agent against the provided diff.
+func (s *Service) handleReview(ctx context.Context, sessionID, diff string, stream pb.RatchetDaemon_SendMessageServer) error {
+	// Load code-reviewer builtin definition.
+	var reviewerDef agent.AgentDefinition
+	if defs, err := agent.LoadBuiltins(); err == nil {
+		for _, d := range defs {
+			if d.Name == "code-reviewer" {
+				reviewerDef = d
+				break
+			}
+		}
+	}
+
+	maxIter := reviewerDef.MaxIterations
+	if maxIter <= 0 {
+		maxIter = 5
+	}
+	systemPrompt := reviewerDef.SystemPrompt
+	if systemPrompt == "" {
+		systemPrompt = `You are a code reviewer. Analyze diffs and files for:
+- Security vulnerabilities (injection, auth bypass, etc.)
+- Logic errors and edge cases
+- Code style and naming conventions
+- Test coverage gaps
+Output structured review: Critical / Important / Minor with file:line refs.`
+	}
+
+	// Resolve provider: prefer reviewer's configured provider, then session provider, then default.
+	// reviewerDef.Model is a model selection hint, not a provider alias.
+	session, sessErr := s.sessions.Get(ctx, sessionID)
+	var prov provider.Provider
+	var provErr error
+	if reviewerDef.Provider != "" {
+		prov, provErr = s.engine.ProviderRegistry.GetByAlias(ctx, reviewerDef.Provider)
+	}
+	if prov == nil {
+		if sessErr == nil && session.Provider != "" {
+			prov, provErr = s.engine.ProviderRegistry.GetByAlias(ctx, session.Provider)
+		} else {
+			prov, provErr = s.engine.ProviderRegistry.GetDefault(ctx)
+		}
+	}
+	if provErr != nil {
+		return sendError(stream, "review: no provider: "+provErr.Error())
+	}
+
+	userMsg := "Please review the following git diff:\n\n```diff\n" + diff + "\n```"
+
+	result, err := executor.Execute(ctx, executor.Config{
+		Provider:      prov,
+		MaxIterations: maxIter,
+	}, systemPrompt, userMsg, "code-reviewer")
+	if err != nil {
+		return sendError(stream, "review execute: "+err.Error())
+	}
+
+	content := ""
+	if result != nil {
+		content = result.Content
+	}
+
+	if err := stream.Send(&pb.ChatEvent{
+		Event: &pb.ChatEvent_Token{
+			Token: &pb.TokenDelta{Content: content},
+		},
+	}); err != nil {
+		return err
+	}
+
+	if sessErr == nil && content != "" {
+		if err := s.saveMessage(ctx, sessionID, "assistant", content, "", ""); err != nil {
+			log.Printf("save review message: %v", err)
+		}
+	}
+
+	return stream.Send(&pb.ChatEvent{
+		Event: &pb.ChatEvent_Complete{
+			Complete: &pb.SessionComplete{Summary: "review complete"},
 		},
 	})
 }

@@ -9,9 +9,11 @@ import (
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/config"
+	"github.com/GoCodeAlone/ratchet-cli/internal/hooks"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 	"github.com/GoCodeAlone/ratchet-cli/internal/version"
 )
@@ -23,16 +25,17 @@ const ProtoVersion = 1
 
 type Service struct {
 	pb.UnimplementedRatchetDaemonServer
-	startedAt time.Time
-	engine    *EngineContext
-	sessions  *SessionManager
-	permGate  *permissionGate
-	plans     *PlanManager
-	cron      *CronScheduler
-	fleet     *FleetManager
-	teams     *TeamManager
-	tokens    *TokenTracker
-	jobs      *JobRegistry
+	startedAt    time.Time
+	engine       *EngineContext
+	sessions     *SessionManager
+	permGate     *permissionGate
+	approvalGate *ApprovalGate
+	plans        *PlanManager
+	cron         *CronScheduler
+	fleet        *FleetManager
+	teams        *TeamManager
+	tokens       *TokenTracker
+	jobs         *JobRegistry
 }
 
 func NewService(ctx context.Context) (*Service, error) {
@@ -44,28 +47,42 @@ func NewService(ctx context.Context) (*Service, error) {
 		return nil, err
 	}
 	svc := &Service{
-		startedAt: time.Now(),
-		engine:    engine,
-		sessions:  NewSessionManager(engine.DB),
-		permGate:  newPermissionGate(),
-		plans:     NewPlanManager(),
-	}
-	svc.cron = NewCronScheduler(engine.DB, func(sessionID, command string) {
-		// Tick handler: future integration point to inject command into session.
-	})
-	if err := svc.cron.Start(ctx); err != nil {
-		engine.Close()
-		return nil, fmt.Errorf("start cron scheduler: %w", err)
+		startedAt:    time.Now(),
+		engine:       engine,
+		sessions:     NewSessionManager(engine.DB),
+		permGate:     newPermissionGate(),
+		approvalGate: NewApprovalGate(),
+		plans:        NewPlanManager(engine.Hooks),
 	}
 	cfg, _ := config.Load()
 	routing := config.ModelRouting{}
 	if cfg != nil {
 		routing = cfg.ModelRouting
 	}
-	svc.fleet = NewFleetManager(routing)
-	svc.teams = NewTeamManager()
+	svc.fleet = NewFleetManager(routing, engine, engine.Hooks)
+	svc.teams = NewTeamManager(engine, engine.Hooks)
 	svc.tokens = NewTokenTracker()
 	svc.jobs = NewJobRegistry()
+
+	// Create and start cron scheduler AFTER all Service fields are initialized,
+	// since tick callbacks invoke svc.handleChat which depends on svc.tokens etc.
+	svc.cron = NewCronScheduler(engine.DB, func(sessionID, command string) {
+		go func() {
+			tickCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			if engine.Hooks != nil {
+				_ = engine.Hooks.Run(hooks.OnCronTick, map[string]string{"session_id": sessionID, "command": command})
+			}
+			ns := &noopSendServer{ctx: tickCtx}
+			if err := svc.handleChat(tickCtx, sessionID, command, ns); err != nil {
+				log.Printf("cron tick session=%s command=%q: %v", sessionID, command, err)
+			}
+		}()
+	})
+	if err := svc.cron.Start(ctx); err != nil {
+		engine.Close()
+		return nil, fmt.Errorf("start cron scheduler: %w", err)
+	}
 	svc.jobs.Register("session", NewSessionJobProvider(svc.sessions))
 	svc.jobs.Register("fleet_worker", NewFleetJobProvider(svc.fleet))
 	svc.jobs.Register("team_agent", NewTeamJobProvider(svc.teams))
@@ -209,10 +226,13 @@ func (s *Service) SendMessage(req *pb.SendMessageReq, stream pb.RatchetDaemon_Se
 }
 
 func (s *Service) RespondToPermission(ctx context.Context, req *pb.PermissionResponse) (*pb.Empty, error) {
-	if !s.permGate.Respond(req) {
-		return nil, status.Error(codes.NotFound, "no pending permission request with that ID")
+	if s.permGate.Respond(req) {
+		return &pb.Empty{}, nil
 	}
-	return &pb.Empty{}, nil
+	if s.approvalGate.Resolve(req.RequestId, req.Allowed, req.Scope) {
+		return &pb.Empty{}, nil
+	}
+	return nil, status.Error(codes.NotFound, "no pending permission request with that ID")
 }
 
 func (s *Service) AddProvider(ctx context.Context, req *pb.AddProviderReq) (*pb.Provider, error) {
@@ -412,11 +432,21 @@ func (s *Service) StopCron(ctx context.Context, req *pb.CronJobReq) (*pb.Empty, 
 
 // StartFleet starts a fleet of workers for plan execution and streams status events.
 func (s *Service) StartFleet(req *pb.StartFleetReq, stream pb.RatchetDaemon_StartFleetServer) error {
-	// Decompose plan steps — for now use a simple single-step decomposition.
-	// Future: load plan from PlanManager and extract independent steps.
-	steps := []string{req.PlanId}
-	if req.PlanId == "" {
-		steps = []string{"default-step"}
+	// Decompose plan into step descriptions. Fall back to single step if plan not found.
+	var steps []string
+	if plan := s.plans.Get(req.PlanId); plan != nil {
+		for _, step := range plan.Steps {
+			if step.Status != "skipped" {
+				steps = append(steps, step.Description)
+			}
+		}
+	}
+	if len(steps) == 0 {
+		if req.PlanId != "" {
+			steps = []string{req.PlanId}
+		} else {
+			steps = []string{"default-step"}
+		}
 	}
 
 	eventCh := make(chan *pb.FleetStatus, 32)
@@ -510,3 +540,14 @@ func (s *Service) RejectPlan(ctx context.Context, req *pb.RejectPlanReq) (*pb.Em
 	}
 	return &pb.Empty{}, nil
 }
+
+// noopSendServer discards all events; used for cron tick injection where no gRPC client is connected.
+type noopSendServer struct{ ctx context.Context }
+
+func (n *noopSendServer) Send(*pb.ChatEvent) error            { return nil }
+func (n *noopSendServer) Context() context.Context           { return n.ctx }
+func (n *noopSendServer) SetHeader(metadata.MD) error        { return nil }
+func (n *noopSendServer) SendHeader(metadata.MD) error       { return nil }
+func (n *noopSendServer) SetTrailer(metadata.MD)             {}
+func (n *noopSendServer) SendMsg(any) error                  { return nil }
+func (n *noopSendServer) RecvMsg(any) error                  { return nil }
