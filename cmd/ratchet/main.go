@@ -56,6 +56,8 @@ func main() {
 		handlePlugin(filteredArgs[1:])
 	case "skill":
 		handleSkill(filteredArgs[1:])
+	case "model":
+		handleModel(filteredArgs[1:])
 	case "config":
 		handleConfig(filteredArgs[1:])
 	case "chat":
@@ -129,6 +131,7 @@ Commands:
 
   daemon           Manage background daemon
   sessions         Manage sessions
+  model            Manage local models (list, pull)
   provider         Manage AI providers
   agent            Manage agent definitions
   team             Multi-agent orchestration
