@@ -7,9 +7,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
+	"github.com/GoCodeAlone/ratchet-cli/internal/mesh"
 	"github.com/GoCodeAlone/workflow-plugin-agent/executor"
 	"github.com/GoCodeAlone/workflow-plugin-agent/provider"
-	"github.com/google/uuid"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/hooks"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
@@ -48,11 +50,12 @@ type teamInstance struct {
 
 // TeamManager manages team instances.
 type TeamManager struct {
-	mu     sync.RWMutex
-	teams  map[string]*teamInstance
+	mu    sync.RWMutex
+	teams map[string]*teamInstance
 	engine *EngineContext
 	hooks  *hooks.HookConfig
-	stop   chan struct{}
+	stop  chan struct{}
+	mesh  *mesh.AgentMesh
 }
 
 // NewTeamManager returns an initialized TeamManager.
@@ -62,6 +65,7 @@ func NewTeamManager(engine *EngineContext, hks *hooks.HookConfig) *TeamManager {
 		engine: engine,
 		hooks:  hks,
 		stop:   make(chan struct{}),
+		mesh:  mesh.NewAgentMesh(),
 	}
 	go tm.cleanupLoop()
 	return tm
@@ -103,7 +107,12 @@ func (tm *TeamManager) purgeCompleted(ttl time.Duration) {
 
 // StartTeam creates a team, spawns default agents, and returns the team ID.
 // Events are sent on the returned channel; it is closed when the team finishes.
+// If req.TeamConfigName is set, the team is launched via the mesh orchestrator.
 func (tm *TeamManager) StartTeam(ctx context.Context, req *pb.StartTeamReq) (string, <-chan *pb.TeamEvent) {
+	if req.TeamConfigName != "" {
+		return tm.startMeshTeamFromConfig(ctx, req)
+	}
+
 	teamID := uuid.New().String()
 	runCtx, cancel := context.WithCancel(ctx)
 
@@ -129,6 +138,60 @@ func (tm *TeamManager) StartTeam(ctx context.Context, req *pb.StartTeamReq) (str
 		tm.run(runCtx, ti, req)
 	}()
 	return teamID, ti.eventCh
+}
+
+// startMeshTeamFromConfig loads a team config by name and launches a mesh team.
+func (tm *TeamManager) startMeshTeamFromConfig(ctx context.Context, req *pb.StartTeamReq) (string, <-chan *pb.TeamEvent) {
+	errCh := func(msg string) (string, <-chan *pb.TeamEvent) {
+		ch := make(chan *pb.TeamEvent, 1)
+		ch <- &pb.TeamEvent{Event: &pb.TeamEvent_Error{Error: &pb.ErrorEvent{Message: msg}}}
+		close(ch)
+		return "", ch
+	}
+
+	// Resolve the team config.
+	var tc *mesh.TeamConfig
+	builtins, err := mesh.BuiltinTeamConfigs()
+	if err == nil {
+		if bc, ok := builtins[req.TeamConfigName]; ok {
+			tc = bc
+		}
+	}
+	if tc == nil {
+		loaded, err := mesh.LoadTeamConfig(req.TeamConfigName)
+		if err != nil {
+			return errCh(fmt.Sprintf("load team config %q: %v", req.TeamConfigName, err))
+		}
+		tc = loaded
+	}
+
+	configs := mesh.ToNodeConfigs(tc)
+
+	// Build a provider factory that resolves providers via the daemon's
+	// ProviderRegistry when available, honouring the per-agent provider/model
+	// settings from the team YAML. Falls back to an Ollama provider using the
+	// agent's model when no registry is configured (e.g., in tests).
+	providerFactory := func(cfg mesh.NodeConfig) provider.Provider {
+		if tm.engine != nil && tm.engine.ProviderRegistry != nil {
+			var prov provider.Provider
+			var provErr error
+			if cfg.Provider != "" {
+				prov, provErr = tm.engine.ProviderRegistry.GetByAlias(ctx, cfg.Provider)
+			}
+			if prov == nil || provErr != nil {
+				prov, provErr = tm.engine.ProviderRegistry.GetDefault(ctx)
+			}
+			if prov != nil && provErr == nil {
+				return prov
+			}
+		}
+		// Fallback: create a local Ollama provider using the agent's model.
+		return provider.NewOllamaProvider(provider.OllamaConfig{
+			Model: cfg.Model,
+		})
+	}
+
+	return tm.StartMeshTeam(ctx, req.Task, configs, providerFactory)
 }
 
 // executeAgent runs a single team agent via the real executor loop.
@@ -400,4 +463,159 @@ func (tm *TeamManager) KillAgent(teamID string) error {
 	}
 	ti.cancel()
 	return nil
+}
+
+// StartMeshTeam creates a team via the mesh orchestrator, converts mesh Events
+// to pb.TeamEvents, and returns a channel of events.
+func (tm *TeamManager) StartMeshTeam(
+	ctx context.Context,
+	task string,
+	configs []mesh.NodeConfig,
+	providerFactory func(mesh.NodeConfig) provider.Provider,
+) (string, <-chan *pb.TeamEvent) {
+	handle, err := tm.mesh.SpawnTeam(ctx, task, configs, providerFactory)
+	if err != nil {
+		ch := make(chan *pb.TeamEvent, 1)
+		ch <- &pb.TeamEvent{
+			Event: &pb.TeamEvent_Error{
+				Error: &pb.ErrorEvent{
+					Message: fmt.Sprintf("spawn team: %v", err),
+				},
+			},
+		}
+		close(ch)
+		return "", ch
+	}
+
+	teamID := handle.ID
+	eventCh := make(chan *pb.TeamEvent, 64)
+
+	// Track as a teamInstance so GetStatus works for mesh teams too.
+	ti := &teamInstance{
+		id:      teamID,
+		task:    task,
+		agents:  make(map[string]*teamAgent),
+		status:  "running",
+		cancel:  handle.Cancel,
+		eventCh: eventCh,
+	}
+	tm.mu.Lock()
+	tm.teams[teamID] = ti
+	tm.mu.Unlock()
+
+	// Convert mesh events to pb events in a goroutine.
+	go func() {
+		defer close(eventCh)
+
+		for ev := range handle.Events {
+			var pbEv *pb.TeamEvent
+			switch ev.Type {
+			case "agent_spawned":
+				agentID := ev.AgentID
+				agentName := ev.AgentID
+				role := ""
+				if ev.Data != nil {
+					if n, ok := ev.Data["name"].(string); ok {
+						agentName = n
+					}
+					if r, ok := ev.Data["role"].(string); ok {
+						role = r
+					}
+				}
+
+				ti.mu.Lock()
+				ti.agents[agentID] = &teamAgent{
+					id:     agentID,
+					name:   agentName,
+					role:   role,
+					status: "running",
+				}
+				ti.mu.Unlock()
+
+				pbEv = &pb.TeamEvent{
+					Event: &pb.TeamEvent_AgentSpawned{
+						AgentSpawned: &pb.AgentSpawned{
+							AgentId:   agentID,
+							AgentName: agentName,
+							Role:      role,
+						},
+					},
+				}
+			case "agent_message":
+				toAgent := ""
+				if ev.Data != nil {
+					if t, ok := ev.Data["to"].(string); ok {
+						toAgent = t
+					}
+				}
+				pbEv = &pb.TeamEvent{
+					Event: &pb.TeamEvent_AgentMessage{
+						AgentMessage: &pb.AgentMessage{
+							FromAgent: ev.AgentID,
+							ToAgent:   toAgent,
+							Content:   ev.Content,
+						},
+					},
+				}
+			case "text":
+				pbEv = &pb.TeamEvent{
+					Event: &pb.TeamEvent_Token{
+						Token: &pb.TokenDelta{
+							Content: ev.Content,
+						},
+					},
+				}
+			case "error":
+				pbEv = &pb.TeamEvent{
+					Event: &pb.TeamEvent_Error{
+						Error: &pb.ErrorEvent{
+							Message: ev.Content,
+						},
+					},
+				}
+			case "complete":
+				// Individual agent complete — track status.
+				ti.mu.Lock()
+				if ag, ok := ti.agents[ev.AgentID]; ok {
+					ag.mu.Lock()
+					ag.status = "completed"
+					ag.mu.Unlock()
+				}
+				ti.mu.Unlock()
+			}
+
+			if pbEv != nil {
+				select {
+				case eventCh <- pbEv:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+
+		// Retrieve the final result (Done is already closed at this point
+		// because handle.Events is closed by the same goroutine that closes
+		// doneCh, so Result() is safe to call without waiting again).
+		result := handle.Result()
+
+		summary := fmt.Sprintf("Team completed task: %s (status: %s)", task, result.Status)
+		if len(result.Errors) > 0 {
+			summary += fmt.Sprintf(" [%d errors]", len(result.Errors))
+		}
+
+		select {
+		case eventCh <- &pb.TeamEvent{
+			Event: &pb.TeamEvent_Complete{
+				Complete: &pb.SessionComplete{
+					Summary: summary,
+				},
+			},
+		}:
+		case <-ctx.Done():
+		}
+
+		tm.markDone(ti, result.Status)
+	}()
+
+	return teamID, eventCh
 }
