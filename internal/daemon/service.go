@@ -36,6 +36,8 @@ type Service struct {
 	teams        *TeamManager
 	tokens       *TokenTracker
 	jobs         *JobRegistry
+	broadcaster  *SessionBroadcaster
+	shutdownFn   func()
 }
 
 func NewService(ctx context.Context) (*Service, error) {
@@ -63,6 +65,7 @@ func NewService(ctx context.Context) (*Service, error) {
 	svc.teams = NewTeamManager(engine, engine.Hooks)
 	svc.tokens = NewTokenTracker()
 	svc.jobs = NewJobRegistry()
+	svc.broadcaster = NewSessionBroadcaster()
 
 	// Create and start cron scheduler AFTER all Service fields are initialized,
 	// since tick callbacks invoke svc.handleChat which depends on svc.tokens etc.
@@ -168,8 +171,20 @@ func (s *Service) RequestReload(req *pb.ReloadReq, stream pb.RatchetDaemon_Reque
 	return nil
 }
 
+// SetShutdownFunc injects the cancel function that shuts down the daemon.
+// Called by daemon main after NewService returns.
+func (s *Service) SetShutdownFunc(fn func()) {
+	s.shutdownFn = fn
+}
+
 func (s *Service) Shutdown(ctx context.Context, _ *pb.Empty) (*pb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "not yet implemented")
+	if s.shutdownFn != nil {
+		go func() {
+			time.Sleep(100 * time.Millisecond) // let RPC response flush
+			s.shutdownFn()
+		}()
+	}
+	return &pb.Empty{}, nil
 }
 
 func (s *Service) CreateSession(ctx context.Context, req *pb.CreateSessionReq) (*pb.Session, error) {
@@ -207,11 +222,26 @@ func (s *Service) ListSessions(ctx context.Context, _ *pb.Empty) (*pb.SessionLis
 }
 
 func (s *Service) AttachSession(req *pb.AttachReq, stream pb.RatchetDaemon_AttachSessionServer) error {
-	return status.Error(codes.Unimplemented, "not yet implemented")
+	ch, subID := s.broadcaster.Subscribe(req.SessionId)
+	defer s.broadcaster.Unsubscribe(req.SessionId, subID)
+	for {
+		select {
+		case event, ok := <-ch:
+			if !ok {
+				return nil
+			}
+			if err := stream.Send(event); err != nil {
+				return err
+			}
+		case <-stream.Context().Done():
+			return nil
+		}
+	}
 }
 
 func (s *Service) DetachSession(ctx context.Context, req *pb.DetachReq) (*pb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "not yet implemented")
+	// Detach is handled client-side by cancelling the AttachSession stream.
+	return &pb.Empty{}, nil
 }
 
 func (s *Service) KillSession(ctx context.Context, req *pb.KillReq) (*pb.Empty, error) {
@@ -350,11 +380,27 @@ func (s *Service) SetDefaultProvider(ctx context.Context, req *pb.SetDefaultProv
 }
 
 func (s *Service) ListAgents(ctx context.Context, _ *pb.Empty) (*pb.AgentList, error) {
-	return nil, status.Error(codes.Unimplemented, "not yet implemented")
+	agents := s.teams.ListAllAgents()
+	agents = append(agents, s.fleet.ListAllWorkers()...)
+	return &pb.AgentList{Agents: agents}, nil
 }
 
 func (s *Service) GetAgentStatus(ctx context.Context, req *pb.AgentStatusReq) (*pb.Agent, error) {
-	return nil, status.Error(codes.Unimplemented, "not yet implemented")
+	if ag := s.teams.FindAgent(req.AgentId); ag != nil {
+		return ag, nil
+	}
+	if ag := s.fleet.FindWorker(req.AgentId); ag != nil {
+		return ag, nil
+	}
+	return nil, status.Errorf(codes.NotFound, "agent %s not found", req.AgentId)
+}
+
+func (s *Service) UpdateProviderModel(ctx context.Context, req *pb.UpdateProviderModelReq) (*pb.Empty, error) {
+	if _, err := s.engine.DB.ExecContext(ctx, "UPDATE llm_providers SET model = ? WHERE alias = ?", req.Model, req.Alias); err != nil {
+		return nil, status.Errorf(codes.Internal, "update model: %v", err)
+	}
+	s.engine.ProviderRegistry.InvalidateCacheAlias(req.Alias)
+	return &pb.Empty{}, nil
 }
 
 func (s *Service) StartTeam(req *pb.StartTeamReq, stream pb.RatchetDaemon_StartTeamServer) error {

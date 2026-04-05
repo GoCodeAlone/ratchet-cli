@@ -76,8 +76,23 @@ const compactSentinel = "\x00compact\x00"
 // The diff content follows immediately after the sentinel.
 const reviewSentinel = "\x00review\x00"
 
+// broadcastStream wraps a send-message stream and fans out each event to the broadcaster.
+type broadcastStream struct {
+	pb.RatchetDaemon_SendMessageServer
+	sessionID   string
+	broadcaster *SessionBroadcaster
+}
+
+func (b *broadcastStream) Send(ev *pb.ChatEvent) error {
+	if b.broadcaster != nil {
+		b.broadcaster.Publish(b.sessionID, ev)
+	}
+	return b.RatchetDaemon_SendMessageServer.Send(ev)
+}
+
 // handleChat executes a chat turn: loads session, resolves provider, streams tokens, handles tools.
 func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string, stream pb.RatchetDaemon_SendMessageServer) error {
+	stream = &broadcastStream{RatchetDaemon_SendMessageServer: stream, sessionID: sessionID, broadcaster: s.broadcaster}
 	// Manual compression request: skip the AI turn and compress history directly.
 	if userMessage == compactSentinel {
 		return s.handleCompact(ctx, sessionID, stream)
