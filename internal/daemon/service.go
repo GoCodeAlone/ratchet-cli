@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"encoding/json"
+	"strings"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/config"
 	"github.com/GoCodeAlone/ratchet-cli/internal/hooks"
@@ -599,27 +600,100 @@ func (s *Service) RejectPlan(ctx context.Context, req *pb.RejectPlanReq) (*pb.Em
 }
 
 // RegisterMeshNode registers a remote node in the service mesh and returns its generated ID.
+// The returned ID should be used by the client when opening a MeshStream (sent as
+// the first MeshEvent.node_registered message) so both sides agree on the node identity.
 func (s *Service) RegisterMeshNode(ctx context.Context, req *pb.RegisterNodeReq) (*pb.RegisterNodeResp, error) {
 	nodeID := uuid.New().String()
-	if _, err := s.meshRouter.Register(nodeID); err != nil {
-		return nil, status.Errorf(codes.Internal, "register mesh node: %v", err)
-	}
+	// Don't register with router here — MeshStream does that using the same ID
+	// sent by the client in the handshake, ensuring a single consistent identity.
 	return &pb.RegisterNodeResp{NodeId: nodeID}, nil
 }
 
 // MeshStream handles bidirectional mesh event exchange with a remote daemon node.
-// Incoming BlackboardSync events are written to the local mesh blackboard.
-// Incoming AgentMessage events are routed via the local mesh router.
-// Outgoing events are forwarded from the router inbox to the remote.
+//
+// Protocol: The first message from the client should be a node_registered event
+// carrying the nodeID from RegisterMeshNode. If missing, a new ID is generated.
+//
+// All outgoing sends are serialized through a single channel to avoid concurrent
+// stream.Send calls. Both AgentMessages and BlackboardSync events are forwarded.
 func (s *Service) MeshStream(stream pb.RatchetDaemon_MeshStreamServer) error {
+	ctx := stream.Context()
+
+	// Handshake: read first message to get node ID.
 	nodeID := uuid.New().String()
-	inbox, err := s.meshRouter.Register(nodeID)
+	first, err := stream.Recv()
 	if err != nil {
-		return status.Errorf(codes.Internal, "register mesh stream node: %v", err)
+		return err
+	}
+	processFirstAsEvent := false
+	if nr, ok := first.Event.(*pb.MeshEvent_NodeRegistered); ok {
+		nodeID = nr.NodeRegistered.NodeId
+	} else {
+		// Not a handshake — process it as a regular event after registration.
+		processFirstAsEvent = true
+	}
+
+	inbox, regErr := s.meshRouter.Register(nodeID)
+	if regErr != nil {
+		return status.Errorf(codes.Internal, "register mesh stream node %s: %v", nodeID, regErr)
 	}
 	defer s.meshRouter.Unregister(nodeID)
 
-	// Forward router inbox messages to the remote node.
+	// Process the first message if it wasn't a handshake.
+	if processFirstAsEvent {
+		s.handleMeshEvent(first)
+	}
+
+	// sendCh serializes all outgoing events to avoid concurrent stream.Send.
+	sendCh := make(chan *pb.MeshEvent, 64)
+	sendErrCh := make(chan error, 1)
+
+	// Sender goroutine.
+	go func() {
+		for {
+			select {
+			case ev, ok := <-sendCh:
+				if !ok {
+					return
+				}
+				if err := stream.Send(ev); err != nil {
+					select {
+					case sendErrCh <- err:
+					default:
+					}
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	// Watch local blackboard for writes → forward to remote via sendCh.
+	watcherID := s.meshBB.Watch(func(key string, val mesh.Entry) {
+		parts := strings.SplitN(key, "/", 2)
+		if len(parts) != 2 {
+			return
+		}
+		valueBytes, _ := json.Marshal(val.Value)
+		select {
+		case sendCh <- &pb.MeshEvent{
+			Event: &pb.MeshEvent_BlackboardSync{
+				BlackboardSync: &pb.BlackboardSync{
+					Section:  parts[0],
+					Key:      parts[1],
+					Value:    valueBytes,
+					Author:   val.Author,
+					Revision: val.Revision,
+				},
+			},
+		}:
+		default:
+		}
+	})
+	defer s.meshBB.Unwatch(watcherID)
+
+	// Forward router inbox messages to the remote node via sendCh.
 	go func() {
 		for {
 			select {
@@ -627,7 +701,8 @@ func (s *Service) MeshStream(stream pb.RatchetDaemon_MeshStreamServer) error {
 				if !ok {
 					return
 				}
-				_ = stream.Send(&pb.MeshEvent{
+				select {
+				case sendCh <- &pb.MeshEvent{
 					Event: &pb.MeshEvent_AgentMessage{
 						AgentMessage: &pb.AgentMessage{
 							FromAgent: msg.From,
@@ -635,8 +710,10 @@ func (s *Service) MeshStream(stream pb.RatchetDaemon_MeshStreamServer) error {
 							Content:   msg.Content,
 						},
 					},
-				})
-			case <-stream.Context().Done():
+				}:
+				default:
+				}
+			case <-ctx.Done():
 				return
 			}
 		}
@@ -644,28 +721,40 @@ func (s *Service) MeshStream(stream pb.RatchetDaemon_MeshStreamServer) error {
 
 	// Main loop: receive events from the remote node.
 	for {
+		select {
+		case sendErr := <-sendErrCh:
+			return fmt.Errorf("mesh stream send: %w", sendErr)
+		default:
+		}
+
 		ev, err := stream.Recv()
 		if err != nil {
-			if stream.Context().Err() != nil {
+			if ctx.Err() != nil {
 				return nil
 			}
 			return err
 		}
-		switch e := ev.Event.(type) {
-		case *pb.MeshEvent_BlackboardSync:
-			sync := e.BlackboardSync
-			var value any
-			_ = json.Unmarshal(sync.Value, &value)
-			s.meshBB.Write(sync.Section, sync.Key, value, sync.Author)
-		case *pb.MeshEvent_AgentMessage:
-			msg := e.AgentMessage
-			_ = s.meshRouter.Send(mesh.Message{
-				From:    msg.FromAgent,
-				To:      msg.ToAgent,
-				Content: msg.Content,
-				Type:    "result",
-			})
-		}
+		s.handleMeshEvent(ev)
+	}
+}
+
+// handleMeshEvent processes a single incoming MeshEvent from a remote node.
+func (s *Service) handleMeshEvent(ev *pb.MeshEvent) {
+	switch e := ev.Event.(type) {
+	case *pb.MeshEvent_BlackboardSync:
+		sync := e.BlackboardSync
+		var value any
+		_ = json.Unmarshal(sync.Value, &value)
+		// Use WriteFromRemote to avoid echo loops.
+		s.meshBB.WriteFromRemote(sync.Section, sync.Key, value, sync.Author, sync.Revision)
+	case *pb.MeshEvent_AgentMessage:
+		msg := e.AgentMessage
+		_ = s.meshRouter.Send(mesh.Message{
+			From:    msg.FromAgent,
+			To:      msg.ToAgent,
+			Content: msg.Content,
+			Type:    "result",
+		})
 	}
 }
 

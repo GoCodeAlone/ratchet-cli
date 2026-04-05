@@ -56,6 +56,16 @@ func TestMeshStream_BlackboardSync(t *testing.T) {
 		t.Fatalf("MeshStream: %v", err)
 	}
 
+	// Send handshake first (node_registered with our ID).
+	err = stream.Send(&pb.MeshEvent{
+		Event: &pb.MeshEvent_NodeRegistered{
+			NodeRegistered: &pb.RegisterNodeResp{NodeId: "test-client"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("handshake Send: %v", err)
+	}
+
 	// Send a BlackboardSync from the client to the server.
 	value, _ := json.Marshal("hello-from-client")
 	err = stream.Send(&pb.MeshEvent{

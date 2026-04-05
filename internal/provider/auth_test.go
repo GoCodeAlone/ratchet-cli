@@ -7,12 +7,20 @@ import (
 )
 
 func TestCopilotAuth_DeviceFlow(t *testing.T) {
-	// DeviceFlow makes a real network call; it should fail in test environments
-	// without network access (or succeed if GitHub is reachable). Either outcome
-	// is acceptable — we just verify the function signature compiles and runs.
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	// DeviceFlow calls StartGitHubDeviceFlow which makes a real HTTP POST.
+	// Use a very short timeout so it fails fast without hitting the network.
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
 	defer cancel()
-	_, _ = DeviceFlow(ctx) // error expected due to timeout; we don't assert
+
+	_, err := DeviceFlow(ctx)
+	if err == nil {
+		t.Skip("DeviceFlow unexpectedly succeeded (GitHub reachable with valid client)")
+	}
+	// We expect a context deadline exceeded or a network error — both are valid.
+	// The key assertion is that DeviceFlow properly propagates the error.
+	if err.Error() == "" {
+		t.Error("expected non-empty error message from DeviceFlow")
+	}
 }
 
 func TestCopilotAuth_ListModels_ReturnsErrorOnFailure(t *testing.T) {
@@ -23,6 +31,6 @@ func TestCopilotAuth_ListModels_ReturnsErrorOnFailure(t *testing.T) {
 	ctx := context.Background()
 	models, err := ListModels(ctx, "copilot", "bad-key", "")
 	if err == nil && len(models) == 0 {
-		t.Error("expected either an error or non-empty model list, got neither")
+		t.Error("expected either an error or non-empty models; got nil error + empty list")
 	}
 }

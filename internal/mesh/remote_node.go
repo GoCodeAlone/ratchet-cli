@@ -43,13 +43,9 @@ func (n *RemoteNode) Info() NodeInfo {
 // Run dials the remote daemon, opens a bidirectional MeshStream, and bridges
 // the local blackboard and message channels with the remote execution.
 //
-//   - Inbox messages (from other local nodes) are forwarded to the remote as AgentMessage events.
-//   - Local blackboard writes are forwarded as BlackboardSync events.
-//   - Incoming BlackboardSync events from the remote are applied to the local blackboard.
-//   - Incoming AgentMessage events are routed to outbox for delivery to local nodes.
-//
-// Run returns when the context is cancelled, the remote signals completion via
-// the blackboard ("status/<nodeID>" = "done" or "approved"), or the stream closes.
+// All outgoing sends are serialized through a single sendCh to avoid
+// concurrent gRPC stream.Send calls. Blackboard writes from the remote
+// use WriteFromRemote to avoid echo loops back through the watcher.
 func (n *RemoteNode) Run(ctx context.Context, task string, bb *Blackboard, inbox <-chan Message, outbox chan<- Message) error {
 	conn, err := grpc.NewClient(n.address, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -66,14 +62,37 @@ func (n *RemoteNode) Run(ctx context.Context, task string, bb *Blackboard, inbox
 	// doneCh is closed when the remote signals task completion.
 	doneCh := make(chan struct{})
 
-	// Watch local blackboard for writes → forward to remote.
-	bb.Watch(func(key string, val Entry) {
+	// sendCh serializes all outgoing MeshEvents to avoid concurrent stream.Send.
+	sendCh := make(chan *pb.MeshEvent, 64)
+
+	// Sender goroutine: single writer to the stream.
+	go func() {
+		for {
+			select {
+			case ev, ok := <-sendCh:
+				if !ok {
+					return
+				}
+				if err := stream.Send(ev); err != nil {
+					return // stream broken, recv loop will detect
+				}
+			case <-ctx.Done():
+				return
+			case <-doneCh:
+				return
+			}
+		}
+	}()
+
+	// Watch local blackboard for writes → forward to remote via sendCh.
+	watcherID := bb.Watch(func(key string, val Entry) {
 		parts := strings.SplitN(key, "/", 2)
 		if len(parts) != 2 {
 			return
 		}
 		valueBytes, _ := json.Marshal(val.Value)
-		_ = stream.Send(&pb.MeshEvent{
+		select {
+		case sendCh <- &pb.MeshEvent{
 			Event: &pb.MeshEvent_BlackboardSync{
 				BlackboardSync: &pb.BlackboardSync{
 					Section:  parts[0],
@@ -83,10 +102,14 @@ func (n *RemoteNode) Run(ctx context.Context, task string, bb *Blackboard, inbox
 					Revision: val.Revision,
 				},
 			},
-		})
+		}:
+		default:
+			// Drop if sendCh is full — avoid blocking the caller.
+		}
 	})
+	defer bb.Unwatch(watcherID)
 
-	// Forward inbox messages to remote.
+	// Forward inbox messages to remote via sendCh.
 	go func() {
 		for {
 			select {
@@ -94,7 +117,8 @@ func (n *RemoteNode) Run(ctx context.Context, task string, bb *Blackboard, inbox
 				if !ok {
 					return
 				}
-				_ = stream.Send(&pb.MeshEvent{
+				select {
+				case sendCh <- &pb.MeshEvent{
 					Event: &pb.MeshEvent_AgentMessage{
 						AgentMessage: &pb.AgentMessage{
 							FromAgent: msg.From,
@@ -102,7 +126,9 @@ func (n *RemoteNode) Run(ctx context.Context, task string, bb *Blackboard, inbox
 							Content:   msg.Content,
 						},
 					},
-				})
+				}:
+				default:
+				}
 			case <-ctx.Done():
 				return
 			case <-doneCh:
@@ -125,7 +151,8 @@ func (n *RemoteNode) Run(ctx context.Context, task string, bb *Blackboard, inbox
 			sync := e.BlackboardSync
 			var value any
 			_ = json.Unmarshal(sync.Value, &value)
-			bb.Write(sync.Section, sync.Key, value, sync.Author)
+			// Use WriteFromRemote to avoid triggering the watcher (echo loop).
+			bb.WriteFromRemote(sync.Section, sync.Key, value, sync.Author, sync.Revision)
 			// Check for task completion signal.
 			if sync.Section == "status" && sync.Key == n.id {
 				if s, ok := value.(string); ok && (s == "done" || s == "approved") {
