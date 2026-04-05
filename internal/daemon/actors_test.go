@@ -108,7 +108,7 @@ func TestActorManager_ApprovalFlow(t *testing.T) {
 	}
 	defer am.Close(context.Background())
 
-	pid, err := am.SpawnApproval(context.Background(), "req-001")
+	pid, err := am.SpawnApproval(context.Background(), "req-001", nil, 0)
 	if err != nil {
 		t.Fatalf("SpawnApproval: %v", err)
 	}
