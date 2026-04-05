@@ -15,6 +15,7 @@ import (
 	providerauth "github.com/GoCodeAlone/ratchet-cli/internal/provider"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 	"github.com/GoCodeAlone/ratchet-cli/internal/tui/theme"
+	wfprovider "github.com/GoCodeAlone/workflow-plugin-agent/provider"
 )
 
 // OnboardingDoneMsg signals provider setup is complete.
@@ -53,6 +54,12 @@ type modelsListMsg struct {
 	err    error
 }
 
+// pullProgressMsg carries a model pull progress update (0–100).
+type pullProgressMsg struct{ pct float64 }
+
+// pullDoneMsg signals a model pull completed or failed.
+type pullDoneMsg struct{ err error }
+
 type onboardingStep int
 
 const (
@@ -62,6 +69,7 @@ const (
 	stepEnterAPIKey
 	stepEnterBaseURL
 	stepFetchModels
+	stepPullModel
 	stepSelectModel
 	stepTestConnection
 )
@@ -150,6 +158,19 @@ type OnboardingModel struct {
 	fetchedModels  []providerauth.ModelInfo
 	modelsError    string
 
+	// Model pull (stepPullModel)
+	pullingModel       bool
+	pullProgress       float64
+	pullModelName      string
+	pullCursor         int
+	recommendedModels  []string
+	pullError          string
+	pullProgressCh     chan float64
+	pullDoneCh         chan error
+	pullCancel         context.CancelFunc
+	pullCustomInput    textinput.Model
+	pullEnteringCustom bool
+
 	// Model selection
 	modelCursor int
 
@@ -210,7 +231,7 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 	// screens all dismiss properly. For the API key entry step, the step-specific
 	// handler routes back to the Anthropic auth choice when appropriate.
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok && keyMsg.String() == "esc" {
-		if m.step != stepSelectProvider && m.step != stepEnterAPIKey && m.step != stepAnthropicAuthChoice {
+		if m.step != stepSelectProvider && m.step != stepEnterAPIKey && m.step != stepAnthropicAuthChoice && m.step != stepPullModel {
 			if m.authCancel != nil {
 				m.authCancel()
 				m.authCancel = nil
@@ -273,8 +294,38 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		}
 		m.fetchedModels = msg.models
 		m.modelCursor = 0
+		// When Ollama has no models installed, offer to pull one.
+		if len(msg.models) == 0 && msg.err == nil && m.selectedProvider().name == "ollama" {
+			m.step = stepPullModel
+			m.pullCursor = 0
+			m.pullError = ""
+			m.pullingModel = false
+			m.recommendedModels = []string{"qwen3:8b", "llama3.3:8b", "gemma3:4b"}
+			return m, nil
+		}
 		m.step = stepSelectModel
 		return m, nil
+
+	case pullProgressMsg:
+		m.pullProgress = msg.pct
+		return m, m.readPullProgress()
+
+	case pullDoneMsg:
+		m.pullingModel = false
+		if m.pullCancel != nil {
+			m.pullCancel()
+			m.pullCancel = nil
+		}
+		if msg.err != nil && msg.err != context.Canceled {
+			m.pullError = msg.err.Error()
+			return m, nil
+		}
+		if msg.err == context.Canceled {
+			// User cancelled — stay on stepPullModel with cleared state.
+			return m, nil
+		}
+		// Pull succeeded — re-fetch models and proceed to selection.
+		return m.transitionToFetchModels()
 
 	case providerAddedMsg:
 		if msg.err != nil {
@@ -298,7 +349,7 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		return m, nil
 
 	case spinner.TickMsg:
-		if m.testing || m.authing || m.fetchingModels {
+		if m.testing || m.authing || m.fetchingModels || m.pullingModel {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
 			return m, cmd
@@ -319,6 +370,8 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		return m.updateEnterBaseURL(msg)
 	case stepFetchModels:
 		return m.updateFetchModels(msg)
+	case stepPullModel:
+		return m.updatePullModel(msg)
 	case stepSelectModel:
 		return m.updateSelectModel(msg)
 	case stepTestConnection:
@@ -585,6 +638,128 @@ func (m OnboardingModel) updateFetchModels(msg tea.Msg) (OnboardingModel, tea.Cm
 	return m, nil
 }
 
+func (m OnboardingModel) updatePullModel(msg tea.Msg) (OnboardingModel, tea.Cmd) {
+	// Allow Esc to cancel an in-progress pull.
+	if m.pullingModel {
+		if keyMsg, ok := msg.(tea.KeyPressMsg); ok && keyMsg.String() == "esc" {
+			if m.pullCancel != nil {
+				m.pullCancel()
+				m.pullCancel = nil
+			}
+			m.pullingModel = false
+			m.pullError = ""
+			m.step = stepSelectProvider
+			m.cursor = m.providerIdx
+		}
+		return m, nil
+	}
+
+	// Custom model name entry mode.
+	if m.pullEnteringCustom {
+		if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+			switch keyMsg.String() {
+			case "esc":
+				m.pullEnteringCustom = false
+				m.pullCustomInput.SetValue("")
+				return m, nil
+			case "enter":
+				name := strings.TrimSpace(m.pullCustomInput.Value())
+				if name == "" {
+					return m, nil
+				}
+				m.pullEnteringCustom = false
+				m.pullModelName = name
+				return m.startPull()
+			}
+		}
+		var cmd tea.Cmd
+		m.pullCustomInput, cmd = m.pullCustomInput.Update(msg)
+		return m, cmd
+	}
+
+	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+		customIdx := len(m.recommendedModels) // index for the "Custom" row
+		switch keyMsg.String() {
+		case "esc":
+			m.step = stepSelectProvider
+			m.cursor = m.providerIdx
+			return m, nil
+		case "j", "down":
+			if m.pullCursor < customIdx {
+				m.pullCursor++
+			}
+		case "k", "up":
+			if m.pullCursor > 0 {
+				m.pullCursor--
+			}
+		case "enter", " ":
+			if m.pullCursor == customIdx {
+				// Enter custom model name
+				m.pullEnteringCustom = true
+				m.pullCustomInput = textinput.New()
+				m.pullCustomInput.Placeholder = "e.g. mistral:7b"
+				m.pullCustomInput.Prompt = ""
+				return m, m.pullCustomInput.Focus()
+			}
+			m.pullModelName = m.recommendedModels[m.pullCursor]
+			return m.startPull()
+		}
+		// Number shortcuts (1 = recommended[0], ..., N+1 = Custom)
+		for i := range m.recommendedModels {
+			if keyMsg.String() == fmt.Sprintf("%d", i+1) {
+				m.pullCursor = i
+			}
+		}
+		if keyMsg.String() == fmt.Sprintf("%d", customIdx+1) {
+			m.pullCursor = customIdx
+		}
+	}
+	return m, nil
+}
+
+// startPull initiates the async model pull and returns the updated model and initial tea.Cmd.
+func (m OnboardingModel) startPull() (OnboardingModel, tea.Cmd) {
+	m.pullingModel = true
+	m.pullProgress = 0
+	m.pullError = ""
+	progressCh := make(chan float64, 50)
+	doneCh := make(chan error, 1)
+	m.pullProgressCh = progressCh
+	m.pullDoneCh = doneCh
+	ctx, cancel := context.WithCancel(context.Background())
+	m.pullCancel = cancel
+	baseURL := m.baseURLInput.Value()
+	pullName := m.pullModelName
+	go func() {
+		c := wfprovider.NewOllamaClient(baseURL)
+		err := c.Pull(ctx, pullName, func(pct float64) {
+			select {
+			case progressCh <- pct:
+			case <-ctx.Done():
+			}
+		})
+		doneCh <- err
+	}()
+	return m, tea.Batch(m.spinner.Tick, m.readPullProgress())
+}
+
+// readPullProgress returns a tea.Cmd that waits for the next pull progress update.
+func (m OnboardingModel) readPullProgress() tea.Cmd {
+	return func() tea.Msg {
+		select {
+		case pct, ok := <-m.pullProgressCh:
+			if ok {
+				return pullProgressMsg{pct: pct}
+			}
+			// Channel closed before done — drain doneCh
+			err := <-m.pullDoneCh
+			return pullDoneMsg{err: err}
+		case err := <-m.pullDoneCh:
+			return pullDoneMsg{err: err}
+		}
+	}
+}
+
 func (m OnboardingModel) updateSelectModel(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 	models := m.fetchedModels
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
@@ -848,6 +1023,41 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 		sb.WriteString(m.spinner.View() + " Loading available models from " + p.displayName + "...\n\n")
 		sb.WriteString(mutedStyle.Render("Esc: cancel"))
 
+	case stepPullModel:
+		customIdx := len(m.recommendedModels)
+		if m.pullEnteringCustom {
+			sb.WriteString("Enter model name to pull:\n\n")
+			sb.WriteString("Model: " + m.pullCustomInput.View() + "\n\n")
+			sb.WriteString(mutedStyle.Render("Enter: pull  Esc: back"))
+		} else {
+			sb.WriteString("No models installed. Pull one to get started:\n\n")
+			for i, name := range m.recommendedModels {
+				cursor := "  "
+				style := mutedStyle
+				if i == m.pullCursor {
+					cursor = "▶ "
+					style = lipgloss.NewStyle().Foreground(t.Foreground).Bold(true)
+				}
+				sb.WriteString(style.Render(fmt.Sprintf("%s%d. %s", cursor, i+1, name)) + "\n")
+			}
+			// Custom row
+			customCursor := "  "
+			customStyle := mutedStyle
+			if m.pullCursor == customIdx {
+				customCursor = "▶ "
+				customStyle = lipgloss.NewStyle().Foreground(t.Foreground).Bold(true)
+			}
+			sb.WriteString(customStyle.Render(fmt.Sprintf("%s%d. Custom (enter model name)", customCursor, customIdx+1)) + "\n")
+			if m.pullingModel {
+				fmt.Fprintf(&sb, "\n%s Pulling %s... %.0f%%\n", m.spinner.View(), m.pullModelName, m.pullProgress)
+			} else if m.pullError != "" {
+				sb.WriteString("\n" + errorStyle.Render("Pull failed: "+m.pullError) + "\n")
+				sb.WriteString(mutedStyle.Render("Enter: retry  Esc: back"))
+			} else {
+				sb.WriteString("\n" + mutedStyle.Render(fmt.Sprintf("↑/↓ or 1-%d: select  Enter: pull  Esc: back", customIdx+1)))
+			}
+		}
+
 	case stepSelectModel:
 		models := m.fetchedModels
 		if m.modelsError != "" || len(models) == 0 {
@@ -944,7 +1154,7 @@ func (m OnboardingModel) currentStepIndex() int {
 			idx++
 		}
 		return idx
-	case stepFetchModels, stepSelectModel:
+	case stepFetchModels, stepPullModel, stepSelectModel:
 		idx := 1
 		if p.auth != authNone {
 			idx++
