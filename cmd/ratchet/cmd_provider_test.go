@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"os"
 	"strings"
 	"testing"
@@ -12,15 +13,14 @@ func TestPromptYesNo_Yes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		oldStdin := os.Stdin
-		os.Stdin = r
 		if _, err := w.WriteString(input); err != nil {
 			t.Fatal(err)
 		}
 		w.Close()
 
-		got := promptYesNo("test?")
-		os.Stdin = oldStdin
+		scanner := bufio.NewScanner(r)
+		got := promptYesNo("test?", scanner)
+		r.Close()
 
 		if !got {
 			t.Errorf("promptYesNo(%q) = false, want true", strings.TrimRight(input, "\n"))
@@ -34,15 +34,14 @@ func TestPromptYesNo_No(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		oldStdin := os.Stdin
-		os.Stdin = r
 		if _, err := w.WriteString(input); err != nil {
 			t.Fatal(err)
 		}
 		w.Close()
 
-		got := promptYesNo("test?")
-		os.Stdin = oldStdin
+		scanner := bufio.NewScanner(r)
+		got := promptYesNo("test?", scanner)
+		r.Close()
 
 		if got {
 			t.Errorf("promptYesNo(%q) = true, want false", strings.TrimRight(input, "\n"))

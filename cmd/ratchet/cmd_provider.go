@@ -162,13 +162,16 @@ func handleOllamaSetup(args []string) {
 		}
 	}
 
+	// Single scanner shared across all stdin reads in this command.
+	scanner := bufio.NewScanner(os.Stdin)
+
 	fmt.Println("=== Ollama Setup ===")
 
 	// 1. Check if ollama binary exists.
 	ollamaPath, err := exec.LookPath("ollama")
 	if err != nil {
 		fmt.Println("✗ ollama not found in PATH")
-		if promptYesNo("Ollama not found. Install it?") {
+		if promptYesNo("Ollama not found. Install it?", scanner) {
 			if err := installOllama(); err != nil {
 				fmt.Fprintf(os.Stderr, "install failed: %v\n", err)
 				fmt.Println("Manual install: https://ollama.com/download")
@@ -212,8 +215,8 @@ func handleOllamaSetup(args []string) {
 			fmt.Printf("  %d. %s\n", i+1, m.Name)
 		}
 		fmt.Println()
-		if !promptYesNo("Pull a new model?") {
-			model = promptModelSelection(models)
+		if !promptYesNo("Pull a new model?", scanner) {
+			model = promptModelSelection(models, scanner)
 			wantNew = false
 		}
 	}
@@ -231,7 +234,6 @@ func handleOllamaSetup(args []string) {
 		}
 		fmt.Printf("  %d. Custom (enter name)\n", len(recommended)+1)
 		fmt.Print("\nSelect [1]: ")
-		scanner := bufio.NewScanner(os.Stdin)
 		scanner.Scan()
 		choice := strings.TrimSpace(scanner.Text())
 		switch choice {
@@ -243,7 +245,7 @@ func handleOllamaSetup(args []string) {
 			model = recommended[2].ID
 		default:
 			fmt.Print("Model name: ")
-			scanner.Scan()
+			scanner.Scan() //nolint:staticcheck
 			model = strings.TrimSpace(scanner.Text())
 			if model == "" {
 				model = recommended[0].ID
@@ -300,9 +302,9 @@ func handleOllamaSetup(args []string) {
 }
 
 // promptYesNo prints question + " [Y/n] " and returns true for yes (default).
-func promptYesNo(question string) bool {
+// The caller must pass the shared scanner for the current command.
+func promptYesNo(question string, scanner *bufio.Scanner) bool {
 	fmt.Printf("%s [Y/n] ", question)
-	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Scan()
 	ans := strings.TrimSpace(strings.ToLower(scanner.Text()))
 	return ans == "" || ans == "y" || ans == "yes"
@@ -356,13 +358,13 @@ func pullModelWithProgress(ctx context.Context, c *wfprovider.OllamaClient, mode
 }
 
 // promptModelSelection prints a numbered list of models and returns the selected model ID.
-func promptModelSelection(models []wfprovider.ModelInfo) string {
+// The caller must pass the shared scanner for the current command.
+func promptModelSelection(models []wfprovider.ModelInfo, scanner *bufio.Scanner) string {
 	fmt.Println("Select model:")
 	for i, m := range models {
 		fmt.Printf("  %d. %s\n", i+1, m.Name)
 	}
 	fmt.Print("Select [1]: ")
-	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Scan()
 	choice := strings.TrimSpace(scanner.Text())
 	if choice == "" {

@@ -159,15 +159,16 @@ type OnboardingModel struct {
 	modelsError    string
 
 	// Model pull (stepPullModel)
-	pullingModel      bool
-	pullProgress      float64
-	pullModelName     string
-	pullCursor        int
-	recommendedModels []string
-	pullError         string
-	pullProgressCh    chan float64
-	pullDoneCh        chan error
-	pullCustomInput   textinput.Model
+	pullingModel       bool
+	pullProgress       float64
+	pullModelName      string
+	pullCursor         int
+	recommendedModels  []string
+	pullError          string
+	pullProgressCh     chan float64
+	pullDoneCh         chan error
+	pullCancel         context.CancelFunc
+	pullCustomInput    textinput.Model
 	pullEnteringCustom bool
 
 	// Model selection
@@ -311,8 +312,16 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 
 	case pullDoneMsg:
 		m.pullingModel = false
-		if msg.err != nil {
+		if m.pullCancel != nil {
+			m.pullCancel()
+			m.pullCancel = nil
+		}
+		if msg.err != nil && msg.err != context.Canceled {
 			m.pullError = msg.err.Error()
+			return m, nil
+		}
+		if msg.err == context.Canceled {
+			// User cancelled — stay on stepPullModel with cleared state.
 			return m, nil
 		}
 		// Pull succeeded — re-fetch models and proceed to selection.
@@ -630,7 +639,18 @@ func (m OnboardingModel) updateFetchModels(msg tea.Msg) (OnboardingModel, tea.Cm
 }
 
 func (m OnboardingModel) updatePullModel(msg tea.Msg) (OnboardingModel, tea.Cmd) {
+	// Allow Esc to cancel an in-progress pull.
 	if m.pullingModel {
+		if keyMsg, ok := msg.(tea.KeyPressMsg); ok && keyMsg.String() == "esc" {
+			if m.pullCancel != nil {
+				m.pullCancel()
+				m.pullCancel = nil
+			}
+			m.pullingModel = false
+			m.pullError = ""
+			m.step = stepSelectProvider
+			m.cursor = m.providerIdx
+		}
 		return m, nil
 	}
 
@@ -706,12 +726,17 @@ func (m OnboardingModel) startPull() (OnboardingModel, tea.Cmd) {
 	doneCh := make(chan error, 1)
 	m.pullProgressCh = progressCh
 	m.pullDoneCh = doneCh
+	ctx, cancel := context.WithCancel(context.Background())
+	m.pullCancel = cancel
 	baseURL := m.baseURLInput.Value()
 	pullName := m.pullModelName
 	go func() {
 		c := wfprovider.NewOllamaClient(baseURL)
-		err := c.Pull(context.Background(), pullName, func(pct float64) {
-			progressCh <- pct
+		err := c.Pull(ctx, pullName, func(pct float64) {
+			select {
+			case progressCh <- pct:
+			case <-ctx.Done():
+			}
 		})
 		doneCh <- err
 	}()
