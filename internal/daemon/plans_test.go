@@ -15,7 +15,7 @@ func makePlanSteps(ids ...string) []*pb.PlanStep {
 }
 
 func TestPlanManager_CreateAndGet(t *testing.T) {
-	pm := NewPlanManager()
+	pm := NewPlanManager(nil)
 	plan := pm.Create("sess1", "my goal", makePlanSteps("s1", "s2"))
 
 	if plan.Id == "" {
@@ -48,7 +48,7 @@ func TestPlanManager_CreateAndGet(t *testing.T) {
 }
 
 func TestPlanManager_Approve(t *testing.T) {
-	pm := NewPlanManager()
+	pm := NewPlanManager(nil)
 	plan := pm.Create("sess1", "goal", makePlanSteps("s1", "s2", "s3"))
 
 	// Approve skipping s2
@@ -84,7 +84,7 @@ func TestPlanManager_Approve(t *testing.T) {
 }
 
 func TestPlanManager_Reject(t *testing.T) {
-	pm := NewPlanManager()
+	pm := NewPlanManager(nil)
 	plan := pm.Create("sess1", "goal", makePlanSteps("s1"))
 
 	if err := pm.Reject(plan.Id, "needs more detail"); err != nil {
@@ -117,7 +117,7 @@ func TestPlanManager_Reject(t *testing.T) {
 }
 
 func TestPlanManager_UpdateStep(t *testing.T) {
-	pm := NewPlanManager()
+	pm := NewPlanManager(nil)
 	plan := pm.Create("sess1", "goal", makePlanSteps("s1", "s2", "s3"))
 
 	// Mark plan as executing manually (simulate approval flow)
@@ -167,7 +167,7 @@ func TestPlanManager_UpdateStep(t *testing.T) {
 }
 
 func TestPlanManager_ForSession(t *testing.T) {
-	pm := NewPlanManager()
+	pm := NewPlanManager(nil)
 	pm.Create("sess1", "goal A", makePlanSteps("s1"))
 	pm.Create("sess1", "goal B", makePlanSteps("s2"))
 	pm.Create("sess2", "goal C", makePlanSteps("s3"))
@@ -187,7 +187,7 @@ func TestPlanManager_ForSession(t *testing.T) {
 }
 
 func TestPlanManager_UpdateStep_SkipDoesNotBlock(t *testing.T) {
-	pm := NewPlanManager()
+	pm := NewPlanManager(nil)
 	plan := pm.Create("sess1", "goal", makePlanSteps("s1", "s2"))
 	plan.Status = "executing"
 

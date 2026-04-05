@@ -11,6 +11,7 @@ import (
 	"github.com/GoCodeAlone/workflow-plugin-agent/provider"
 	"github.com/google/uuid"
 
+	"github.com/GoCodeAlone/ratchet-cli/internal/hooks"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 )
 
@@ -50,14 +51,16 @@ type TeamManager struct {
 	mu     sync.RWMutex
 	teams  map[string]*teamInstance
 	engine *EngineContext
+	hooks  *hooks.HookConfig
 	stop   chan struct{}
 }
 
 // NewTeamManager returns an initialized TeamManager.
-func NewTeamManager(engine *EngineContext) *TeamManager {
+func NewTeamManager(engine *EngineContext, hks *hooks.HookConfig) *TeamManager {
 	tm := &TeamManager{
 		teams:  make(map[string]*teamInstance),
 		engine: engine,
+		hooks:  hks,
 		stop:   make(chan struct{}),
 	}
 	go tm.cleanupLoop()
@@ -219,6 +222,9 @@ func (tm *TeamManager) run(ctx context.Context, ti *teamInstance, req *pb.StartT
 				},
 			},
 		}
+		if tm.hooks != nil {
+			_ = tm.hooks.Run(hooks.OnAgentSpawn, map[string]string{"agent_name": ag.name, "agent_role": ag.role})
+		}
 	}
 
 	select {
@@ -245,6 +251,9 @@ func (tm *TeamManager) run(ctx context.Context, ti *teamInstance, req *pb.StartT
 			orch.mu.Lock()
 			orch.status = "completed"
 			orch.mu.Unlock()
+			if tm.hooks != nil {
+				_ = tm.hooks.Run(hooks.OnAgentComplete, map[string]string{"agent_name": orch.name})
+			}
 			if worker != nil {
 				tm.routeMessage(ti, orch.name, worker.name, orchResult)
 			}
@@ -265,6 +274,9 @@ func (tm *TeamManager) run(ctx context.Context, ti *teamInstance, req *pb.StartT
 			worker.mu.Lock()
 			worker.status = "completed"
 			worker.mu.Unlock()
+			if tm.hooks != nil {
+				_ = tm.hooks.Run(hooks.OnAgentComplete, map[string]string{"agent_name": worker.name})
+			}
 			if orch != nil {
 				tm.routeMessage(ti, worker.name, orch.name, workerResult)
 			}

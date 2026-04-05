@@ -10,7 +10,7 @@ import (
 )
 
 func TestFleetManager_Decompose(t *testing.T) {
-	fm := NewFleetManager(config.ModelRouting{}, nil)
+	fm := NewFleetManager(config.ModelRouting{}, nil, nil)
 	req := &pb.StartFleetReq{
 		SessionId:  "sess-1",
 		PlanId:     "plan-1",
@@ -41,7 +41,7 @@ func TestFleetManager_Decompose(t *testing.T) {
 }
 
 func TestFleetManager_WorkerLifecycle(t *testing.T) {
-	fm := NewFleetManager(config.ModelRouting{}, nil)
+	fm := NewFleetManager(config.ModelRouting{}, nil, nil)
 	req := &pb.StartFleetReq{
 		SessionId:  "sess-2",
 		PlanId:     "plan-2",
@@ -71,7 +71,7 @@ func TestFleetManager_WorkerLifecycle(t *testing.T) {
 }
 
 func TestFleetManager_KillWorker(t *testing.T) {
-	fm := NewFleetManager(config.ModelRouting{}, nil)
+	fm := NewFleetManager(config.ModelRouting{}, nil, nil)
 
 	// Use a context to control worker duration
 	req := &pb.StartFleetReq{
@@ -108,7 +108,7 @@ func TestFleetManager_KillWorker(t *testing.T) {
 }
 
 func TestFleetManager_MaxWorkers(t *testing.T) {
-	fm := NewFleetManager(config.ModelRouting{}, nil)
+	fm := NewFleetManager(config.ModelRouting{}, nil, nil)
 	req := &pb.StartFleetReq{
 		SessionId:  "sess-4",
 		PlanId:     "plan-4",

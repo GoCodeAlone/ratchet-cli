@@ -14,6 +14,7 @@ import (
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/agent"
 	"github.com/GoCodeAlone/ratchet-cli/internal/config"
+	"github.com/GoCodeAlone/ratchet-cli/internal/hooks"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 )
 
@@ -270,7 +271,19 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 		contextCfg.PreserveMessages = 10
 	}
 	const defaultModelLimit = 200000 // conservative default (Claude Sonnet)
-	if s.tokens.ShouldCompress(sessionID, contextCfg.CompressionThreshold, defaultModelLimit) {
+	modelLimit := defaultModelLimit
+	if session.Model != "" && contextCfg.ModelLimits != nil {
+		if limit, ok := contextCfg.ModelLimits[session.Model]; ok {
+			modelLimit = limit
+		}
+	}
+	if s.tokens.ShouldCompress(sessionID, contextCfg.CompressionThreshold, modelLimit) {
+		if s.engine.Hooks != nil {
+			_ = s.engine.Hooks.Run(hooks.OnTokenLimit, map[string]string{
+				"session_id":   sessionID,
+				"tokens_limit": fmt.Sprintf("%d", modelLimit),
+			})
+		}
 		history, loadErr := s.loadHistory(ctx, sessionID)
 		if loadErr == nil && len(history) > contextCfg.PreserveMessages {
 			compressed, summary, compErr := Compress(ctx, history, contextCfg.PreserveMessages, prov)

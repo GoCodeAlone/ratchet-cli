@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/config"
+	"github.com/GoCodeAlone/ratchet-cli/internal/hooks"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 	"github.com/GoCodeAlone/ratchet-cli/internal/version"
 )
@@ -51,12 +52,15 @@ func NewService(ctx context.Context) (*Service, error) {
 		sessions:     NewSessionManager(engine.DB),
 		permGate:     newPermissionGate(),
 		approvalGate: NewApprovalGate(),
-		plans:        NewPlanManager(),
+		plans:        NewPlanManager(engine.Hooks),
 	}
 	svc.cron = NewCronScheduler(engine.DB, func(sessionID, command string) {
 		go func() {
 			tickCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
+			if engine.Hooks != nil {
+				_ = engine.Hooks.Run(hooks.OnCronTick, map[string]string{"session_id": sessionID, "command": command})
+			}
 			ns := &noopSendServer{ctx: tickCtx}
 			if err := svc.handleChat(tickCtx, sessionID, command, ns); err != nil {
 				log.Printf("cron tick session=%s command=%q: %v", sessionID, command, err)
@@ -72,8 +76,8 @@ func NewService(ctx context.Context) (*Service, error) {
 	if cfg != nil {
 		routing = cfg.ModelRouting
 	}
-	svc.fleet = NewFleetManager(routing, engine)
-	svc.teams = NewTeamManager(engine)
+	svc.fleet = NewFleetManager(routing, engine, engine.Hooks)
+	svc.teams = NewTeamManager(engine, engine.Hooks)
 	svc.tokens = NewTokenTracker()
 	svc.jobs = NewJobRegistry()
 	svc.jobs.Register("session", NewSessionJobProvider(svc.sessions))

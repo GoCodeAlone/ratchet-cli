@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/config"
+	"github.com/GoCodeAlone/ratchet-cli/internal/hooks"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 	"github.com/GoCodeAlone/workflow-plugin-agent/executor"
 	"github.com/GoCodeAlone/workflow-plugin-agent/provider"
@@ -29,15 +30,17 @@ type FleetManager struct {
 	fleets  map[string]*fleetInstance
 	routing config.ModelRouting
 	engine  *EngineContext
+	hooks   *hooks.HookConfig
 	stop    chan struct{}
 }
 
 // NewFleetManager returns an initialized FleetManager with optional model routing config.
-func NewFleetManager(routing config.ModelRouting, engine *EngineContext) *FleetManager {
+func NewFleetManager(routing config.ModelRouting, engine *EngineContext, hks *hooks.HookConfig) *FleetManager {
 	fm := &FleetManager{
 		fleets:  make(map[string]*fleetInstance),
 		routing: routing,
 		engine:  engine,
+		hooks:   hks,
 		stop:    make(chan struct{}),
 	}
 	go fm.cleanupLoop()
@@ -124,7 +127,13 @@ func (fm *FleetManager) StartFleet(ctx context.Context, req *pb.StartFleetReq, s
 				log.Printf("fleet %s: panic: %v", fleetID, r)
 			}
 		}()
+		if fm.hooks != nil {
+			_ = fm.hooks.Run(hooks.PreFleet, map[string]string{"fleet_id": fleetID})
+		}
 		fm.runFleet(ctx, fi, maxWorkers, eventCh)
+		if fm.hooks != nil {
+			_ = fm.hooks.Run(hooks.PostFleet, map[string]string{"fleet_id": fleetID})
+		}
 	}()
 
 	return fleetID
