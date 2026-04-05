@@ -54,6 +54,18 @@ func NewService(ctx context.Context) (*Service, error) {
 		approvalGate: NewApprovalGate(),
 		plans:        NewPlanManager(engine.Hooks),
 	}
+	cfg, _ := config.Load()
+	routing := config.ModelRouting{}
+	if cfg != nil {
+		routing = cfg.ModelRouting
+	}
+	svc.fleet = NewFleetManager(routing, engine, engine.Hooks)
+	svc.teams = NewTeamManager(engine, engine.Hooks)
+	svc.tokens = NewTokenTracker()
+	svc.jobs = NewJobRegistry()
+
+	// Create and start cron scheduler AFTER all Service fields are initialized,
+	// since tick callbacks invoke svc.handleChat which depends on svc.tokens etc.
 	svc.cron = NewCronScheduler(engine.DB, func(sessionID, command string) {
 		go func() {
 			tickCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -71,15 +83,6 @@ func NewService(ctx context.Context) (*Service, error) {
 		engine.Close()
 		return nil, fmt.Errorf("start cron scheduler: %w", err)
 	}
-	cfg, _ := config.Load()
-	routing := config.ModelRouting{}
-	if cfg != nil {
-		routing = cfg.ModelRouting
-	}
-	svc.fleet = NewFleetManager(routing, engine, engine.Hooks)
-	svc.teams = NewTeamManager(engine, engine.Hooks)
-	svc.tokens = NewTokenTracker()
-	svc.jobs = NewJobRegistry()
 	svc.jobs.Register("session", NewSessionJobProvider(svc.sessions))
 	svc.jobs.Register("fleet_worker", NewFleetJobProvider(svc.fleet))
 	svc.jobs.Register("team_agent", NewTeamJobProvider(svc.teams))
@@ -532,5 +535,5 @@ func (n *noopSendServer) Context() context.Context           { return n.ctx }
 func (n *noopSendServer) SetHeader(metadata.MD) error        { return nil }
 func (n *noopSendServer) SendHeader(metadata.MD) error       { return nil }
 func (n *noopSendServer) SetTrailer(metadata.MD)             {}
-func (n *noopSendServer) SendMsg(interface{}) error          { return nil }
-func (n *noopSendServer) RecvMsg(interface{}) error          { return nil }
+func (n *noopSendServer) SendMsg(any) error                  { return nil }
+func (n *noopSendServer) RecvMsg(any) error                  { return nil }

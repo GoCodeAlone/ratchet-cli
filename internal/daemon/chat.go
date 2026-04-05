@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -83,8 +84,7 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 	}
 
 	// Code review request: run a review sub-session against the provided diff.
-	if strings.HasPrefix(userMessage, reviewSentinel) {
-		diff := strings.TrimPrefix(userMessage, reviewSentinel)
+	if diff, ok := strings.CutPrefix(userMessage, reviewSentinel); ok {
 		return s.handleReview(ctx, sessionID, diff, stream)
 	}
 
@@ -320,12 +320,7 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 
 // isAutoAllowed checks if a tool is in the auto-allow list.
 func (s *Service) isAutoAllowed(cfg *config.Config, toolName string) bool {
-	for _, t := range cfg.Permissions.AutoAllow {
-		if t == toolName {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(cfg.Permissions.AutoAllow, toolName)
 }
 
 // executeTool runs a tool via the tool registry.
@@ -494,12 +489,13 @@ func (s *Service) handleReview(ctx context.Context, sessionID, diff string, stre
 Output structured review: Critical / Important / Minor with file:line refs.`
 	}
 
-	// Resolve provider: prefer reviewer's model alias, then session provider, then default.
+	// Resolve provider: prefer reviewer's configured provider, then session provider, then default.
+	// reviewerDef.Model is a model selection hint, not a provider alias.
 	session, sessErr := s.sessions.Get(ctx, sessionID)
 	var prov provider.Provider
 	var provErr error
-	if reviewerDef.Model != "" {
-		prov, provErr = s.engine.ProviderRegistry.GetByAlias(ctx, reviewerDef.Model)
+	if reviewerDef.Provider != "" {
+		prov, provErr = s.engine.ProviderRegistry.GetByAlias(ctx, reviewerDef.Provider)
 	}
 	if prov == nil {
 		if sessErr == nil && session.Provider != "" {

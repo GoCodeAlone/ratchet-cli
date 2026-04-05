@@ -283,8 +283,25 @@ func (tm *TeamManager) run(ctx context.Context, ti *teamInstance, req *pb.StartT
 		}
 	}
 
+	// Determine overall team status based on agent outcomes.
+	teamStatus := "completed"
 	summary := fmt.Sprintf("Team completed task: %s", req.Task)
-	if workerResult != "" {
+
+	ti.mu.RLock()
+	for _, ag := range ti.agents {
+		ag.mu.RLock()
+		s := ag.status
+		ag.mu.RUnlock()
+		if s == "failed" {
+			teamStatus = "failed"
+			break
+		}
+	}
+	ti.mu.RUnlock()
+
+	if teamStatus == "failed" {
+		summary = fmt.Sprintf("Team failed task: %s", req.Task)
+	} else if workerResult != "" {
 		summary = workerResult
 	}
 
@@ -296,7 +313,7 @@ func (tm *TeamManager) run(ctx context.Context, ti *teamInstance, req *pb.StartT
 		},
 	}
 
-	tm.markDone(ti, "completed")
+	tm.markDone(ti, teamStatus)
 }
 
 func (tm *TeamManager) agentByRole(ti *teamInstance, role string) *teamAgent {

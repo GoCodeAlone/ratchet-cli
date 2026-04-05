@@ -145,7 +145,6 @@ func (fm *FleetManager) runFleet(ctx context.Context, fi *fleetInstance, maxWork
 	var wg sync.WaitGroup
 
 	for _, w := range fi.status.Workers {
-		w := w // capture loop var
 		wg.Add(1)
 		sem <- struct{}{}
 		go func() {
@@ -219,9 +218,17 @@ func (fm *FleetManager) executeWorker(ctx context.Context, w *pb.FleetWorker) er
 
 	var prov provider.Provider
 	var err error
-	if w.Provider != "" {
+	switch {
+	case w.Provider != "":
 		prov, err = fm.engine.ProviderRegistry.GetByAlias(ctx, w.Provider)
-	} else {
+	case w.Model != "":
+		// Model routing: try w.Model as a provider alias (set by ModelForStep).
+		prov, err = fm.engine.ProviderRegistry.GetByAlias(ctx, w.Model)
+		if err != nil {
+			// Model alias not registered as a provider; fall back to default.
+			prov, err = fm.engine.ProviderRegistry.GetDefault(ctx)
+		}
+	default:
 		prov, err = fm.engine.ProviderRegistry.GetDefault(ctx)
 	}
 	if err != nil {

@@ -55,6 +55,7 @@ func (m *memSecretsProvider) Delete(_ context.Context, _ string) error        { 
 func (m *memSecretsProvider) List(_ context.Context) ([]string, error)        { return nil, nil }
 
 var _ secrets.Provider = (*memSecretsProvider)(nil)
+var _ provider.Provider = (*mockProvider)(nil)
 
 // newTestEngine creates an EngineContext backed by an in-memory SQLite DB with a
 // built-in mock provider registered as default. Safe to call from any test.
