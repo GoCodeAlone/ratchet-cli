@@ -167,6 +167,8 @@ type OnboardingModel struct {
 	pullError         string
 	pullProgressCh    chan float64
 	pullDoneCh        chan error
+	pullCustomInput   textinput.Model
+	pullEnteringCustom bool
 
 	// Model selection
 	modelCursor int
@@ -631,14 +633,39 @@ func (m OnboardingModel) updatePullModel(msg tea.Msg) (OnboardingModel, tea.Cmd)
 	if m.pullingModel {
 		return m, nil
 	}
+
+	// Custom model name entry mode.
+	if m.pullEnteringCustom {
+		if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+			switch keyMsg.String() {
+			case "esc":
+				m.pullEnteringCustom = false
+				m.pullCustomInput.SetValue("")
+				return m, nil
+			case "enter":
+				name := strings.TrimSpace(m.pullCustomInput.Value())
+				if name == "" {
+					return m, nil
+				}
+				m.pullEnteringCustom = false
+				m.pullModelName = name
+				return m.startPull()
+			}
+		}
+		var cmd tea.Cmd
+		m.pullCustomInput, cmd = m.pullCustomInput.Update(msg)
+		return m, cmd
+	}
+
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+		customIdx := len(m.recommendedModels) // index for the "Custom" row
 		switch keyMsg.String() {
 		case "esc":
 			m.step = stepSelectProvider
 			m.cursor = m.providerIdx
 			return m, nil
 		case "j", "down":
-			if m.pullCursor < len(m.recommendedModels) {
+			if m.pullCursor < customIdx {
 				m.pullCursor++
 			}
 		case "k", "up":
@@ -646,37 +673,49 @@ func (m OnboardingModel) updatePullModel(msg tea.Msg) (OnboardingModel, tea.Cmd)
 				m.pullCursor--
 			}
 		case "enter", " ":
-			if m.pullCursor < len(m.recommendedModels) {
-				m.pullModelName = m.recommendedModels[m.pullCursor]
-			} else {
-				m.pullModelName = m.recommendedModels[0]
+			if m.pullCursor == customIdx {
+				// Enter custom model name
+				m.pullEnteringCustom = true
+				m.pullCustomInput = textinput.New()
+				m.pullCustomInput.Placeholder = "e.g. mistral:7b"
+				m.pullCustomInput.Prompt = ""
+				return m, m.pullCustomInput.Focus()
 			}
-			m.pullingModel = true
-			m.pullProgress = 0
-			m.pullError = ""
-			progressCh := make(chan float64, 50)
-			doneCh := make(chan error, 1)
-			m.pullProgressCh = progressCh
-			m.pullDoneCh = doneCh
-			baseURL := m.baseURLInput.Value()
-			pullName := m.pullModelName
-			go func() {
-				c := wfprovider.NewOllamaClient(baseURL)
-				err := c.Pull(context.Background(), pullName, func(pct float64) {
-					progressCh <- pct
-				})
-				doneCh <- err
-			}()
-			return m, tea.Batch(m.spinner.Tick, m.readPullProgress())
+			m.pullModelName = m.recommendedModels[m.pullCursor]
+			return m.startPull()
 		}
-		// Number shortcuts
+		// Number shortcuts (1 = recommended[0], ..., N+1 = Custom)
 		for i := range m.recommendedModels {
 			if keyMsg.String() == fmt.Sprintf("%d", i+1) {
 				m.pullCursor = i
 			}
 		}
+		if keyMsg.String() == fmt.Sprintf("%d", customIdx+1) {
+			m.pullCursor = customIdx
+		}
 	}
 	return m, nil
+}
+
+// startPull initiates the async model pull and returns the updated model and initial tea.Cmd.
+func (m OnboardingModel) startPull() (OnboardingModel, tea.Cmd) {
+	m.pullingModel = true
+	m.pullProgress = 0
+	m.pullError = ""
+	progressCh := make(chan float64, 50)
+	doneCh := make(chan error, 1)
+	m.pullProgressCh = progressCh
+	m.pullDoneCh = doneCh
+	baseURL := m.baseURLInput.Value()
+	pullName := m.pullModelName
+	go func() {
+		c := wfprovider.NewOllamaClient(baseURL)
+		err := c.Pull(context.Background(), pullName, func(pct float64) {
+			progressCh <- pct
+		})
+		doneCh <- err
+	}()
+	return m, tea.Batch(m.spinner.Tick, m.readPullProgress())
 }
 
 // readPullProgress returns a tea.Cmd that waits for the next pull progress update.
@@ -960,23 +999,38 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 		sb.WriteString(mutedStyle.Render("Esc: cancel"))
 
 	case stepPullModel:
-		sb.WriteString("No models installed. Pull one to get started:\n\n")
-		for i, name := range m.recommendedModels {
-			cursor := "  "
-			style := mutedStyle
-			if i == m.pullCursor {
-				cursor = "▶ "
-				style = lipgloss.NewStyle().Foreground(t.Foreground).Bold(true)
-			}
-			sb.WriteString(style.Render(fmt.Sprintf("%s%d. %s", cursor, i+1, name)) + "\n")
-		}
-		if m.pullingModel {
-			sb.WriteString(fmt.Sprintf("\n%s Pulling %s... %.0f%%\n", m.spinner.View(), m.pullModelName, m.pullProgress))
-		} else if m.pullError != "" {
-			sb.WriteString("\n" + errorStyle.Render("Pull failed: "+m.pullError) + "\n")
-			sb.WriteString(mutedStyle.Render("Enter: retry  Esc: back"))
+		customIdx := len(m.recommendedModels)
+		if m.pullEnteringCustom {
+			sb.WriteString("Enter model name to pull:\n\n")
+			sb.WriteString("Model: " + m.pullCustomInput.View() + "\n\n")
+			sb.WriteString(mutedStyle.Render("Enter: pull  Esc: back"))
 		} else {
-			sb.WriteString("\n" + mutedStyle.Render(fmt.Sprintf("↑/↓ or 1-%d: select  Enter: pull  Esc: back", len(m.recommendedModels))))
+			sb.WriteString("No models installed. Pull one to get started:\n\n")
+			for i, name := range m.recommendedModels {
+				cursor := "  "
+				style := mutedStyle
+				if i == m.pullCursor {
+					cursor = "▶ "
+					style = lipgloss.NewStyle().Foreground(t.Foreground).Bold(true)
+				}
+				sb.WriteString(style.Render(fmt.Sprintf("%s%d. %s", cursor, i+1, name)) + "\n")
+			}
+			// Custom row
+			customCursor := "  "
+			customStyle := mutedStyle
+			if m.pullCursor == customIdx {
+				customCursor = "▶ "
+				customStyle = lipgloss.NewStyle().Foreground(t.Foreground).Bold(true)
+			}
+			sb.WriteString(customStyle.Render(fmt.Sprintf("%s%d. Custom (enter model name)", customCursor, customIdx+1)) + "\n")
+			if m.pullingModel {
+				fmt.Fprintf(&sb, "\n%s Pulling %s... %.0f%%\n", m.spinner.View(), m.pullModelName, m.pullProgress)
+			} else if m.pullError != "" {
+				sb.WriteString("\n" + errorStyle.Render("Pull failed: "+m.pullError) + "\n")
+				sb.WriteString(mutedStyle.Render("Enter: retry  Esc: back"))
+			} else {
+				sb.WriteString("\n" + mutedStyle.Render(fmt.Sprintf("↑/↓ or 1-%d: select  Enter: pull  Esc: back", customIdx+1)))
+			}
 		}
 
 	case stepSelectModel:
