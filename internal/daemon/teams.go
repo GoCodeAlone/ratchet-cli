@@ -334,6 +334,7 @@ func (tm *TeamManager) StartMeshTeam(
 		defer close(eventCh)
 
 		for ev := range handle.Events {
+			var pbEv *pb.TeamEvent
 			switch ev.Type {
 			case "agent_spawned":
 				agentID := ev.AgentID
@@ -347,10 +348,6 @@ func (tm *TeamManager) StartMeshTeam(
 						role = r
 					}
 				}
-				// Extract name from content if available (format: "node <name> (<role>) spawned")
-				if agentName == ev.AgentID && ev.Content != "" {
-					agentName = ev.AgentID
-				}
 
 				ti.mu.Lock()
 				ti.agents[agentID] = &teamAgent{
@@ -361,7 +358,7 @@ func (tm *TeamManager) StartMeshTeam(
 				}
 				ti.mu.Unlock()
 
-				eventCh <- &pb.TeamEvent{
+				pbEv = &pb.TeamEvent{
 					Event: &pb.TeamEvent_AgentSpawned{
 						AgentSpawned: &pb.AgentSpawned{
 							AgentId:   agentID,
@@ -377,7 +374,7 @@ func (tm *TeamManager) StartMeshTeam(
 						toAgent = t
 					}
 				}
-				eventCh <- &pb.TeamEvent{
+				pbEv = &pb.TeamEvent{
 					Event: &pb.TeamEvent_AgentMessage{
 						AgentMessage: &pb.AgentMessage{
 							FromAgent: ev.AgentID,
@@ -387,7 +384,7 @@ func (tm *TeamManager) StartMeshTeam(
 					},
 				}
 			case "text":
-				eventCh <- &pb.TeamEvent{
+				pbEv = &pb.TeamEvent{
 					Event: &pb.TeamEvent_Token{
 						Token: &pb.TokenDelta{
 							Content: ev.Content,
@@ -395,7 +392,7 @@ func (tm *TeamManager) StartMeshTeam(
 					},
 				}
 			case "error":
-				eventCh <- &pb.TeamEvent{
+				pbEv = &pb.TeamEvent{
 					Event: &pb.TeamEvent_Error{
 						Error: &pb.ErrorEvent{
 							Message: ev.Content,
@@ -403,7 +400,7 @@ func (tm *TeamManager) StartMeshTeam(
 					},
 				}
 			case "complete":
-				// Individual agent complete - track status.
+				// Individual agent complete — track status.
 				ti.mu.Lock()
 				if ag, ok := ti.agents[ev.AgentID]; ok {
 					ag.mu.Lock()
@@ -412,22 +409,35 @@ func (tm *TeamManager) StartMeshTeam(
 				}
 				ti.mu.Unlock()
 			}
+
+			if pbEv != nil {
+				select {
+				case eventCh <- pbEv:
+				case <-ctx.Done():
+					return
+				}
+			}
 		}
 
-		// Wait for team result.
-		result := <-handle.Done
+		// Retrieve the final result (Done is already closed at this point
+		// because handle.Events is closed by the same goroutine that closes
+		// doneCh, so Result() is safe to call without waiting again).
+		result := handle.Result()
 
 		summary := fmt.Sprintf("Team completed task: %s (status: %s)", task, result.Status)
 		if len(result.Errors) > 0 {
 			summary += fmt.Sprintf(" [%d errors]", len(result.Errors))
 		}
 
-		eventCh <- &pb.TeamEvent{
+		select {
+		case eventCh <- &pb.TeamEvent{
 			Event: &pb.TeamEvent_Complete{
 				Complete: &pb.SessionComplete{
 					Summary: summary,
 				},
 			},
+		}:
+		case <-ctx.Done():
 		}
 
 		tm.markDone(ti, result.Status)

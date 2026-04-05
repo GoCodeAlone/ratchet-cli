@@ -12,11 +12,33 @@ import (
 
 // TeamHandle is returned by SpawnTeam and allows callers to wait for
 // completion, observe events, or cancel the team.
+//
+// Done is closed when the team finishes. Call Result() after Done closes to
+// retrieve the final outcome. Using a close-only signal allows multiple
+// independent consumers (e.g., a status tracker and an event bridge) to wait
+// without racing for a single value.
 type TeamHandle struct {
 	ID     string
-	Done   <-chan TeamResult
+	Done   <-chan struct{}
 	Events <-chan Event
 	Cancel func()
+
+	mu     sync.RWMutex
+	result TeamResult
+}
+
+// Result returns the final outcome recorded for the team.
+// Callers should wait for Done to be closed before calling Result.
+func (h *TeamHandle) Result() TeamResult {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.result
+}
+
+func (h *TeamHandle) setResult(result TeamResult) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.result = result
 }
 
 // TeamResult is the final outcome of a team execution.
@@ -80,9 +102,21 @@ func (m *AgentMesh) SpawnTeam(
 	// 3. Create nodes.
 	nodes := make([]Node, 0, len(configs))
 	eventCh := make(chan Event, 256)
-	doneCh := make(chan TeamResult, 1)
+	doneCh := make(chan struct{})
 
 	teamCtx, cancelTeam := context.WithCancel(ctx)
+
+	// Create the handle early so the watcher goroutine can call setResult.
+	handle := &TeamHandle{
+		ID:     teamID,
+		Done:   doneCh,
+		Events: eventCh,
+		Cancel: cancelTeam,
+	}
+
+	m.mu.Lock()
+	m.teams[teamID] = handle
+	m.mu.Unlock()
 
 	for _, cfg := range configs {
 		var node Node
@@ -121,11 +155,16 @@ func (m *AgentMesh) SpawnTeam(
 		m.nodes[node.ID()] = node
 		m.mu.Unlock()
 
-		// Emit agent_spawned event.
+		// Emit agent_spawned event with name/role in Data so downstream
+		// consumers can populate agent metadata without parsing Content.
 		eventCh <- Event{
 			Type:    "agent_spawned",
 			AgentID: node.ID(),
 			Content: fmt.Sprintf("node %s (%s) spawned", node.Info().Name, node.Info().Role),
+			Data: map[string]any{
+				"name": node.Info().Name,
+				"role": node.Info().Role,
+			},
 		}
 	}
 
@@ -194,7 +233,9 @@ func (m *AgentMesh) SpawnTeam(
 		}(w.node, w.inbox)
 	}
 
-	// 6. Watcher goroutine: monitor the "status" section for all-done.
+	// 6. Watcher goroutine: wait for all node goroutines to exit.
+	// Nodes decide when to stop via their own ShouldStop checks
+	// (blackboard status write) or context cancellation.
 	go func() {
 		wg.Wait()
 
@@ -214,11 +255,11 @@ func (m *AgentMesh) SpawnTeam(
 			status = "completed_with_errors"
 		}
 
-		doneCh <- TeamResult{
+		handle.setResult(TeamResult{
 			Status:    status,
 			Artifacts: artifacts,
 			Errors:    errs,
-		}
+		})
 		close(doneCh)
 		close(eventCh)
 
@@ -227,17 +268,6 @@ func (m *AgentMesh) SpawnTeam(
 			router.Unregister(nd.ID())
 		}
 	}()
-
-	handle := &TeamHandle{
-		ID:     teamID,
-		Done:   doneCh,
-		Events: eventCh,
-		Cancel: cancelTeam,
-	}
-
-	m.mu.Lock()
-	m.teams[teamID] = handle
-	m.mu.Unlock()
 
 	return handle, nil
 }

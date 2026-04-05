@@ -218,6 +218,25 @@ func (m TeamModel) View(t theme.Theme) string {
 		Foreground(t.Muted).
 		Render("  ↑↓ navigate  Enter: expand  k: kill agent"))
 
+	// Message log panel — show the last 5 entries.
+	if len(m.messageLog) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, lipgloss.NewStyle().
+			Foreground(t.Primary).
+			Bold(true).
+			Render("  Event Log"))
+		start := len(m.messageLog) - 5
+		if start < 0 {
+			start = 0
+		}
+		for _, entry := range m.messageLog[start:] {
+			lines = append(lines, lipgloss.NewStyle().
+				Foreground(t.Foreground).
+				Padding(0, 2).
+				Render(entry))
+		}
+	}
+
 	return strings.Join(lines, "\n")
 }
 

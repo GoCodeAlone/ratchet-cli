@@ -2,7 +2,6 @@ package mesh
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -223,14 +222,9 @@ func (t *SendMessageTool) Execute(_ context.Context, args map[string]any) (any, 
 		Timestamp: time.Now(),
 	}
 
-	b, err := json.Marshal(msg)
-	if err != nil {
-		return nil, err
-	}
-
 	select {
 	case t.outbox <- msg:
-		return fmt.Sprintf("sent (%d bytes)", len(b)), nil
+		return "sent", nil
 	default:
 		return nil, fmt.Errorf("outbox full, message dropped")
 	}

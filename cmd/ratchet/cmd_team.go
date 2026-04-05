@@ -86,7 +86,10 @@ func handleTeamStart(args []string) {
 		fmt.Println()
 	}
 
-	stream, err := c.StartTeam(context.Background(), &pb.StartTeamReq{Task: task})
+	stream, err := c.StartTeam(context.Background(), &pb.StartTeamReq{
+		Task:           task,
+		TeamConfigName: teamConfigName,
+	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)

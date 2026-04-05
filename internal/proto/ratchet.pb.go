@@ -2153,6 +2153,7 @@ type StartTeamReq struct {
 	Task                 string                 `protobuf:"bytes,1,opt,name=task,proto3" json:"task,omitempty"`
 	SessionId            string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	OrchestratorProvider string                 `protobuf:"bytes,3,opt,name=orchestrator_provider,json=orchestratorProvider,proto3" json:"orchestrator_provider,omitempty"`
+	TeamConfigName       string                 `protobuf:"bytes,4,opt,name=team_config_name,json=teamConfigName,proto3" json:"team_config_name,omitempty"` // optional: builtin name (e.g. "code-gen") or YAML path
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -2204,6 +2205,13 @@ func (x *StartTeamReq) GetSessionId() string {
 func (x *StartTeamReq) GetOrchestratorProvider() string {
 	if x != nil {
 		return x.OrchestratorProvider
+	}
+	return ""
+}
+
+func (x *StartTeamReq) GetTeamConfigName() string {
+	if x != nil {
+		return x.TeamConfigName
 	}
 	return ""
 }
@@ -4347,12 +4355,13 @@ const file_internal_proto_ratchet_proto_rawDesc = "" +
 	"\tAgentList\x12&\n" +
 	"\x06agents\x18\x01 \x03(\v2\x0e.ratchet.AgentR\x06agents\"+\n" +
 	"\x0eAgentStatusReq\x12\x19\n" +
-	"\bagent_id\x18\x01 \x01(\tR\aagentId\"v\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\"\xa0\x01\n" +
 	"\fStartTeamReq\x12\x12\n" +
 	"\x04task\x18\x01 \x01(\tR\x04task\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x02 \x01(\tR\tsessionId\x123\n" +
-	"\x15orchestrator_provider\x18\x03 \x01(\tR\x14orchestratorProvider\"\xd5\x03\n" +
+	"\x15orchestrator_provider\x18\x03 \x01(\tR\x14orchestratorProvider\x12(\n" +
+	"\x10team_config_name\x18\x04 \x01(\tR\x0eteamConfigName\"\xd5\x03\n" +
 	"\tTeamEvent\x12<\n" +
 	"\ragent_spawned\x18\x01 \x01(\v2\x15.ratchet.AgentSpawnedH\x00R\fagentSpawned\x12<\n" +
 	"\ragent_message\x18\x02 \x01(\v2\x15.ratchet.AgentMessageH\x00R\fagentMessage\x12+\n" +

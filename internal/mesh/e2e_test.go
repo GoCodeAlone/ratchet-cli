@@ -222,20 +222,17 @@ func TestE2E_ThreeAgentFlow(t *testing.T) {
 		t.Fatalf("SpawnTeam: %v", err)
 	}
 
-	// Collect events.
+	// Collect events (Events is closed when team finishes, so ranging
+	// is the cleanest way to drain and detect completion).
 	var events []Event
 	for ev := range handle.Events {
 		events = append(events, ev)
 	}
 
-	// Wait for result.
-	select {
-	case result := <-handle.Done:
-		if result.Status != "completed" {
-			t.Fatalf("expected 'completed', got %q; errors: %v", result.Status, result.Errors)
-		}
-	case <-ctx.Done():
-		t.Fatal("timed out waiting for team completion")
+	// Done is closed when Events is closed, so Result() is safe here.
+	result := handle.Result()
+	if result.Status != "completed" {
+		t.Fatalf("expected 'completed', got %q; errors: %v", result.Status, result.Errors)
 	}
 
 	// Verify events include spawns for all three agents.

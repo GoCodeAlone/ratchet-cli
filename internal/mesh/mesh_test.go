@@ -162,7 +162,8 @@ func TestSpawnTeam_TwoNodes(t *testing.T) {
 
 	// Wait for completion.
 	select {
-	case result := <-handle.Done:
+	case <-handle.Done:
+		result := handle.Result()
 		if result.Status != "completed" {
 			t.Fatalf("expected status 'completed', got %q; errors: %v", result.Status, result.Errors)
 		}

@@ -57,16 +57,34 @@ func (n *LocalNode) Run(ctx context.Context, task string, bb *Blackboard, inbox 
 	reg.Register(&BlackboardListTool{bb: bb})
 	reg.Register(&SendMessageTool{outbox: outbox, from: n.id})
 
-	// Convert mesh inbox (Message) to provider inbox (provider.Message)
+	// Convert mesh inbox (Message) to provider inbox (provider.Message).
+	// The goroutine selects on ctx.Done() so it exits when the executor
+	// stops early (context cancelled or ShouldStop), preventing goroutine
+	// leaks if provInbox fills.
 	provInbox := make(chan provider.Message, cap(inbox))
 	go func() {
-		for msg := range inbox {
-			provInbox <- provider.Message{
+		defer close(provInbox)
+		for {
+			var msg Message
+			var ok bool
+			select {
+			case <-ctx.Done():
+				return
+			case msg, ok = <-inbox:
+				if !ok {
+					return
+				}
+			}
+			provMsg := provider.Message{
 				Role:    provider.Role("user"),
 				Content: "[" + msg.Type + " from " + msg.From + "] " + msg.Content,
 			}
+			select {
+			case <-ctx.Done():
+				return
+			case provInbox <- provMsg:
+			}
 		}
-		close(provInbox)
 	}()
 
 	maxIter := n.config.MaxIterations

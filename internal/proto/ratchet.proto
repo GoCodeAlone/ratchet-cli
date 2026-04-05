@@ -216,6 +216,7 @@ message StartTeamReq {
   string task = 1;
   string session_id = 2;
   string orchestrator_provider = 3;
+  string team_config_name = 4; // optional: builtin name (e.g. "code-gen") or YAML path
 }
 
 message TeamEvent {
