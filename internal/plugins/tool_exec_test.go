@@ -53,12 +53,20 @@ func TestExecTool_RoundTrip(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 
+	// The binary echoes the envelope {"name":"echo_tool","arguments":{...}}.
 	got, ok := result.(map[string]any)
 	if !ok {
 		t.Fatalf("result type = %T, want map[string]any", result)
 	}
-	if got["msg"] != "hello" {
-		t.Errorf("result[msg] = %v, want hello", got["msg"])
+	if got["name"] != "echo_tool" {
+		t.Errorf("result[name] = %v, want echo_tool", got["name"])
+	}
+	arguments, ok := got["arguments"].(map[string]any)
+	if !ok {
+		t.Fatalf("result[arguments] type = %T", got["arguments"])
+	}
+	if arguments["msg"] != "hello" {
+		t.Errorf("arguments[msg] = %v, want hello", arguments["msg"])
 	}
 }
 

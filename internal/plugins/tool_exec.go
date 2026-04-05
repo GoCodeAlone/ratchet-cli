@@ -101,7 +101,7 @@ func (t *ExecTool) Definition() provider.ToolDef {
 // Execute implements plugin.Tool. It marshals args to JSON, writes to stdin,
 // and parses the binary's stdout as JSON.
 func (t *ExecTool) Execute(ctx context.Context, args map[string]any) (any, error) {
-	input, err := json.Marshal(args)
+	input, err := json.Marshal(map[string]any{"name": t.def.Name, "arguments": args})
 	if err != nil {
 		return nil, fmt.Errorf("marshal args: %w", err)
 	}
