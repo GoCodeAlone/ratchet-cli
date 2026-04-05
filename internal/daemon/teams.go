@@ -100,7 +100,12 @@ func (tm *TeamManager) purgeCompleted(ttl time.Duration) {
 
 // StartTeam creates a team, spawns default agents, and returns the team ID.
 // Events are sent on the returned channel; it is closed when the team finishes.
+// If req.TeamConfigName is set, the team is launched via the mesh orchestrator.
 func (tm *TeamManager) StartTeam(ctx context.Context, req *pb.StartTeamReq) (string, <-chan *pb.TeamEvent) {
+	if req.TeamConfigName != "" {
+		return tm.startMeshTeamFromConfig(ctx, req)
+	}
+
 	teamID := uuid.New().String()
 	runCtx, cancel := context.WithCancel(ctx)
 
@@ -126,6 +131,44 @@ func (tm *TeamManager) StartTeam(ctx context.Context, req *pb.StartTeamReq) (str
 		tm.run(runCtx, ti, req)
 	}()
 	return teamID, ti.eventCh
+}
+
+// startMeshTeamFromConfig loads a team config by name and launches a mesh team.
+func (tm *TeamManager) startMeshTeamFromConfig(ctx context.Context, req *pb.StartTeamReq) (string, <-chan *pb.TeamEvent) {
+	errCh := func(msg string) (string, <-chan *pb.TeamEvent) {
+		ch := make(chan *pb.TeamEvent, 1)
+		ch <- &pb.TeamEvent{Event: &pb.TeamEvent_Error{Error: &pb.ErrorEvent{Message: msg}}}
+		close(ch)
+		return "", ch
+	}
+
+	// Resolve the team config.
+	var tc *mesh.TeamConfig
+	builtins, err := mesh.BuiltinTeamConfigs()
+	if err == nil {
+		if bc, ok := builtins[req.TeamConfigName]; ok {
+			tc = bc
+		}
+	}
+	if tc == nil {
+		loaded, err := mesh.LoadTeamConfig(req.TeamConfigName)
+		if err != nil {
+			return errCh(fmt.Sprintf("load team config %q: %v", req.TeamConfigName, err))
+		}
+		tc = loaded
+	}
+
+	configs := mesh.ToNodeConfigs(tc)
+
+	// Build a provider factory that creates Ollama providers based on the
+	// agent config's provider/model fields.
+	providerFactory := func(cfg mesh.NodeConfig) provider.Provider {
+		return provider.NewOllamaProvider(provider.OllamaConfig{
+			Model: cfg.Model,
+		})
+	}
+
+	return tm.StartMeshTeam(ctx, req.Task, configs, providerFactory)
 }
 
 // run is the main team goroutine. It spawns agents and simulates their execution.

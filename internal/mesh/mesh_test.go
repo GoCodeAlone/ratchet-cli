@@ -190,6 +190,100 @@ func TestSpawnTeam_EmptyConfigs(t *testing.T) {
 	}
 }
 
+func TestSpawnTeam_NilProviderFactoryLocalNode(t *testing.T) {
+	m := NewAgentMesh()
+	configs := []NodeConfig{
+		{Name: "worker", Role: "worker", Location: "local"},
+	}
+	_, err := m.SpawnTeam(context.Background(), "task", configs, nil)
+	if err == nil {
+		t.Fatal("expected error when providerFactory is nil for local node")
+	}
+}
+
+func TestSpawnTeam_NameBasedRouting(t *testing.T) {
+	// Sender sends a direct message to "receiver" by name.
+	senderSteps := []provider.ScriptedStep{
+		{
+			ToolCalls: []provider.ToolCall{
+				{
+					ID:   "s-1",
+					Name: "send_message",
+					Arguments: map[string]any{
+						"to":      "receiver",
+						"type":    "task",
+						"content": "hello receiver",
+					},
+				},
+			},
+		},
+		{
+			ToolCalls: []provider.ToolCall{
+				{
+					ID:   "s-2",
+					Name: "blackboard_write",
+					Arguments: map[string]any{
+						"section": "status",
+						"key":     "sender",
+						"value":   "done",
+					},
+				},
+			},
+		},
+	}
+	// Receiver just marks itself done after one iteration.
+	receiverSteps := []provider.ScriptedStep{
+		{
+			ToolCalls: []provider.ToolCall{
+				{
+					ID:   "r-1",
+					Name: "blackboard_write",
+					Arguments: map[string]any{
+						"section": "status",
+						"key":     "receiver",
+						"value":   "done",
+					},
+				},
+			},
+		},
+	}
+
+	senderSrc := provider.NewScriptedSource(senderSteps, false)
+	receiverSrc := provider.NewScriptedSource(receiverSteps, false)
+	senderProv := provider.NewTestProvider(senderSrc)
+	receiverProv := provider.NewTestProvider(receiverSrc)
+
+	configs := []NodeConfig{
+		{Name: "sender", Role: "sender", MaxIterations: 5},
+		{Name: "receiver", Role: "receiver", MaxIterations: 5},
+	}
+
+	provIdx := 0
+	provs := []provider.Provider{senderProv, receiverProv}
+	m := NewAgentMesh()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	handle, err := m.SpawnTeam(ctx, "routing test", configs, func(_ NodeConfig) provider.Provider {
+		p := provs[provIdx]
+		provIdx++
+		return p
+	})
+	if err != nil {
+		t.Fatalf("SpawnTeam: %v", err)
+	}
+
+	select {
+	case <-handle.Done:
+		result := handle.Result()
+		if result.Status != "completed" {
+			t.Fatalf("expected 'completed', got %q; errors: %v", result.Status, result.Errors)
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for team completion")
+	}
+}
+
 func TestSpawnTeam_CancelledContext(t *testing.T) {
 	steps := []provider.ScriptedStep{
 		{Content: "thinking..."},

@@ -2,6 +2,7 @@ package pages
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -24,6 +25,10 @@ type AgentCard struct {
 	expanded           bool
 }
 
+// messageLogMaxSize is the maximum number of entries kept in the message log
+// to prevent unbounded memory growth during long-running team sessions.
+const messageLogMaxSize = 200
+
 // TeamModel shows the multi-agent team view.
 type TeamModel struct {
 	agents     []AgentCard
@@ -44,6 +49,15 @@ func (m TeamModel) SetSize(w, h int) TeamModel {
 	return m
 }
 
+// appendLog appends entry to log and trims it to messageLogMaxSize entries.
+func appendLog(log []string, entry string) []string {
+	log = append(log, entry)
+	if len(log) > messageLogMaxSize {
+		log = log[len(log)-messageLogMaxSize:]
+	}
+	return log
+}
+
 // ApplyEvent updates the team model from a streaming team event.
 func (m TeamModel) ApplyEvent(ev *pb.TeamEvent) TeamModel {
 	m.events = append(m.events, ev)
@@ -54,10 +68,10 @@ func (m TeamModel) ApplyEvent(ev *pb.TeamEvent) TeamModel {
 			Role:   e.AgentSpawned.Role,
 			Status: "active",
 		})
-		m.messageLog = append(m.messageLog,
+		m.messageLog = appendLog(m.messageLog,
 			fmt.Sprintf("[spawned] %s (%s)", e.AgentSpawned.AgentName, e.AgentSpawned.Role))
 	case *pb.TeamEvent_AgentMessage:
-		m.messageLog = append(m.messageLog,
+		m.messageLog = appendLog(m.messageLog,
 			fmt.Sprintf("[%s → %s] %s", e.AgentMessage.FromAgent, e.AgentMessage.ToAgent, e.AgentMessage.Content))
 		for i, a := range m.agents {
 			if a.Name == e.AgentMessage.FromAgent {
@@ -75,10 +89,10 @@ func (m TeamModel) ApplyEvent(ev *pb.TeamEvent) TeamModel {
 			m.agents[last].Messages[lastMsg] += e.Token.Content
 		}
 	case *pb.TeamEvent_Complete:
-		m.messageLog = append(m.messageLog,
+		m.messageLog = appendLog(m.messageLog,
 			fmt.Sprintf("[complete] %s", e.Complete.Summary))
 	case *pb.TeamEvent_Error:
-		m.messageLog = append(m.messageLog,
+		m.messageLog = appendLog(m.messageLog,
 			fmt.Sprintf("[error] %s", e.Error.Message))
 	}
 	return m
@@ -202,9 +216,14 @@ func (m TeamModel) View(t theme.Theme) string {
 		}
 
 		if agent.expanded && len(agent.BlackboardSections) > 0 {
+			sectionKeys := make([]string, 0, len(agent.BlackboardSections))
+			for section := range agent.BlackboardSections {
+				sectionKeys = append(sectionKeys, section)
+			}
+			sort.Strings(sectionKeys)
 			var bbParts []string
-			for section, count := range agent.BlackboardSections {
-				bbParts = append(bbParts, fmt.Sprintf("%s:%d", section, count))
+			for _, section := range sectionKeys {
+				bbParts = append(bbParts, fmt.Sprintf("%s:%d", section, agent.BlackboardSections[section]))
 			}
 			lines = append(lines, lipgloss.NewStyle().
 				Foreground(t.Muted).

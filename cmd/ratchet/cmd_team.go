@@ -13,7 +13,7 @@ import (
 
 func handleTeam(args []string) {
 	if len(args) == 0 {
-		fmt.Println("Usage: ratchet team <start|status|list|logs> [args...]")
+		fmt.Println("Usage: ratchet team <start|status|list> [args...]")
 		return
 	}
 
@@ -21,11 +21,9 @@ func handleTeam(args []string) {
 	case "start":
 		handleTeamStart(args[1:])
 	case "status":
-		handleTeamStatus()
+		handleTeamStatus(args[1:])
 	case "list":
 		handleTeamList()
-	case "logs":
-		handleTeamLogs(args[1:])
 	default:
 		fmt.Printf("unknown team command: %s\n", args[0])
 	}
@@ -97,7 +95,12 @@ func handleTeamStart(args []string) {
 	for event := range stream {
 		switch e := event.Event.(type) {
 		case *pb.TeamEvent_AgentSpawned:
-			fmt.Printf("[spawned] %s (%s)\n", e.AgentSpawned.AgentName, e.AgentSpawned.Role)
+			if e.AgentSpawned.AgentName == "__team__" {
+				fmt.Printf("Team ID: %s\n", e.AgentSpawned.AgentId)
+				fmt.Printf("(Use 'ratchet team status %s' to check status)\n\n", e.AgentSpawned.AgentId)
+			} else {
+				fmt.Printf("[spawned] %s (%s)\n", e.AgentSpawned.AgentName, e.AgentSpawned.Role)
+			}
 		case *pb.TeamEvent_Token:
 			fmt.Print(e.Token.Content)
 		case *pb.TeamEvent_AgentMessage:
@@ -137,7 +140,13 @@ func resolveTeamConfig(name string) (*mesh.TeamConfig, error) {
 	return mesh.LoadTeamConfig(name)
 }
 
-func handleTeamStatus() {
+func handleTeamStatus(args []string) {
+	if len(args) < 1 {
+		fmt.Println("Usage: ratchet team status <team-id>")
+		return
+	}
+	teamID := args[0]
+
 	c, err := client.EnsureDaemon()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -145,7 +154,7 @@ func handleTeamStatus() {
 	}
 	defer c.Close()
 
-	resp, err := c.GetTeamStatus(context.Background(), "")
+	resp, err := c.GetTeamStatus(context.Background(), teamID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -185,12 +194,4 @@ func handleTeamList() {
 	} else {
 		fmt.Println("No active teams.")
 	}
-}
-
-func handleTeamLogs(args []string) {
-	if len(args) < 1 {
-		fmt.Println("Usage: ratchet team logs <team-id>")
-		return
-	}
-	fmt.Printf("Team logs for %s: not yet implemented\n", args[0])
 }

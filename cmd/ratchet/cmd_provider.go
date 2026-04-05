@@ -177,7 +177,7 @@ func handleOllamaSetup(args []string) {
 	// 2. Check if ollama server is running.
 	fmt.Print("  Checking if Ollama server is running... ")
 	httpClient := &http.Client{Timeout: 3 * time.Second}
-	resp, err := httpClient.Get("http://localhost:11434")
+	resp, err := httpClient.Get("http://localhost:11434/api/tags")
 	if err != nil {
 		fmt.Println("not running")
 		fmt.Println()
@@ -188,6 +188,15 @@ func handleOllamaSetup(args []string) {
 		return
 	}
 	resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		fmt.Printf("not running (HTTP %d)\n", resp.StatusCode)
+		fmt.Println()
+		fmt.Println("Start the Ollama server:")
+		fmt.Println("  ollama serve")
+		fmt.Println()
+		fmt.Println("Then re-run: ratchet provider setup ollama")
+		return
+	}
 	fmt.Println("running ✓")
 
 	// 3. Suggest model to pull.

@@ -182,13 +182,13 @@ func (t *SendMessageTool) Name() string { return "send_message" }
 func (t *SendMessageTool) Definition() provider.ToolDef {
 	return provider.ToolDef{
 		Name:        "send_message",
-		Description: "Send a message to another mesh node (or broadcast with to='*').",
+		Description: "Send a message to another mesh node by name (e.g., 'coder', 'reviewer') or broadcast with to='*'.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"to": map[string]any{
 					"type":        "string",
-					"description": "Target node ID, or '*' for broadcast",
+					"description": "Target agent name (e.g., 'coder'), node ID, or '*' for broadcast",
 				},
 				"type": map[string]any{
 					"type":        "string",

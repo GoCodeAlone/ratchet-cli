@@ -85,6 +85,11 @@ func (m *AgentMesh) SpawnTeam(
 	if len(configs) == 0 {
 		return nil, fmt.Errorf("at least one node config is required")
 	}
+	for _, cfg := range configs {
+		if (cfg.Location == "" || cfg.Location == "local") && providerFactory == nil {
+			return nil, fmt.Errorf("providerFactory is required for local node configs")
+		}
+	}
 
 	// 1. Generate a team ID.
 	m.mu.Lock()
@@ -136,6 +141,32 @@ func (m *AgentMesh) SpawnTeam(
 		nodes = append(nodes, node)
 	}
 
+	// mergeInboxes fans in multiple inbound channels into a single channel.
+	mergeInboxes := func(chans ...<-chan Message) <-chan Message {
+		switch len(chans) {
+		case 0:
+			return nil
+		case 1:
+			return chans[0]
+		}
+		merged := make(chan Message)
+		var wg sync.WaitGroup
+		wg.Add(len(chans))
+		for _, ch := range chans {
+			go func(c <-chan Message) {
+				defer wg.Done()
+				for msg := range c {
+					merged <- msg
+				}
+			}(ch)
+		}
+		go func() {
+			wg.Wait()
+			close(merged)
+		}()
+		return merged
+	}
+
 	// 4. Register each node with the router and set up outbox wiring.
 	type nodeWiring struct {
 		node  Node
@@ -144,15 +175,32 @@ func (m *AgentMesh) SpawnTeam(
 	wiring := make([]nodeWiring, 0, len(nodes))
 
 	for _, node := range nodes {
-		inbox, err := router.Register(node.ID())
+		inboxes := make([]<-chan Message, 0, 2)
+
+		idInbox, err := router.Register(node.ID())
 		if err != nil {
 			cancelTeam()
 			return nil, fmt.Errorf("registering node %s: %w", node.ID(), err)
 		}
-		wiring = append(wiring, nodeWiring{node: node, inbox: inbox})
+		inboxes = append(inboxes, idInbox)
+
+		name := node.Info().Name
+		if name != "" && name != node.ID() {
+			nameInbox, err := router.Register(name)
+			if err != nil {
+				cancelTeam()
+				return nil, fmt.Errorf("registering node alias %s for %s: %w", name, node.ID(), err)
+			}
+			inboxes = append(inboxes, nameInbox)
+		}
+
+		wiring = append(wiring, nodeWiring{node: node, inbox: mergeInboxes(inboxes...)})
 
 		m.mu.Lock()
 		m.nodes[node.ID()] = node
+		if name != "" {
+			m.nodes[name] = node
+		}
 		m.mu.Unlock()
 
 		// Emit agent_spawned event with name/role in Data so downstream
@@ -263,9 +311,12 @@ func (m *AgentMesh) SpawnTeam(
 		close(doneCh)
 		close(eventCh)
 
-		// Clean up router registrations.
+		// Clean up router registrations (both ID and name aliases).
 		for _, nd := range nodes {
 			router.Unregister(nd.ID())
+			if name := nd.Info().Name; name != "" && name != nd.ID() {
+				router.Unregister(name)
+			}
 		}
 	}()
 

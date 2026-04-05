@@ -338,7 +338,21 @@ func (s *Service) GetAgentStatus(ctx context.Context, req *pb.AgentStatusReq) (*
 }
 
 func (s *Service) StartTeam(req *pb.StartTeamReq, stream pb.RatchetDaemon_StartTeamServer) error {
-	_, eventCh := s.teams.StartTeam(stream.Context(), req)
+	teamID, eventCh := s.teams.StartTeam(stream.Context(), req)
+
+	// Emit the team ID as the first event so callers can track it.
+	if err := stream.Send(&pb.TeamEvent{
+		Event: &pb.TeamEvent_AgentSpawned{
+			AgentSpawned: &pb.AgentSpawned{
+				AgentId:   teamID,
+				AgentName: "__team__",
+				Role:      "team",
+			},
+		},
+	}); err != nil {
+		return err
+	}
+
 	for ev := range eventCh {
 		if err := stream.Send(ev); err != nil {
 			return err
