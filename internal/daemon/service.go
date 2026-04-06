@@ -275,7 +275,13 @@ func (s *Service) RespondToPermission(ctx context.Context, req *pb.PermissionRes
 
 func (s *Service) AddProvider(ctx context.Context, req *pb.AddProviderReq) (*pb.Provider, error) {
 	id := uuid.New().String()
-	secretName := fmt.Sprintf("provider_%s", req.Alias)
+	// Only create a secret reference if an API key is provided.
+	// Providers like Ollama don't need keys — storing an empty secret_name
+	// prevents the ProviderRegistry from trying to resolve a nonexistent secret.
+	secretName := ""
+	if req.ApiKey != "" {
+		secretName = fmt.Sprintf("provider_%s", req.Alias)
+	}
 
 	isDefault := 0
 	if req.IsDefault {
