@@ -67,6 +67,7 @@ const (
 	stepAnthropicAuthChoice
 	stepBrowserAuth
 	stepEnterAPIKey
+	stepOllamaChoice // "I already have a local server" vs "Set up Ollama for me"
 	stepEnterBaseURL
 	stepFetchModels
 	stepPullModel
@@ -157,6 +158,9 @@ type OnboardingModel struct {
 	fetchingModels bool
 	fetchedModels  []providerauth.ModelInfo
 	modelsError    string
+
+	// Ollama choice (stepOllamaChoice)
+	ollamaChoiceCursor int // 0 = "I have a server", 1 = "Set up Ollama"
 
 	// Model pull (stepPullModel)
 	pullingModel       bool
@@ -377,6 +381,8 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		return m.updateBrowserAuth(msg)
 	case stepEnterAPIKey:
 		return m.updateEnterAPIKey(msg)
+	case stepOllamaChoice:
+		return m.updateOllamaChoice(msg)
 	case stepEnterBaseURL:
 		return m.updateEnterBaseURL(msg)
 	case stepFetchModels:
@@ -447,6 +453,11 @@ func (m OnboardingModel) advanceFromProvider() (OnboardingModel, tea.Cmd) {
 		return m, m.apiKeyInput.Focus()
 
 	case authNone:
+		if p.name == "ollama" {
+			m.step = stepOllamaChoice
+			m.ollamaChoiceCursor = 0
+			return m, nil
+		}
 		if p.needsBaseURL {
 			m.step = stepEnterBaseURL
 			m.baseURLInput.SetValue(p.defaultURL)
@@ -610,6 +621,43 @@ func (m OnboardingModel) updateEnterAPIKey(msg tea.Msg) (OnboardingModel, tea.Cm
 	var cmd tea.Cmd
 	m.apiKeyInput, cmd = m.apiKeyInput.Update(msg)
 	return m, cmd
+}
+
+func (m OnboardingModel) updateOllamaChoice(msg tea.Msg) (OnboardingModel, tea.Cmd) {
+	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+		switch keyMsg.String() {
+		case "esc":
+			m.step = stepSelectProvider
+			m.cursor = m.providerIdx
+			return m, nil
+		case "j", "down":
+			if m.ollamaChoiceCursor < 1 {
+				m.ollamaChoiceCursor++
+			}
+		case "k", "up":
+			if m.ollamaChoiceCursor > 0 {
+				m.ollamaChoiceCursor--
+			}
+		case "enter":
+			p := m.selectedProvider()
+			if m.ollamaChoiceCursor == 0 {
+				// "I have a local server" → go to URL entry
+				m.step = stepEnterBaseURL
+				m.baseURLInput.SetValue(p.defaultURL)
+				return m, m.baseURLInput.Focus()
+			}
+			// "Set up Ollama for me" → go straight to pull model step
+			// with default Ollama URL pre-set
+			m.baseURLInput.SetValue(p.defaultURL)
+			m.step = stepPullModel
+			m.pullCursor = 0
+			m.pullError = ""
+			m.pullingModel = false
+			m.recommendedModels = []string{"qwen3:8b", "llama3.3:8b", "gemma3:4b"}
+			return m, nil
+		}
+	}
+	return m, nil
 }
 
 func (m OnboardingModel) updateEnterBaseURL(msg tea.Msg) (OnboardingModel, tea.Cmd) {
@@ -1034,16 +1082,30 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 		sb.WriteString(mutedStyle.Render("Your key is stored locally and never shared.") + "\n")
 		sb.WriteString(mutedStyle.Render("Enter: continue  Esc: back"))
 
+	case stepOllamaChoice:
+		sb.WriteString("How would you like to set up local models?\n\n")
+		choices := []string{
+			"I already have a local server running (Ollama, LM Studio, etc.)",
+			"Set up Ollama for me (install + download a model)",
+		}
+		for i, label := range choices {
+			cursor := "  "
+			style := mutedStyle
+			if i == m.ollamaChoiceCursor {
+				cursor = "▶ "
+				style = lipgloss.NewStyle().Foreground(t.Foreground).Bold(true)
+			}
+			sb.WriteString(style.Render(fmt.Sprintf("%s%s", cursor, label)) + "\n")
+		}
+		sb.WriteString("\n")
+		sb.WriteString(mutedStyle.Render("↑/↓: navigate  Enter: select  Esc: back"))
+
 	case stepEnterBaseURL:
 		p := m.selectedProvider()
 		if p.name == "ollama" {
-			sb.WriteString("Local model server URL:\n\n")
+			sb.WriteString("Enter your local model server URL:\n\n")
 			sb.WriteString("URL: " + m.baseURLInput.View() + "\n\n")
-			sb.WriteString(mutedStyle.Render("The default (http://localhost:11434) works for Ollama.") + "\n")
-			sb.WriteString(mutedStyle.Render("LM Studio, vLLM, and llama.cpp also work — enter their URL.") + "\n\n")
-			sb.WriteString(mutedStyle.Render("Don't have a local model server yet?") + "\n")
-			sb.WriteString(mutedStyle.Render("Run: ratchet provider setup ollama") + "\n")
-			sb.WriteString(mutedStyle.Render("It will install Ollama, download a model, and set everything up.") + "\n\n")
+			sb.WriteString(mutedStyle.Render("Default works for Ollama. LM Studio, vLLM, llama.cpp also supported.") + "\n\n")
 			sb.WriteString(mutedStyle.Render("Enter: continue  Esc: back"))
 		} else {
 			fmt.Fprintf(&sb, "Enter the %s server URL:\n\n", p.displayName)
@@ -1176,6 +1238,9 @@ func (m OnboardingModel) stepCount() int {
 	if p.auth != authNone {
 		count++
 	}
+	if p.name == "ollama" {
+		count++ // ollama choice step
+	}
 	if p.needsBaseURL {
 		count++
 	}
@@ -1191,16 +1256,24 @@ func (m OnboardingModel) currentStepIndex() int {
 		return 1
 	case stepBrowserAuth, stepEnterAPIKey:
 		return 1
+	case stepOllamaChoice:
+		return 1
 	case stepEnterBaseURL:
 		idx := 1
 		if p.auth != authNone {
 			idx++
+		}
+		if p.name == "ollama" {
+			idx++ // ollama choice step
 		}
 		return idx
 	case stepFetchModels, stepPullModel, stepSelectModel:
 		idx := 1
 		if p.auth != authNone {
 			idx++
+		}
+		if p.name == "ollama" {
+			idx++ // ollama choice step
 		}
 		if p.needsBaseURL {
 			idx++
