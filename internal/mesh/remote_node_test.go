@@ -68,6 +68,17 @@ func TestRemoteNode_DialsAndReceivesAgentMessage(t *testing.T) {
 		runErr <- node.Run(ctx, "test task", bb, inbox, outbox)
 	}()
 
+	// The node sends a NodeRegistered handshake immediately on connect.
+	// Drain it before checking for the forwarded inbox message.
+	select {
+	case ev := <-srv.received:
+		if ev.GetNodeRegistered() == nil {
+			t.Fatalf("expected initial NodeRegistered handshake, got %T", ev.Event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for NodeRegistered handshake")
+	}
+
 	// Send a message via the inbox to test forwarding.
 	inbox <- Message{From: "local", To: "remote", Content: "hello remote", Type: "task"}
 
