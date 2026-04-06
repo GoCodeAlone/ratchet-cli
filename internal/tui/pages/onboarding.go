@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -60,6 +61,12 @@ type pullProgressMsg struct{ pct float64 }
 // pullDoneMsg signals a model pull completed or failed.
 type pullDoneMsg struct{ err error }
 
+// ollamaSetupMsg carries the result of the async Ollama health/start check.
+type ollamaSetupMsg struct {
+	status string // "ready", "not_installed", "failed"
+	err    error
+}
+
 type onboardingStep int
 
 const (
@@ -68,6 +75,7 @@ const (
 	stepBrowserAuth
 	stepEnterAPIKey
 	stepOllamaChoice // "I already have a local server" vs "Set up Ollama for me"
+	stepOllamaSetup  // checking/starting Ollama before model pull
 	stepEnterBaseURL
 	stepFetchModels
 	stepPullModel
@@ -159,8 +167,10 @@ type OnboardingModel struct {
 	fetchedModels  []providerauth.ModelInfo
 	modelsError    string
 
-	// Ollama choice (stepOllamaChoice)
-	ollamaChoiceCursor int // 0 = "I have a server", 1 = "Set up Ollama"
+	// Ollama choice and setup (stepOllamaChoice, stepOllamaSetup)
+	ollamaChoiceCursor int    // 0 = "I have a server", 1 = "Set up Ollama"
+	ollamaSetupStatus  string // "checking", "not_installed", "starting", "ready", "failed"
+	ollamaSetupError   string
 
 	// Model pull (stepPullModel)
 	pullingModel       bool
@@ -309,7 +319,7 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 			m.pullCursor = 0
 			m.pullError = ""
 			m.pullingModel = false
-			m.recommendedModels = []string{"qwen3:8b", "llama3.3:8b", "gemma3:4b"}
+			m.recommendedModels = []string{"qwen3:8b", "llama3.1:8b", "gemma3:4b"}
 			return m, nil
 		}
 		m.step = stepSelectModel
@@ -383,6 +393,8 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		return m.updateEnterAPIKey(msg)
 	case stepOllamaChoice:
 		return m.updateOllamaChoice(msg)
+	case stepOllamaSetup:
+		return m.updateOllamaSetup(msg)
 	case stepEnterBaseURL:
 		return m.updateEnterBaseURL(msg)
 	case stepFetchModels:
@@ -646,14 +658,83 @@ func (m OnboardingModel) updateOllamaChoice(msg tea.Msg) (OnboardingModel, tea.C
 				m.baseURLInput.SetValue(p.defaultURL)
 				return m, m.baseURLInput.Focus()
 			}
-			// "Set up Ollama for me" → go straight to pull model step
-			// with default Ollama URL pre-set
+			// "Set up Ollama for me" → check/start Ollama first
 			m.baseURLInput.SetValue(p.defaultURL)
+			m.step = stepOllamaSetup
+			m.ollamaSetupStatus = "checking"
+			m.ollamaSetupError = ""
+			return m, tea.Batch(m.spinner.Tick, m.checkOllama())
+		}
+	}
+	return m, nil
+}
+
+// checkOllama tests if Ollama is reachable and tries to start it if not.
+func (m OnboardingModel) checkOllama() tea.Cmd {
+	return func() tea.Msg {
+		baseURL := m.baseURLInput.Value()
+		c := wfprovider.NewOllamaClient(baseURL)
+
+		// Check if already running.
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := c.Health(ctx); err == nil {
+			return ollamaSetupMsg{status: "ready"}
+		}
+
+		// Not running — try to start it.
+		if _, err := exec.LookPath("ollama"); err != nil {
+			return ollamaSetupMsg{status: "not_installed", err: fmt.Errorf("ollama binary not found in PATH")}
+		}
+
+		// Start ollama serve in background.
+		cmd := exec.Command("ollama", "serve")
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		if err := cmd.Start(); err != nil {
+			return ollamaSetupMsg{status: "failed", err: fmt.Errorf("start ollama: %w", err)}
+		}
+
+		// Poll health for up to 15 seconds.
+		deadline := time.Now().Add(15 * time.Second)
+		for time.Now().Before(deadline) {
+			pollCtx, pollCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			if err := c.Health(pollCtx); err == nil {
+				pollCancel()
+				return ollamaSetupMsg{status: "ready"}
+			}
+			pollCancel()
+			time.Sleep(500 * time.Millisecond)
+		}
+		return ollamaSetupMsg{status: "failed", err: fmt.Errorf("ollama did not start within 15s")}
+	}
+}
+
+func (m OnboardingModel) updateOllamaSetup(msg tea.Msg) (OnboardingModel, tea.Cmd) {
+	switch msg := msg.(type) {
+	case ollamaSetupMsg:
+		m.ollamaSetupStatus = msg.status
+		if msg.err != nil {
+			m.ollamaSetupError = msg.err.Error()
+		}
+		if msg.status == "ready" {
+			// Ollama is running → go to model pull
 			m.step = stepPullModel
 			m.pullCursor = 0
 			m.pullError = ""
 			m.pullingModel = false
-			m.recommendedModels = []string{"qwen3:8b", "llama3.3:8b", "gemma3:4b"}
+			m.recommendedModels = []string{"qwen3:8b", "llama3.1:8b", "gemma3:4b"}
+			return m, nil
+		}
+		return m, nil
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+	case tea.KeyPressMsg:
+		if msg.String() == "esc" {
+			m.step = stepOllamaChoice
+			m.ollamaChoiceCursor = 0
 			return m, nil
 		}
 	}
@@ -1081,6 +1162,32 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 		sb.WriteString("Key: " + m.apiKeyInput.View() + "\n\n")
 		sb.WriteString(mutedStyle.Render("Your key is stored locally and never shared.") + "\n")
 		sb.WriteString(mutedStyle.Render("Enter: continue  Esc: back"))
+
+	case stepOllamaSetup:
+		switch m.ollamaSetupStatus {
+		case "checking":
+			sb.WriteString(m.spinner.View() + " Checking if Ollama is running...\n\n")
+			sb.WriteString(mutedStyle.Render("Esc: cancel"))
+		case "not_installed":
+			sb.WriteString(errorStyle.Render("Ollama is not installed") + "\n\n")
+			sb.WriteString("Install Ollama first:\n\n")
+			sb.WriteString("  macOS:  brew install ollama\n")
+			sb.WriteString("  Linux:  curl -fsSL https://ollama.com/install.sh | sh\n\n")
+			sb.WriteString("Or run from the terminal:\n")
+			sb.WriteString("  ratchet provider setup ollama\n\n")
+			sb.WriteString(mutedStyle.Render("Esc: back"))
+		case "failed":
+			sb.WriteString(errorStyle.Render("Could not start Ollama") + "\n\n")
+			if m.ollamaSetupError != "" {
+				sb.WriteString(mutedStyle.Render(m.ollamaSetupError) + "\n\n")
+			}
+			sb.WriteString("Try starting it manually:\n")
+			sb.WriteString("  ollama serve\n\n")
+			sb.WriteString(mutedStyle.Render("Esc: back"))
+		default:
+			sb.WriteString(m.spinner.View() + " Starting Ollama server...\n\n")
+			sb.WriteString(mutedStyle.Render("Esc: cancel"))
+		}
 
 	case stepOllamaChoice:
 		sb.WriteString("How would you like to set up local models?\n\n")

@@ -228,7 +228,7 @@ func handleOllamaSetup(args []string) {
 	if wantNew {
 		recommended := []wfprovider.ModelInfo{
 			{ID: "qwen3:8b", Name: "qwen3:8b      (8GB, fast, good tool use)"},
-			{ID: "llama3.3:8b", Name: "llama3.3:8b   (8GB, general purpose)"},
+			{ID: "llama3.1:8b", Name: "llama3.1:8b   (8GB, general purpose)"},
 			{ID: "gemma3:4b", Name: "gemma3:4b     (4GB, lightweight)"},
 		}
 		fmt.Println("Recommended models:")
