@@ -275,6 +275,7 @@ func loadTools(ctx context.Context, toolsDir string) ([]plugin.Tool, error) {
 		return nil, err
 	}
 	var result []plugin.Tool
+	var startedDaemons []*DaemonTool
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
@@ -289,29 +290,44 @@ func loadTools(ctx context.Context, toolsDir string) ([]plugin.Tool, error) {
 			log.Printf("plugins: skipping %s: parse tool.json: %v", e.Name(), err)
 			continue
 		}
+		if def.Name == "" {
+			log.Printf("plugins: skipping %s: tool.json missing 'name' field", e.Name())
+			continue
+		}
 
 		switch def.Protocol {
 		case "daemon":
 			binPath, err := findBinary(toolDir, def.Name)
 			if err != nil {
+				stopDaemons(startedDaemons)
 				return nil, fmt.Errorf("tool %s: %w", def.Name, err)
 			}
 			daemon, err := StartDaemon(ctx, binPath)
 			if err != nil {
+				stopDaemons(startedDaemons)
 				return nil, fmt.Errorf("start daemon %s: %w", def.Name, err)
 			}
+			startedDaemons = append(startedDaemons, daemon)
 			for _, d := range daemon.Defs() {
 				result = append(result, NewDaemonToolRef(daemon, d))
 			}
 		default: // "exec" or unspecified
 			t, err := LoadExecTool(toolDir)
 			if err != nil {
+				stopDaemons(startedDaemons)
 				return nil, fmt.Errorf("tool %s: %w", def.Name, err)
 			}
 			result = append(result, t)
 		}
 	}
 	return result, nil
+}
+
+// stopDaemons stops all daemon tools in the slice (used for cleanup on error).
+func stopDaemons(daemons []*DaemonTool) {
+	for _, d := range daemons {
+		_ = d.Stop()
+	}
 }
 
 // loadMCPConfig reads a .mcp.json file and returns an MCPConfig.

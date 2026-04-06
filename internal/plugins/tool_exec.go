@@ -125,7 +125,7 @@ func (t *ExecTool) Execute(ctx context.Context, args map[string]any) (any, error
 	return result, nil
 }
 
-// isExitError is a helper to avoid importing os/exec in tests.
+// isExitError checks if err is an *exec.ExitError and extracts it.
 func isExitError(err error, target **exec.ExitError) bool {
 	if ee, ok := err.(*exec.ExitError); ok {
 		*target = ee

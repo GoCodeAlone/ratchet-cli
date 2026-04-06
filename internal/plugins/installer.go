@@ -89,8 +89,10 @@ func InstallFromLocal(src string) error {
 	}
 
 	destDir := filepath.Join(pluginsDir(), m.Name)
+	// Remove any existing install to prevent stale files from a previous version.
+	_ = os.RemoveAll(destDir)
 	if err := copyDir(src, destDir); err != nil {
-		os.RemoveAll(destDir)
+		os.RemoveAll(destDir) // clean up partial copy
 		return fmt.Errorf("copy plugin: %w", err)
 	}
 

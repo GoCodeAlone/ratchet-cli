@@ -55,6 +55,9 @@ func LoadManifest(pluginDir string) (*Manifest, error) {
 		if err := json.Unmarshal(data, &m); err != nil {
 			return nil, fmt.Errorf("parse manifest %s: %w", path, err)
 		}
+		if m.Name == "" {
+			return nil, fmt.Errorf("manifest %s: 'name' field is required", path)
+		}
 		return &m, nil
 	}
 	return nil, fmt.Errorf("no manifest found in %s (tried .ratchet-plugin/plugin.json, .claude-plugin/plugin.json)", pluginDir)

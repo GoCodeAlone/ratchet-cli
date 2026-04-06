@@ -181,6 +181,11 @@ func (d *DaemonTool) Call(ctx context.Context, name string, args map[string]any)
 
 	select {
 	case <-ctx.Done():
+		// Context cancelled while I/O is in flight. The goroutine is blocked
+		// on stdin/stdout and will corrupt the JSON-RPC stream for the next call.
+		// Kill the daemon to prevent interleaved responses.
+		_ = d.cmd.Process.Kill()
+		_, _ = d.cmd.Process.Wait()
 		return nil, ctx.Err()
 	case r := <-ch:
 		if r.err != nil {

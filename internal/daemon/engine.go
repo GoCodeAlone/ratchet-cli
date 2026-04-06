@@ -36,6 +36,7 @@ type EngineContext struct {
 	PluginSkills   []skills.Skill
 	PluginAgents   []agent.AgentDefinition
 	PluginCommands []plugins.Command
+	PluginDaemons  []*plugins.DaemonTool // stopped on Close()
 }
 
 func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error) { //nolint:unparam
@@ -144,6 +145,12 @@ func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error
 }
 
 func (ec *EngineContext) Close() {
+	// Stop plugin daemon tools.
+	for _, d := range ec.PluginDaemons {
+		if err := d.Stop(); err != nil {
+			log.Printf("stop plugin daemon: %v", err)
+		}
+	}
 	if ec.Actors != nil {
 		_ = ec.Actors.Close(context.Background())
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/plugins"
 )
@@ -60,7 +61,27 @@ func handlePlugin(args []string) {
 	}
 }
 
-// isLocalPath returns true if src looks like a local filesystem path.
+// isLocalPath returns true if src looks like a local filesystem path
+// rather than a GitHub owner/repo reference.
 func isLocalPath(src string) bool {
-	return len(src) > 0 && (src[0] == '.' || src[0] == '/')
+	if len(src) == 0 {
+		return false
+	}
+	// Explicit relative/absolute paths
+	if src[0] == '.' || src[0] == '/' {
+		return true
+	}
+	// Home-relative paths
+	if strings.HasPrefix(src, "~") {
+		return true
+	}
+	// Windows absolute paths (e.g. C:\...)
+	if len(src) >= 2 && src[1] == ':' {
+		return true
+	}
+	// If it exists on disk, treat it as local
+	if _, err := os.Stat(src); err == nil {
+		return true
+	}
+	return false
 }
