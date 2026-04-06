@@ -97,6 +97,7 @@ func StartDaemon(ctx context.Context, binPath string) (*DaemonTool, error) {
 	if err := d.initialize(); err != nil {
 		_ = stdin.Close()
 		_ = cmd.Process.Kill()
+		_ = cmd.Wait() // reap zombie
 		return nil, fmt.Errorf("initialize daemon: %w", err)
 	}
 	return d, nil
@@ -212,7 +213,7 @@ func (d *DaemonTool) Stop() error {
 		return err
 	case <-time.After(daemonStopTimeout):
 		_ = d.cmd.Process.Kill()
-		return <-done
+		return <-done // Wait() already called in goroutine above; reaps zombie
 	}
 }
 

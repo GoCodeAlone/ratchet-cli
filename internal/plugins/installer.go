@@ -58,6 +58,7 @@ func InstallFromGitHub(ctx context.Context, repo string) error {
 
 	destDir := filepath.Join(pluginsDir(), name)
 	if err := extractTarGz(tarball, destDir); err != nil {
+		os.RemoveAll(destDir)
 		return fmt.Errorf("extract tarball: %w", err)
 	}
 
@@ -89,6 +90,7 @@ func InstallFromLocal(src string) error {
 
 	destDir := filepath.Join(pluginsDir(), m.Name)
 	if err := copyDir(src, destDir); err != nil {
+		os.RemoveAll(destDir)
 		return fmt.Errorf("copy plugin: %w", err)
 	}
 

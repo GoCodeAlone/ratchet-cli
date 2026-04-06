@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -285,6 +286,7 @@ func loadTools(ctx context.Context, toolsDir string) ([]plugin.Tool, error) {
 		}
 		var def ToolDef
 		if err := json.Unmarshal(defData, &def); err != nil {
+			log.Printf("plugins: skipping %s: parse tool.json: %v", e.Name(), err)
 			continue
 		}
 
