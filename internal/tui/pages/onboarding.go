@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -319,7 +320,7 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 			m.pullCursor = 0
 			m.pullError = ""
 			m.pullingModel = false
-			m.recommendedModels = []string{"qwen3:8b", "llama3.1:8b", "gemma3:4b"}
+			m.recommendedModels = recommendedOllamaModels()
 			return m, nil
 		}
 		m.step = stepSelectModel
@@ -669,45 +670,78 @@ func (m OnboardingModel) updateOllamaChoice(msg tea.Msg) (OnboardingModel, tea.C
 	return m, nil
 }
 
-// checkOllama tests if Ollama is reachable and tries to start it if not.
+// checkOllama checks if Ollama is reachable, installs it if missing, and starts it.
+// The full flow: health check → install if needed → start server → poll until ready.
 func (m OnboardingModel) checkOllama() tea.Cmd {
 	return func() tea.Msg {
 		baseURL := m.baseURLInput.Value()
 		c := wfprovider.NewOllamaClient(baseURL)
 
-		// Check if already running.
+		// 1. Check if already running.
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		if err := c.Health(ctx); err == nil {
+		err := c.Health(ctx)
+		cancel()
+		if err == nil {
 			return ollamaSetupMsg{status: "ready"}
 		}
 
-		// Not running — try to start it.
-		if _, err := exec.LookPath("ollama"); err != nil {
-			return ollamaSetupMsg{status: "not_installed", err: fmt.Errorf("ollama binary not found in PATH")}
+		// 2. Install if binary not found.
+		if _, lookErr := exec.LookPath("ollama"); lookErr != nil {
+			if installErr := installOllamaQuiet(); installErr != nil {
+				return ollamaSetupMsg{status: "failed", err: fmt.Errorf("install ollama: %w", installErr)}
+			}
+			// Verify install worked.
+			if _, lookErr = exec.LookPath("ollama"); lookErr != nil {
+				return ollamaSetupMsg{status: "failed", err: fmt.Errorf("ollama not found after install")}
+			}
 		}
 
-		// Start ollama serve in background.
+		// 3. Start ollama serve in background.
 		cmd := exec.Command("ollama", "serve")
 		cmd.Stdout = nil
 		cmd.Stderr = nil
-		if err := cmd.Start(); err != nil {
-			return ollamaSetupMsg{status: "failed", err: fmt.Errorf("start ollama: %w", err)}
+		if startErr := cmd.Start(); startErr != nil {
+			return ollamaSetupMsg{status: "failed", err: fmt.Errorf("start ollama: %w", startErr)}
 		}
 
-		// Poll health for up to 15 seconds.
+		// 4. Poll health for up to 15 seconds.
 		deadline := time.Now().Add(15 * time.Second)
 		for time.Now().Before(deadline) {
 			pollCtx, pollCancel := context.WithTimeout(context.Background(), 2*time.Second)
-			if err := c.Health(pollCtx); err == nil {
+			if pollErr := c.Health(pollCtx); pollErr == nil {
 				pollCancel()
 				return ollamaSetupMsg{status: "ready"}
 			}
 			pollCancel()
 			time.Sleep(500 * time.Millisecond)
 		}
-		return ollamaSetupMsg{status: "failed", err: fmt.Errorf("ollama did not start within 15s")}
+		return ollamaSetupMsg{status: "failed", err: fmt.Errorf("ollama did not become ready within 15s")}
 	}
+}
+
+// installOllamaQuiet installs Ollama silently (output suppressed for TUI).
+func installOllamaQuiet() error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("brew", "install", "ollama")
+	case "linux":
+		script := `set -e; t=$(mktemp); curl -fsSL https://ollama.com/install.sh -o "$t"; sh "$t"; rm -f "$t"`
+		cmd = exec.Command("sh", "-c", script)
+	default:
+		return fmt.Errorf("automatic install not supported on %s — install from https://ollama.com/download", runtime.GOOS)
+	}
+	// Suppress output for TUI context.
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	return cmd.Run()
+}
+
+// recommendedOllamaModels returns a list of recommended models for new users.
+// Currently static since Ollama has no public library API. Centralized here
+// so it's easy to update. The "Custom" option in the TUI lets users enter any name.
+func recommendedOllamaModels() []string {
+	return []string{"qwen3:8b", "llama3.1:8b", "gemma3:4b"}
 }
 
 func (m OnboardingModel) updateOllamaSetup(msg tea.Msg) (OnboardingModel, tea.Cmd) {
@@ -723,7 +757,7 @@ func (m OnboardingModel) updateOllamaSetup(msg tea.Msg) (OnboardingModel, tea.Cm
 			m.pullCursor = 0
 			m.pullError = ""
 			m.pullingModel = false
-			m.recommendedModels = []string{"qwen3:8b", "llama3.1:8b", "gemma3:4b"}
+			m.recommendedModels = recommendedOllamaModels()
 			return m, nil
 		}
 		return m, nil
@@ -1166,26 +1200,17 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 	case stepOllamaSetup:
 		switch m.ollamaSetupStatus {
 		case "checking":
-			sb.WriteString(m.spinner.View() + " Checking if Ollama is running...\n\n")
+			sb.WriteString(m.spinner.View() + " Setting up Ollama...\n\n")
+			sb.WriteString(mutedStyle.Render("Checking installation, starting server...") + "\n\n")
 			sb.WriteString(mutedStyle.Render("Esc: cancel"))
-		case "not_installed":
-			sb.WriteString(errorStyle.Render("Ollama is not installed") + "\n\n")
-			sb.WriteString("Install Ollama first:\n\n")
-			sb.WriteString("  macOS:  brew install ollama\n")
-			sb.WriteString("  Linux:  curl -fsSL https://ollama.com/install.sh | sh\n\n")
-			sb.WriteString("Or run from the terminal:\n")
-			sb.WriteString("  ratchet provider setup ollama\n\n")
-			sb.WriteString(mutedStyle.Render("Esc: back"))
 		case "failed":
-			sb.WriteString(errorStyle.Render("Could not start Ollama") + "\n\n")
+			sb.WriteString(errorStyle.Render("Ollama setup failed") + "\n\n")
 			if m.ollamaSetupError != "" {
 				sb.WriteString(mutedStyle.Render(m.ollamaSetupError) + "\n\n")
 			}
-			sb.WriteString("Try starting it manually:\n")
-			sb.WriteString("  ollama serve\n\n")
 			sb.WriteString(mutedStyle.Render("Esc: back"))
 		default:
-			sb.WriteString(m.spinner.View() + " Starting Ollama server...\n\n")
+			sb.WriteString(m.spinner.View() + " Setting up Ollama...\n\n")
 			sb.WriteString(mutedStyle.Render("Esc: cancel"))
 		}
 
