@@ -59,6 +59,15 @@ func (n *RemoteNode) Run(ctx context.Context, task string, bb *Blackboard, inbox
 		return fmt.Errorf("remote node %s: open mesh stream at %s: %w", n.id, n.address, err)
 	}
 
+	// Send handshake so the server uses our node ID (not a random one).
+	if err := stream.Send(&pb.MeshEvent{
+		Event: &pb.MeshEvent_NodeRegistered{
+			NodeRegistered: &pb.RegisterNodeResp{NodeId: n.id},
+		},
+	}); err != nil {
+		return fmt.Errorf("remote node %s: send handshake to %s: %w", n.id, n.address, err)
+	}
+
 	// doneCh is closed when the remote signals task completion.
 	doneCh := make(chan struct{})
 
