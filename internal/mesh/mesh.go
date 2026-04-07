@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/GoCodeAlone/workflow-plugin-agent/executor"
@@ -111,6 +113,16 @@ func (m *AgentMesh) SpawnTeam(
 	bb := NewBlackboard()
 	for _, section := range []string{"plan", "code", "reviews", "status", "artifacts"} {
 		bb.Write(section, "_init", "empty", "mesh")
+	}
+
+	// 3. Start transcript logger — writes to ~/.ratchet/transcripts/<teamID>.log
+	transcriptDir := filepath.Join(os.Getenv("HOME"), ".ratchet", "transcripts")
+	_ = os.MkdirAll(transcriptDir, 0o755)
+	var transcript *TranscriptLogger
+	if f, err := os.Create(filepath.Join(transcriptDir, teamID+".log")); err == nil {
+		router := NewRouter()
+		transcript = NewTranscriptLogger(f, bb, router, teamID)
+		transcript.LogStart(task)
 	}
 	router := NewRouter()
 
@@ -265,6 +277,10 @@ func (m *AgentMesh) SpawnTeam(
 			go func() {
 				defer outboxWg.Done()
 				for msg := range outbox {
+					// Log message to transcript.
+					if transcript != nil {
+						transcript.LogMessage(msg)
+					}
 					if err := router.Send(msg); err != nil {
 						log.Printf("mesh: router send error for %s: %v", nd.ID(), err)
 					}
@@ -330,6 +346,12 @@ func (m *AgentMesh) SpawnTeam(
 
 		if len(errs) > 0 {
 			status = "completed_with_errors"
+		}
+
+		// Log transcript completion.
+		if transcript != nil {
+			transcript.LogComplete(len(nodes), len(errs))
+			transcript.Stop()
 		}
 
 		handle.setResult(TeamResult{
