@@ -55,10 +55,18 @@ func NewService(ctx context.Context) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	sm := NewSessionManager(engine.DB)
+	// Clean up stale sessions from previous daemon runs (24h expiry).
+	if cleaned, err := sm.CleanupStale(ctx, 24*time.Hour); err != nil {
+		log.Printf("session cleanup: %v", err)
+	} else if cleaned > 0 {
+		log.Printf("session cleanup: marked %d stale sessions as completed", cleaned)
+	}
+
 	svc := &Service{
 		startedAt:    time.Now(),
 		engine:       engine,
-		sessions:     NewSessionManager(engine.DB),
+		sessions:     sm,
 		permGate:     newPermissionGate(),
 		approvalGate: NewApprovalGate(),
 		plans:        NewPlanManager(engine.Hooks),

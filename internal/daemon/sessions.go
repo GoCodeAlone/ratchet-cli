@@ -123,6 +123,18 @@ func (sm *SessionManager) SetBackground(ctx context.Context, id string) error {
 	return err
 }
 
+// CleanupStale marks sessions older than maxAge as completed.
+// Called on daemon startup to prevent indefinite accumulation.
+func (sm *SessionManager) CleanupStale(ctx context.Context, maxAge time.Duration) (int64, error) {
+	cutoff := time.Now().Add(-maxAge).Format(time.RFC3339)
+	result, err := sm.db.ExecContext(ctx,
+		`UPDATE sessions SET status = 'completed' WHERE status = 'active' AND created_at < ?`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 // Subscribe returns a channel for receiving session events.
 func (sm *SessionManager) Subscribe(sessionID string) chan any {
 	ch := make(chan any, 64)
