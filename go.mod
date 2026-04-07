@@ -7,7 +7,7 @@ require (
 	charm.land/bubbletea/v2 v2.0.1
 	charm.land/lipgloss/v2 v2.0.0
 	github.com/GoCodeAlone/workflow v0.3.56
-	github.com/GoCodeAlone/workflow-plugin-agent v0.6.7
+	github.com/GoCodeAlone/workflow-plugin-agent v0.6.8
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/creack/pty v1.1.24
 	github.com/google/generative-ai-go v0.20.1
@@ -166,6 +166,7 @@ require (
 	github.com/hashicorp/memberlist v0.5.4 // indirect
 	github.com/hashicorp/vault/api v1.22.0 // indirect
 	github.com/hashicorp/yamux v0.1.2 // indirect
+	github.com/hinshun/vt10x v0.0.0-20220301184237-5011da428d02 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/itchyny/gojq v0.12.18 // indirect
 	github.com/itchyny/timefmt-go v0.1.7 // indirect
