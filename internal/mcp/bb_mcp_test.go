@@ -2,8 +2,8 @@ package mcp
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/json"
+	"io"
 	"strings"
 	"testing"
 
@@ -12,16 +12,19 @@ import (
 
 func TestBBMCPServer_Initialize(t *testing.T) {
 	bb := mesh.NewBlackboard()
-	var out bytes.Buffer
 	srv := NewBBMCPServer(bb)
 
 	req := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}` + "\n"
 	in := strings.NewReader(req)
 
-	go srv.Serve(bufio.NewReader(in), &out)
+	// Use io.Pipe so the scanner blocks until the server writes (not EOF immediately).
+	pr, pw := io.Pipe()
+	go func() {
+		srv.Serve(bufio.NewReader(in), pw)
+		pw.Close()
+	}()
 
-	// Read until we get a response.
-	scanner := bufio.NewScanner(&out)
+	scanner := bufio.NewScanner(pr)
 	for scanner.Scan() {
 		line := scanner.Text()
 		var resp map[string]any
