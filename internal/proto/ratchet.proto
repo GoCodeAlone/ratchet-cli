@@ -411,6 +411,155 @@ message MeshEvent {
   }
 }
 
+// === New messages for team lifecycle ===
+
+message ListTeamsReq {
+  string project_id = 1;  // optional filter by project
+}
+
+message TeamList {
+  repeated TeamStatus teams = 1;
+}
+
+message TeamAddAgentReq {
+  string team_id = 1;
+  string agent_spec = 2;  // "name:provider[:model]"
+}
+
+message TeamRemoveAgentReq {
+  string team_id = 1;
+  string agent_name = 2;
+}
+
+message TeamRenameReq {
+  string team_id = 1;
+  string new_name = 2;
+}
+
+message KillTeamReq {
+  string team_id = 1;
+}
+
+// Attach/detach
+message AttachTeamReq {
+  string team_id = 1;
+  string mode = 2;  // "observe" or "join"
+}
+
+message TeamActivityEvent {
+  oneof event {
+    AgentMessage agent_message = 1;
+    TokenDelta token = 2;
+    ErrorEvent error = 3;
+    SessionComplete complete = 4;
+    HumanRequest human_request = 5;
+  }
+}
+
+// Human-in-the-loop
+message HumanRequest {
+  string request_id = 1;
+  string team_id = 2;
+  string from_agent = 3;
+  string question = 4;
+  string timestamp = 5;
+}
+
+message HumanResponse {
+  string request_id = 1;
+  string team_id = 2;
+  string content = 3;
+}
+
+message PendingHumanReq {
+  string team_id = 1;  // optional filter
+}
+
+message PendingHumanList {
+  repeated HumanRequest requests = 1;
+}
+
+message SteerTeamReq {
+  string team_id = 1;
+  string directive = 2;
+}
+
+message DirectMessageReq {
+  string team_id = 1;
+  string to_agent = 2;
+  string content = 3;
+}
+
+// Project management
+message StartProjectReq {
+  string name = 1;
+  string config_path = 2;
+}
+
+message ProjectStatus {
+  string id = 1;
+  string name = 2;
+  string status = 3;
+  repeated string team_ids = 4;
+  string created_at = 5;
+}
+
+message ProjectList {
+  repeated ProjectStatus projects = 1;
+}
+
+message ProjectReq {
+  string project_id = 1;
+}
+
+// Task tracker
+message TaskCreateReq {
+  string title = 1;
+  string project_id = 2;
+  string assigned_team = 3;
+  int32 priority = 4;
+  string description = 5;
+}
+
+message TaskUpdateReq {
+  string task_id = 1;
+  string status = 2;
+  string notes = 3;
+}
+
+message TaskClaimReq {
+  string task_id = 1;
+  string agent_name = 2;
+}
+
+message TaskListReq {
+  string project_id = 1;
+  string team = 2;
+  string status = 3;
+  int32 limit = 4;
+}
+
+message TaskInfo {
+  string id = 1;
+  string title = 2;
+  string status = 3;
+  string assigned_team = 4;
+  string claimed_by = 5;
+  int32 priority = 6;
+  string description = 7;
+  string project_id = 8;
+  string created_at = 9;
+  string updated_at = 10;
+}
+
+message TaskList {
+  repeated TaskInfo tasks = 1;
+}
+
+message TaskReq {
+  string task_id = 1;
+}
+
 // === Service ===
 
 service RatchetDaemon {
@@ -476,4 +625,33 @@ service RatchetDaemon {
   // Agent Mesh (scaffolded — handlers return Unimplemented)
   rpc RegisterMeshNode(RegisterNodeReq) returns (RegisterNodeResp);
   rpc MeshStream(stream MeshEvent) returns (stream MeshEvent);
+
+  // Teams (extended)
+  rpc ListTeams(ListTeamsReq) returns (TeamList);
+  rpc KillTeam(KillTeamReq) returns (Empty);
+  rpc RenameTeam(TeamRenameReq) returns (Empty);
+  rpc TeamAddAgent(TeamAddAgentReq) returns (Empty);
+  rpc TeamRemoveAgent(TeamRemoveAgentReq) returns (Empty);
+  rpc AttachTeam(AttachTeamReq) returns (stream TeamActivityEvent);
+  rpc SteerTeam(SteerTeamReq) returns (Empty);
+  rpc DirectMessage(DirectMessageReq) returns (Empty);
+
+  // Human-in-the-loop
+  rpc RespondToHuman(HumanResponse) returns (Empty);
+  rpc ListPendingHuman(PendingHumanReq) returns (PendingHumanList);
+
+  // Projects
+  rpc StartProject(StartProjectReq) returns (ProjectStatus);
+  rpc ListProjects(Empty) returns (ProjectList);
+  rpc PauseProject(ProjectReq) returns (Empty);
+  rpc ResumeProject(ProjectReq) returns (Empty);
+  rpc KillProject(ProjectReq) returns (Empty);
+  rpc GetProjectStatus(ProjectReq) returns (ProjectStatus);
+
+  // Task tracker
+  rpc CreateTask(TaskCreateReq) returns (TaskInfo);
+  rpc ClaimTask(TaskClaimReq) returns (TaskInfo);
+  rpc UpdateTask(TaskUpdateReq) returns (TaskInfo);
+  rpc ListTasks(TaskListReq) returns (TaskList);
+  rpc GetTask(TaskReq) returns (TaskInfo);
 }

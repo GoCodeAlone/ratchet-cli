@@ -777,6 +777,98 @@ func (s *Service) MeshStream(stream pb.RatchetDaemon_MeshStreamServer) error {
 	}
 }
 
+// === Team lifecycle stubs (Task 2.1) ===
+
+func (s *Service) ListTeams(ctx context.Context, req *pb.ListTeamsReq) (*pb.TeamList, error) {
+	return nil, status.Error(codes.Unimplemented, "ListTeams not yet implemented")
+}
+
+func (s *Service) KillTeam(ctx context.Context, req *pb.KillTeamReq) (*pb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "KillTeam not yet implemented")
+}
+
+func (s *Service) RenameTeam(ctx context.Context, req *pb.TeamRenameReq) (*pb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "RenameTeam not yet implemented")
+}
+
+func (s *Service) TeamAddAgent(ctx context.Context, req *pb.TeamAddAgentReq) (*pb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "TeamAddAgent not yet implemented")
+}
+
+func (s *Service) TeamRemoveAgent(ctx context.Context, req *pb.TeamRemoveAgentReq) (*pb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "TeamRemoveAgent not yet implemented")
+}
+
+func (s *Service) AttachTeam(req *pb.AttachTeamReq, stream pb.RatchetDaemon_AttachTeamServer) error {
+	return status.Error(codes.Unimplemented, "AttachTeam not yet implemented")
+}
+
+func (s *Service) SteerTeam(ctx context.Context, req *pb.SteerTeamReq) (*pb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "SteerTeam not yet implemented")
+}
+
+func (s *Service) DirectMessage(ctx context.Context, req *pb.DirectMessageReq) (*pb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "DirectMessage not yet implemented")
+}
+
+// === Human-in-the-loop stubs (Task 2.1) ===
+
+func (s *Service) RespondToHuman(ctx context.Context, req *pb.HumanResponse) (*pb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "RespondToHuman not yet implemented")
+}
+
+func (s *Service) ListPendingHuman(ctx context.Context, req *pb.PendingHumanReq) (*pb.PendingHumanList, error) {
+	return nil, status.Error(codes.Unimplemented, "ListPendingHuman not yet implemented")
+}
+
+// === Project stubs (Task 2.1) ===
+
+func (s *Service) StartProject(ctx context.Context, req *pb.StartProjectReq) (*pb.ProjectStatus, error) {
+	return nil, status.Error(codes.Unimplemented, "StartProject not yet implemented")
+}
+
+func (s *Service) ListProjects(ctx context.Context, _ *pb.Empty) (*pb.ProjectList, error) {
+	return nil, status.Error(codes.Unimplemented, "ListProjects not yet implemented")
+}
+
+func (s *Service) PauseProject(ctx context.Context, req *pb.ProjectReq) (*pb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "PauseProject not yet implemented")
+}
+
+func (s *Service) ResumeProject(ctx context.Context, req *pb.ProjectReq) (*pb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "ResumeProject not yet implemented")
+}
+
+func (s *Service) KillProject(ctx context.Context, req *pb.ProjectReq) (*pb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "KillProject not yet implemented")
+}
+
+func (s *Service) GetProjectStatus(ctx context.Context, req *pb.ProjectReq) (*pb.ProjectStatus, error) {
+	return nil, status.Error(codes.Unimplemented, "GetProjectStatus not yet implemented")
+}
+
+// === Task tracker stubs (Task 2.1) ===
+
+func (s *Service) CreateTask(ctx context.Context, req *pb.TaskCreateReq) (*pb.TaskInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "CreateTask not yet implemented")
+}
+
+func (s *Service) ClaimTask(ctx context.Context, req *pb.TaskClaimReq) (*pb.TaskInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "ClaimTask not yet implemented")
+}
+
+func (s *Service) UpdateTask(ctx context.Context, req *pb.TaskUpdateReq) (*pb.TaskInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "UpdateTask not yet implemented")
+}
+
+func (s *Service) ListTasks(ctx context.Context, req *pb.TaskListReq) (*pb.TaskList, error) {
+	return nil, status.Error(codes.Unimplemented, "ListTasks not yet implemented")
+}
+
+func (s *Service) GetTask(ctx context.Context, req *pb.TaskReq) (*pb.TaskInfo, error) {
+	return nil, status.Error(codes.Unimplemented, "GetTask not yet implemented")
+}
+
 // handleMeshEvent processes a single incoming MeshEvent from a remote node.
 func (s *Service) handleMeshEvent(ev *pb.MeshEvent) {
 	switch e := ev.Event.(type) {
