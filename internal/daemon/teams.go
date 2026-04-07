@@ -611,6 +611,48 @@ func (tm *TeamManager) KillAgent(teamID string) error {
 	return nil
 }
 
+// AddAgent dynamically adds an agent to a running team's mesh.
+// This is a stub; full wiring requires access to the team's BB/Router.
+func (tm *TeamManager) AddAgent(teamID, agentSpec string) error {
+	tm.mu.RLock()
+	resolved := tm.resolveTeamID(teamID)
+	_, ok := tm.teams[resolved]
+	tm.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("team %q not found", teamID)
+	}
+
+	ac, err := mesh.ParseAgentFlag(agentSpec)
+	if err != nil {
+		return fmt.Errorf("parse agent spec: %w", err)
+	}
+	_ = ac
+	// TODO: wire to team's live BB/Router in Task 2.5.
+	return fmt.Errorf("dynamic add not yet wired to team mesh instance")
+}
+
+// RemoveAgent dynamically removes an agent from a running team.
+func (tm *TeamManager) RemoveAgent(teamID, agentName string) error {
+	tm.mu.RLock()
+	resolved := tm.resolveTeamID(teamID)
+	ti, ok := tm.teams[resolved]
+	tm.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("team %q not found", teamID)
+	}
+
+	ti.mu.Lock()
+	for id, ag := range ti.agents {
+		if ag.name == agentName {
+			delete(ti.agents, id)
+			ti.mu.Unlock()
+			return nil
+		}
+	}
+	ti.mu.Unlock()
+	return fmt.Errorf("agent %q not found in team %q", agentName, teamID)
+}
+
 // StartMeshTeam creates a team via the mesh orchestrator, converts mesh Events
 // to pb.TeamEvents, and returns a channel of events.
 func (tm *TeamManager) StartMeshTeam(

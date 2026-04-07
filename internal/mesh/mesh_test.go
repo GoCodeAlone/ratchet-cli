@@ -386,3 +386,34 @@ collected:
 		t.Fatal("expected at least one agent_spawned event")
 	}
 }
+
+func TestAddRemoveNode(t *testing.T) {
+	m := NewAgentMesh()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = ctx
+
+	bb := NewBlackboard()
+	router := NewRouter()
+
+	// Add a node.
+	cfg := NodeConfig{Name: "debugger", Role: "worker", Provider: "ollama", Location: "local"}
+	err := m.AddNodeToTeam(ctx, "team-1", cfg, bb, router, nil)
+	if err != nil {
+		t.Fatalf("AddNodeToTeam: %v", err)
+	}
+
+	// Verify BB was updated with team member info.
+	members := bb.List("team/members")
+	if members == nil {
+		t.Fatal("expected team/members section")
+	}
+	if _, ok := members["debugger"]; !ok {
+		t.Error("expected debugger in team/members")
+	}
+
+	// Remove the node.
+	if err := m.RemoveNodeFromTeam("team-1", "debugger", router); err != nil {
+		t.Fatalf("RemoveNodeFromTeam: %v", err)
+	}
+}

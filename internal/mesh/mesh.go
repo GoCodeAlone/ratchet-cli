@@ -354,6 +354,77 @@ func (m *AgentMesh) SpawnTeam(
 	return handle, nil
 }
 
+// AddNodeToTeam dynamically adds a new node to a running team.
+// The node is registered with the router and its presence is recorded in the
+// BB team/members section. A goroutine is started to run the node.
+func (m *AgentMesh) AddNodeToTeam(
+	ctx context.Context,
+	teamID string,
+	cfg NodeConfig,
+	bb *Blackboard,
+	router *Router,
+	providerFactory func(NodeConfig) provider.Provider,
+) error {
+	var prov provider.Provider
+	if providerFactory != nil {
+		prov = providerFactory(cfg)
+	}
+	node := NewLocalNode(cfg, prov, nil)
+
+	// Register with router.
+	inbox, err := router.Register(cfg.Name)
+	if err != nil {
+		return fmt.Errorf("register node %s: %w", cfg.Name, err)
+	}
+
+	// Record in mesh registry.
+	m.mu.Lock()
+	m.nodes[cfg.Name] = node
+	m.mu.Unlock()
+
+	// Update BB roster.
+	bb.Write("team/members", cfg.Name, map[string]string{
+		"role":     cfg.Role,
+		"provider": cfg.Provider,
+		"status":   "active",
+	}, "mesh")
+
+	// Notify via BB.
+	bb.Write("team/events", fmt.Sprintf("add-%s", cfg.Name),
+		fmt.Sprintf("agent %q (%s) joined the team", cfg.Name, cfg.Role), "mesh")
+
+	// Start the node in a goroutine.
+	outbox := make(chan Message, 64)
+	go func() {
+		defer router.Unregister(cfg.Name)
+		go func() {
+			for msg := range outbox {
+				_ = router.Send(msg)
+			}
+		}()
+		_ = node.Run(ctx, "", bb, inbox, outbox)
+		close(outbox)
+	}()
+
+	return nil
+}
+
+// RemoveNodeFromTeam removes a node from a running team by unregistering it
+// from the router (which causes its inbox to be closed and node.Run to exit).
+func (m *AgentMesh) RemoveNodeFromTeam(teamID, nodeName string, router *Router) error {
+	m.mu.Lock()
+	_, ok := m.nodes[nodeName]
+	if !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("node %q not found", nodeName)
+	}
+	delete(m.nodes, nodeName)
+	m.mu.Unlock()
+
+	router.Unregister(nodeName)
+	return nil
+}
+
 // makeEventForwarder returns an executor.Event callback that converts events
 // into mesh Events and sends them on the channel.
 func makeEventForwarder(ch chan<- Event, agentID string) func(executor.Event) {
