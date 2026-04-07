@@ -204,6 +204,7 @@ func ToNodeConfigs(tc *TeamConfig) []NodeConfig {
 // ProjectTeamConfig extends TeamConfig with per-team Blackboard mode.
 type ProjectTeamConfig struct {
 	Name       string        `yaml:"name" json:"name"`
+	WorkDir    string        `yaml:"workdir,omitempty" json:"workdir,omitempty"` // per-team working directory (overrides project-level)
 	Agents     []AgentConfig `yaml:"agents" json:"agents"`
 	Timeout    string        `yaml:"timeout,omitempty" json:"timeout,omitempty"`
 	Blackboard string        `yaml:"blackboard,omitempty" json:"blackboard,omitempty"` // shared, isolated, orchestrator, bridge:<t1>,<t2>
@@ -212,6 +213,9 @@ type ProjectTeamConfig struct {
 // ProjectConfig defines a multi-team project.
 type ProjectConfig struct {
 	Project string              `yaml:"project" json:"project"`
+	Cwd     string              `yaml:"cwd,omitempty" json:"cwd,omitempty"`       // where project was initiated (auto-set at start time if empty)
+	WorkDir string              `yaml:"workdir,omitempty" json:"workdir,omitempty"` // working directory for agents (defaults to cwd)
+	Paths   []string            `yaml:"paths,omitempty" json:"paths,omitempty"`    // whitelisted directories for tool/agent interaction
 	Teams   []ProjectTeamConfig `yaml:"teams" json:"teams"`
 }
 

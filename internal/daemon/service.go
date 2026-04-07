@@ -889,7 +889,14 @@ func (s *Service) ListPendingHuman(ctx context.Context, req *pb.PendingHumanReq)
 // === Project handlers (Task 4.3) ===
 
 func (s *Service) StartProject(ctx context.Context, req *pb.StartProjectReq) (*pb.ProjectStatus, error) {
-	p, err := s.projects.Register(req.Name, req.ConfigPath)
+	// Auto-capture cwd from config if available, otherwise let Register auto-detect.
+	var opts *RegisterOpts
+	if req.ConfigPath != "" {
+		if pc, loadErr := mesh.LoadProjectConfig(req.ConfigPath); loadErr == nil {
+			opts = &RegisterOpts{Cwd: pc.Cwd, WorkDir: pc.WorkDir, Paths: pc.Paths}
+		}
+	}
+	p, err := s.projects.Register(req.Name, req.ConfigPath, opts)
 	if err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
 	}

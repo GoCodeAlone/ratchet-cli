@@ -8,7 +8,7 @@ func TestProjectRegistry(t *testing.T) {
 	pr := NewProjectRegistry()
 
 	// Register a project.
-	p, err := pr.Register("email-service", "/path/to/config.yaml")
+	p, err := pr.Register("email-service", "/path/to/config.yaml", nil)
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
@@ -20,7 +20,7 @@ func TestProjectRegistry(t *testing.T) {
 	}
 
 	// Duplicate name.
-	if _, err := pr.Register("email-service", ""); err == nil {
+	if _, err := pr.Register("email-service", "", nil); err == nil {
 		t.Error("expected error on duplicate project name")
 	}
 

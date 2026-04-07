@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -13,7 +14,10 @@ type Project struct {
 	ID         string
 	Name       string
 	ConfigPath string
-	Status     string // active, paused, killed, completed
+	Cwd        string   // directory where the project was started
+	WorkDir    string   // working directory for agents (defaults to Cwd)
+	Paths      []string // whitelisted directories for tool/agent interaction (empty = unrestricted under WorkDir)
+	Status     string   // active, paused, killed, completed
 	TeamIDs    []string
 	CreatedAt  time.Time
 }
@@ -33,8 +37,16 @@ func NewProjectRegistry() *ProjectRegistry {
 	}
 }
 
-// Register creates a new project entry.
-func (pr *ProjectRegistry) Register(name, configPath string) (*Project, error) {
+// RegisterOpts holds optional fields for project registration.
+type RegisterOpts struct {
+	Cwd     string
+	WorkDir string
+	Paths   []string
+}
+
+// Register creates a new project entry. Cwd is auto-captured from the current
+// working directory if not provided in opts.
+func (pr *ProjectRegistry) Register(name, configPath string, opts *RegisterOpts) (*Project, error) {
 	pr.mu.Lock()
 	defer pr.mu.Unlock()
 
@@ -42,10 +54,28 @@ func (pr *ProjectRegistry) Register(name, configPath string) (*Project, error) {
 		return nil, fmt.Errorf("project %q already exists", name)
 	}
 
+	cwd := ""
+	workDir := ""
+	var paths []string
+	if opts != nil {
+		cwd = opts.Cwd
+		workDir = opts.WorkDir
+		paths = opts.Paths
+	}
+	if cwd == "" {
+		cwd, _ = os.Getwd()
+	}
+	if workDir == "" {
+		workDir = cwd
+	}
+
 	p := &Project{
 		ID:         "proj-" + uuid.NewString()[:8],
 		Name:       name,
 		ConfigPath: configPath,
+		Cwd:        cwd,
+		WorkDir:    workDir,
+		Paths:      paths,
 		Status:     "active",
 		CreatedAt:  time.Now(),
 	}
