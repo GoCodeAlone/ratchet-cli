@@ -4,17 +4,19 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/client"
 	"github.com/GoCodeAlone/ratchet-cli/internal/mesh"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
+	"gopkg.in/yaml.v3"
 )
 
 func handleTeam(args []string) {
 	if len(args) == 0 {
-		fmt.Println("Usage: ratchet team <start|status|list> [args...]")
+		fmt.Println("Usage: ratchet team <start|status|list|save|kill> [args...]")
 		return
 	}
 
@@ -25,42 +27,104 @@ func handleTeam(args []string) {
 		handleTeamStatus(args[1:])
 	case "list":
 		handleTeamList()
+	case "save":
+		handleTeamSave(args[1:])
+	case "kill":
+		handleTeamKill(args[1:])
 	default:
 		fmt.Printf("unknown team command: %s\n", args[0])
 	}
 }
 
 func handleTeamStart(args []string) {
-	if len(args) < 1 {
-		fmt.Println("Usage: ratchet team start [<name|yaml-path>] --task \"description\"")
-		return
-	}
-
-	// Parse args: first positional is either a team name/path or the task description.
-	// If --task flag is present, the first positional is the team config identifier.
-	var teamConfigName string
-	var task string
+	var (
+		agentFlags   []string
+		teamName     string
+		bbMode       string
+		orchestrator string
+		configName   string
+		task         string
+	)
 
 	for i := 0; i < len(args); i++ {
-		if args[i] == "--task" && i+1 < len(args) {
-			task = args[i+1]
-			i++
-		} else if teamConfigName == "" {
-			teamConfigName = args[i]
+		switch args[i] {
+		case "--agent":
+			if i+1 < len(args) {
+				agentFlags = append(agentFlags, args[i+1])
+				i++
+			}
+		case "--agents":
+			if i+1 < len(args) {
+				for _, a := range strings.Split(args[i+1], ",") {
+					agentFlags = append(agentFlags, strings.TrimSpace(a))
+				}
+				i++
+			}
+		case "--name":
+			if i+1 < len(args) {
+				teamName = args[i+1]
+				i++
+			}
+		case "--bb":
+			if i+1 < len(args) {
+				bbMode = args[i+1]
+				i++
+			}
+		case "--orchestrator":
+			if i+1 < len(args) {
+				orchestrator = args[i+1]
+				i++
+			}
+		case "--config":
+			if i+1 < len(args) {
+				configName = args[i+1]
+				i++
+			}
+		case "--task":
+			if i+1 < len(args) {
+				task = args[i+1]
+				i++
+			}
+		default:
+			// Positional: could be config name or task.
+			if configName == "" && task == "" && isTeamConfig(args[i]) {
+				configName = args[i]
+			} else if task == "" {
+				task = args[i]
+			}
 		}
 	}
 
-	// If no --task flag, treat the first positional as the task (backward compatible).
-	if task == "" && teamConfigName != "" {
-		// Check if teamConfigName matches a builtin or file path.
-		if !isTeamConfig(teamConfigName) {
-			task = teamConfigName
-			teamConfigName = ""
+	// Build team config from --agent flags if no --config.
+	if configName == "" && len(agentFlags) > 0 {
+		tc, err := mesh.BuildTeamConfigFromFlags(teamName, agentFlags, orchestrator, bbMode)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
 		}
+		fmt.Printf("Team: %s (%d agents, bb=%s)\n", tc.Name, len(tc.Agents), bbMode)
+		for _, a := range tc.Agents {
+			prov := a.Provider
+			if prov == "" {
+				prov = "(default)"
+			}
+			fmt.Printf("  • %s — %s", a.Name, prov)
+			if a.Model != "" {
+				fmt.Printf("/%s", a.Model)
+			}
+			if a.Role == "orchestrator" {
+				fmt.Print(" [orchestrator]")
+			}
+			fmt.Println()
+		}
+		fmt.Println()
+
+		// Serialize to a temp YAML and pass as config name.
+		configName = writeTemporaryTeamConfig(tc)
 	}
 
 	if task == "" {
-		fmt.Println("Usage: ratchet team start [<name|yaml-path>] --task \"description\"")
+		fmt.Println("Usage: ratchet team start [--agent name:provider[:model]]... [--config name] \"task\"")
 		return
 	}
 
@@ -71,23 +135,20 @@ func handleTeamStart(args []string) {
 	}
 	defer c.Close()
 
-	// If a team config is specified, display it and proceed with normal start.
-	if teamConfigName != "" {
-		tc, err := resolveTeamConfig(teamConfigName)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+	if configName != "" {
+		tc, err := resolveTeamConfig(configName)
+		if err == nil {
+			fmt.Printf("Using team config: %s (%d agents)\n", tc.Name, len(tc.Agents))
+			for _, a := range tc.Agents {
+				fmt.Printf("  • %s (%s) — %s/%s\n", a.Name, a.Role, a.Provider, a.Model)
+			}
+			fmt.Println()
 		}
-		fmt.Printf("Using team config: %s (%d agents)\n", tc.Name, len(tc.Agents))
-		for _, a := range tc.Agents {
-			fmt.Printf("  • %s (%s) — %s/%s\n", a.Name, a.Role, a.Provider, a.Model)
-		}
-		fmt.Println()
 	}
 
 	stream, err := c.StartTeam(context.Background(), &pb.StartTeamReq{
 		Task:           task,
-		TeamConfigName: teamConfigName,
+		TeamConfigName: configName,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -112,6 +173,25 @@ func handleTeamStart(args []string) {
 			fmt.Fprintf(os.Stderr, "error: %s\n", e.Error.Message)
 		}
 	}
+}
+
+func writeTemporaryTeamConfig(tc *mesh.TeamConfig) string {
+	data, err := yaml.Marshal(tc)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error marshaling team config: %v\n", err)
+		os.Exit(1)
+	}
+	tmpFile, err := os.CreateTemp("", "ratchet-team-*.yaml")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error creating temp file: %v\n", err)
+		os.Exit(1)
+	}
+	if _, err := tmpFile.Write(data); err != nil {
+		fmt.Fprintf(os.Stderr, "error writing temp file: %v\n", err)
+		os.Exit(1)
+	}
+	tmpFile.Close()
+	return tmpFile.Name()
 }
 
 // isTeamConfig returns true if the name matches a builtin config or is a YAML file path.
@@ -190,4 +270,72 @@ func handleTeamList() {
 	// implemented. Direct GetTeamStatus("") calls always return NotFound.
 	fmt.Println("Active team listing is not available via this command.")
 	fmt.Println("Use `ratchet team status <team-id>` for a known team ID.")
+}
+
+func handleTeamSave(args []string) {
+	var (
+		name       string
+		agentFlags []string
+		outputPath string
+	)
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--agent":
+			if i+1 < len(args) {
+				agentFlags = append(agentFlags, args[i+1])
+				i++
+			}
+		case "--output":
+			if i+1 < len(args) {
+				outputPath = args[i+1]
+				i++
+			}
+		default:
+			if name == "" {
+				name = args[i]
+			}
+		}
+	}
+
+	if name == "" || len(agentFlags) == 0 {
+		fmt.Println("Usage: ratchet team save <name> --agent name:provider[:model] [--output path]")
+		return
+	}
+
+	tc, err := mesh.BuildTeamConfigFromFlags(name, agentFlags, "", "")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if outputPath == "" {
+		dir := filepath.Join(".", ".ratchet", "teams")
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			fmt.Fprintf(os.Stderr, "error creating dir: %v\n", err)
+			os.Exit(1)
+		}
+		outputPath = filepath.Join(dir, name+".yaml")
+	}
+
+	data, err := yaml.Marshal(tc)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := os.WriteFile(outputPath, data, 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Saved team config to %s\n", outputPath)
+}
+
+func handleTeamKill(args []string) {
+	if len(args) < 1 {
+		fmt.Println("Usage: ratchet team kill <team-id>")
+		return
+	}
+	// TODO: Wire to KillTeam RPC once it exists.
+	fmt.Printf("team kill %s: not yet implemented\n", args[0])
 }
