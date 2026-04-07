@@ -79,11 +79,11 @@ func (p ThinkingPanel) View() string {
 	lineCount := len(lines)
 
 	if p.collapsed {
-		header := headerStyle.Render(fmt.Sprintf("▶ Thinking (%d lines)", lineCount))
+		header := headerStyle.Render(fmt.Sprintf("▶ Thinking (%d lines) — Ctrl+H to expand", lineCount))
 		return header
 	}
 
-	header := headerStyle.Render("▼ Thinking")
+	header := headerStyle.Render("▼ Thinking — Ctrl+H to collapse")
 	body := contentStyle.Render(p.content)
 	return header + "\n" + body
 }
