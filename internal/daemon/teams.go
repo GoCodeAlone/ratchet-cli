@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"sync"
@@ -51,25 +53,98 @@ type teamInstance struct {
 
 // TeamManager manages team instances.
 type TeamManager struct {
-	mu    sync.RWMutex
-	teams map[string]*teamInstance
+	mu     sync.RWMutex
+	teams  map[string]*teamInstance
+	names  map[string]string // user-assigned name → team ID
 	engine *EngineContext
 	hooks  *hooks.HookConfig
-	stop  chan struct{}
-	mesh  *mesh.AgentMesh
+	stop   chan struct{}
+	mesh   *mesh.AgentMesh
+}
+
+// generateTeamShortID generates a short human-readable team ID like "t-a3f2".
+func generateTeamShortID() string {
+	b := make([]byte, 2)
+	if _, err := rand.Read(b); err != nil {
+		return "t-" + uuid.NewString()[:4]
+	}
+	return "t-" + hex.EncodeToString(b)
 }
 
 // NewTeamManager returns an initialized TeamManager.
 func NewTeamManager(engine *EngineContext, hks *hooks.HookConfig) *TeamManager {
 	tm := &TeamManager{
 		teams:  make(map[string]*teamInstance),
+		names:  make(map[string]string),
 		engine: engine,
 		hooks:  hks,
 		stop:   make(chan struct{}),
-		mesh:  mesh.NewAgentMesh(),
+		mesh:   mesh.NewAgentMesh(),
 	}
 	go tm.cleanupLoop()
 	return tm
+}
+
+// resolveTeamID maps a name-or-ID to a canonical team ID.
+// Must be called with at least a read lock held on tm.mu.
+func (tm *TeamManager) resolveTeamID(idOrName string) string {
+	if _, ok := tm.teams[idOrName]; ok {
+		return idOrName
+	}
+	if id, ok := tm.names[idOrName]; ok {
+		return id
+	}
+	return idOrName
+}
+
+// Rename assigns a user-friendly name to a team.
+func (tm *TeamManager) Rename(teamID, newName string) error {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	if _, ok := tm.teams[teamID]; !ok {
+		return fmt.Errorf("team %q not found", teamID)
+	}
+	if existing, ok := tm.names[newName]; ok && existing != teamID {
+		return fmt.Errorf("name %q already assigned to team %s", newName, existing)
+	}
+	// Remove old name mapping if one exists.
+	for name, id := range tm.names {
+		if id == teamID {
+			delete(tm.names, name)
+			break
+		}
+	}
+	tm.names[newName] = teamID
+	return nil
+}
+
+// ListTeams returns status for all teams, optionally filtered by project (unused in Phase 2).
+func (tm *TeamManager) ListTeams(projectID string) []*pb.TeamStatus {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
+	var out []*pb.TeamStatus
+	for _, ti := range tm.teams {
+		ti.mu.RLock()
+		var agents []*pb.Agent
+		for _, ag := range ti.agents {
+			ag.mu.RLock()
+			agents = append(agents, &pb.Agent{
+				Id:     ag.id,
+				Name:   ag.name,
+				Role:   ag.role,
+				Status: ag.status,
+			})
+			ag.mu.RUnlock()
+		}
+		out = append(out, &pb.TeamStatus{
+			TeamId: ti.id,
+			Task:   ti.task,
+			Agents: agents,
+			Status: ti.status,
+		})
+		ti.mu.RUnlock()
+	}
+	return out
 }
 
 // cleanupLoop periodically removes teams that completed more than 10 minutes ago.
@@ -114,7 +189,7 @@ func (tm *TeamManager) StartTeam(ctx context.Context, req *pb.StartTeamReq) (str
 		return tm.startMeshTeamFromConfig(ctx, req)
 	}
 
-	teamID := uuid.New().String()
+	teamID := generateTeamShortID()
 	runCtx, cancel := context.WithCancel(ctx)
 
 	ti := &teamInstance{
@@ -435,10 +510,11 @@ func (tm *TeamManager) markDone(ti *teamInstance, s string) {
 	ti.mu.Unlock()
 }
 
-// GetStatus returns the current TeamStatus for a given team ID.
+// GetStatus returns the current TeamStatus for a given team ID or name.
 func (tm *TeamManager) GetStatus(teamID string) (*pb.TeamStatus, error) {
 	tm.mu.RLock()
-	ti, ok := tm.teams[teamID]
+	resolved := tm.resolveTeamID(teamID)
+	ti, ok := tm.teams[resolved]
 	tm.mu.RUnlock()
 	if !ok {
 		return nil, fmt.Errorf("team %s not found", teamID)

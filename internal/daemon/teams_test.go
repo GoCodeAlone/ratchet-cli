@@ -135,3 +135,52 @@ func TestTeamManager_GetStatus_NotFound(t *testing.T) {
 		t.Error("expected error for nonexistent team")
 	}
 }
+
+func TestTeamShortID(t *testing.T) {
+	id := generateTeamShortID()
+	if len(id) < 6 || id[:2] != "t-" {
+		t.Errorf("got ID %q, want t-XXXX pattern", id)
+	}
+}
+
+func TestTeamRename(t *testing.T) {
+	tm := NewTeamManager(nil, nil)
+
+	ti := &teamInstance{
+		id:     "t-abcd",
+		task:   "test",
+		agents: make(map[string]*teamAgent),
+		status: "running",
+	}
+	tm.mu.Lock()
+	tm.teams["t-abcd"] = ti
+	tm.mu.Unlock()
+
+	if err := tm.Rename("t-abcd", "email-dev"); err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+
+	// Lookup by new name.
+	if _, err := tm.GetStatus("email-dev"); err != nil {
+		t.Fatalf("GetStatus by name: %v", err)
+	}
+
+	// Lookup by old ID still works.
+	if _, err := tm.GetStatus("t-abcd"); err != nil {
+		t.Fatalf("GetStatus by ID: %v", err)
+	}
+}
+
+func TestListTeams(t *testing.T) {
+	tm := NewTeamManager(nil, nil)
+
+	tm.mu.Lock()
+	tm.teams["t-0001"] = &teamInstance{id: "t-0001", task: "task-a", agents: make(map[string]*teamAgent), status: "running"}
+	tm.teams["t-0002"] = &teamInstance{id: "t-0002", task: "task-b", agents: make(map[string]*teamAgent), status: "completed"}
+	tm.mu.Unlock()
+
+	teams := tm.ListTeams("")
+	if len(teams) != 2 {
+		t.Fatalf("got %d teams, want 2", len(teams))
+	}
+}
