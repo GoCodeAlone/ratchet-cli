@@ -219,6 +219,9 @@ func initDB(db *sql.DB) error {
 	// Prior versions always set secret_name="provider_<alias>" even for keyless
 	// providers (ollama, llama_cpp), causing "secret not found" errors.
 	migrations := []string{
+		// Add settings column if missing (older DBs predate this column).
+		`ALTER TABLE llm_providers ADD COLUMN settings TEXT NOT NULL DEFAULT '{}'`,
+		// Clear stale secret_name for keyless providers.
 		`UPDATE llm_providers SET secret_name = '' WHERE secret_name != '' AND type IN ('ollama', 'llama_cpp')`,
 	}
 	for _, m := range migrations {

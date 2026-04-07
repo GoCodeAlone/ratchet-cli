@@ -7,7 +7,7 @@ require (
 	charm.land/bubbletea/v2 v2.0.1
 	charm.land/lipgloss/v2 v2.0.0
 	github.com/GoCodeAlone/workflow v0.3.56
-	github.com/GoCodeAlone/workflow-plugin-agent v0.6.0
+	github.com/GoCodeAlone/workflow-plugin-agent v0.6.2
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/google/generative-ai-go v0.20.1
 	github.com/google/uuid v1.6.0
