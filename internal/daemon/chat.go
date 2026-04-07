@@ -152,18 +152,19 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 		Content: userMessage,
 	})
 
-	// Save user message
-	if err := s.saveMessage(ctx, sessionID, "user", userMessage, "", ""); err != nil {
-		log.Printf("save user message: %v", err)
-	}
-
-	// Stream from provider
+	// Stream from provider (save user message AFTER successful stream start,
+	// so failed requests don't pollute conversation history).
 	eventCh, err := prov.Stream(ctx, messages, nil) // tools will be added in later task
 	if err != nil {
 		if isAuthError(err) {
 			return sendAuthError(stream, session.Provider, err.Error())
 		}
 		return sendError(stream, "provider stream: "+err.Error())
+	}
+
+	// Provider accepted the request — now save the user message to history.
+	if err := s.saveMessage(ctx, sessionID, "user", userMessage, "", ""); err != nil {
+		log.Printf("save user message: %v", err)
 	}
 
 	var fullResponse string
