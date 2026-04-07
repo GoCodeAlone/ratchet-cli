@@ -66,6 +66,8 @@ func main() {
 			os.Exit(1)
 		}
 		return
+	case "mcp":
+		handleMCP(filteredArgs[1:])
 	case "chat":
 		handleChat(filteredArgs) // pass "chat" + remaining args
 	case "version":
