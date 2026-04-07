@@ -7,8 +7,9 @@ require (
 	charm.land/bubbletea/v2 v2.0.1
 	charm.land/lipgloss/v2 v2.0.0
 	github.com/GoCodeAlone/workflow v0.3.56
-	github.com/GoCodeAlone/workflow-plugin-agent v0.6.4
+	github.com/GoCodeAlone/workflow-plugin-agent v0.6.5
 	github.com/charmbracelet/glamour v0.10.0
+	github.com/creack/pty v1.1.24
 	github.com/google/generative-ai-go v0.20.1
 	github.com/google/uuid v1.6.0
 	github.com/tochemey/goakt/v4 v4.0.0
@@ -108,7 +109,6 @@ require (
 	github.com/cncf/xds/go v0.0.0-20251210132809-ee656c7534f5 // indirect
 	github.com/containerd/errdefs v1.0.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
-	github.com/creack/pty v1.1.24 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/deckarep/golang-set/v2 v2.8.0 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect

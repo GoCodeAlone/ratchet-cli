@@ -25,12 +25,22 @@ func handleProvider(args []string) {
 	switch args[0] {
 	case "setup":
 		if len(args) < 2 {
-			fmt.Println("Usage: ratchet provider setup <ollama>")
+			fmt.Println("Usage: ratchet provider setup <ollama|claude-code|copilot-cli|codex-cli|gemini-cli|cursor-cli>")
 			return
 		}
 		switch args[1] {
 		case "ollama":
 			handleOllamaSetup(args[2:])
+		case "claude-code":
+			handleCLIToolSetup("claude_code", "claude", "claude", args[2:])
+		case "copilot-cli":
+			handleCLIToolSetup("copilot_cli", "copilot", "copilot", args[2:])
+		case "codex-cli":
+			handleCLIToolSetup("codex_cli", "codex", "codex", args[2:])
+		case "gemini-cli":
+			handleCLIToolSetup("gemini_cli", "gemini", "gemini", args[2:])
+		case "cursor-cli":
+			handleCLIToolSetup("cursor_cli", "agent", "cursor-cli", args[2:])
 		default:
 			fmt.Printf("unknown provider to setup: %s\n", args[1])
 		}
@@ -427,6 +437,95 @@ func pullModelWithProgress(ctx context.Context, c *wfprovider.OllamaClient, mode
 		fmt.Println() // newline after progress output
 	}
 	return err
+}
+
+// cliInstallInstructions maps provider alias to human-readable install instructions.
+var cliInstallInstructions = map[string]string{
+	"claude-code": "Install Claude Code: curl -fsSL https://claude.ai/install.sh | bash",
+	"copilot-cli": "Install GitHub Copilot CLI: see https://githubnext.com/projects/copilot-cli/",
+	"codex-cli":   "Install Codex CLI: npm install -g @openai/codex",
+	"gemini-cli":  "Install Gemini CLI: npm install -g @google/gemini-cli",
+	"cursor-cli":  "Install Cursor agent CLI: see https://cursor.com/",
+}
+
+// handleCLIToolSetup is the generic setup flow for PTY-backed CLI providers.
+// providerType is the ratchet type (e.g. "claude_code"), binary is the executable
+// name (e.g. "claude"), and alias is the human-facing setup name (e.g. "claude-code").
+func handleCLIToolSetup(providerType, binary, alias string, _ []string) {
+	fmt.Printf("=== %s Setup ===\n", alias)
+
+	scanner := bufio.NewScanner(os.Stdin)
+
+	// 1. Check binary exists.
+	binPath, err := exec.LookPath(binary)
+	if err != nil {
+		fmt.Printf("✗ %s not found in PATH\n", binary)
+		if inst, ok := cliInstallInstructions[alias]; ok {
+			fmt.Println(inst)
+		}
+		fmt.Printf("After installing, re-run: ratchet provider setup %s\n", alias)
+		return
+	}
+	fmt.Printf("✓ %s found: %s\n", binary, binPath)
+
+	// 2. Health check: run <binary> -p "say ok" with 30s timeout.
+	fmt.Print("Running health check... ")
+	healthArgs := cliHealthCheckArgs(providerType)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	out, err := exec.CommandContext(ctx, binary, healthArgs...).Output()
+	cancel()
+	if err != nil {
+		fmt.Printf("FAIL\n  %v\n", err)
+		fmt.Printf("Ensure %s is authenticated and working, then re-run: ratchet provider setup %s\n", binary, alias)
+		return
+	}
+	response := strings.TrimSpace(string(out))
+	if len(response) > 60 {
+		response = response[:60] + "..."
+	}
+	fmt.Printf("OK (%q)\n", response)
+
+	// 3. Register provider with daemon.
+	fmt.Println("Registering provider with ratchet...")
+	c, err := client.EnsureDaemon()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon error: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() { _ = c.Close() }()
+
+	workDir, _ := os.Getwd()
+	p, err := c.AddProvider(context.Background(), &pb.AddProviderReq{
+		Alias:   alias,
+		Type:    providerType,
+		BaseUrl: workDir,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "add provider failed: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("✓ Provider registered: %s (%s)\n", p.Alias, p.Type)
+
+	// 4. Optionally set as default.
+	if promptYesNo("Set as default provider?", scanner) {
+		if err := c.SetDefaultProvider(context.Background(), alias); err != nil {
+			fmt.Fprintf(os.Stderr, "set default failed: %v\n", err)
+		} else {
+			fmt.Printf("✓ Default provider set to: %s\n", alias)
+		}
+	}
+
+	fmt.Printf("\n=== Setup complete ===\nRun 'ratchet' to start chatting via %s.\n", alias)
+}
+
+// cliHealthCheckArgs returns the health-check args for a given PTY provider type.
+func cliHealthCheckArgs(providerType string) []string {
+	switch providerType {
+	case "codex_cli":
+		return []string{"exec", "say ok"}
+	default:
+		return []string{"-p", "say ok"}
+	}
 }
 
 // promptModelSelection prints a numbered list of models and returns the selected model ID.
