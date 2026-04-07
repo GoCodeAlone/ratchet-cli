@@ -14,22 +14,10 @@ import (
 //go:embed teams/code-gen.yaml
 var defaultCodeGenTeam []byte
 
-//go:embed teams/orchestrate.yaml
-var defaultOrchestrateTeam []byte
-
 // DefaultCodeGenTeamConfig returns the built-in code-gen team configuration.
 func DefaultCodeGenTeamConfig() (*TeamConfig, error) {
 	var tc TeamConfig
 	if err := yaml.Unmarshal(defaultCodeGenTeam, &tc); err != nil {
-		return nil, err
-	}
-	return &tc, nil
-}
-
-// DefaultOrchestrateTeamConfig returns the built-in orchestrate team configuration.
-func DefaultOrchestrateTeamConfig() (*TeamConfig, error) {
-	var tc TeamConfig
-	if err := yaml.Unmarshal(defaultOrchestrateTeam, &tc); err != nil {
 		return nil, err
 	}
 	return &tc, nil
@@ -41,13 +29,8 @@ func BuiltinTeamConfigs() (map[string]*TeamConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	ot, err := DefaultOrchestrateTeamConfig()
-	if err != nil {
-		return nil, err
-	}
 	return map[string]*TeamConfig{
-		"code-gen":    tc,
-		"orchestrate": ot,
+		"code-gen": tc,
 	}, nil
 }
 
