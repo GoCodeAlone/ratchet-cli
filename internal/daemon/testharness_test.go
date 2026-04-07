@@ -126,7 +126,9 @@ func newE2EHarness(t *testing.T) *E2EHarness {
 
 	svc.cron = NewCronScheduler(db, func(sessionID, command string) {
 		go func() {
-			tickCtx, tickCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			// Derive from the harness ctx so ticks are cancelled on test cleanup,
+			// preventing goroutines from outliving the test and using a closed DB.
+			tickCtx, tickCancel := context.WithTimeout(ctx, 30*time.Second)
 			defer tickCancel()
 			ns := &noopSendServer{ctx: tickCtx}
 			_ = svc.handleChat(tickCtx, sessionID, command, ns)

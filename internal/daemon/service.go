@@ -2,18 +2,19 @@ package daemon
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
-
-	"encoding/json"
-	"strings"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/config"
 	"github.com/GoCodeAlone/ratchet-cli/internal/hooks"
@@ -233,7 +234,10 @@ func (s *Service) AttachSession(req *pb.AttachReq, stream pb.RatchetDaemon_Attac
 	// Verify the session exists before subscribing (prevents hanging on nonexistent sessions).
 	if s.sessions != nil {
 		if _, err := s.sessions.Get(stream.Context(), req.SessionId); err != nil {
-			return status.Errorf(codes.NotFound, "session %s not found", req.SessionId)
+			if errors.Is(err, sql.ErrNoRows) {
+				return status.Errorf(codes.NotFound, "session %s not found", req.SessionId)
+			}
+			return status.Errorf(codes.Internal, "lookup session %s: %v", req.SessionId, err)
 		}
 	}
 	ch, subID := s.broadcaster.Subscribe(req.SessionId)
@@ -307,10 +311,17 @@ func (s *Service) AddProvider(ctx context.Context, req *pb.AddProviderReq) (*pb.
 		}
 	}
 
+	// Apply server-side default for max_tokens when the client omits it
+	// (protobuf default is 0, but providers expect a reasonable value).
+	maxTokens := req.MaxTokens
+	if maxTokens == 0 {
+		maxTokens = 4096
+	}
+
 	// DB insert before secret store to avoid orphaned secrets on constraint failure
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO llm_providers (id, alias, type, model, secret_name, base_url, max_tokens, settings, is_default) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, req.Alias, req.Type, req.Model, secretName, req.BaseUrl, req.MaxTokens, "{}", isDefault,
+		id, req.Alias, req.Type, req.Model, secretName, req.BaseUrl, maxTokens, "{}", isDefault,
 	); err != nil {
 		return nil, status.Errorf(codes.Internal, "insert provider: %v", err)
 	}
@@ -420,7 +431,10 @@ func (s *Service) UpdateProviderModel(ctx context.Context, req *pb.UpdateProvide
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "update model: %v", err)
 	}
-	rows, _ := result.RowsAffected()
+	rows, raErr := result.RowsAffected()
+	if raErr != nil {
+		return nil, status.Errorf(codes.Internal, "rows affected: %v", raErr)
+	}
 	if rows == 0 {
 		return nil, status.Errorf(codes.NotFound, "provider %q not found", req.Alias)
 	}

@@ -15,7 +15,8 @@ import (
 // new model value to the DB and that subsequent provider resolution reflects it.
 func TestE2E_UpdateProviderModel(t *testing.T) {
 	h := newE2EHarness(t)
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 
 	// Add a second mock provider so we have an alias to update (distinct from
 	// the default "e2e-mock" inserted by newE2EHarness).
@@ -63,7 +64,8 @@ func TestE2E_UpdateProviderModel(t *testing.T) {
 // verifies that the tick callback saves a user message to the messages table.
 func TestE2E_CronTickInjection(t *testing.T) {
 	h := newE2EHarness(t)
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 
 	// Create a session pinned to the default mock provider so handleChat can
 	// resolve a provider during the cron tick.
