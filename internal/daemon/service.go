@@ -303,8 +303,8 @@ func (s *Service) AddProvider(ctx context.Context, req *pb.AddProviderReq) (*pb.
 
 	// DB insert before secret store to avoid orphaned secrets on constraint failure
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO llm_providers (id, alias, type, model, secret_name, base_url, max_tokens, is_default) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, req.Alias, req.Type, req.Model, secretName, req.BaseUrl, req.MaxTokens, isDefault,
+		`INSERT INTO llm_providers (id, alias, type, model, secret_name, base_url, max_tokens, settings, is_default) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, req.Alias, req.Type, req.Model, secretName, req.BaseUrl, req.MaxTokens, "{}", isDefault,
 	); err != nil {
 		return nil, status.Errorf(codes.Internal, "insert provider: %v", err)
 	}

@@ -431,10 +431,14 @@ func (s *Service) handleCompact(ctx context.Context, sessionID string, stream pb
 	var prov provider.Provider
 	session, sessErr := s.sessions.Get(ctx, sessionID)
 	if sessErr == nil {
+		var provErr error
 		if session.Provider != "" {
-			prov, _ = s.engine.ProviderRegistry.GetByAlias(ctx, session.Provider)
+			prov, provErr = s.engine.ProviderRegistry.GetByAlias(ctx, session.Provider)
 		} else {
-			prov, _ = s.engine.ProviderRegistry.GetDefault(ctx)
+			prov, provErr = s.engine.ProviderRegistry.GetDefault(ctx)
+		}
+		if provErr != nil {
+			log.Printf("compact: resolve provider for summarization: %v (using fallback)", provErr)
 		}
 	}
 

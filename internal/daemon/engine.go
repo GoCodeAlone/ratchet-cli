@@ -214,5 +214,18 @@ func initDB(db *sql.DB) error {
 			return fmt.Errorf("exec DDL: %w", err)
 		}
 	}
+
+	// Migration: clear stale secret_name for providers that don't need API keys.
+	// Prior versions always set secret_name="provider_<alias>" even for keyless
+	// providers (ollama, llama_cpp), causing "secret not found" errors.
+	migrations := []string{
+		`UPDATE llm_providers SET secret_name = '' WHERE secret_name != '' AND type IN ('ollama', 'llama_cpp')`,
+	}
+	for _, m := range migrations {
+		if _, err := db.Exec(m); err != nil {
+			log.Printf("warning: migration failed: %v", err)
+		}
+	}
+
 	return nil
 }
