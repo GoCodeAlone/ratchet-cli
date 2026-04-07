@@ -169,27 +169,41 @@ func (tm *TeamManager) startMeshTeamFromConfig(ctx context.Context, req *pb.Star
 	configs := mesh.ToNodeConfigs(tc)
 
 	// Build a provider factory that resolves providers via the daemon's
-	// ProviderRegistry when available, honouring the per-agent provider/model
-	// settings from the team YAML. Falls back to an Ollama provider using the
-	// agent's model when no registry is configured (e.g., in tests).
+	// ProviderRegistry. Resolution order:
+	//   1. cfg.Provider (explicit alias from YAML/user) → GetByAlias
+	//   2. Empty provider → GetDefault (user's configured default)
+	//   3. Ollama fallback (standalone/test mode, uses cfg.Model)
+	//
+	// Team configs SHOULD omit provider/model to use the user's default.
+	// Explicit provider/model in YAML is for advanced use (multi-model teams).
 	providerFactory := func(cfg mesh.NodeConfig) provider.Provider {
 		if tm.engine != nil && tm.engine.ProviderRegistry != nil {
 			var prov provider.Provider
 			var provErr error
 			if cfg.Provider != "" {
 				prov, provErr = tm.engine.ProviderRegistry.GetByAlias(ctx, cfg.Provider)
+				if provErr != nil {
+					log.Printf("team agent %s: provider %q not found (%v), trying default", cfg.Name, cfg.Provider, provErr)
+				}
 			}
-			if prov == nil || provErr != nil {
+			if prov == nil {
 				prov, provErr = tm.engine.ProviderRegistry.GetDefault(ctx)
+				if provErr != nil {
+					log.Printf("team agent %s: no default provider: %v", cfg.Name, provErr)
+				}
 			}
-			if prov != nil && provErr == nil {
+			if prov != nil {
 				return prov
 			}
 		}
 		// Fallback: create a local Ollama provider using the agent's model.
-		prov, err := gkprov.NewOllamaProvider(ctx, cfg.Model, "", 0)
+		model := cfg.Model
+		if model == "" {
+			model = "qwen3:1.7b" // safe default for fallback
+		}
+		prov, err := gkprov.NewOllamaProvider(ctx, model, "", 0)
 		if err != nil {
-			log.Printf("team: fallback ollama provider: %v", err)
+			log.Printf("team agent %s: fallback ollama provider: %v", cfg.Name, err)
 			return nil
 		}
 		return prov

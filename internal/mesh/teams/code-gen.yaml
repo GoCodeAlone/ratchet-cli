@@ -2,8 +2,6 @@ name: code-gen
 agents:
   - name: architect
     role: architect
-    provider: local-qwen
-    model: qwen3:14b
     max_iterations: 20
     system_prompt: |
       You are a software architect. Given a task, design the architecture:
@@ -13,8 +11,6 @@ agents:
 
   - name: coder
     role: coder
-    provider: local-qwen
-    model: qwen3:8b
     max_iterations: 40
     system_prompt: |
       You are a senior developer. Read the architecture plan from the
@@ -24,8 +20,6 @@ agents:
 
   - name: reviewer
     role: reviewer
-    provider: local-qwen
-    model: qwen3:8b
     max_iterations: 20
     system_prompt: |
       You are a code reviewer. Read code from the blackboard "code" section,

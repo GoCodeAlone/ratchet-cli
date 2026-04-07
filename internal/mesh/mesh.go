@@ -134,6 +134,9 @@ func (m *AgentMesh) SpawnTeam(
 			})
 		} else {
 			prov := providerFactory(cfg)
+			if prov == nil {
+				return nil, fmt.Errorf("no provider available for agent %q (provider=%q model=%q) — check your provider configuration", cfg.Name, cfg.Provider, cfg.Model)
+			}
 			node = NewLocalNode(cfg, prov, nil)
 			// Set the event forwarder now that we have the real node ID.
 			node.(*LocalNode).onEvent = makeEventForwarder(eventCh, node.ID())
@@ -369,11 +372,16 @@ func makeEventForwarder(ch chan<- Event, agentID string) func(executor.Event) {
 			evType = string(e.Type)
 		}
 
+		content := e.Content
+		if content == "" && e.Error != "" {
+			content = e.Error
+		}
+
 		select {
 		case ch <- Event{
 			Type:    evType,
 			AgentID: agentID,
-			Content: e.Content,
+			Content: content,
 			Data: map[string]any{
 				"tool_name": e.ToolName,
 				"iteration": e.Iteration,
