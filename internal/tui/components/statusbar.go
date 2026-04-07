@@ -56,7 +56,7 @@ func (s StatusBar) View(t theme.Theme) string {
 	line1 := strings.Join(segments, "  ")
 
 	// Line 2: keybind hints (right-aligned)
-	hints := "Ctrl+S sidebar  Ctrl+T team  Ctrl+C quit "
+	hints := "Ctrl+S sidebar  Ctrl+T team  Ctrl+H thinking  Ctrl+C quit "
 	pad1 := s.Width - lipgloss.Width(line1)
 	if pad1 < 0 {
 		pad1 = 0
