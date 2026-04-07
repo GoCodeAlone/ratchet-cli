@@ -19,11 +19,13 @@ Implement:
 ```go
 // CLIAdapter defines per-tool behavior for driving a CLI via PTY.
 type CLIAdapter interface {
-    Name() string                          // provider type name
-    Binary() string                        // binary name (e.g. "claude")
-    NonInteractiveArgs(msg string) []string // args for single-shot mode
-    HealthCheckArgs() []string             // args for a quick health check
-    ParseResponse(raw string) string       // clean raw output into response text
+    Name() string                            // provider type name
+    Binary() string                          // binary name (e.g. "claude")
+    NonInteractiveArgs(msg string) []string  // args for single-shot mode
+    HealthCheckArgs() []string               // args for a quick health check
+    DetectPrompt(output string) bool         // is the CLI ready for input?
+    DetectResponseEnd(output string) bool    // has the response finished?
+    ParseResponse(raw string) string         // clean raw output into response text
 }
 
 // ptyProvider implements provider.Provider by driving a CLI tool.
@@ -33,16 +35,29 @@ type ptyProvider struct {
     workDir   string
     authInfo  provider.AuthModeInfo
     timeout   time.Duration
+
+    // PTY session state (for interactive/streaming mode)
+    mu       sync.Mutex
+    ptmx     *os.File     // PTY master — nil when no active session
+    cmd      *exec.Cmd    // running CLI process
+    output   bytes.Buffer // accumulated output
 }
 ```
 
-**Chat()**: Run `exec.CommandContext(ctx, binPath, adapter.NonInteractiveArgs(msg)...)`, capture stdout, return `provider.Response{Content: adapter.ParseResponse(stdout)}`.
+**Chat()**: Run `exec.CommandContext(ctx, binPath, adapter.NonInteractiveArgs(msg)...)`, capture stdout, return `provider.Response{Content: adapter.ParseResponse(stdout)}`. Stateless, no PTY.
 
-**Stream()**: Same as Chat() but emit tokens progressively by reading stdout line-by-line in a goroutine, sending `StreamEvent{Type: "text"}` per chunk. Final `StreamEvent{Type: "done"}`.
+**Stream()**: Full PTY interaction:
+1. If no active PTY session, start one: `pty.StartWithSize(exec.Command(binPath), &pty.Winsize{Rows:40, Cols:120})`
+2. Wait for `adapter.DetectPrompt(output)` to return true (CLI is ready)
+3. Write `message + "\n"` to PTY stdin
+4. Read output in a goroutine, emit `StreamEvent{Type: "text", Text: chunk}` per read
+5. When `adapter.DetectResponseEnd(output)` returns true, emit `StreamEvent{Type: "done"}`
+6. Keep the PTY session alive for multi-turn (reuse on next Stream() call)
+7. Tool approval prompts from the CLI are passed through as text events (visible to user)
 
-**Name()**: Return adapter.Name().
+**Close()**: Kill PTY process and clean up on provider removal or daemon shutdown.
 
-**Test**: Create a mock CLI binary (shell script that echoes input) and test Chat()/Stream() round-trip.
+**Test**: Create a mock CLI binary (Go test binary that simulates prompt → response → prompt) and test Chat()/Stream()/multi-turn round-trip.
 
 Commit: `feat: add PTY CLI provider core + CLIAdapter interface`
 
@@ -60,30 +75,42 @@ Implement CLIAdapter for each tool:
 - Binary: `claude`
 - NonInteractiveArgs: `["-p", msg, "--output-format", "text"]`
 - HealthCheckArgs: `["-p", "say ok", "--output-format", "text"]`
+- DetectPrompt: look for `❯` or `>` at line start
+- DetectResponseEnd: look for prompt reappearing after response content
 
 **CopilotCLIAdapter:**
 - Binary: `copilot`
 - NonInteractiveArgs: `["-p", msg]`
 - HealthCheckArgs: `["-p", "say ok"]`
+- DetectPrompt: look for `>` at line start
+- DetectResponseEnd: prompt reappears
 
 **CodexCLIAdapter:**
 - Binary: `codex`
 - NonInteractiveArgs: `["exec", msg]`
 - HealthCheckArgs: `["exec", "say ok"]`
+- DetectPrompt: look for composer input area
+- DetectResponseEnd: prompt reappears
 
 **GeminiCLIAdapter:**
 - Binary: `gemini`
 - NonInteractiveArgs: `["-p", msg]`
 - HealthCheckArgs: `["-p", "say ok"]`
+- DetectPrompt: look for `❯` or `>` at line start
+- DetectResponseEnd: prompt reappears
 
 **CursorCLIAdapter:**
 - Binary: `agent`
 - NonInteractiveArgs: `["-p", msg]`
 - HealthCheckArgs: `["-p", "say ok"]`
+- DetectPrompt: look for `>` at line start
+- DetectResponseEnd: prompt reappears
 
 **ParseResponse**: Strip ANSI codes, trim whitespace, remove CLI-specific boilerplate (spinner text, status lines).
 
-**Test**: Verify each adapter produces correct args, parse strips ANSI.
+**NOTE**: DetectPrompt/DetectResponseEnd patterns will need calibration per-tool by actually running each CLI interactively. The patterns above are initial estimates — the integration tests (Task 6) will validate and refine them.
+
+**Test**: Verify each adapter produces correct args, parse strips ANSI, prompt detection works on sample output.
 
 Commit: `feat: add CLI adapters for Claude Code, Copilot, Codex, Gemini, Cursor`
 
@@ -164,10 +191,12 @@ Commit: `chore: bump workflow-plugin-agent for PTY CLI providers`
 - Create: `ratchet-cli/internal/tui/pty_cli_integration_test.go`
 
 For each CLI tool that's installed on the machine:
-1. Run setup
-2. Send a non-interactive message
-3. Verify response
-4. Test provider list shows the new provider
+1. Run setup (verify binary, health check)
+2. Send a non-interactive Chat() message, verify response contains expected text
+3. Start a Stream() PTY session, send a message, verify streaming events received
+4. Multi-turn: send a second message in the same PTY session, verify context maintained
+5. Test provider list shows the new provider
+6. Verify tool approval prompts are visible in stream output (where applicable)
 
 Use `exec.LookPath` to skip tests for tools that aren't installed.
 
