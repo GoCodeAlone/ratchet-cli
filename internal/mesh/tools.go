@@ -190,27 +190,31 @@ func (t *SendMessageTool) Definition() provider.ToolDef {
 					"type":        "string",
 					"description": "Target agent name (e.g., 'coder'), node ID, or '*' for broadcast",
 				},
-				"type": map[string]any{
+				"message_type": map[string]any{
 					"type":        "string",
 					"description": "Message type: task, result, feedback, or request",
+					"default":     "task",
 				},
 				"content": map[string]any{
 					"type":        "string",
 					"description": "Message body",
 				},
 			},
-			"required": []string{"to", "type", "content"},
+			"required": []string{"to", "content"},
 		},
 	}
 }
 
 func (t *SendMessageTool) Execute(_ context.Context, args map[string]any) (any, error) {
 	to, _ := args["to"].(string)
-	msgType, _ := args["type"].(string)
+	msgType, _ := args["message_type"].(string)
 	content, _ := args["content"].(string)
 
-	if to == "" || msgType == "" {
-		return nil, fmt.Errorf("to and type are required")
+	if to == "" {
+		return nil, fmt.Errorf("'to' is required")
+	}
+	if msgType == "" {
+		msgType = "task" // default when omitted
 	}
 
 	msg := Message{

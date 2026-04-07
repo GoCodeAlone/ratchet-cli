@@ -635,6 +635,11 @@ func (tm *TeamManager) StartMeshTeam(
 						},
 					},
 				}
+			case "thinking":
+				// Suppress thinking events from team output — they contain
+				// the model's internal reasoning which is noise in team context.
+				// If we want to expose this later, TeamEvent needs a Thinking variant.
+				continue
 			case "error":
 				pbEv = &pb.TeamEvent{
 					Event: &pb.TeamEvent_Error{
@@ -668,10 +673,26 @@ func (tm *TeamManager) StartMeshTeam(
 		// doneCh, so Result() is safe to call without waiting again).
 		result := handle.Result()
 
-		summary := fmt.Sprintf("Team completed task: %s (status: %s)", task, result.Status)
+		// Emit error events for any agent failures before the completion event.
 		if len(result.Errors) > 0 {
-			summary += fmt.Sprintf(" [%d errors]", len(result.Errors))
+			for _, err := range result.Errors {
+				select {
+				case eventCh <- &pb.TeamEvent{
+					Event: &pb.TeamEvent_Error{
+						Error: &pb.ErrorEvent{Message: err.Error()},
+					},
+				}:
+				case <-ctx.Done():
+					return
+				}
+			}
 		}
+
+		status := result.Status
+		if status == "" {
+			status = "completed"
+		}
+		summary := fmt.Sprintf("Team %s task: %s", status, task)
 
 		select {
 		case eventCh <- &pb.TeamEvent{
@@ -684,7 +705,7 @@ func (tm *TeamManager) StartMeshTeam(
 		case <-ctx.Done():
 		}
 
-		tm.markDone(ti, result.Status)
+		tm.markDone(ti, status)
 	}()
 
 	return teamID, eventCh

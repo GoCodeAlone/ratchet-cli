@@ -364,6 +364,8 @@ func makeEventForwarder(ch chan<- Event, agentID string) func(executor.Event) {
 			evType = "tool_call"
 		case executor.EventText:
 			evType = "text"
+		case executor.EventThinking:
+			evType = "thinking"
 		case executor.EventCompleted:
 			evType = "complete"
 		case executor.EventFailed:
