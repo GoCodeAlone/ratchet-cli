@@ -47,6 +47,7 @@ type Service struct {
 	meshRouter   *mesh.Router
 	humanGate    *HumanGate
 	autorespond  *Autoresponder
+	projects     *ProjectRegistry
 }
 
 func NewService(ctx context.Context) (*Service, error) {
@@ -88,6 +89,7 @@ func NewService(ctx context.Context) (*Service, error) {
 	svc.humanGate = NewHumanGate()
 	wd, _ := os.Getwd()
 	svc.autorespond = LoadAutoresponder(wd)
+	svc.projects = NewProjectRegistry()
 
 	// Create and start cron scheduler AFTER all Service fields are initialized,
 	// since tick callbacks invoke svc.handleChat which depends on svc.tokens etc.
@@ -878,30 +880,94 @@ func (s *Service) ListPendingHuman(ctx context.Context, req *pb.PendingHumanReq)
 	return &pb.PendingHumanList{Requests: out}, nil
 }
 
-// === Project stubs (Task 2.1) ===
+// === Project handlers (Task 4.3) ===
 
 func (s *Service) StartProject(ctx context.Context, req *pb.StartProjectReq) (*pb.ProjectStatus, error) {
-	return nil, status.Error(codes.Unimplemented, "StartProject not yet implemented")
+	p, err := s.projects.Register(req.Name, req.ConfigPath)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+
+	// If config path is provided, load and start teams.
+	if req.ConfigPath != "" {
+		pc, err := mesh.LoadProjectConfig(req.ConfigPath)
+		if err != nil {
+			return nil, status.Errorf(codes.InvalidArgument, "load project config: %v", err)
+		}
+		for _, teamCfg := range pc.Teams {
+			tc := teamCfg.ToTeamConfig()
+			configs := mesh.ToNodeConfigs(tc)
+			teamID, _ := s.teams.StartMeshTeam(ctx, "project:"+p.Name, configs, nil)
+			if teamID != "" {
+				s.projects.AddTeam(p.ID, teamID)
+			}
+		}
+	}
+
+	return &pb.ProjectStatus{
+		Id:        p.ID,
+		Name:      p.Name,
+		Status:    p.Status,
+		TeamIds:   p.TeamIDs,
+		CreatedAt: p.CreatedAt.Format(time.RFC3339),
+	}, nil
 }
 
 func (s *Service) ListProjects(ctx context.Context, _ *pb.Empty) (*pb.ProjectList, error) {
-	return nil, status.Error(codes.Unimplemented, "ListProjects not yet implemented")
+	projects := s.projects.List()
+	var out []*pb.ProjectStatus
+	for _, p := range projects {
+		out = append(out, &pb.ProjectStatus{
+			Id:        p.ID,
+			Name:      p.Name,
+			Status:    p.Status,
+			TeamIds:   p.TeamIDs,
+			CreatedAt: p.CreatedAt.Format(time.RFC3339),
+		})
+	}
+	return &pb.ProjectList{Projects: out}, nil
 }
 
 func (s *Service) PauseProject(ctx context.Context, req *pb.ProjectReq) (*pb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "PauseProject not yet implemented")
+	if err := s.projects.SetStatus(req.ProjectId, "paused"); err != nil {
+		return nil, status.Errorf(codes.NotFound, "%v", err)
+	}
+	return &pb.Empty{}, nil
 }
 
 func (s *Service) ResumeProject(ctx context.Context, req *pb.ProjectReq) (*pb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "ResumeProject not yet implemented")
+	if err := s.projects.SetStatus(req.ProjectId, "active"); err != nil {
+		return nil, status.Errorf(codes.NotFound, "%v", err)
+	}
+	return &pb.Empty{}, nil
 }
 
 func (s *Service) KillProject(ctx context.Context, req *pb.ProjectReq) (*pb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "KillProject not yet implemented")
+	p, err := s.projects.Get(req.ProjectId)
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "%v", err)
+	}
+	for _, teamID := range p.TeamIDs {
+		_ = s.teams.KillAgent(teamID)
+	}
+	if err := s.projects.SetStatus(req.ProjectId, "killed"); err != nil {
+		return nil, status.Errorf(codes.Internal, "%v", err)
+	}
+	return &pb.Empty{}, nil
 }
 
 func (s *Service) GetProjectStatus(ctx context.Context, req *pb.ProjectReq) (*pb.ProjectStatus, error) {
-	return nil, status.Error(codes.Unimplemented, "GetProjectStatus not yet implemented")
+	p, err := s.projects.Get(req.ProjectId)
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "%v", err)
+	}
+	return &pb.ProjectStatus{
+		Id:        p.ID,
+		Name:      p.Name,
+		Status:    p.Status,
+		TeamIds:   p.TeamIDs,
+		CreatedAt: p.CreatedAt.Format(time.RFC3339),
+	}, nil
 }
 
 // === Task tracker stubs (Task 2.1) ===
