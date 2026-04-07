@@ -79,40 +79,59 @@ func TestE2E_CronTickInjection(t *testing.T) {
 		t.Fatalf("CreateCron: %v", err)
 	}
 
-	// Wait long enough for at least two ticks (200 ms interval × 2 + margin).
-	time.Sleep(600 * time.Millisecond)
+	// Poll until the cron job has run and its injected message is persisted.
+	// Avoids fixed sleeps that can flake on slow CI machines.
+	deadline := time.Now().Add(5 * time.Second)
+	var (
+		found    *pb.CronJob
+		msgCount int
+		lastErr  error
+	)
+	for time.Now().Before(deadline) {
+		found = nil
+		msgCount = 0
+		lastErr = nil
 
-	// Verify the cron job's run_count was incremented.
-	list, err := h.Client.ListCrons(ctx, &pb.Empty{})
-	if err != nil {
-		t.Fatalf("ListCrons: %v", err)
-	}
-	var found *pb.CronJob
-	for _, j := range list.Jobs {
-		if j.Id == job.Id {
-			jCopy := j
-			found = jCopy
+		list, err := h.Client.ListCrons(ctx, &pb.Empty{})
+		if err != nil {
+			lastErr = err
+		} else {
+			for _, j := range list.Jobs {
+				if j.Id == job.Id {
+					jCopy := j
+					found = jCopy
+					break
+				}
+			}
+		}
+
+		if lastErr == nil {
+			row := h.DB.QueryRowContext(ctx,
+				`SELECT COUNT(*) FROM messages WHERE session_id = ? AND role = 'user'`,
+				session.Id,
+			)
+			if err := row.Scan(&msgCount); err != nil {
+				lastErr = err
+			}
+		}
+
+		if lastErr == nil && found != nil && found.RunCount >= 1 && msgCount >= 1 {
 			break
 		}
-	}
-	if found == nil {
-		t.Fatalf("cron job %s not found in list", job.Id)
-	}
-	if found.RunCount < 1 {
-		t.Errorf("expected run_count >= 1 after 600 ms, got %d", found.RunCount)
+		time.Sleep(50 * time.Millisecond)
 	}
 
-	// Verify at least one message was saved to the messages table for the session.
-	var msgCount int
-	row := h.DB.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM messages WHERE session_id = ? AND role = 'user'`,
-		session.Id,
-	)
-	if err := row.Scan(&msgCount); err != nil {
-		t.Fatalf("query messages: %v", err)
+	if lastErr != nil {
+		t.Fatalf("waiting for cron effects: %v", lastErr)
+	}
+	if found == nil {
+		t.Fatalf("cron job %s not found in list before timeout", job.Id)
+	}
+	if found.RunCount < 1 {
+		t.Fatalf("expected run_count >= 1 before timeout, got %d", found.RunCount)
 	}
 	if msgCount < 1 {
-		t.Errorf("expected at least 1 user message injected by cron, got %d", msgCount)
+		t.Fatalf("expected at least 1 user message injected by cron before timeout, got %d", msgCount)
 	}
 }
 
@@ -121,7 +140,9 @@ func TestE2E_CronTickInjection(t *testing.T) {
 func TestE2E_ListAgents_Empty(t *testing.T) {
 	h := newE2EHarness(t)
 
-	resp, err := h.Client.ListAgents(context.Background(), &pb.Empty{})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	resp, err := h.Client.ListAgents(ctx, &pb.Empty{})
 	if err != nil {
 		t.Fatalf("ListAgents: %v", err)
 	}

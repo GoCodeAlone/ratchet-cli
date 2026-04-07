@@ -59,6 +59,11 @@ func newE2EHarness(t *testing.T) *E2EHarness {
 	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = db.Close() })
 
+	// Enable foreign keys to match production behavior.
+	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		t.Fatalf("enable foreign keys: %v", err)
+	}
+
 	// initDB creates all tables AND runs the migration that clears stale
 	// secret_name for keyless provider types (ollama, llama_cpp).
 	if err := initDB(db); err != nil {
@@ -170,7 +175,9 @@ func newE2EHarness(t *testing.T) *E2EHarness {
 // Pass apiKey="" for keyless providers (e.g. ollama, llama_cpp simulated via mock).
 func (h *E2EHarness) addProvider(t *testing.T, alias, provType, apiKey string, isDefault bool) *pb.Provider {
 	t.Helper()
-	p, err := h.Client.AddProvider(context.Background(), &pb.AddProviderReq{
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	p, err := h.Client.AddProvider(ctx, &pb.AddProviderReq{
 		Alias:     alias,
 		Type:      provType,
 		ApiKey:    apiKey,
@@ -185,7 +192,9 @@ func (h *E2EHarness) addProvider(t *testing.T, alias, provType, apiKey string, i
 // createSession creates a session pinned to providerAlias and fatally fails on error.
 func (h *E2EHarness) createSession(t *testing.T, providerAlias string) *pb.Session {
 	t.Helper()
-	session, err := h.Client.CreateSession(context.Background(), &pb.CreateSessionReq{
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	session, err := h.Client.CreateSession(ctx, &pb.CreateSessionReq{
 		WorkingDir: t.TempDir(),
 		Provider:   providerAlias,
 	})

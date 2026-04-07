@@ -16,6 +16,7 @@ package daemon
 import (
 	"context"
 	"testing"
+	"time"
 
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 )
@@ -24,7 +25,8 @@ import (
 // via the gRPC API, verifying that the DB is updated correctly at each step.
 func TestE2EProviderAddListRemove(t *testing.T) {
 	h := newE2EHarness(t)
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 
 	// Initially only the default harness provider exists.
 	list, err := h.Client.ListProviders(ctx, &pb.Empty{})
@@ -83,7 +85,8 @@ func TestE2EProviderAddListRemove(t *testing.T) {
 // the is_default flag and that only one provider is default at a time.
 func TestE2EProviderSetDefault(t *testing.T) {
 	h := newE2EHarness(t)
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 
 	// Add a second mock provider (not default).
 	h.addProvider(t, "other-mock", "mock", "", false)
@@ -122,7 +125,8 @@ func TestE2EProviderSetDefault(t *testing.T) {
 // field and invalidates the cache.
 func TestE2EProviderUpdateModel(t *testing.T) {
 	h := newE2EHarness(t)
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 
 	h.addProvider(t, "gpt-provider", "openai", "sk-fake", false)
 
@@ -198,7 +202,8 @@ func TestE2EAddProviderWithoutKey_NoSecret(t *testing.T) {
 // migrations, and confirm the row was cleaned up.
 func TestE2EStaleMigration_KeylessTypesGetEmptySecretName(t *testing.T) {
 	h := newE2EHarness(t)
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 
 	// Inject a stale pre-fix row: ollama provider with a non-empty secret_name.
 	_, err := h.DB.ExecContext(ctx, `INSERT INTO llm_providers
@@ -281,7 +286,8 @@ func TestE2EKeyedProviderResolvesWithKey(t *testing.T) {
 // alias returns an error on the second attempt (UNIQUE constraint on alias column).
 func TestE2EProviderDuplicateAlias(t *testing.T) {
 	h := newE2EHarness(t)
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 
 	h.addProvider(t, "dup-test", "mock", "", false)
 
@@ -298,7 +304,8 @@ func TestE2EProviderDuplicateAlias(t *testing.T) {
 // exist silently succeeds (DELETE WHERE alias=? affects 0 rows — not an error).
 func TestE2ERemoveNonexistentProvider(t *testing.T) {
 	h := newE2EHarness(t)
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
 
 	_, err := h.Client.RemoveProvider(ctx, &pb.RemoveProviderReq{Alias: "ghost"})
 	if err != nil {
