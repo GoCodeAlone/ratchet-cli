@@ -68,8 +68,8 @@ github.com/GoCodeAlone/modular/modules/scheduler v1.14.0 h1:JSrzo4FB7uGASExv+fCL
 github.com/GoCodeAlone/modular/modules/scheduler v1.14.0/go.mod h1:emkR2AnilabLJZv1rOTDO9eGpRBmZs487H00Lnp9jIc=
 github.com/GoCodeAlone/workflow v0.3.56 h1:jsJmVwCRLz7XOTLQNoyE7POBDW3SmqbG/18VnAzbaEc=
 github.com/GoCodeAlone/workflow v0.3.56/go.mod h1:uATRqpqPubm+g2jJtYoaMTMmjlUaXnLsSdZk5of+jW0=
-github.com/GoCodeAlone/workflow-plugin-agent v0.6.13 h1:Pw9BRaMo5SVcZngqIB0U1LlIM3LZXMUA+gcxcKLFs7I=
-github.com/GoCodeAlone/workflow-plugin-agent v0.6.13/go.mod h1:E/Q8WAKJnC/oFnWkPHJYEqsDCRRqqW0AuxtQdmv6uKg=
+github.com/GoCodeAlone/workflow-plugin-agent v0.6.14 h1:IfabHGqrNAWkiOz0zSO4dHH2T/EK/IeV1z++KPTemak=
+github.com/GoCodeAlone/workflow-plugin-agent v0.6.14/go.mod h1:E/Q8WAKJnC/oFnWkPHJYEqsDCRRqqW0AuxtQdmv6uKg=
 github.com/GoCodeAlone/workflow-plugin-authz v0.2.2 h1:xnaNLQybNv4u/TeC1+pJuwUHbLPZaCOtcWcUn4HVeq4=
 github.com/GoCodeAlone/workflow-plugin-authz v0.2.2/go.mod h1:jyeRNdNl8qCXwTc1lGYPazz97ZjCVrE2OGgqGheBJV0=
 github.com/GoCodeAlone/yaegi v0.17.1 h1:aPAwU29L9cGceRAff02c5pjQcT5KapDB4fWFZK9tElE=
