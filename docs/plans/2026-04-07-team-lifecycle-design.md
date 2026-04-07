@@ -44,6 +44,7 @@ paths:                                # whitelist of directories agents can inte
 
 teams:
   - name: design
+    workdir: /Users/jon/workspace    # per-team workdir override (optional, inherits project)
     agents:
       - name: architect
         provider: ollama
@@ -54,6 +55,7 @@ teams:
     blackboard: shared
 
   - name: dev
+    workdir: /Users/jon/workspace/ratchet-cli  # this team works in a specific repo
     agents:
       - name: lead
         provider: ollama
@@ -126,7 +128,32 @@ ratchet project kill email-service
 
 Projects own the shared Blackboard, task tracker, and cross-team config. Ad-hoc teams (no config file) get an implicit anonymous project.
 
-## 4. Team Identity & Multi-Team Support
+## 4. Project Directory Scope
+
+Projects track their directory context:
+
+- **`cwd`**: Where the project config was started from. Auto-captured at `ratchet project start` time if not in config. Daemon stores this — users can reconnect from any directory.
+- **`workdir`**: Working directory for agents. Defaults to `cwd`. Can be overridden at project or per-team level. PTY sessions start in this directory.
+- **`paths`**: Whitelist of directories agents can interact with (tool calls, file reads/writes). If omitted, agents can access anything under `workdir`. Enforced by the tool policy engine.
+
+Per-team `workdir` overrides the project-level setting. This supports multi-repo workspaces:
+
+```yaml
+project: platform
+cwd: /Users/jon/workspace
+paths:
+  - /Users/jon/workspace/ratchet-cli
+  - /Users/jon/workspace/workflow-plugin-agent
+teams:
+  - name: ratchet-dev
+    workdir: /Users/jon/workspace/ratchet-cli  # agents work in this repo
+  - name: plugin-dev
+    workdir: /Users/jon/workspace/workflow-plugin-agent
+```
+
+When a user reconnects (`ratchet team attach`), the daemon resolves the team's workdir regardless of the user's current shell directory.
+
+## 5. Team Identity & Multi-Team Support
 
 Auto-generated short ID (e.g., `t-3a7f`) plus optional user-assigned name.
 
