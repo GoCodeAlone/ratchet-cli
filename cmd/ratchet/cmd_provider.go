@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	acpbridge "github.com/GoCodeAlone/ratchet-cli/internal/acp"
 	"github.com/GoCodeAlone/ratchet-cli/internal/client"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 	providerauth "github.com/GoCodeAlone/ratchet-cli/internal/provider"
@@ -18,11 +19,14 @@ import (
 
 func handleProvider(args []string) {
 	if len(args) == 0 {
-		fmt.Println("Usage: ratchet provider <add|list|test|remove|default|setup>")
+		fmt.Println("Usage: ratchet provider <add|list|test|remove|default|setup|discover>")
 		return
 	}
 
 	switch args[0] {
+	case "discover":
+		handleProviderDiscover()
+		return
 	case "setup":
 		if len(args) < 2 {
 			fmt.Println("Usage: ratchet provider setup <ollama|claude-code|copilot-cli|codex-cli|gemini-cli|cursor-cli>")
@@ -547,4 +551,34 @@ func promptModelSelection(models []wfprovider.ModelInfo, scanner *bufio.Scanner)
 		}
 	}
 	return models[0].ID
+}
+
+func handleProviderDiscover() {
+	fmt.Println("Fetching ACP agent registry...")
+	registry := acpbridge.NewRegistry(24 * time.Hour)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	agents, err := registry.Agents(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(agents) == 0 {
+		fmt.Println("No ACP agents found in registry.")
+		return
+	}
+
+	fmt.Printf("Found %d ACP agent(s):\n\n", len(agents))
+	for _, a := range agents {
+		desc := a.Description
+		if len(desc) > 80 {
+			desc = desc[:77] + "..."
+		}
+		fmt.Printf("  %-20s %s\n", a.ID, desc)
+		if a.Homepage != "" {
+			fmt.Printf("  %-20s %s\n", "", a.Homepage)
+		}
+	}
 }

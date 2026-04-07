@@ -60,6 +60,12 @@ func main() {
 		handleModel(filteredArgs[1:])
 	case "config":
 		handleConfig(filteredArgs[1:])
+	case "acp":
+		if err := runACP(filteredArgs[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "acp error: %v\n", err)
+			os.Exit(1)
+		}
+		return
 	case "chat":
 		handleChat(filteredArgs) // pass "chat" + remaining args
 	case "version":
@@ -138,6 +144,7 @@ Commands:
   plugin           Manage plugins
   skill            Manage skills
   config           Configuration
+  acp              Run as ACP agent (stdio JSON-RPC)
   version          Print version
 
 Slash commands (inside TUI):
