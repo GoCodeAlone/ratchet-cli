@@ -45,6 +45,8 @@ type Service struct {
 	shutdownFn   func()
 	meshBB       *mesh.Blackboard
 	meshRouter   *mesh.Router
+	humanGate    *HumanGate
+	autorespond  *Autoresponder
 }
 
 func NewService(ctx context.Context) (*Service, error) {
@@ -83,6 +85,9 @@ func NewService(ctx context.Context) (*Service, error) {
 	svc.broadcaster = NewSessionBroadcaster()
 	svc.meshBB = mesh.NewBlackboard()
 	svc.meshRouter = mesh.NewRouter()
+	svc.humanGate = NewHumanGate()
+	wd, _ := os.Getwd()
+	svc.autorespond = LoadAutoresponder(wd)
 
 	// Create and start cron scheduler AFTER all Service fields are initialized,
 	// since tick callbacks invoke svc.handleChat which depends on svc.tokens etc.
@@ -849,14 +854,28 @@ func (s *Service) DirectMessage(ctx context.Context, req *pb.DirectMessageReq) (
 	return &pb.Empty{}, nil
 }
 
-// === Human-in-the-loop stubs (Task 2.1) ===
+// === Human-in-the-loop handlers (Task 3.4) ===
 
 func (s *Service) RespondToHuman(ctx context.Context, req *pb.HumanResponse) (*pb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "RespondToHuman not yet implemented")
+	if err := s.humanGate.Respond(req.RequestId, req.Content); err != nil {
+		return nil, status.Errorf(codes.NotFound, "%v", err)
+	}
+	return &pb.Empty{}, nil
 }
 
 func (s *Service) ListPendingHuman(ctx context.Context, req *pb.PendingHumanReq) (*pb.PendingHumanList, error) {
-	return nil, status.Error(codes.Unimplemented, "ListPendingHuman not yet implemented")
+	entries := s.humanGate.Pending(req.TeamId)
+	var out []*pb.HumanRequest
+	for _, e := range entries {
+		out = append(out, &pb.HumanRequest{
+			RequestId: e.ID,
+			TeamId:    e.TeamID,
+			FromAgent: e.FromAgent,
+			Question:  e.Question,
+			Timestamp: e.Timestamp.Format("15:04:05"),
+		})
+	}
+	return &pb.PendingHumanList{Requests: out}, nil
 }
 
 // === Project stubs (Task 2.1) ===

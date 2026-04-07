@@ -39,6 +39,10 @@ func handleTeam(args []string) {
 		handleTeamAddAgent(args[1:])
 	case "remove":
 		handleTeamRemoveAgent(args[1:])
+	case "pending":
+		handleTeamPending(args[1:])
+	case "respond":
+		handleTeamRespond(args[1:])
 	default:
 		fmt.Printf("unknown team command: %s\n", args[0])
 	}
@@ -387,4 +391,23 @@ func handleTeamRemoveAgent(args []string) {
 		return
 	}
 	fmt.Printf("team remove: %s from %s (not yet wired to RPC)\n", args[1], args[0])
+}
+
+func handleTeamPending(args []string) {
+	c, err := client.EnsureDaemon()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	defer c.Close()
+	// TODO: Wire to ListPendingHuman RPC.
+	fmt.Println("team pending: not yet wired to RPC")
+}
+
+func handleTeamRespond(args []string) {
+	if len(args) < 1 {
+		fmt.Println("Usage: ratchet team respond <team-id>")
+		return
+	}
+	fmt.Printf("team respond %s: not yet wired to RPC\n", args[0])
 }
