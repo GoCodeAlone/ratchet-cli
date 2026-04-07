@@ -224,3 +224,183 @@ func TestLoadTeamConfig_InvalidYAML(t *testing.T) {
 		t.Fatal("expected error for invalid YAML")
 	}
 }
+
+func TestLoadTeamConfigJSON(t *testing.T) {
+	dir := t.TempDir()
+	jsonFile := filepath.Join(dir, "test-team.json")
+	if err := os.WriteFile(jsonFile, []byte(`{
+		"name": "json-team",
+		"timeout": "5m",
+		"agents": [
+			{"name": "lead", "role": "orchestrator", "provider": "ollama", "model": "qwen3:8b", "tools": ["blackboard_read", "send_message"]}
+		]
+	}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tc, err := LoadTeamConfig(jsonFile)
+	if err != nil {
+		t.Fatalf("LoadTeamConfig JSON: %v", err)
+	}
+	if tc.Name != "json-team" {
+		t.Errorf("got name %q, want %q", tc.Name, "json-team")
+	}
+	if len(tc.Agents) != 1 {
+		t.Fatalf("got %d agents, want 1", len(tc.Agents))
+	}
+	if tc.Agents[0].Provider != "ollama" {
+		t.Errorf("got provider %q, want %q", tc.Agents[0].Provider, "ollama")
+	}
+}
+
+func TestLoadTeamConfigsDir(t *testing.T) {
+	dir := t.TempDir()
+	yamlContent := `name: y-team
+agents:
+  - name: worker
+    role: worker
+    provider: ollama`
+	if err := os.WriteFile(filepath.Join(dir, "team1.yaml"), []byte(yamlContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+	jsonContent := `{"name": "j-team", "agents": [{"name": "worker", "role": "worker", "provider": "ollama"}]}`
+	if err := os.WriteFile(filepath.Join(dir, "team2.json"), []byte(jsonContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	configs, err := LoadTeamConfigs(dir)
+	if err != nil {
+		t.Fatalf("LoadTeamConfigs: %v", err)
+	}
+	if len(configs) != 2 {
+		t.Fatalf("got %d configs, want 2", len(configs))
+	}
+}
+
+func TestSearchTeamConfig(t *testing.T) {
+	dir := t.TempDir()
+	teamsDir := filepath.Join(dir, ".ratchet", "teams")
+	if err := os.MkdirAll(teamsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	yamlContent := `name: my-team
+agents:
+  - name: lead
+    role: orchestrator
+    provider: ollama`
+	if err := os.WriteFile(filepath.Join(teamsDir, "my-team.yaml"), []byte(yamlContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tc, err := SearchTeamConfig("my-team", dir, "")
+	if err != nil {
+		t.Fatalf("SearchTeamConfig: %v", err)
+	}
+	if tc.Name != "my-team" {
+		t.Errorf("got name %q, want %q", tc.Name, "my-team")
+	}
+}
+
+func TestParseProjectConfig(t *testing.T) {
+	yamlContent := `project: email-service
+teams:
+  - name: design
+    agents:
+      - name: architect
+        provider: ollama
+        model: qwen3:8b
+        role: orchestrator
+      - name: researcher
+        provider: claude_code
+    blackboard: shared
+  - name: dev
+    agents:
+      - name: lead
+        provider: ollama
+        role: orchestrator
+      - name: coder
+        provider: claude_code
+    blackboard: shared`
+
+	pc, err := ParseProjectConfig([]byte(yamlContent))
+	if err != nil {
+		t.Fatalf("ParseProjectConfig: %v", err)
+	}
+	if pc.Project != "email-service" {
+		t.Errorf("got project %q, want %q", pc.Project, "email-service")
+	}
+	if len(pc.Teams) != 2 {
+		t.Fatalf("got %d teams, want 2", len(pc.Teams))
+	}
+	if pc.Teams[0].Blackboard != "shared" {
+		t.Errorf("got bb mode %q, want %q", pc.Teams[0].Blackboard, "shared")
+	}
+}
+
+func TestParseProjectConfigJSON(t *testing.T) {
+	jsonContent := `{
+		"project": "api-service",
+		"teams": [
+			{
+				"name": "backend",
+				"agents": [{"name": "dev", "role": "worker", "provider": "ollama"}],
+				"blackboard": "isolated"
+			}
+		]
+	}`
+	pc, err := ParseProjectConfigJSON([]byte(jsonContent))
+	if err != nil {
+		t.Fatalf("ParseProjectConfigJSON: %v", err)
+	}
+	if pc.Project != "api-service" {
+		t.Errorf("got project %q, want %q", pc.Project, "api-service")
+	}
+}
+
+func TestValidateProjectConfig(t *testing.T) {
+	pc := &ProjectConfig{
+		Project: "",
+		Teams:   []ProjectTeamConfig{},
+	}
+	if err := ValidateProjectConfig(pc); err == nil {
+		t.Error("expected error for empty project name")
+	}
+}
+
+func TestParseAgentFlag(t *testing.T) {
+	tests := []struct {
+		input     string
+		wantName  string
+		wantProv  string
+		wantModel string
+		wantErr   bool
+	}{
+		{"lead:ollama:qwen3:8b", "lead", "ollama", "qwen3:8b", false},
+		{"coder:claude_code", "coder", "claude_code", "", false},
+		{"worker", "worker", "", "", false},
+		{"", "", "", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			ac, err := ParseAgentFlag(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if ac.Name != tt.wantName {
+				t.Errorf("name: got %q, want %q", ac.Name, tt.wantName)
+			}
+			if ac.Provider != tt.wantProv {
+				t.Errorf("provider: got %q, want %q", ac.Provider, tt.wantProv)
+			}
+			if ac.Model != tt.wantModel {
+				t.Errorf("model: got %q, want %q", ac.Model, tt.wantModel)
+			}
+		})
+	}
+}
