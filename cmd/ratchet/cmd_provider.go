@@ -54,6 +54,13 @@ func handleProvider(args []string) {
 		if len(args) > 2 {
 			alias = args[2]
 		}
+		// Parse --model flag from remaining args.
+		var model string
+		for i := 1; i < len(args); i++ {
+			if args[i] == "--model" && i+1 < len(args) {
+				model = args[i+1]
+			}
+		}
 		var apiKey, baseURL string
 		switch providerType {
 		case "ollama":
@@ -62,6 +69,35 @@ func handleProvider(args []string) {
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
 				os.Exit(1)
+			}
+			// If no --model flag, try to list installed models and let user pick.
+			if model == "" {
+				ollamaClient := wfprovider.NewOllamaClient(baseURL)
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				models, listErr := ollamaClient.ListModels(ctx)
+				cancel()
+				if listErr == nil && len(models) > 0 {
+					fmt.Println("Available models:")
+					for i, m := range models {
+						fmt.Printf("  %d. %s\n", i+1, m.Name)
+					}
+					fmt.Print("Select [1]: ")
+					scanner := bufio.NewScanner(os.Stdin)
+					if scanner.Scan() {
+						choice := strings.TrimSpace(scanner.Text())
+						idx := 0
+						if choice != "" {
+							fmt.Sscanf(choice, "%d", &idx)
+							idx-- // 1-indexed
+						}
+						if idx >= 0 && idx < len(models) {
+							model = models[idx].ID
+						}
+					}
+					if model == "" {
+						model = models[0].ID
+					}
+				}
 			}
 		case "llama_cpp":
 			// No API key needed for llama.cpp
@@ -87,6 +123,7 @@ func handleProvider(args []string) {
 		p, err := c.AddProvider(context.Background(), &pb.AddProviderReq{
 			Alias:   alias,
 			Type:    providerType,
+			Model:   model,
 			ApiKey:  apiKey,
 			BaseUrl: baseURL,
 		})
