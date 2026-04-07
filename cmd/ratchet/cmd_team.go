@@ -31,6 +31,14 @@ func handleTeam(args []string) {
 		handleTeamSave(args[1:])
 	case "kill":
 		handleTeamKill(args[1:])
+	case "attach":
+		handleTeamAttach(args[1:])
+	case "rename":
+		handleTeamRename(args[1:])
+	case "add":
+		handleTeamAddAgent(args[1:])
+	case "remove":
+		handleTeamRemoveAgent(args[1:])
 	default:
 		fmt.Printf("unknown team command: %s\n", args[0])
 	}
@@ -338,4 +346,45 @@ func handleTeamKill(args []string) {
 	}
 	// TODO: Wire to KillTeam RPC once it exists.
 	fmt.Printf("team kill %s: not yet implemented\n", args[0])
+}
+
+func handleTeamAttach(args []string) {
+	if len(args) < 1 {
+		fmt.Println("Usage: ratchet team attach <team-id> [--join]")
+		return
+	}
+	teamID := args[0]
+	mode := "observe"
+	for _, a := range args[1:] {
+		if a == "--join" {
+			mode = "join"
+		}
+	}
+	fmt.Printf("Attaching to team %s (mode: %s). Ctrl+D to detach.\n", teamID, mode)
+	// TODO: Wire to AttachTeam streaming RPC once client method exists.
+	fmt.Println("attach: streaming not yet implemented")
+}
+
+func handleTeamRename(args []string) {
+	if len(args) < 2 {
+		fmt.Println("Usage: ratchet team rename <team-id> <new-name>")
+		return
+	}
+	fmt.Printf("team rename: %s → %s (not yet wired to RPC)\n", args[0], args[1])
+}
+
+func handleTeamAddAgent(args []string) {
+	if len(args) < 2 {
+		fmt.Println("Usage: ratchet team add <team-id> <name:provider[:model]>")
+		return
+	}
+	fmt.Printf("team add: %s to %s (not yet wired to RPC)\n", args[1], args[0])
+}
+
+func handleTeamRemoveAgent(args []string) {
+	if len(args) < 2 {
+		fmt.Println("Usage: ratchet team remove <team-id> <agent-name>")
+		return
+	}
+	fmt.Printf("team remove: %s from %s (not yet wired to RPC)\n", args[1], args[0])
 }

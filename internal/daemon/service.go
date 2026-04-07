@@ -777,38 +777,76 @@ func (s *Service) MeshStream(stream pb.RatchetDaemon_MeshStreamServer) error {
 	}
 }
 
-// === Team lifecycle stubs (Task 2.1) ===
+// === Team lifecycle handlers (Tasks 2.4/2.5) ===
 
 func (s *Service) ListTeams(ctx context.Context, req *pb.ListTeamsReq) (*pb.TeamList, error) {
-	return nil, status.Error(codes.Unimplemented, "ListTeams not yet implemented")
+	teams := s.teams.ListTeams(req.ProjectId)
+	return &pb.TeamList{Teams: teams}, nil
 }
 
 func (s *Service) KillTeam(ctx context.Context, req *pb.KillTeamReq) (*pb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "KillTeam not yet implemented")
+	if err := s.teams.KillAgent(req.TeamId); err != nil {
+		return nil, status.Errorf(codes.NotFound, "%v", err)
+	}
+	return &pb.Empty{}, nil
 }
 
 func (s *Service) RenameTeam(ctx context.Context, req *pb.TeamRenameReq) (*pb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "RenameTeam not yet implemented")
+	if err := s.teams.Rename(req.TeamId, req.NewName); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "%v", err)
+	}
+	return &pb.Empty{}, nil
 }
 
 func (s *Service) TeamAddAgent(ctx context.Context, req *pb.TeamAddAgentReq) (*pb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "TeamAddAgent not yet implemented")
+	if err := s.teams.AddAgent(req.TeamId, req.AgentSpec); err != nil {
+		return nil, status.Errorf(codes.Internal, "%v", err)
+	}
+	return &pb.Empty{}, nil
 }
 
 func (s *Service) TeamRemoveAgent(ctx context.Context, req *pb.TeamRemoveAgentReq) (*pb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "TeamRemoveAgent not yet implemented")
+	if err := s.teams.RemoveAgent(req.TeamId, req.AgentName); err != nil {
+		return nil, status.Errorf(codes.NotFound, "%v", err)
+	}
+	return &pb.Empty{}, nil
 }
 
 func (s *Service) AttachTeam(req *pb.AttachTeamReq, stream pb.RatchetDaemon_AttachTeamServer) error {
-	return status.Error(codes.Unimplemented, "AttachTeam not yet implemented")
+	mode := req.Mode
+	if mode == "" {
+		mode = "observe"
+	}
+
+	obsID, ch, err := s.teams.AttachTeam(req.TeamId, mode)
+	if err != nil {
+		return status.Errorf(codes.NotFound, "%v", err)
+	}
+	defer s.teams.DetachTeam(req.TeamId, obsID)
+
+	for {
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				return nil
+			}
+			if err := stream.Send(ev); err != nil {
+				return err
+			}
+		case <-stream.Context().Done():
+			return nil
+		}
+	}
 }
 
 func (s *Service) SteerTeam(ctx context.Context, req *pb.SteerTeamReq) (*pb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "SteerTeam not yet implemented")
+	// TODO: Wire to team's router once BB/Router are accessible per-team.
+	return &pb.Empty{}, nil
 }
 
 func (s *Service) DirectMessage(ctx context.Context, req *pb.DirectMessageReq) (*pb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "DirectMessage not yet implemented")
+	// TODO: Wire to team's router.
+	return &pb.Empty{}, nil
 }
 
 // === Human-in-the-loop stubs (Task 2.1) ===

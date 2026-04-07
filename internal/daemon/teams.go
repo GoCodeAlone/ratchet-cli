@@ -39,12 +39,21 @@ type agentMsg struct {
 	ts      time.Time
 }
 
+// teamObserver tracks an attached client observing a team.
+type teamObserver struct {
+	id     string
+	mode   string // "observe" or "join"
+	events chan *pb.TeamActivityEvent
+	cancel context.CancelFunc
+}
+
 // teamInstance tracks a running team.
 type teamInstance struct {
 	mu          sync.RWMutex
 	id          string
 	task        string
 	agents      map[string]*teamAgent
+	observers   map[string]*teamObserver
 	status      string // running, completed, failed
 	cancel      context.CancelFunc
 	eventCh     chan *pb.TeamEvent
@@ -609,6 +618,75 @@ func (tm *TeamManager) KillAgent(teamID string) error {
 	}
 	ti.cancel()
 	return nil
+}
+
+// AttachTeam registers an observer for a team and returns the event channel.
+func (tm *TeamManager) AttachTeam(teamID, mode string) (string, <-chan *pb.TeamActivityEvent, error) {
+	tm.mu.RLock()
+	resolved := tm.resolveTeamID(teamID)
+	ti, ok := tm.teams[resolved]
+	tm.mu.RUnlock()
+	if !ok {
+		return "", nil, fmt.Errorf("team %q not found", teamID)
+	}
+
+	obsID := "obs-" + uuid.NewString()[:8]
+	obsCtx, cancel := context.WithCancel(context.Background())
+	ch := make(chan *pb.TeamActivityEvent, 64)
+
+	obs := &teamObserver{
+		id:     obsID,
+		mode:   mode,
+		events: ch,
+		cancel: cancel,
+	}
+
+	ti.mu.Lock()
+	if ti.observers == nil {
+		ti.observers = make(map[string]*teamObserver)
+	}
+	ti.observers[obsID] = obs
+	ti.mu.Unlock()
+
+	// Cleanup when context is done.
+	go func() {
+		<-obsCtx.Done()
+		ti.mu.Lock()
+		delete(ti.observers, obsID)
+		ti.mu.Unlock()
+		close(ch)
+	}()
+
+	return obsID, ch, nil
+}
+
+// DetachTeam removes an observer by cancelling its context.
+func (tm *TeamManager) DetachTeam(teamID, observerID string) {
+	tm.mu.RLock()
+	resolved := tm.resolveTeamID(teamID)
+	ti, ok := tm.teams[resolved]
+	tm.mu.RUnlock()
+	if !ok {
+		return
+	}
+	ti.mu.Lock()
+	if obs, exists := ti.observers[observerID]; exists {
+		obs.cancel()
+	}
+	ti.mu.Unlock()
+}
+
+// broadcastToObservers sends an event to all attached observers.
+func (tm *TeamManager) broadcastToObservers(ti *teamInstance, event *pb.TeamActivityEvent) {
+	ti.mu.RLock()
+	defer ti.mu.RUnlock()
+	for _, obs := range ti.observers {
+		select {
+		case obs.events <- event:
+		default:
+			// Drop if observer channel is full.
+		}
+	}
 }
 
 // AddAgent dynamically adds an agent to a running team's mesh.
