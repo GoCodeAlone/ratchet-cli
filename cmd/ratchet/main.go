@@ -52,6 +52,8 @@ func main() {
 		handleAgent(filteredArgs[1:])
 	case "team":
 		handleTeam(filteredArgs[1:])
+	case "project":
+		handleProject(filteredArgs[1:])
 	case "plugin":
 		handlePlugin(filteredArgs[1:])
 	case "skill":
