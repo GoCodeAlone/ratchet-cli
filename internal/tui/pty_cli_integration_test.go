@@ -138,6 +138,8 @@ func TestPTYCLI_ProviderSetup(t *testing.T) {
 
 // TestPTYCLI_PTYChat verifies each installed CLI tool responds to a prompt
 // delivered via ratchet's -p flag (non-interactive ratchet mode).
+// It sets the tool as the default provider before each sub-test so the correct
+// backend is used, then restores whatever was default before.
 func TestPTYCLI_PTYChat(t *testing.T) {
 	for _, tool := range cliTools {
 		tool := tool
@@ -145,6 +147,10 @@ func TestPTYCLI_PTYChat(t *testing.T) {
 			if _, err := exec.LookPath(tool.binary); err != nil {
 				t.Skipf("%s not installed, skipping", tool.binary)
 			}
+
+			// Set this tool as the default provider so ratchet -p uses it.
+			setDefault := startPTY(t, "provider", "default", tool.setupAlias)
+			setDefault.waitFor(tool.setupAlias, 10*time.Second)
 
 			s := startPTY(t, "-p", "What is 2+2? Reply with just the number.")
 			out := s.waitFor("4", 120*time.Second)
