@@ -108,6 +108,9 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 	if err != nil {
 		return fmt.Errorf("get session %s: %w", sessionID, err)
 	}
+	if session.Status == "completed" || session.Status == "killed" {
+		return sendError(stream, fmt.Sprintf("session %s is no longer active (status: %s)", sessionID, session.Status))
+	}
 
 	// Resolve provider
 	var prov provider.Provider
@@ -431,10 +434,14 @@ func (s *Service) handleCompact(ctx context.Context, sessionID string, stream pb
 	var prov provider.Provider
 	session, sessErr := s.sessions.Get(ctx, sessionID)
 	if sessErr == nil {
+		var provErr error
 		if session.Provider != "" {
-			prov, _ = s.engine.ProviderRegistry.GetByAlias(ctx, session.Provider)
+			prov, provErr = s.engine.ProviderRegistry.GetByAlias(ctx, session.Provider)
 		} else {
-			prov, _ = s.engine.ProviderRegistry.GetDefault(ctx)
+			prov, provErr = s.engine.ProviderRegistry.GetDefault(ctx)
+		}
+		if provErr != nil {
+			log.Printf("compact: resolve provider for summarization: %v (using fallback)", provErr)
 		}
 	}
 
