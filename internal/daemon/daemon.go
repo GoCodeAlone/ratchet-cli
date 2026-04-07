@@ -22,7 +22,7 @@ var reloadSignal = syscall.SIGUSR1
 
 // Start runs the daemon in the foreground. It creates the Unix socket,
 // starts the gRPC server, and blocks until signal.
-func Start(ctx context.Context) error {
+func Start(ctx context.Context, debug bool) error {
 	if err := EnsureDataDir(); err != nil {
 		return err
 	}
@@ -55,6 +55,7 @@ func Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("create service: %w", err)
 	}
+	svc.engine.Debug = debug
 	pb.RegisterRatchetDaemonServer(srv, svc)
 
 	// Graceful shutdown on SIGINT/SIGTERM.
@@ -94,7 +95,7 @@ func Start(ctx context.Context) error {
 }
 
 // StartBackground forks the current process as a background daemon.
-func StartBackground() error {
+func StartBackground(debug bool) error {
 	if IsRunning() {
 		return nil // already running
 	}
@@ -104,7 +105,11 @@ func StartBackground() error {
 		return fmt.Errorf("get executable: %w", err)
 	}
 
-	cmd := exec.Command(exe, "daemon", "start")
+	args := []string{"daemon", "start"}
+	if debug {
+		args = append(args, "--debug")
+	}
+	cmd := exec.Command(exe, args...)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}

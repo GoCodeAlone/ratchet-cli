@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -75,6 +77,22 @@ const compactSentinel = "\x00compact\x00"
 // reviewSentinel is a prefix sent by the TUI to trigger a code review sub-session.
 // The diff content follows immediately after the sentinel.
 const reviewSentinel = "\x00review\x00"
+
+// debugLog appends a log entry to ~/.ratchet/debug.log when debug mode is active.
+func debugLog(format string, args ...any) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	logPath := filepath.Join(home, ".ratchet", "debug.log")
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	logger := log.New(f, "", log.LstdFlags)
+	logger.Printf(format, args...)
+}
 
 // broadcastStream wraps a send-message stream and fans out each event to the broadcaster.
 type broadcastStream struct {
@@ -151,6 +169,12 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 		Role:    provider.RoleUser,
 		Content: userMessage,
 	})
+
+	// Debug: log outgoing messages.
+	if s.engine.Debug {
+		msgJSON, _ := json.Marshal(messages)
+		debugLog("[chat] session=%s sending %d messages: %s", sessionID, len(messages), string(msgJSON))
+	}
 
 	// Stream from provider (save user message AFTER successful stream start,
 	// so failed requests don't pollute conversation history).
@@ -269,6 +293,11 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 			}
 			return sendError(stream, event.Error)
 		}
+	}
+
+	// Debug: log response content.
+	if s.engine.Debug {
+		debugLog("[chat] session=%s response (%d chars): %s", sessionID, len(fullResponse), fullResponse)
 	}
 
 	// Save assistant response

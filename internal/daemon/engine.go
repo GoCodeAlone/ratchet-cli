@@ -32,6 +32,7 @@ type EngineContext struct {
 	ModelRouting     config.ModelRouting
 	Actors           *ActorManager
 	Hooks            *hooks.HookConfig
+	Debug            bool // enable request/response debug logging to ~/.ratchet/debug.log
 	// Plugin-contributed capabilities
 	PluginSkills   []skills.Skill
 	PluginAgents   []agent.AgentDefinition

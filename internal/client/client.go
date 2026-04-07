@@ -41,7 +41,7 @@ func Connect() (*Client, error) {
 // EnsureDaemon starts the daemon if not running, then connects.
 func EnsureDaemon() (*Client, error) {
 	if !daemon.IsRunning() {
-		if err := daemon.StartBackground(); err != nil {
+		if err := daemon.StartBackground(false); err != nil {
 			return nil, fmt.Errorf("start daemon: %w", err)
 		}
 	}

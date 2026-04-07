@@ -16,19 +16,23 @@ func handleDaemon(args []string) {
 	switch args[0] {
 	case "start":
 		bg := false
+		debug := false
 		for _, a := range args[1:] {
 			if a == "--background" || a == "-b" {
 				bg = true
 			}
+			if a == "--debug" {
+				debug = true
+			}
 		}
 		if bg {
-			if err := daemon.StartBackground(); err != nil {
+			if err := daemon.StartBackground(debug); err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
 				os.Exit(1)
 			}
 			fmt.Println("daemon started in background")
 		} else {
-			if err := daemon.Start(context.Background()); err != nil {
+			if err := daemon.Start(context.Background(), debug); err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
 				os.Exit(1)
 			}
@@ -42,7 +46,7 @@ func handleDaemon(args []string) {
 	case "restart":
 		// Stop the old daemon (ignore errors — it may not be running).
 		_ = daemon.Stop()
-		if err := daemon.StartBackground(); err != nil {
+		if err := daemon.StartBackground(false); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
