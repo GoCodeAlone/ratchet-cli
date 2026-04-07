@@ -176,6 +176,38 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 		debugLog("[chat] session=%s sending %d messages: %s", sessionID, len(messages), string(msgJSON))
 	}
 
+	// PTY CLI providers (claude_code, copilot_cli, etc.) don't support streaming
+	// well — their interactive PTY mode requires complex prompt detection.
+	// Use Chat() (non-interactive) for these and fake-stream the response.
+	isPTYProvider := strings.HasSuffix(prov.Name(), "_code") || strings.HasSuffix(prov.Name(), "_cli")
+	if isPTYProvider {
+		resp, chatErr := prov.Chat(ctx, messages, nil)
+		if chatErr != nil {
+			if isAuthError(chatErr) {
+				return sendAuthError(stream, session.Provider, chatErr.Error())
+			}
+			return sendError(stream, "provider chat: "+chatErr.Error())
+		}
+		// Save user message after successful provider call.
+		if err := s.saveMessage(ctx, sessionID, "user", userMessage, "", ""); err != nil {
+			log.Printf("save user message: %v", err)
+		}
+		// Emit the full response as a single token event.
+		if resp != nil && resp.Content != "" {
+			if err := stream.Send(&pb.ChatEvent{
+				Event: &pb.ChatEvent_Token{Token: &pb.TokenDelta{Content: resp.Content}},
+			}); err != nil {
+				return err
+			}
+			if err := s.saveMessage(ctx, sessionID, "assistant", resp.Content, "", ""); err != nil {
+				log.Printf("save assistant message: %v", err)
+			}
+		}
+		return stream.Send(&pb.ChatEvent{
+			Event: &pb.ChatEvent_Complete{Complete: &pb.SessionComplete{Summary: "done"}},
+		})
+	}
+
 	// Stream from provider (save user message AFTER successful stream start,
 	// so failed requests don't pollute conversation history).
 	eventCh, err := prov.Stream(ctx, messages, nil) // tools will be added in later task
