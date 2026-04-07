@@ -396,9 +396,13 @@ func TestAddRemoveNode(t *testing.T) {
 	bb := NewBlackboard()
 	router := NewRouter()
 
-	// Add a node.
+	// Add a node with a stub provider factory.
 	cfg := NodeConfig{Name: "debugger", Role: "worker", Provider: "ollama", Location: "local"}
-	err := m.AddNodeToTeam(ctx, "team-1", cfg, bb, router, nil)
+	stubFactory := func(nc NodeConfig) provider.Provider {
+		src := provider.NewScriptedSource(nil, false)
+		return provider.NewTestProvider(src)
+	}
+	err := m.AddNodeToTeam(ctx, "team-1", cfg, bb, router, stubFactory)
 	if err != nil {
 		t.Fatalf("AddNodeToTeam: %v", err)
 	}
@@ -413,7 +417,7 @@ func TestAddRemoveNode(t *testing.T) {
 	}
 
 	// Remove the node.
-	if err := m.RemoveNodeFromTeam("team-1", "debugger", router); err != nil {
+	if err := m.RemoveNodeFromTeam("team-1", "debugger", router, bb); err != nil {
 		t.Fatalf("RemoveNodeFromTeam: %v", err)
 	}
 }

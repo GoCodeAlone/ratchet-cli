@@ -813,7 +813,7 @@ func (s *Service) RenameTeam(ctx context.Context, req *pb.TeamRenameReq) (*pb.Em
 
 func (s *Service) TeamAddAgent(ctx context.Context, req *pb.TeamAddAgentReq) (*pb.Empty, error) {
 	if err := s.teams.AddAgent(req.TeamId, req.AgentSpec); err != nil {
-		return nil, status.Errorf(codes.Internal, "%v", err)
+		return nil, status.Errorf(codes.Unimplemented, "%v", err)
 	}
 	return &pb.Empty{}, nil
 }
@@ -854,12 +854,12 @@ func (s *Service) AttachTeam(req *pb.AttachTeamReq, stream pb.RatchetDaemon_Atta
 
 func (s *Service) SteerTeam(ctx context.Context, req *pb.SteerTeamReq) (*pb.Empty, error) {
 	// TODO: Wire to team's router once BB/Router are accessible per-team.
-	return &pb.Empty{}, nil
+	return nil, status.Errorf(codes.Unimplemented, "SteerTeam not yet implemented")
 }
 
 func (s *Service) DirectMessage(ctx context.Context, req *pb.DirectMessageReq) (*pb.Empty, error) {
 	// TODO: Wire to team's router.
-	return &pb.Empty{}, nil
+	return nil, status.Errorf(codes.Unimplemented, "DirectMessage not yet implemented")
 }
 
 // === Human-in-the-loop handlers (Task 3.4) ===
@@ -900,10 +900,11 @@ func (s *Service) StartProject(ctx context.Context, req *pb.StartProjectReq) (*p
 		if err != nil {
 			return nil, status.Errorf(codes.InvalidArgument, "load project config: %v", err)
 		}
+		providerFactory := s.teams.newProviderFactory(ctx)
 		for _, teamCfg := range pc.Teams {
 			tc := teamCfg.ToTeamConfig()
 			configs := mesh.ToNodeConfigs(tc)
-			teamID, _ := s.teams.StartMeshTeam(ctx, "project:"+p.Name, configs, nil)
+			teamID, _ := s.teams.StartMeshTeam(ctx, "project:"+p.Name, configs, providerFactory)
 			if teamID != "" {
 				s.projects.AddTeam(p.ID, teamID)
 			}

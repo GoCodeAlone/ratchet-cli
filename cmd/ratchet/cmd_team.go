@@ -278,10 +278,29 @@ func handleTeamList() {
 	}
 	fmt.Println()
 
-	// Active team listing requires a dedicated ListTeams RPC which is not yet
-	// implemented. Direct GetTeamStatus("") calls always return NotFound.
-	fmt.Println("Active team listing is not available via this command.")
-	fmt.Println("Use `ratchet team status <team-id>` for a known team ID.")
+	// List active teams from the daemon.
+	c, err := client.EnsureDaemon()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not connect to daemon: %v\n", err)
+		return
+	}
+	defer c.Close()
+
+	list, err := c.ListTeams(context.Background(), "")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: list teams: %v\n", err)
+		return
+	}
+
+	fmt.Println("Active teams:")
+	if len(list.Teams) == 0 {
+		fmt.Println("  (none)")
+		return
+	}
+	fmt.Printf("  %-12s %-10s %s\n", "ID", "STATUS", "TASK")
+	for _, t := range list.Teams {
+		fmt.Printf("  %-12s %-10s %s\n", t.TeamId, t.Status, t.Task)
+	}
 }
 
 func handleTeamSave(args []string) {

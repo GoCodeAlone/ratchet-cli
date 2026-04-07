@@ -67,6 +67,9 @@ func (hg *HumanGate) Wait(ctx context.Context, reqID string) (string, error) {
 		hg.mu.Unlock()
 		return resp, nil
 	case <-ctx.Done():
+		hg.mu.Lock()
+		delete(hg.pending, reqID)
+		hg.mu.Unlock()
 		return "", ctx.Err()
 	}
 }

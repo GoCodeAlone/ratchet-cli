@@ -31,6 +31,7 @@ type teamAgent struct {
 	status      string // running, completed, failed
 	currentTask string
 	messages    []agentMsg
+	cancel      context.CancelFunc // non-nil if agent has its own context
 }
 
 type agentMsg struct {
@@ -186,6 +187,11 @@ func (tm *TeamManager) purgeCompleted(ttl time.Duration) {
 		ti.mu.RUnlock()
 		if !completed.IsZero() && now.Sub(completed) > ttl {
 			delete(tm.teams, id)
+			for name, nameID := range tm.names {
+				if nameID == id {
+					delete(tm.names, name)
+				}
+			}
 		}
 	}
 }
@@ -251,47 +257,7 @@ func (tm *TeamManager) startMeshTeamFromConfig(ctx context.Context, req *pb.Star
 	}
 
 	configs := mesh.ToNodeConfigs(tc)
-
-	// Build a provider factory that resolves providers via the daemon's
-	// ProviderRegistry. Resolution order:
-	//   1. cfg.Provider (explicit alias from YAML/user) → GetByAlias
-	//   2. Empty provider → GetDefault (user's configured default)
-	//   3. Ollama fallback (standalone/test mode, uses cfg.Model)
-	//
-	// Team configs SHOULD omit provider/model to use the user's default.
-	// Explicit provider/model in YAML is for advanced use (multi-model teams).
-	providerFactory := func(cfg mesh.NodeConfig) provider.Provider {
-		if tm.engine != nil && tm.engine.ProviderRegistry != nil {
-			var prov provider.Provider
-			var provErr error
-			if cfg.Provider != "" {
-				prov, provErr = tm.engine.ProviderRegistry.GetByAlias(ctx, cfg.Provider)
-				if provErr != nil {
-					log.Printf("team agent %s: provider %q not found (%v), trying default", cfg.Name, cfg.Provider, provErr)
-				}
-			}
-			if prov == nil {
-				prov, provErr = tm.engine.ProviderRegistry.GetDefault(ctx)
-				if provErr != nil {
-					log.Printf("team agent %s: no default provider: %v", cfg.Name, provErr)
-				}
-			}
-			if prov != nil {
-				return prov
-			}
-		}
-		// Fallback: create a local Ollama provider using the agent's model.
-		model := cfg.Model
-		if model == "" {
-			model = "qwen3:1.7b" // safe default for fallback
-		}
-		prov, err := gkprov.NewOllamaProvider(ctx, model, "", 0)
-		if err != nil {
-			log.Printf("team agent %s: fallback ollama provider: %v", cfg.Name, err)
-			return nil
-		}
-		return prov
-	}
+	providerFactory := tm.newProviderFactory(ctx)
 
 	return tm.StartMeshTeam(ctx, req.Task, configs, providerFactory)
 }
@@ -501,7 +467,7 @@ func (tm *TeamManager) routeMessage(ti *teamInstance, from, to, content string) 
 	}
 	ti.mu.Unlock()
 
-	ti.eventCh <- &pb.TeamEvent{
+	pbEv := &pb.TeamEvent{
 		Event: &pb.TeamEvent_AgentMessage{
 			AgentMessage: &pb.AgentMessage{
 				FromAgent: from,
@@ -510,6 +476,16 @@ func (tm *TeamManager) routeMessage(ti *teamInstance, from, to, content string) 
 			},
 		},
 	}
+	ti.eventCh <- pbEv
+	tm.broadcastToObservers(ti, &pb.TeamActivityEvent{
+		Event: &pb.TeamActivityEvent_AgentMessage{
+			AgentMessage: &pb.AgentMessage{
+				FromAgent: from,
+				ToAgent:   to,
+				Content:   content,
+			},
+		},
+	})
 }
 
 func (tm *TeamManager) markDone(ti *teamInstance, s string) {
@@ -611,7 +587,8 @@ func (tm *TeamManager) FindAgent(agentID string) *pb.Agent {
 // KillAgent cancels the team that owns the given agent (team-level cancel).
 func (tm *TeamManager) KillAgent(teamID string) error {
 	tm.mu.RLock()
-	ti, ok := tm.teams[teamID]
+	resolved := tm.resolveTeamID(teamID)
+	ti, ok := tm.teams[resolved]
 	tm.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("team %s not found", teamID)
@@ -723,12 +700,53 @@ func (tm *TeamManager) RemoveAgent(teamID, agentName string) error {
 	for id, ag := range ti.agents {
 		if ag.name == agentName {
 			delete(ti.agents, id)
+			cancelFn := ag.cancel
 			ti.mu.Unlock()
+			if cancelFn != nil {
+				cancelFn()
+			}
 			return nil
 		}
 	}
 	ti.mu.Unlock()
 	return fmt.Errorf("agent %q not found in team %q", agentName, teamID)
+}
+
+// newProviderFactory builds a provider factory using the engine's ProviderRegistry,
+// with an Ollama fallback for standalone/test mode. This is the same factory
+// used by startMeshTeamFromConfig and should be passed to StartMeshTeam callers.
+func (tm *TeamManager) newProviderFactory(ctx context.Context) func(mesh.NodeConfig) provider.Provider {
+	return func(cfg mesh.NodeConfig) provider.Provider {
+		if tm.engine != nil && tm.engine.ProviderRegistry != nil {
+			var prov provider.Provider
+			var provErr error
+			if cfg.Provider != "" {
+				prov, provErr = tm.engine.ProviderRegistry.GetByAlias(ctx, cfg.Provider)
+				if provErr != nil {
+					log.Printf("team agent %s: provider %q not found (%v), trying default", cfg.Name, cfg.Provider, provErr)
+				}
+			}
+			if prov == nil {
+				prov, provErr = tm.engine.ProviderRegistry.GetDefault(ctx)
+				if provErr != nil {
+					log.Printf("team agent %s: no default provider: %v", cfg.Name, provErr)
+				}
+			}
+			if prov != nil {
+				return prov
+			}
+		}
+		model := cfg.Model
+		if model == "" {
+			model = "qwen3:1.7b"
+		}
+		prov, err := gkprov.NewOllamaProvider(ctx, model, "", 0)
+		if err != nil {
+			log.Printf("team agent %s: fallback ollama provider: %v", cfg.Name, err)
+			return nil
+		}
+		return prov
+	}
 }
 
 // StartMeshTeam creates a team via the mesh orchestrator, converts mesh Events

@@ -2,6 +2,8 @@ package mesh
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"sync"
@@ -9,6 +11,15 @@ import (
 	"github.com/GoCodeAlone/workflow-plugin-agent/executor"
 	"github.com/GoCodeAlone/workflow-plugin-agent/provider"
 )
+
+// generateTeamShortID generates a short human-readable team ID like "t-a3f2".
+func generateTeamShortID() string {
+	b := make([]byte, 2)
+	if _, err := rand.Read(b); err != nil {
+		return "t-" + hex.EncodeToString([]byte{0, 0})
+	}
+	return "t-" + hex.EncodeToString(b)
+}
 
 // TeamHandle is returned by SpawnTeam and allows callers to wait for
 // completion, observe events, or cancel the team.
@@ -62,7 +73,6 @@ type AgentMesh struct {
 	mu     sync.RWMutex
 	nodes  map[string]Node
 	teams  map[string]*TeamHandle
-	nextID int
 }
 
 // NewAgentMesh creates a new AgentMesh ready to spawn teams.
@@ -92,9 +102,9 @@ func (m *AgentMesh) SpawnTeam(
 	}
 
 	// 1. Generate a team ID.
+	teamID := generateTeamShortID()
 	m.mu.Lock()
-	m.nextID++
-	teamID := fmt.Sprintf("team-%d", m.nextID)
+	m.teams[teamID] = nil // reserve slot
 	m.mu.Unlock()
 
 	// 2. Initialise shared state.
@@ -365,9 +375,12 @@ func (m *AgentMesh) AddNodeToTeam(
 	router *Router,
 	providerFactory func(NodeConfig) provider.Provider,
 ) error {
-	var prov provider.Provider
-	if providerFactory != nil {
-		prov = providerFactory(cfg)
+	if providerFactory == nil {
+		return fmt.Errorf("providerFactory is required for local node %q", cfg.Name)
+	}
+	prov := providerFactory(cfg)
+	if prov == nil {
+		return fmt.Errorf("no provider available for local node %q (provider=%q model=%q)", cfg.Name, cfg.Provider, cfg.Model)
 	}
 	node := NewLocalNode(cfg, prov, nil)
 
@@ -411,7 +424,7 @@ func (m *AgentMesh) AddNodeToTeam(
 
 // RemoveNodeFromTeam removes a node from a running team by unregistering it
 // from the router (which causes its inbox to be closed and node.Run to exit).
-func (m *AgentMesh) RemoveNodeFromTeam(teamID, nodeName string, router *Router) error {
+func (m *AgentMesh) RemoveNodeFromTeam(teamID, nodeName string, router *Router, bb *Blackboard) error {
 	m.mu.Lock()
 	_, ok := m.nodes[nodeName]
 	if !ok {
@@ -422,6 +435,12 @@ func (m *AgentMesh) RemoveNodeFromTeam(teamID, nodeName string, router *Router) 
 	m.mu.Unlock()
 
 	router.Unregister(nodeName)
+
+	if bb != nil {
+		bb.Write("team/members", nodeName, map[string]string{"status": "removed"}, "mesh")
+		bb.Write("team/events", fmt.Sprintf("remove-%s", nodeName),
+			fmt.Sprintf("agent %q left the team", nodeName), "mesh")
+	}
 	return nil
 }
 

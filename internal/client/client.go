@@ -254,6 +254,11 @@ func (c *Client) GetTeamStatus(ctx context.Context, teamID string) (*pb.TeamStat
 	return c.daemon.GetTeamStatus(ctx, &pb.TeamStatusReq{TeamId: teamID})
 }
 
+// ListTeams returns all active teams, optionally filtered by project.
+func (c *Client) ListTeams(ctx context.Context, projectID string) (*pb.TeamList, error) {
+	return c.daemon.ListTeams(ctx, &pb.ListTeamsReq{ProjectId: projectID})
+}
+
 // CompactSession requests immediate context compression for the given session.
 // It sends a special sentinel message that handleChat recognises as a compression
 // request rather than a user turn — the daemon compresses history and responds
