@@ -34,6 +34,14 @@ ratchet team start --bb shared --agent lead:ollama --agent coder:claude_code "ta
 **Multi-team config file:**
 ```yaml
 project: email-service
+cwd: /Users/jon/workspace           # where the project was initiated (auto-set if omitted)
+workdir: /Users/jon/workspace        # working directory for agents (defaults to cwd)
+paths:                                # whitelist of directories agents can interact with
+  - /Users/jon/workspace/ratchet-cli
+  - /Users/jon/workspace/workflow-plugin-agent
+  - /Users/jon/workspace/ratchet
+# paths is optional — if omitted, agents can access anything under workdir
+
 teams:
   - name: design
     agents:
