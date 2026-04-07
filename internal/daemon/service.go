@@ -48,6 +48,7 @@ type Service struct {
 	humanGate    *HumanGate
 	autorespond  *Autoresponder
 	projects     *ProjectRegistry
+	tracker      *mesh.Tracker
 }
 
 func NewService(ctx context.Context) (*Service, error) {
@@ -90,6 +91,11 @@ func NewService(ctx context.Context) (*Service, error) {
 	wd, _ := os.Getwd()
 	svc.autorespond = LoadAutoresponder(wd)
 	svc.projects = NewProjectRegistry()
+	if tr, err := mesh.NewTracker(engine.DB); err != nil {
+		log.Printf("tracker init: %v (task tracker disabled)", err)
+	} else {
+		svc.tracker = tr
+	}
 
 	// Create and start cron scheduler AFTER all Service fields are initialized,
 	// since tick callbacks invoke svc.handleChat which depends on svc.tokens etc.
@@ -970,26 +976,94 @@ func (s *Service) GetProjectStatus(ctx context.Context, req *pb.ProjectReq) (*pb
 	}, nil
 }
 
-// === Task tracker stubs (Task 2.1) ===
+// === Task tracker RPCs ===
 
-func (s *Service) CreateTask(ctx context.Context, req *pb.TaskCreateReq) (*pb.TaskInfo, error) {
-	return nil, status.Error(codes.Unimplemented, "CreateTask not yet implemented")
+func (s *Service) CreateTask(_ context.Context, req *pb.TaskCreateReq) (*pb.TaskInfo, error) {
+	if s.tracker == nil {
+		return nil, status.Error(codes.Unavailable, "task tracker not initialized")
+	}
+	taskID, err := s.tracker.CreateTask(req.ProjectId, req.Title, req.Description, req.AssignedTeam, int(req.Priority))
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "create task: %v", err)
+	}
+	t, err := s.tracker.GetTask(taskID)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "get task: %v", err)
+	}
+	return taskToProto(t), nil
 }
 
-func (s *Service) ClaimTask(ctx context.Context, req *pb.TaskClaimReq) (*pb.TaskInfo, error) {
-	return nil, status.Error(codes.Unimplemented, "ClaimTask not yet implemented")
+func (s *Service) ClaimTask(_ context.Context, req *pb.TaskClaimReq) (*pb.TaskInfo, error) {
+	if s.tracker == nil {
+		return nil, status.Error(codes.Unavailable, "task tracker not initialized")
+	}
+	if err := s.tracker.ClaimTask(req.TaskId, req.AgentName); err != nil {
+		return nil, status.Errorf(codes.FailedPrecondition, "claim task: %v", err)
+	}
+	t, err := s.tracker.GetTask(req.TaskId)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "get task: %v", err)
+	}
+	return taskToProto(t), nil
 }
 
-func (s *Service) UpdateTask(ctx context.Context, req *pb.TaskUpdateReq) (*pb.TaskInfo, error) {
-	return nil, status.Error(codes.Unimplemented, "UpdateTask not yet implemented")
+func (s *Service) UpdateTask(_ context.Context, req *pb.TaskUpdateReq) (*pb.TaskInfo, error) {
+	if s.tracker == nil {
+		return nil, status.Error(codes.Unavailable, "task tracker not initialized")
+	}
+	if err := s.tracker.UpdateTask(req.TaskId, req.Status, req.Notes); err != nil {
+		return nil, status.Errorf(codes.Internal, "update task: %v", err)
+	}
+	t, err := s.tracker.GetTask(req.TaskId)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "get task: %v", err)
+	}
+	return taskToProto(t), nil
 }
 
-func (s *Service) ListTasks(ctx context.Context, req *pb.TaskListReq) (*pb.TaskList, error) {
-	return nil, status.Error(codes.Unimplemented, "ListTasks not yet implemented")
+func (s *Service) ListTasks(_ context.Context, req *pb.TaskListReq) (*pb.TaskList, error) {
+	if s.tracker == nil {
+		return nil, status.Error(codes.Unavailable, "task tracker not initialized")
+	}
+	limit := int(req.Limit)
+	if limit == 0 {
+		limit = 50
+	}
+	tasks, err := s.tracker.ListTasks(req.ProjectId, req.Team, req.Status, limit)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "list tasks: %v", err)
+	}
+	list := &pb.TaskList{}
+	for i := range tasks {
+		list.Tasks = append(list.Tasks, taskToProto(&tasks[i]))
+	}
+	return list, nil
 }
 
-func (s *Service) GetTask(ctx context.Context, req *pb.TaskReq) (*pb.TaskInfo, error) {
-	return nil, status.Error(codes.Unimplemented, "GetTask not yet implemented")
+func (s *Service) GetTask(_ context.Context, req *pb.TaskReq) (*pb.TaskInfo, error) {
+	if s.tracker == nil {
+		return nil, status.Error(codes.Unavailable, "task tracker not initialized")
+	}
+	t, err := s.tracker.GetTask(req.TaskId)
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "get task: %v", err)
+	}
+	return taskToProto(t), nil
+}
+
+func taskToProto(t *mesh.Task) *pb.TaskInfo {
+	return &pb.TaskInfo{
+		Id:           t.ID,
+		Title:        t.Title,
+		Status:       t.Status,
+		AssignedTeam: t.AssignedTeam,
+		ClaimedBy:    t.ClaimedBy,
+		Priority:     int32(t.Priority),
+		Description:  t.Description,
+		ProjectId:    t.ProjectID,
+		CreatedAt:    t.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		UpdatedAt:    t.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+	}
 }
 
 // handleMeshEvent processes a single incoming MeshEvent from a remote node.

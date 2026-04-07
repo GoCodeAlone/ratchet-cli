@@ -60,6 +60,12 @@ var knownTools = map[string]bool{
 	"blackboard_write": true,
 	"blackboard_list":  true,
 	"send_message":     true,
+	"task_create":      true,
+	"task_claim":       true,
+	"task_update":      true,
+	"task_list":        true,
+	"task_get":         true,
+	"project_status":   true,
 }
 
 // LoadTeamConfig reads a team config file (YAML or JSON) and validates it.
