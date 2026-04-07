@@ -15,15 +15,19 @@ type BBBridge struct {
 	agentName   string
 	role        string
 	teamMembers []string
+	workDir     string // working directory passed to the PTY provider session
 	bb          *Blackboard
 	transcript  *TranscriptLogger
 	sendToPTY   func(ctx context.Context, prompt string) (string, error)
 }
 
 // NewBBBridge creates a bridge for a PTY-backed agent.
+// workDir is the working directory for the underlying PTY provider session;
+// pass "" to use the provider's default.
 func NewBBBridge(
 	agentName, role string,
 	teamMembers []string,
+	workDir string,
 	bb *Blackboard,
 	transcript *TranscriptLogger,
 	sendToPTY func(ctx context.Context, prompt string) (string, error),
@@ -32,6 +36,7 @@ func NewBBBridge(
 		agentName:   agentName,
 		role:        role,
 		teamMembers: teamMembers,
+		workDir:     workDir,
 		bb:          bb,
 		transcript:  transcript,
 		sendToPTY:   sendToPTY,

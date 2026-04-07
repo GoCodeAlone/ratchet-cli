@@ -31,8 +31,10 @@ type NodeConfig struct {
 	Role          string
 	Model         string
 	Provider      string
-	Location      string // "local" or "grpc://host:port"
+	Location      string   // "local" or "grpc://host:port"
 	SystemPrompt  string
 	Tools         []string
 	MaxIterations int
+	WorkDir       string   // working directory for this agent's sessions
+	AllowedPaths  []string // whitelisted path prefixes for file tool access (empty = unrestricted)
 }

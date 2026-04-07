@@ -50,8 +50,11 @@ type AgentConfig struct {
 type TeamConfig struct {
 	Name            string        `yaml:"name" json:"name"`
 	Agents          []AgentConfig `yaml:"agents" json:"agents"`
-	Timeout         string        `yaml:"timeout" json:"timeout,omitempty"` // duration string like "10m"
+	Timeout         string        `yaml:"timeout" json:"timeout,omitempty"`           // duration string like "10m"
 	MaxReviewRounds int           `yaml:"max_review_rounds" json:"max_review_rounds,omitempty"`
+	WorkDir         string        `yaml:"workdir,omitempty" json:"workdir,omitempty"` // working directory for agent sessions
+	Blackboard      string        `yaml:"blackboard,omitempty" json:"blackboard,omitempty"` // BB mode: shared, isolated, orchestrator, bridge:t1,t2
+	AllowedPaths    []string      `yaml:"paths,omitempty" json:"paths,omitempty"`    // whitelisted path prefixes for tool access
 }
 
 // knownTools is the set of tool names available to mesh agents.
@@ -196,6 +199,8 @@ func ToNodeConfigs(tc *TeamConfig) []NodeConfig {
 			SystemPrompt:  a.SystemPrompt,
 			Tools:         a.Tools,
 			MaxIterations: a.MaxIterations,
+			WorkDir:       tc.WorkDir,
+			AllowedPaths:  tc.AllowedPaths,
 		}
 	}
 	return configs
@@ -295,9 +300,11 @@ func ValidateProjectConfig(pc *ProjectConfig) error {
 // ToTeamConfig converts a ProjectTeamConfig to a standard TeamConfig.
 func (ptc *ProjectTeamConfig) ToTeamConfig() *TeamConfig {
 	return &TeamConfig{
-		Name:    ptc.Name,
-		Agents:  ptc.Agents,
-		Timeout: ptc.Timeout,
+		Name:       ptc.Name,
+		Agents:     ptc.Agents,
+		Timeout:    ptc.Timeout,
+		WorkDir:    ptc.WorkDir,
+		Blackboard: ptc.Blackboard,
 	}
 }
 
@@ -323,7 +330,7 @@ func BuildTeamConfigFromFlags(name string, agentFlags []string, orchestrator str
 		return nil, fmt.Errorf("at least one --agent is required")
 	}
 
-	tc := &TeamConfig{Name: name}
+	tc := &TeamConfig{Name: name, Blackboard: bbMode}
 	if tc.Name == "" {
 		tc.Name = "cli-team"
 	}

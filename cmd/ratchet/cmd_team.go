@@ -133,6 +133,25 @@ func handleTeamStart(args []string) {
 
 		// Serialize to a temp YAML and pass as config name.
 		configName = writeTemporaryTeamConfig(tc)
+	} else if configName != "" && (bbMode != "" || orchestrator != "") {
+		// --config with --bb or --orchestrator overrides: load config, apply
+		// flag overrides, write modified temp YAML so the daemon sees them.
+		tc, err := resolveTeamConfig(configName)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error loading config: %v\n", err)
+			os.Exit(1)
+		}
+		if bbMode != "" {
+			tc.Blackboard = bbMode
+		}
+		if orchestrator != "" {
+			for i := range tc.Agents {
+				if tc.Agents[i].Name == orchestrator {
+					tc.Agents[i].Role = "orchestrator"
+				}
+			}
+		}
+		configName = writeTemporaryTeamConfig(tc)
 	}
 
 	if task == "" {
@@ -223,6 +242,8 @@ func isTeamConfig(name string) bool {
 }
 
 // resolveTeamConfig loads a team config by builtin name or file path.
+// It first tries builtin configs and TeamConfig format; then falls back to
+// ProjectConfig format (extracting the first team).
 func resolveTeamConfig(name string) (*mesh.TeamConfig, error) {
 	builtins, err := mesh.BuiltinTeamConfigs()
 	if err == nil {
@@ -230,7 +251,30 @@ func resolveTeamConfig(name string) (*mesh.TeamConfig, error) {
 			return tc, nil
 		}
 	}
-	return mesh.LoadTeamConfig(name)
+	tc, loadErr := mesh.LoadTeamConfig(name)
+	if loadErr == nil {
+		return tc, nil
+	}
+	// Fallback: try as ProjectConfig.
+	pc, pcErr := mesh.LoadProjectConfig(name)
+	if pcErr != nil {
+		return nil, loadErr // return original error
+	}
+	if len(pc.Teams) == 0 {
+		return nil, fmt.Errorf("project config %q has no teams", name)
+	}
+	ptc := &pc.Teams[0]
+	result := ptc.ToTeamConfig()
+	if result.WorkDir == "" {
+		result.WorkDir = pc.WorkDir
+	}
+	if result.WorkDir == "" {
+		result.WorkDir = pc.Cwd
+	}
+	if len(result.AllowedPaths) == 0 {
+		result.AllowedPaths = pc.Paths
+	}
+	return result, nil
 }
 
 func handleTeamStatus(args []string) {

@@ -232,6 +232,8 @@ func (tm *TeamManager) StartTeam(ctx context.Context, req *pb.StartTeamReq) (str
 }
 
 // startMeshTeamFromConfig loads a team config by name and launches a mesh team.
+// It first tries to load as a TeamConfig; if that fails it falls back to
+// ProjectConfig (which supports workdir, paths, and per-team blackboard mode).
 func (tm *TeamManager) startMeshTeamFromConfig(ctx context.Context, req *pb.StartTeamReq) (string, <-chan *pb.TeamEvent) {
 	errCh := func(msg string) (string, <-chan *pb.TeamEvent) {
 		ch := make(chan *pb.TeamEvent, 1)
@@ -249,11 +251,33 @@ func (tm *TeamManager) startMeshTeamFromConfig(ctx context.Context, req *pb.Star
 		}
 	}
 	if tc == nil {
-		loaded, err := mesh.LoadTeamConfig(req.TeamConfigName)
-		if err != nil {
-			return errCh(fmt.Sprintf("load team config %q: %v", req.TeamConfigName, err))
+		loaded, loadErr := mesh.LoadTeamConfig(req.TeamConfigName)
+		if loadErr != nil {
+			// Fallback: try loading as a ProjectConfig (has project:, teams:, workdir:, paths:).
+			pc, pcErr := mesh.LoadProjectConfig(req.TeamConfigName)
+			if pcErr != nil {
+				return errCh(fmt.Sprintf("load team config %q: %v", req.TeamConfigName, loadErr))
+			}
+			if len(pc.Teams) == 0 {
+				return errCh(fmt.Sprintf("project config %q has no teams", req.TeamConfigName))
+			}
+			// Use the first team; future work can select by name via req.
+			ptc := &pc.Teams[0]
+			tc = ptc.ToTeamConfig()
+			// Resolve WorkDir: team-level overrides project-level, fall back to cwd.
+			if tc.WorkDir == "" {
+				tc.WorkDir = pc.WorkDir
+			}
+			if tc.WorkDir == "" {
+				tc.WorkDir = pc.Cwd
+			}
+			// Propagate project-level paths when team has none.
+			if len(tc.AllowedPaths) == 0 {
+				tc.AllowedPaths = pc.Paths
+			}
+		} else {
+			tc = loaded
 		}
-		tc = loaded
 	}
 
 	configs := mesh.ToNodeConfigs(tc)

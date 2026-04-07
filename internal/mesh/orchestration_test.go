@@ -42,12 +42,14 @@ func TestOrchestration_EndToEnd(t *testing.T) {
 	claudeBridge := NewBBBridge(
 		"claude_code", "implementation",
 		[]string{"orchestrator", "copilot"},
+		"", // workDir: use provider default in tests
 		bb, logger,
 		mockPTYSender("claude_code"),
 	)
 	copilotBridge := NewBBBridge(
 		"copilot", "review",
 		[]string{"orchestrator", "claude_code"},
+		"", // workDir: use provider default in tests
 		bb, logger,
 		mockPTYSender("copilot"),
 	)
