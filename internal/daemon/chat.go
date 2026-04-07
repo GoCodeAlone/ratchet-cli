@@ -108,6 +108,9 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 	if err != nil {
 		return fmt.Errorf("get session %s: %w", sessionID, err)
 	}
+	if session.Status == "completed" || session.Status == "killed" {
+		return sendError(stream, fmt.Sprintf("session %s is no longer active (status: %s)", sessionID, session.Status))
+	}
 
 	// Resolve provider
 	var prov provider.Provider

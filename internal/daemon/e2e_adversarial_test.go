@@ -352,9 +352,9 @@ func TestE2EAdversarial_AttachNonexistentSession(t *testing.T) {
 	// session) or close immediately.
 	ev, recvErr := stream.Recv()
 	if recvErr != nil && recvErr != io.EOF {
-		// BUG CONFIRMED: context deadline exceeded — the stream hung until our
-		// 5s timeout fired. AttachSession has no session-existence check.
-		t.Logf("BUG CONFIRMED: AttachSession(ghost) hung until context expired: %v", recvErr)
+		// If we get here with a non-EOF error, the stream was rejected (expected
+		// after the fix — AttachSession now checks session existence).
+		t.Logf("AttachSession(ghost) correctly rejected: %v", recvErr)
 		return
 	}
 	if recvErr == io.EOF {

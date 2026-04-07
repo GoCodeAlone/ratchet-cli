@@ -230,6 +230,12 @@ func (s *Service) ListSessions(ctx context.Context, _ *pb.Empty) (*pb.SessionLis
 }
 
 func (s *Service) AttachSession(req *pb.AttachReq, stream pb.RatchetDaemon_AttachSessionServer) error {
+	// Verify the session exists before subscribing (prevents hanging on nonexistent sessions).
+	if s.sessions != nil {
+		if _, err := s.sessions.Get(stream.Context(), req.SessionId); err != nil {
+			return status.Errorf(codes.NotFound, "session %s not found", req.SessionId)
+		}
+	}
 	ch, subID := s.broadcaster.Subscribe(req.SessionId)
 	defer s.broadcaster.Unsubscribe(req.SessionId, subID)
 	for {
@@ -410,8 +416,13 @@ func (s *Service) GetAgentStatus(ctx context.Context, req *pb.AgentStatusReq) (*
 }
 
 func (s *Service) UpdateProviderModel(ctx context.Context, req *pb.UpdateProviderModelReq) (*pb.Empty, error) {
-	if _, err := s.engine.DB.ExecContext(ctx, "UPDATE llm_providers SET model = ? WHERE alias = ?", req.Model, req.Alias); err != nil {
+	result, err := s.engine.DB.ExecContext(ctx, "UPDATE llm_providers SET model = ? WHERE alias = ?", req.Model, req.Alias)
+	if err != nil {
 		return nil, status.Errorf(codes.Internal, "update model: %v", err)
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return nil, status.Errorf(codes.NotFound, "provider %q not found", req.Alias)
 	}
 	s.engine.ProviderRegistry.InvalidateCacheAlias(req.Alias)
 	return &pb.Empty{}, nil
