@@ -180,8 +180,7 @@ func TestE2EAdversarial_SendToNonexistentSession(t *testing.T) {
 }
 
 // TestE2EAdversarial_DuplicateProviderAlias verifies that the second AddProvider
-// with the same alias returns an error rather than silently corrupting the DB.
-// (This duplicates a test in e2e_provider_test.go but is kept here for adversarial coverage.)
+// with the same alias upserts without DB corruption (exactly 1 row after).
 func TestE2EAdversarial_DuplicateProviderAlias(t *testing.T) {
 	h := newE2EHarness(t)
 	ctx := context.Background()
@@ -192,19 +191,15 @@ func TestE2EAdversarial_DuplicateProviderAlias(t *testing.T) {
 		Alias: "dup-alias",
 		Type:  "mock",
 	})
-	if err == nil {
-		// BUG: The UNIQUE constraint on alias should have been enforced. If this
-		// succeeds, there are now two rows with the same alias in the DB.
-		t.Error("BUG: expected UNIQUE constraint error for duplicate alias, got nil")
+	if err != nil {
+		t.Fatalf("expected upsert to succeed, got: %v", err)
+	}
 
-		// Verify DB corruption: count rows with this alias.
-		var count int
-		_ = h.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM llm_providers WHERE alias = ?`, "dup-alias").Scan(&count)
-		if count > 1 {
-			t.Errorf("DB corrupted: %d rows with alias 'dup-alias'", count)
-		}
-	} else {
-		t.Logf("correctly rejected duplicate alias: %v", err)
+	// Verify no DB corruption: exactly 1 row.
+	var count int
+	_ = h.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM llm_providers WHERE alias = ?`, "dup-alias").Scan(&count)
+	if count != 1 {
+		t.Errorf("expected exactly 1 row with alias 'dup-alias', got %d", count)
 	}
 }
 

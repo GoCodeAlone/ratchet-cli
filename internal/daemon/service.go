@@ -359,9 +359,17 @@ func (s *Service) AddProvider(ctx context.Context, req *pb.AddProviderReq) (*pb.
 		maxTokens = 4096
 	}
 
-	// DB insert before secret store to avoid orphaned secrets on constraint failure
+	// Upsert: insert or update if alias already exists.
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO llm_providers (id, alias, type, model, secret_name, base_url, max_tokens, settings, is_default) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO llm_providers (id, alias, type, model, secret_name, base_url, max_tokens, settings, is_default)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(alias) DO UPDATE SET
+		   type = excluded.type,
+		   model = excluded.model,
+		   secret_name = CASE WHEN excluded.secret_name = '' THEN secret_name ELSE excluded.secret_name END,
+		   base_url = CASE WHEN excluded.base_url = '' THEN base_url ELSE excluded.base_url END,
+		   max_tokens = excluded.max_tokens,
+		   is_default = excluded.is_default`,
 		id, req.Alias, req.Type, req.Model, secretName, req.BaseUrl, maxTokens, "{}", isDefault,
 	); err != nil {
 		return nil, status.Errorf(codes.Internal, "insert provider: %v", err)

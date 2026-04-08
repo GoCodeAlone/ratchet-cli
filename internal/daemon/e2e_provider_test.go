@@ -282,8 +282,8 @@ func TestE2EKeyedProviderResolvesWithKey(t *testing.T) {
 	}
 }
 
-// TestE2EProviderDuplicateAlias verifies that adding two providers with the same
-// alias returns an error on the second attempt (UNIQUE constraint on alias column).
+// TestE2EProviderDuplicateAlias verifies that adding a provider with an existing
+// alias upserts (updates) rather than erroring.
 func TestE2EProviderDuplicateAlias(t *testing.T) {
 	h := newE2EHarness(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -291,12 +291,15 @@ func TestE2EProviderDuplicateAlias(t *testing.T) {
 
 	h.addProvider(t, "dup-test", "mock", "", false)
 
-	_, err := h.Client.AddProvider(ctx, &pb.AddProviderReq{
+	p, err := h.Client.AddProvider(ctx, &pb.AddProviderReq{
 		Alias: "dup-test",
 		Type:  "mock",
 	})
-	if err == nil {
-		t.Error("expected error for duplicate alias, got nil")
+	if err != nil {
+		t.Fatalf("expected upsert to succeed, got: %v", err)
+	}
+	if p.Alias != "dup-test" {
+		t.Errorf("expected alias dup-test, got %s", p.Alias)
 	}
 }
 
