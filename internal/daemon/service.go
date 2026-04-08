@@ -21,6 +21,7 @@ import (
 	"github.com/GoCodeAlone/ratchet-cli/internal/mesh"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 	"github.com/GoCodeAlone/ratchet-cli/internal/version"
+	"github.com/GoCodeAlone/workflow-plugin-agent/policy"
 )
 
 // ProtoVersion is the current protocol version. Increment this when making
@@ -49,6 +50,7 @@ type Service struct {
 	autorespond  *Autoresponder
 	projects     *ProjectRegistry
 	tracker      *mesh.Tracker
+	trustEngine  *policy.TrustEngine
 }
 
 func NewService(ctx context.Context) (*Service, error) {
@@ -91,6 +93,24 @@ func NewService(ctx context.Context) (*Service, error) {
 	wd, _ := os.Getwd()
 	svc.autorespond = LoadAutoresponder(wd)
 	svc.projects = NewProjectRegistry()
+
+	// Initialize TrustEngine from config.
+	trustMode := "conservative"
+	var trustRules []policy.TrustRule
+	if cfg != nil {
+		if cfg.Trust.Mode != "" {
+			trustMode = cfg.Trust.Mode
+		}
+		trustRules = cfg.Trust.ToTrustRules()
+	}
+	svc.trustEngine = policy.NewTrustEngine(trustMode, trustRules, nil)
+
+	// Attach PermissionStore for persistent grants if DB is available.
+	if engine.DB != nil {
+		if ps, err := policy.NewPermissionStore(engine.DB); err == nil {
+			svc.trustEngine.SetPermissionStore(ps)
+		}
+	}
 	if tr, err := mesh.NewTracker(engine.DB); err != nil {
 		log.Printf("tracker init: %v (task tracker disabled)", err)
 	} else {

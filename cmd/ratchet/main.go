@@ -14,16 +14,24 @@ import (
 )
 
 func main() {
-	// Check for --reconfigure / -r flag before subcommand dispatch
+	// Check for --reconfigure / -r and --mode flags before subcommand dispatch.
 	reconfigure := false
+	var modeFlag string
 	var filteredArgs []string
-	for _, arg := range os.Args[1:] {
-		if arg == "--reconfigure" || arg == "-r" {
+	args := os.Args[1:]
+	for i, arg := range args {
+		switch {
+		case arg == "--reconfigure" || arg == "-r":
 			reconfigure = true
-		} else {
+		case arg == "--mode" && i+1 < len(args):
+			modeFlag = args[i+1]
+		case strings.HasPrefix(arg, "--mode="):
+			modeFlag = strings.TrimPrefix(arg, "--mode=")
+		default:
 			filteredArgs = append(filteredArgs, arg)
 		}
 	}
+	_ = modeFlag // consumed by daemon via config; reserved for future session wiring
 
 	if len(filteredArgs) == 0 {
 		// Default: launch interactive TUI
