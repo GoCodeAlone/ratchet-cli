@@ -895,6 +895,33 @@ func (tm *TeamManager) StartMeshTeam(
 					ag.mu.Unlock()
 				}
 				ti.mu.Unlock()
+			case "trust_allow":
+				// Trust audit: tool allowed — logged at debug level only.
+				log.Printf("[TRUST ALLOW] agent=%s tool=%s", ev.AgentID, ev.Content)
+			case "trust_deny":
+				// Trust audit: tool denied — surface as error so TUI shows it.
+				toolName := ""
+				if ev.Data != nil {
+					if n, ok := ev.Data["tool_name"].(string); ok {
+						toolName = n
+					}
+				}
+				pbEv = &pb.TeamEvent{
+					Event: &pb.TeamEvent_Error{
+						Error: &pb.ErrorEvent{
+							Message: fmt.Sprintf("[TRUST DENY] agent=%s tool=%s: %s", ev.AgentID, toolName, ev.Content),
+						},
+					},
+				}
+			case "trust_ask":
+				// Trust audit: tool queued for approval.
+				toolName := ""
+				if ev.Data != nil {
+					if n, ok := ev.Data["tool_name"].(string); ok {
+						toolName = n
+					}
+				}
+				log.Printf("[TRUST ASK] agent=%s tool=%s: %s", ev.AgentID, toolName, ev.Content)
 			}
 
 			if pbEv != nil {
