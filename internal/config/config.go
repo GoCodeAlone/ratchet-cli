@@ -16,6 +16,7 @@ type Config struct {
 	Daemon            DaemonConfig     `yaml:"daemon"`
 	ModelRouting      ModelRouting     `yaml:"model_routing"`
 	Context           ContextConfig    `yaml:"context"`
+	Trust             TrustConfig      `yaml:"trust"`
 }
 
 // ContextConfig controls automatic context-window compression behaviour.
@@ -68,6 +69,9 @@ func DefaultConfig() *Config {
 		Daemon: DaemonConfig{
 			AutoStart:   true,
 			IdleTimeout: "30m",
+		},
+		Trust: TrustConfig{
+			Mode: "conservative",
 		},
 		Context: ContextConfig{
 			CompressionThreshold: 0.9,
