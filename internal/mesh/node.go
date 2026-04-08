@@ -36,5 +36,9 @@ type NodeConfig struct {
 	Tools         []string
 	MaxIterations int
 	WorkDir       string   // working directory for this agent's sessions
-	AllowedPaths  []string // whitelisted path prefixes for file tool access (empty = unrestricted)
+	AllowedPaths  []string    // whitelisted path prefixes for file tool access (empty = unrestricted)
+	TrustEngine   interface{} // *policy.TrustEngine — passed to executor.Config as TrustEvaluator
+	SandboxMode   bool
+	ContainerMgr  interface{} // executor.ContainerExecutor
+	ProviderArgs  []string    // per-agent CLI args override for PTY adapters
 }

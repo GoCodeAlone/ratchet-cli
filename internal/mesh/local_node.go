@@ -172,6 +172,7 @@ func (n *LocalNode) Run(ctx context.Context, task string, bb *Blackboard, inbox 
 		MaxIterations: maxIter,
 		Inbox:         provInbox,
 		OnEvent:       n.onEvent,
+		SandboxMode:   n.config.SandboxMode,
 		ShouldStop: func() (reason string) {
 			// Check by node ID
 			if e, ok := bb.Read("status", n.id); ok {
@@ -187,6 +188,17 @@ func (n *LocalNode) Run(ctx context.Context, task string, bb *Blackboard, inbox 
 			}
 			return ""
 		},
+	}
+
+	// Wire trust engine if configured.
+	if te, ok := n.config.TrustEngine.(executor.TrustEvaluator); ok {
+		cfg.TrustEngine = te
+	}
+	// Wire container executor if sandbox mode is enabled.
+	if n.config.SandboxMode {
+		if cm, ok := n.config.ContainerMgr.(executor.ContainerExecutor); ok {
+			cfg.ContainerMgr = cm
+		}
 	}
 
 	agentCtx := tools.WithAgentID(ctx, n.id)
