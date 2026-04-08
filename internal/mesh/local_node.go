@@ -190,9 +190,13 @@ func (n *LocalNode) Run(ctx context.Context, task string, bb *Blackboard, inbox 
 		},
 	}
 
-	// Wire trust engine if configured.
+	// Wire trust engine if configured; default to allow-all for mesh agents
+	// that don't have explicit trust config (mesh tools are already gated by
+	// the tool allowlist on NodeConfig).
 	if te, ok := n.config.TrustEngine.(executor.TrustEvaluator); ok {
 		cfg.TrustEngine = te
+	} else {
+		cfg.TrustEngine = &executor.NullTrustEvaluator{}
 	}
 	// Wire container executor if sandbox mode is enabled.
 	if n.config.SandboxMode {
