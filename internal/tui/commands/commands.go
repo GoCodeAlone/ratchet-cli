@@ -117,6 +117,10 @@ func Parse(input string, c *client.Client, sessionID ...string) *Result {
 		return jobsCmd(c)
 	case "/login":
 		return loginCmd(parts[1:], c)
+	case "/mode":
+		return modeCmd(parts[1:], c)
+	case "/trust":
+		return trustCmd(parts[1:], c)
 	default:
 		return &Result{Lines: []string{
 			fmt.Sprintf("Unknown command: %s — type /help for available commands", cmd),
@@ -154,6 +158,11 @@ func helpCmd() *Result {
 		"  /compact                   Manually compress conversation context",
 		"  /review                    Run built-in code-reviewer on current git diff",
 		"  /login [alias]             Re-authenticate the current (or named) provider",
+		"  /mode <mode>               Switch trust mode (conservative|permissive|locked|sandbox)",
+		"  /trust list                Show active trust rules",
+		"  /trust allow \"pattern\"    Add allow rule",
+		"  /trust deny \"pattern\"     Add deny rule",
+		"  /trust reset               Reset to config defaults",
 		"  /exit                      Quit ratchet",
 	}}
 }
