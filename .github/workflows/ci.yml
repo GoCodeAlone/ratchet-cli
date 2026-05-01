@@ -78,3 +78,19 @@ jobs:
         run: git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
       - name: Go vet
         run: go vet ./...
+
+  wfctl-validate:
+    name: wfctl strict validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - name: Configure Git for private modules
+        run: git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
+      - name: Install wfctl
+        run: go install github.com/GoCodeAlone/workflow/cmd/wfctl@v0.20.1
+      - name: Validate app.yaml
+        run: wfctl validate app.yaml
