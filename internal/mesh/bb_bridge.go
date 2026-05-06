@@ -71,7 +71,7 @@ func (b *BBBridge) FormatPrompt(msg Message) string {
 				if len(v) > 2000 {
 					v = v[:2000] + "...(truncated)"
 				}
-				sb.WriteString(fmt.Sprintf("%s: %s\n", k, v))
+				fmt.Fprintf(&sb, "%s: %s\n", k, v)
 			}
 		}
 		if hasReal {
@@ -80,7 +80,7 @@ func (b *BBBridge) FormatPrompt(msg Message) string {
 	}
 
 	// Task.
-	sb.WriteString(fmt.Sprintf("[TASK FROM %s]\n", msg.From))
+	fmt.Fprintf(&sb, "[TASK FROM %s]\n", msg.From)
 	sb.WriteString(msg.Content)
 	sb.WriteString("\n\nWhen done, end your response with [RESULT: <one-line summary>].\n")
 
