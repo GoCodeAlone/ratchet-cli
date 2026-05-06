@@ -65,6 +65,56 @@ func TestWriteClaudeCodeMCPConfig_MergeExisting(t *testing.T) {
 	}
 }
 
+func TestWriteClaudeCodeMCPConfig_InvalidExistingJSON(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, ".claude", "mcp.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte(`{"mcpServers":`)
+	if err := os.WriteFile(configPath, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := WriteMCPConfig(configPath, "ratchet-blackboard", MCPServerEntry{Command: "ratchet"})
+	if err == nil {
+		t.Fatal("expected invalid existing JSON to return an error")
+	}
+
+	data, readErr := os.ReadFile(configPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(data) != string(original) {
+		t.Fatalf("invalid config was overwritten: %s", data)
+	}
+}
+
+func TestWriteCopilotMCPConfig_InvalidExistingJSON(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, ".copilot", "mcp-config.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte(`{"servers":`)
+	if err := os.WriteFile(configPath, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := WriteCopilotMCPConfig(configPath, "ratchet-blackboard", MCPServerEntry{Command: "ratchet"})
+	if err == nil {
+		t.Fatal("expected invalid existing JSON to return an error")
+	}
+
+	data, readErr := os.ReadFile(configPath)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(data) != string(original) {
+		t.Fatalf("invalid config was overwritten: %s", data)
+	}
+}
+
 func TestRemoveMCPConfig(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, ".claude", "mcp.json")
