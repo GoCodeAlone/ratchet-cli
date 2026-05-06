@@ -49,9 +49,9 @@ func (b *BBBridge) FormatPrompt(msg Message) string {
 
 	// Team context.
 	sb.WriteString("[TEAM CONTEXT]\n")
-	sb.WriteString(fmt.Sprintf("You are %q (%s role) in a multi-agent team.\n", b.agentName, b.role))
-	sb.WriteString(fmt.Sprintf("The orchestrator is directing you. Other team members: %s\n\n",
-		strings.Join(b.teamMembers, ", ")))
+	fmt.Fprintf(&sb, "You are %q (%s role) in a multi-agent team.\n", b.agentName, b.role)
+	fmt.Fprintf(&sb, "The orchestrator is directing you. Other team members: %s\n\n",
+		strings.Join(b.teamMembers, ", "))
 
 	// Inject relevant BB sections.
 	for _, section := range b.bb.ListSections() {
@@ -64,7 +64,7 @@ func (b *BBBridge) FormatPrompt(msg Message) string {
 		for k, e := range entries {
 			if k != "_init" {
 				if !hasReal {
-					sb.WriteString(fmt.Sprintf("[BLACKBOARD — %s]\n", section))
+					fmt.Fprintf(&sb, "[BLACKBOARD — %s]\n", section)
 					hasReal = true
 				}
 				v := fmt.Sprintf("%v", e.Value)
