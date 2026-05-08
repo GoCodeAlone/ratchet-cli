@@ -101,8 +101,9 @@ func handleProvider(args []string) {
 						choice := strings.TrimSpace(scanner.Text())
 						idx := 0
 						if choice != "" {
-							fmt.Sscanf(choice, "%d", &idx)
-							idx-- // 1-indexed
+							if _, scanErr := fmt.Sscanf(choice, "%d", &idx); scanErr == nil {
+								idx-- // 1-indexed
+							}
 						}
 						if idx >= 0 && idx < len(models) {
 							model = models[idx].ID

@@ -33,7 +33,9 @@ func WriteMCPConfig(path, serverName string, entry MCPServerEntry) error {
 
 	var config ClaudeCodeMCPConfig
 	if data, err := os.ReadFile(path); err == nil {
-		json.Unmarshal(data, &config)
+		if err := json.Unmarshal(data, &config); err != nil {
+			return fmt.Errorf("parse config: %w", err)
+		}
 	}
 	if config.MCPServers == nil {
 		config.MCPServers = make(map[string]MCPServerEntry)
@@ -51,7 +53,9 @@ func WriteCopilotMCPConfig(path, serverName string, entry MCPServerEntry) error 
 
 	var config CopilotMCPConfig
 	if data, err := os.ReadFile(path); err == nil {
-		json.Unmarshal(data, &config)
+		if err := json.Unmarshal(data, &config); err != nil {
+			return fmt.Errorf("parse config: %w", err)
+		}
 	}
 	if config.Servers == nil {
 		config.Servers = make(map[string]MCPServerEntry)
