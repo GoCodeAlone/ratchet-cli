@@ -58,3 +58,6 @@ brews:
       if OS.mac?
         system "codesign", "--force", "--sign", "-", "#{bin}/ratchet"
       end
+
+release:
+  draft: true
