@@ -6,7 +6,7 @@ require (
 	charm.land/bubbles/v2 v2.0.0
 	charm.land/bubbletea/v2 v2.0.2
 	charm.land/lipgloss/v2 v2.0.2
-	github.com/GoCodeAlone/workflow v0.50.0
+	github.com/GoCodeAlone/workflow v0.51.6
 	github.com/GoCodeAlone/workflow-plugin-agent v0.7.2
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/coder/acp-go-sdk v0.6.3
@@ -113,7 +113,6 @@ require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/deckarep/golang-set/v2 v2.9.0 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
-	github.com/digitalocean/godo v1.178.0 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/dlclark/regexp2 v1.11.4 // indirect
 	github.com/docker/docker v28.5.2+incompatible // indirect
@@ -143,7 +142,6 @@ require (
 	github.com/google/btree v1.1.3 // indirect
 	github.com/google/dotprompt/go v0.0.0-20251014011017-8d056e027254 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
-	github.com/google/go-querystring v1.2.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.14 // indirect
 	github.com/googleapis/gax-go/v2 v2.19.0 // indirect
