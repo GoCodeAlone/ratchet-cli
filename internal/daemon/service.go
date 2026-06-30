@@ -380,6 +380,9 @@ func (s *Service) AddProvider(ctx context.Context, req *pb.AddProviderReq) (*pb.
 		if err := s.engine.SecretsProvider.Set(ctx, secretName, req.ApiKey); err != nil {
 			return nil, status.Errorf(codes.Internal, "store api key: %v", err)
 		}
+		if s.engine.SecretsRedactor != nil {
+			s.engine.SecretsRedactor.AddValue(secretName, req.ApiKey)
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -1125,10 +1128,10 @@ func (s *Service) handleMeshEvent(ev *pb.MeshEvent) {
 // noopSendServer discards all events; used for cron tick injection where no gRPC client is connected.
 type noopSendServer struct{ ctx context.Context }
 
-func (n *noopSendServer) Send(*pb.ChatEvent) error            { return nil }
-func (n *noopSendServer) Context() context.Context           { return n.ctx }
-func (n *noopSendServer) SetHeader(metadata.MD) error        { return nil }
-func (n *noopSendServer) SendHeader(metadata.MD) error       { return nil }
-func (n *noopSendServer) SetTrailer(metadata.MD)             {}
-func (n *noopSendServer) SendMsg(any) error                  { return nil }
-func (n *noopSendServer) RecvMsg(any) error                  { return nil }
+func (n *noopSendServer) Send(*pb.ChatEvent) error     { return nil }
+func (n *noopSendServer) Context() context.Context     { return n.ctx }
+func (n *noopSendServer) SetHeader(metadata.MD) error  { return nil }
+func (n *noopSendServer) SendHeader(metadata.MD) error { return nil }
+func (n *noopSendServer) SetTrailer(metadata.MD)       {}
+func (n *noopSendServer) SendMsg(any) error            { return nil }
+func (n *noopSendServer) RecvMsg(any) error            { return nil }

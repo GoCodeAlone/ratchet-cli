@@ -193,23 +193,6 @@ func (fm *FleetManager) runFleet(ctx context.Context, fi *fleetInstance, maxWork
 	close(eventCh)
 }
 
-// secretGuardAdapter adapts *orchestrator.SecretGuard to executor.SecretRedactor.
-// SecretGuard.CheckAndRedact returns bool but the interface requires no return.
-type secretGuardAdapter struct {
-	guard interface {
-		Redact(string) string
-		CheckAndRedact(msg *provider.Message) bool
-	}
-}
-
-func (a *secretGuardAdapter) Redact(text string) string {
-	return a.guard.Redact(text)
-}
-
-func (a *secretGuardAdapter) CheckAndRedact(msg *provider.Message) {
-	a.guard.CheckAndRedact(msg)
-}
-
 // executeWorker runs a single fleet worker step using the real executor.
 func (fm *FleetManager) executeWorker(ctx context.Context, w *pb.FleetWorker) error {
 	if fm.engine == nil || fm.engine.ProviderRegistry == nil {
@@ -235,15 +218,10 @@ func (fm *FleetManager) executeWorker(ctx context.Context, w *pb.FleetWorker) er
 		return fmt.Errorf("fleet worker %s: resolve provider: %w", w.Id, err)
 	}
 
-	var redactor executor.SecretRedactor
-	if fm.engine.SecretGuard != nil {
-		redactor = &secretGuardAdapter{guard: fm.engine.SecretGuard}
-	}
-
 	cfg := executor.Config{
 		Provider:       prov,
 		MaxIterations:  25,
-		SecretRedactor: redactor,
+		SecretRedactor: fm.engine.SecretRedactor,
 	}
 
 	systemPrompt := fmt.Sprintf(
@@ -285,11 +263,11 @@ func (fm *FleetManager) ListAllWorkers() []*pb.Agent {
 		if fi.status != nil {
 			for _, w := range fi.status.Workers {
 				agents = append(agents, &pb.Agent{
-					Id:       w.Id,
-					Name:     w.Name,
-					Status:   w.Status,
-					Model:    w.Model,
-					Provider: w.Provider,
+					Id:        w.Id,
+					Name:      w.Name,
+					Status:    w.Status,
+					Model:     w.Model,
+					Provider:  w.Provider,
 					SessionId: fi.status.SessionId,
 				})
 			}
