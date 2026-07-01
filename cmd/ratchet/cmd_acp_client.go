@@ -710,6 +710,19 @@ func executeACPClientCancel(store *acpclient.Store, id string, jsonOut bool, w i
 	}
 	pending, _, _, _, _ := countACPClientQueue(rec.PromptQueue)
 	if pending > 0 {
+		if rec.PendingPrompt != nil && rec.PendingPrompt.Status == acpclient.PendingPromptStatusPending {
+			if err := store.MarkPendingCanceled(id, time.Now().UTC()); err != nil {
+				return err
+			}
+			if jsonOut {
+				return json.NewEncoder(w).Encode(struct {
+					SessionID string `json:"session_id"`
+					Status    string `json:"status"`
+				}{SessionID: id, Status: acpclient.SessionStatusCanceled})
+			}
+			fmt.Fprintf(w, "canceled pending prompt for %s\n", id)
+			return nil
+		}
 		count, err := store.CancelPendingQueue(id, time.Now().UTC())
 		if err != nil {
 			return err
