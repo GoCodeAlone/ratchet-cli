@@ -226,16 +226,15 @@ func (m SessionTreeModel) hasChildren(id string) bool {
 
 func (m SessionTreeModel) previewLines() []string {
 	var lines []string
-	for sessionID, messages := range m.previews {
-		for _, msg := range messages {
-			text := sanitizeTreeText(msg.GetContent())
-			if text == "" {
-				continue
-			}
-			lines = append(lines, lipgloss.NewStyle().Padding(0, 1).Render(
-				fmt.Sprintf("%s %-9s %s", shortID(sessionID), truncate(msg.GetRole(), 9), truncate(text, max(20, m.width-20))),
-			))
+	sessionID := m.SelectedSessionID()
+	for _, msg := range m.previews[sessionID] {
+		text := sanitizeTreeText(msg.GetContent())
+		if text == "" {
+			continue
 		}
+		lines = append(lines, lipgloss.NewStyle().Padding(0, 1).Render(
+			fmt.Sprintf("%s %-9s %s", shortID(sessionID), truncate(msg.GetRole(), 9), truncate(text, max(20, m.width-20))),
+		))
 	}
 	return lines
 }

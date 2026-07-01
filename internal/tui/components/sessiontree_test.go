@@ -15,9 +15,16 @@ func TestSessionTreeModelFlattensAndRendersHierarchy(t *testing.T) {
 	model = model.SetPreview("fork-2", []*pb.HistoryMessage{
 		{Id: "msg-3", Role: "assistant", Content: "branch\npreview\twith\x01 controls", Timestamp: timestamppb.Now()},
 	})
+	for range 3 {
+		var cmd tea.Cmd
+		model, cmd = model.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+		if cmd != nil {
+			t.Fatalf("unexpected command while moving cursor: %T", cmd())
+		}
+	}
 
-	if model.SelectedSessionID() != "root-1" {
-		t.Fatalf("selected session = %q, want root-1", model.SelectedSessionID())
+	if model.SelectedSessionID() != "fork-2" {
+		t.Fatalf("selected session = %q, want fork-2", model.SelectedSessionID())
 	}
 
 	view := model.View(theme.Dark())
