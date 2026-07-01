@@ -21,6 +21,9 @@ func TestHandleSessionsHistoryCloneForkTree(t *testing.T) {
 			{Id: "sess-1", RootId: "sess-1", Status: "active"},
 			{Id: "fork-1", ParentId: "sess-1", RootId: "sess-1", ForkedFromMessageId: "msg-1", Status: "active"},
 		}},
+		compactions: &pb.SessionCompactionList{Records: []*pb.CompactionRecord{
+			{Id: "comp-1", Reason: "manual", Summary: "short summary", MessagesRemoved: 4, MessagesKept: 3, FirstKeptMessageId: "msg-5", CreatedAt: timestamppb.Now()},
+		}},
 	}
 	withFakeSessionsClient(t, fake)
 
@@ -55,6 +58,15 @@ func TestHandleSessionsHistoryCloneForkTree(t *testing.T) {
 			t.Fatalf("tree output missing %q:\n%s", want, treeOut)
 		}
 	}
+
+	compactionsOut := captureStdout(t, func() {
+		handleSessions([]string{"compactions", "sess-1"})
+	})
+	for _, want := range []string{"COMPACTION_ID", "comp-1", "manual", "msg-5", "short summary"} {
+		if !strings.Contains(compactionsOut, want) {
+			t.Fatalf("compactions output missing %q:\n%s", want, compactionsOut)
+		}
+	}
 }
 
 func withFakeSessionsClient(t *testing.T, fake *fakeSessionsClient) {
@@ -71,6 +83,7 @@ type fakeSessionsClient struct {
 	clone         *pb.Session
 	fork          *pb.Session
 	tree          *pb.SessionList
+	compactions   *pb.SessionCompactionList
 	cloneReason   string
 	forkReason    string
 	forkMessageID string
@@ -105,4 +118,8 @@ func (f *fakeSessionsClient) ForkSession(_ context.Context, _ string, messageID,
 
 func (f *fakeSessionsClient) GetSessionTree(context.Context, string) (*pb.SessionList, error) {
 	return f.tree, nil
+}
+
+func (f *fakeSessionsClient) ListSessionCompactions(context.Context, string) (*pb.SessionCompactionList, error) {
+	return f.compactions, nil
 }

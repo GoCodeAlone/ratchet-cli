@@ -128,6 +128,10 @@ func (c *Client) GetSessionTree(ctx context.Context, sessionID string) (*pb.Sess
 	return c.daemon.GetSessionTree(ctx, &pb.SessionTreeReq{SessionId: sessionID})
 }
 
+func (c *Client) ListSessionCompactions(ctx context.Context, sessionID string) (*pb.SessionCompactionList, error) {
+	return c.daemon.ListSessionCompactions(ctx, &pb.SessionCompactionsReq{SessionId: sessionID})
+}
+
 func (c *Client) KillSession(ctx context.Context, id string) error {
 	_, err := c.daemon.KillSession(ctx, &pb.KillReq{SessionId: id})
 	return err

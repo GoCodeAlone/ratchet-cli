@@ -19,6 +19,7 @@ type sessionsClient interface {
 	CloneSession(context.Context, string, string) (*pb.Session, error)
 	ForkSession(context.Context, string, string, string) (*pb.Session, error)
 	GetSessionTree(context.Context, string) (*pb.SessionList, error)
+	ListSessionCompactions(context.Context, string) (*pb.SessionCompactionList, error)
 }
 
 var ensureSessionsClient = func() (sessionsClient, error) {
@@ -124,13 +125,39 @@ func handleSessions(args []string) {
 		for _, s := range resp.Sessions {
 			fmt.Printf("%-36s %-10s %-36s %-36s %-36s\n", s.Id, s.Status, s.ParentId, s.RootId, s.ForkedFromMessageId)
 		}
+	case "compactions":
+		if len(args) < 2 {
+			fmt.Println("Usage: ratchet sessions compactions <id>")
+			return
+		}
+		resp, err := c.ListSessionCompactions(context.Background(), args[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		if len(resp.Records) == 0 {
+			fmt.Println("No compactions.")
+			return
+		}
+		fmt.Printf("%-36s %-8s %-25s %-7s %-7s %-36s %s\n", "COMPACTION_ID", "REASON", "CREATED_AT", "REMOVED", "KEPT", "FIRST_KEPT", "SUMMARY")
+		for _, record := range resp.Records {
+			fmt.Printf("%-36s %-8s %-25s %-7d %-7d %-36s %s\n",
+				record.Id,
+				record.Reason,
+				formatTimestamp(record.CreatedAt),
+				record.MessagesRemoved,
+				record.MessagesKept,
+				record.FirstKeptMessageId,
+				record.Summary,
+			)
+		}
 	default:
 		fmt.Printf("unknown sessions command: %s\n", args[0])
 	}
 }
 
 func printSessionsUsage() {
-	fmt.Println("Usage: ratchet sessions <list|kill|history|clone|fork|tree>")
+	fmt.Println("Usage: ratchet sessions <list|kill|history|clone|fork|tree|compactions>")
 }
 
 func parseForkArgs(args []string) (sessionID, messageID string, ok bool) {
