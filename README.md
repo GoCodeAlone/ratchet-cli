@@ -33,8 +33,10 @@ ratchet sessions clone ID   # Clone a session with full visible history
 ratchet sessions fork ID --at MESSAGE_ID
                             # Fork a session through a specific message
 ratchet sessions tree ID    # Show root/parent/fork lineage
+ratchet sessions summary ID "short label"
+                            # Update the branch summary shown in lineage views
 ratchet sessions compactions ID
-                            # Show compaction records for a session
+                            # Show compaction records and archive sessions
 ratchet daemon status       # Check daemon
 ratchet provider list       # List providers
 ratchet team start "task"   # Start agent team

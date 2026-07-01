@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/client"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
@@ -20,6 +22,7 @@ type sessionsClient interface {
 	ForkSession(context.Context, string, string, string) (*pb.Session, error)
 	GetSessionTree(context.Context, string) (*pb.SessionList, error)
 	ListSessionCompactions(context.Context, string) (*pb.SessionCompactionList, error)
+	UpdateSessionSummary(context.Context, string, string) (*pb.Session, error)
 }
 
 var ensureSessionsClient = func() (sessionsClient, error) {
@@ -50,9 +53,9 @@ func handleSessions(args []string) {
 			fmt.Println("No sessions.")
 			return
 		}
-		fmt.Printf("%-36s %-10s %-20s %s\n", "ID", "STATUS", "PROVIDER", "WORKING_DIR")
+		fmt.Printf("%-36s %-10s %-20s %-32s %s\n", "ID", "STATUS", "PROVIDER", "SUMMARY", "WORKING_DIR")
 		for _, s := range resp.Sessions {
-			fmt.Printf("%-36s %-10s %-20s %s\n", s.Id, s.Status, s.Provider, s.WorkingDir)
+			fmt.Printf("%-36s %-10s %-20s %-32s %s\n", s.Id, s.Status, s.Provider, formatSummary(s.BranchSummary), s.WorkingDir)
 		}
 	case "kill":
 		if len(args) < 2 {
@@ -121,10 +124,23 @@ func handleSessions(args []string) {
 			fmt.Println("No sessions.")
 			return
 		}
-		fmt.Printf("%-36s %-10s %-36s %-36s %-36s\n", "SESSION_ID", "STATUS", "PARENT_ID", "ROOT_ID", "FORKED_FROM")
+		fmt.Printf("%-36s %-10s %-36s %-36s %-36s %s\n", "SESSION_ID", "STATUS", "PARENT_ID", "ROOT_ID", "FORKED_FROM", "SUMMARY")
 		for _, s := range resp.Sessions {
-			fmt.Printf("%-36s %-10s %-36s %-36s %-36s\n", s.Id, s.Status, s.ParentId, s.RootId, s.ForkedFromMessageId)
+			fmt.Printf("%-36s %-10s %-36s %-36s %-36s %s\n", s.Id, s.Status, s.ParentId, s.RootId, s.ForkedFromMessageId, formatSummary(s.BranchSummary))
 		}
+	case "summary":
+		if len(args) < 3 {
+			fmt.Println("Usage: ratchet sessions summary <id> <text>")
+			return
+		}
+		summary := strings.Join(args[2:], " ")
+		session, err := c.UpdateSessionSummary(context.Background(), args[1], summary)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Updated session summary: %s\n", session.Id)
+		fmt.Printf("Summary: %s\n", sanitizeSummary(session.BranchSummary))
 	case "compactions":
 		if len(args) < 2 {
 			fmt.Println("Usage: ratchet sessions compactions <id>")
@@ -139,15 +155,16 @@ func handleSessions(args []string) {
 			fmt.Println("No compactions.")
 			return
 		}
-		fmt.Printf("%-36s %-8s %-25s %-7s %-7s %-36s %s\n", "COMPACTION_ID", "REASON", "CREATED_AT", "REMOVED", "KEPT", "FIRST_KEPT", "SUMMARY")
+		fmt.Printf("%-36s %-8s %-25s %-7s %-7s %-36s %-36s %s\n", "COMPACTION_ID", "REASON", "CREATED_AT", "REMOVED", "KEPT", "FIRST_KEPT", "ARCHIVE_SESSION", "SUMMARY")
 		for _, record := range resp.Records {
-			fmt.Printf("%-36s %-8s %-25s %-7d %-7d %-36s %s\n",
+			fmt.Printf("%-36s %-8s %-25s %-7d %-7d %-36s %-36s %s\n",
 				record.Id,
 				record.Reason,
 				formatTimestamp(record.CreatedAt),
 				record.MessagesRemoved,
 				record.MessagesKept,
 				record.FirstKeptMessageId,
+				record.ArchiveSessionId,
 				record.Summary,
 			)
 		}
@@ -157,7 +174,7 @@ func handleSessions(args []string) {
 }
 
 func printSessionsUsage() {
-	fmt.Println("Usage: ratchet sessions <list|kill|history|clone|fork|tree|compactions>")
+	fmt.Println("Usage: ratchet sessions <list|kill|history|clone|fork|tree|summary|compactions>")
 }
 
 func parseForkArgs(args []string) (sessionID, messageID string, ok bool) {
@@ -172,4 +189,34 @@ func formatTimestamp(ts *timestamppb.Timestamp) string {
 		return ""
 	}
 	return ts.AsTime().Format(time.RFC3339)
+}
+
+func formatSummary(summary string) string {
+	const maxSummaryRunes = 32
+	summary = sanitizeSummary(summary)
+	runes := []rune(summary)
+	if len(runes) <= maxSummaryRunes {
+		return summary
+	}
+	return string(runes[:maxSummaryRunes-3]) + "..."
+}
+
+func sanitizeSummary(summary string) string {
+	var b strings.Builder
+	lastSpace := false
+	for _, r := range summary {
+		if unicode.IsSpace(r) {
+			if !lastSpace {
+				b.WriteByte(' ')
+				lastSpace = true
+			}
+			continue
+		}
+		if unicode.IsControl(r) {
+			continue
+		}
+		b.WriteRune(r)
+		lastSpace = false
+	}
+	return strings.TrimSpace(b.String())
 }
