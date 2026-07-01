@@ -80,11 +80,17 @@ func newTestEngine(t *testing.T) *EngineContext {
 	}
 
 	sp := &memSecretsProvider{}
-	reg := ratchetplugin.NewProviderRegistry(db, sp)
+	redactor := secrets.NewRedactor()
+	reg := ratchetplugin.NewProviderRegistry(db, func() secrets.Provider {
+		return sp
+	})
 
 	return &EngineContext{
 		DB:               db,
 		ProviderRegistry: reg,
 		ToolRegistry:     ratchetplugin.NewToolRegistry(),
+		SecretsProvider:  sp,
+		SecretsRedactor:  redactor,
+		SecretRedactor:   newEngineSecretRedactor(redactor),
 	}
 }

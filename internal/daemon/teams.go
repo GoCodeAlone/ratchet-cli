@@ -764,7 +764,7 @@ func (tm *TeamManager) newProviderFactory(ctx context.Context) func(mesh.NodeCon
 		if model == "" {
 			model = "qwen3:1.7b"
 		}
-		prov, err := gkprov.NewOllamaProvider(ctx, model, "", 0)
+		prov, err := gkprov.NewOllamaProvider(ctx, model, "", 0, 0)
 		if err != nil {
 			log.Printf("team agent %s: fallback ollama provider: %v", cfg.Name, err)
 			return nil

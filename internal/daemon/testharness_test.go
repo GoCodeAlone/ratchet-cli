@@ -82,18 +82,26 @@ func newE2EHarness(t *testing.T) *E2EHarness {
 	// ProviderRegistry with all built-in factories including "mock", "ollama",
 	// "llama_cpp", "anthropic", etc. Uses the real secrets provider so that
 	// secret resolution failures are caught in tests.
-	reg := ratchetplugin.NewProviderRegistry(db, secretProvider)
+	reg := ratchetplugin.NewProviderRegistry(db, func() secrets.Provider {
+		return secretProvider
+	})
+	redactor := secrets.NewRedactor()
+	if err := redactor.LoadFromProvider(context.Background(), secretProvider); err != nil {
+		t.Fatalf("load secrets redactor: %v", err)
+	}
 
 	// HookConfig: empty but non-nil so callers can register hooks in tests.
 	hks := &hooks.HookConfig{Hooks: make(map[hooks.Event][]hooks.Hook)}
 
 	// EngineContext wired to the in-memory DB and real secrets provider.
 	engine := &EngineContext{
-		DB:              db,
+		DB:               db,
 		ProviderRegistry: reg,
-		ToolRegistry:    ratchetplugin.NewToolRegistry(),
-		SecretsProvider: secretProvider,
-		Hooks:           hks,
+		ToolRegistry:     ratchetplugin.NewToolRegistry(),
+		SecretsProvider:  secretProvider,
+		SecretsRedactor:  redactor,
+		SecretRedactor:   newEngineSecretRedactor(redactor),
+		Hooks:            hks,
 	}
 
 	// MemoryStore for agent memory (needed by teams/fleet internals).

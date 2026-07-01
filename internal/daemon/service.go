@@ -331,6 +331,9 @@ func (s *Service) AddProvider(ctx context.Context, req *pb.AddProviderReq) (*pb.
 	// prevents the ProviderRegistry from trying to resolve a nonexistent secret.
 	secretName := ""
 	if req.ApiKey != "" {
+		if !validProviderAliasForSecret(req.Alias) {
+			return nil, status.Errorf(codes.InvalidArgument, "invalid provider alias %q: use only letters, digits, '_' or '-'", req.Alias)
+		}
 		secretName = fmt.Sprintf("provider_%s", req.Alias)
 	}
 
@@ -385,6 +388,9 @@ func (s *Service) AddProvider(ctx context.Context, req *pb.AddProviderReq) (*pb.
 	if err := tx.Commit(); err != nil {
 		return nil, status.Errorf(codes.Internal, "commit: %v", err)
 	}
+	if req.ApiKey != "" && s.engine.SecretsRedactor != nil {
+		s.engine.SecretsRedactor.AddValue(secretName, req.ApiKey)
+	}
 
 	s.engine.ProviderRegistry.InvalidateCacheAlias(req.Alias)
 
@@ -395,6 +401,23 @@ func (s *Service) AddProvider(ctx context.Context, req *pb.AddProviderReq) (*pb.
 		BaseUrl:   req.BaseUrl,
 		IsDefault: req.IsDefault,
 	}, nil
+}
+
+func validProviderAliasForSecret(alias string) bool {
+	if alias == "" || len(alias) > 128 {
+		return false
+	}
+	for _, r := range alias {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '_' || r == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Service) ListProviders(ctx context.Context, _ *pb.Empty) (*pb.ProviderList, error) {
@@ -1125,10 +1148,10 @@ func (s *Service) handleMeshEvent(ev *pb.MeshEvent) {
 // noopSendServer discards all events; used for cron tick injection where no gRPC client is connected.
 type noopSendServer struct{ ctx context.Context }
 
-func (n *noopSendServer) Send(*pb.ChatEvent) error            { return nil }
-func (n *noopSendServer) Context() context.Context           { return n.ctx }
-func (n *noopSendServer) SetHeader(metadata.MD) error        { return nil }
-func (n *noopSendServer) SendHeader(metadata.MD) error       { return nil }
-func (n *noopSendServer) SetTrailer(metadata.MD)             {}
-func (n *noopSendServer) SendMsg(any) error                  { return nil }
-func (n *noopSendServer) RecvMsg(any) error                  { return nil }
+func (n *noopSendServer) Send(*pb.ChatEvent) error     { return nil }
+func (n *noopSendServer) Context() context.Context     { return n.ctx }
+func (n *noopSendServer) SetHeader(metadata.MD) error  { return nil }
+func (n *noopSendServer) SendHeader(metadata.MD) error { return nil }
+func (n *noopSendServer) SetTrailer(metadata.MD)       {}
+func (n *noopSendServer) SendMsg(any) error            { return nil }
+func (n *noopSendServer) RecvMsg(any) error            { return nil }

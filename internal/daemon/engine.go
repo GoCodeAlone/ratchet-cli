@@ -15,6 +15,7 @@ import (
 	"github.com/GoCodeAlone/ratchet-cli/internal/mcp"
 	"github.com/GoCodeAlone/ratchet-cli/internal/plugins"
 	"github.com/GoCodeAlone/ratchet-cli/internal/skills"
+	"github.com/GoCodeAlone/workflow-plugin-agent/executor"
 	ratchetplugin "github.com/GoCodeAlone/workflow-plugin-agent/orchestrator"
 	"github.com/GoCodeAlone/workflow/secrets"
 	_ "modernc.org/sqlite"
@@ -26,8 +27,9 @@ type EngineContext struct {
 	ProviderRegistry *ratchetplugin.ProviderRegistry
 	ToolRegistry     *ratchetplugin.ToolRegistry
 	MemoryStore      *ratchetplugin.MemoryStore
-	SecretGuard      *ratchetplugin.SecretGuard
 	SecretsProvider  secrets.Provider
+	SecretsRedactor  *secrets.Redactor
+	SecretRedactor   executor.SecretRedactor
 	MCPDiscoverer    *mcp.Discoverer
 	ModelRouting     config.ModelRouting
 	Actors           *ActorManager
@@ -79,11 +81,18 @@ func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error
 		return nil, fmt.Errorf("create secrets dir: %w", err)
 	}
 	secretProvider := secrets.NewFileProvider(secretsDir)
-	ec.SecretGuard = ratchetplugin.NewSecretGuard(secretProvider, "file")
 	ec.SecretsProvider = secretProvider
+	ec.SecretsRedactor = secrets.NewRedactor()
+	if err := ec.SecretsRedactor.LoadFromProvider(ctx, secretProvider); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("load secrets redactor: %w", err)
+	}
+	ec.SecretRedactor = newEngineSecretRedactor(ec.SecretsRedactor)
 
 	// Provider registry
-	ec.ProviderRegistry = ratchetplugin.NewProviderRegistry(db, secretProvider)
+	ec.ProviderRegistry = ratchetplugin.NewProviderRegistry(db, func() secrets.Provider {
+		return secretProvider
+	})
 
 	// Tool registry
 	ec.ToolRegistry = ratchetplugin.NewToolRegistry()
