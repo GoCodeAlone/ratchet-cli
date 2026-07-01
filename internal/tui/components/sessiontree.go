@@ -53,8 +53,17 @@ func (m SessionTreeModel) SetSize(width, height int) SessionTreeModel {
 
 // SetSessions replaces the sessions backing the tree.
 func (m SessionTreeModel) SetSessions(sessions []*pb.Session) SessionTreeModel {
+	selectedID := m.SelectedSessionID()
 	m.sessions = sessions
 	m.rebuildRows()
+	if selectedID != "" {
+		for i, row := range m.rows {
+			if row.session.GetId() == selectedID {
+				m.cursor = i
+				return m
+			}
+		}
+	}
 	if m.cursor >= len(m.rows) {
 		m.cursor = max(0, len(m.rows)-1)
 	}
@@ -203,6 +212,9 @@ func (m *SessionTreeModel) rebuildRows() {
 func (m *SessionTreeModel) setCollapsed(collapsed bool) {
 	if m.cursor < 0 || m.cursor >= len(m.rows) {
 		return
+	}
+	if m.collapsed == nil {
+		m.collapsed = make(map[string]bool)
 	}
 	id := m.rows[m.cursor].session.GetId()
 	if !m.hasChildren(id) {

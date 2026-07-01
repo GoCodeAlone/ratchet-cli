@@ -71,6 +71,33 @@ func TestSessionTreeBrowserSelectionRefreshesPreviewAndSelects(t *testing.T) {
 	}
 }
 
+func TestSessionTreeBrowserIgnoresStalePreviewResults(t *testing.T) {
+	client := &fakeSessionTreeClient{
+		tree: sampleSessionList(),
+		history: map[string]*pb.SessionHistory{
+			"fork-1": {Messages: []*pb.HistoryMessage{{Id: "m2", Role: "assistant", Content: "fork reply"}}},
+		},
+	}
+	model := NewSessionTreeBrowser(client, "root-1", theme.Dark())
+	var cmd tea.Cmd
+	model, cmd = model.Update(runCmd(t, model.Init()))
+	model, _ = model.Update(runCmd(t, cmd))
+
+	model, cmd = model.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	model, _ = model.Update(sessionPreviewLoadedMsg{
+		sessionID: "root-1",
+		err:       errors.New("stale root preview failed"),
+	})
+	if strings.Contains(model.View(), "stale root preview failed") {
+		t.Fatalf("view rendered stale preview error:\n%s", model.View())
+	}
+
+	model, _ = model.Update(runCmd(t, cmd))
+	if !strings.Contains(model.View(), "fork reply") {
+		t.Fatalf("view missing current preview:\n%s", model.View())
+	}
+}
+
 func TestSessionTreeBrowserRefreshAndErrors(t *testing.T) {
 	client := &fakeSessionTreeClient{
 		treeErr: errors.New("daemon unavailable"),

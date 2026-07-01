@@ -79,6 +79,25 @@ func TestSessionTreeModelNavigationSelectionAndCollapse(t *testing.T) {
 	}
 }
 
+func TestSessionTreeModelRefreshPreservesSelectedSession(t *testing.T) {
+	model := NewSessionTree().SetSessions(sampleTreeSessions())
+	for range 3 {
+		model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	}
+	if model.SelectedSessionID() != "fork-2" {
+		t.Fatalf("selected session = %q, want fork-2", model.SelectedSessionID())
+	}
+
+	model = model.SetSessions([]*pb.Session{
+		{Id: "root-1", RootId: "root-1", Status: "active", BranchSummary: "root summary"},
+		{Id: "fork-2", ParentId: "root-1", RootId: "root-1", ForkedFromMessageId: "msg-2", Status: "completed", BranchSummary: "second fork refreshed"},
+		{Id: "fork-1", ParentId: "root-1", RootId: "root-1", ForkedFromMessageId: "msg-1", Status: "active", BranchSummary: "fork summary"},
+	})
+	if model.SelectedSessionID() != "fork-2" {
+		t.Fatalf("selected session after refresh = %q, want fork-2", model.SelectedSessionID())
+	}
+}
+
 func TestSessionTreeModelBoundsAndSanitizesText(t *testing.T) {
 	model := NewSessionTree().SetSize(64, 8).SetSessions([]*pb.Session{
 		{

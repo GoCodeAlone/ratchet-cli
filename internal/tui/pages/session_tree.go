@@ -65,6 +65,9 @@ func (m SessionTreeBrowser) Update(msg tea.Msg) (SessionTreeBrowser, tea.Cmd) {
 		return m, m.loadPreview(m.tree.SelectedSessionID())
 
 	case sessionPreviewLoadedMsg:
+		if msg.sessionID != "" && msg.sessionID != m.tree.SelectedSessionID() {
+			return m, nil
+		}
 		if msg.err != nil {
 			m.err = msg.err.Error()
 			return m, nil
