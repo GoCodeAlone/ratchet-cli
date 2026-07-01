@@ -21,9 +21,17 @@ type CompactionRecord struct {
 }
 
 func appendCompactionRecord(ctx context.Context, db *sql.DB, record CompactionRecord) (*CompactionRecord, error) {
+	return appendCompactionRecordExec(ctx, db, record)
+}
+
+type compactionRecordExec interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func appendCompactionRecordExec(ctx context.Context, execer compactionRecordExec, record CompactionRecord) (*CompactionRecord, error) {
 	record.ID = uuid.New().String()
 	record.CreatedAt = time.Now().UTC()
-	_, err := db.ExecContext(ctx,
+	_, err := execer.ExecContext(ctx,
 		`INSERT INTO session_compactions
 		 (id, session_id, summary, reason, messages_removed, messages_kept, first_kept_message_id, archive_session_id, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
