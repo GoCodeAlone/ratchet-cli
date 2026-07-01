@@ -105,6 +105,29 @@ func (c *Client) ListSessions(ctx context.Context) (*pb.SessionList, error) {
 	return c.daemon.ListSessions(ctx, &pb.Empty{})
 }
 
+func (c *Client) ListSessionMessages(ctx context.Context, sessionID string) (*pb.SessionHistory, error) {
+	return c.daemon.ListSessionMessages(ctx, &pb.SessionMessagesReq{SessionId: sessionID})
+}
+
+func (c *Client) CloneSession(ctx context.Context, sessionID, reason string) (*pb.Session, error) {
+	return c.daemon.CloneSession(ctx, &pb.CloneSessionReq{
+		SessionId: sessionID,
+		Reason:    reason,
+	})
+}
+
+func (c *Client) ForkSession(ctx context.Context, sessionID, messageID, reason string) (*pb.Session, error) {
+	return c.daemon.ForkSession(ctx, &pb.ForkSessionReq{
+		SessionId: sessionID,
+		MessageId: messageID,
+		Reason:    reason,
+	})
+}
+
+func (c *Client) GetSessionTree(ctx context.Context, sessionID string) (*pb.SessionList, error) {
+	return c.daemon.GetSessionTree(ctx, &pb.SessionTreeReq{SessionId: sessionID})
+}
+
 func (c *Client) KillSession(ctx context.Context, id string) error {
 	_, err := c.daemon.KillSession(ctx, &pb.KillReq{SessionId: id})
 	return err

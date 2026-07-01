@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/config"
 	"github.com/GoCodeAlone/ratchet-cli/internal/hooks"
@@ -281,6 +282,46 @@ func (s *Service) ListSessions(ctx context.Context, _ *pb.Empty) (*pb.SessionLis
 	return &pb.SessionList{Sessions: pbSessions}, nil
 }
 
+func (s *Service) ListSessionMessages(ctx context.Context, req *pb.SessionMessagesReq) (*pb.SessionHistory, error) {
+	messages, err := s.sessions.ListMessages(ctx, req.SessionId)
+	if err != nil {
+		return nil, sessionLineageStatusError("list session messages", req.SessionId, err)
+	}
+	pbMessages := make([]*pb.HistoryMessage, 0, len(messages))
+	for _, msg := range messages {
+		pbMessages = append(pbMessages, sessionMessageToProto(msg))
+	}
+	return &pb.SessionHistory{Messages: pbMessages}, nil
+}
+
+func (s *Service) CloneSession(ctx context.Context, req *pb.CloneSessionReq) (*pb.Session, error) {
+	si, err := s.sessions.Clone(ctx, req.SessionId, req.Reason)
+	if err != nil {
+		return nil, sessionLineageStatusError("clone session", req.SessionId, err)
+	}
+	return sessionToProto(*si), nil
+}
+
+func (s *Service) ForkSession(ctx context.Context, req *pb.ForkSessionReq) (*pb.Session, error) {
+	si, err := s.sessions.Fork(ctx, req.SessionId, req.MessageId, req.Reason)
+	if err != nil {
+		return nil, sessionLineageStatusError("fork session", req.SessionId, err)
+	}
+	return sessionToProto(*si), nil
+}
+
+func (s *Service) GetSessionTree(ctx context.Context, req *pb.SessionTreeReq) (*pb.SessionList, error) {
+	sessions, err := s.sessions.ListTree(ctx, req.SessionId)
+	if err != nil {
+		return nil, sessionLineageStatusError("get session tree", req.SessionId, err)
+	}
+	pbSessions := make([]*pb.Session, 0, len(sessions))
+	for _, si := range sessions {
+		pbSessions = append(pbSessions, sessionToProto(si))
+	}
+	return &pb.SessionList{Sessions: pbSessions}, nil
+}
+
 func sessionToProto(si SessionInfo) *pb.Session {
 	return &pb.Session{
 		Id:                  si.ID,
@@ -294,6 +335,24 @@ func sessionToProto(si SessionInfo) *pb.Session {
 		ForkedFromMessageId: si.ForkedFromMessageID,
 		ForkReason:          si.ForkReason,
 	}
+}
+
+func sessionMessageToProto(msg SessionHistoryMessage) *pb.HistoryMessage {
+	return &pb.HistoryMessage{
+		Id:         msg.ID,
+		Role:       msg.Role,
+		Content:    msg.Content,
+		ToolName:   msg.ToolName,
+		ToolCallId: msg.ToolCallID,
+		Timestamp:  timestamppb.New(msg.CreatedAt),
+	}
+}
+
+func sessionLineageStatusError(action, sessionID string, err error) error {
+	if errors.Is(err, sql.ErrNoRows) {
+		return status.Errorf(codes.NotFound, "%s %s: not found", action, sessionID)
+	}
+	return status.Errorf(codes.Internal, "%s %s: %v", action, sessionID, err)
 }
 
 func (s *Service) AttachSession(req *pb.AttachReq, stream pb.RatchetDaemon_AttachSessionServer) error {

@@ -21,6 +21,10 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	RatchetDaemon_CreateSession_FullMethodName       = "/ratchet.RatchetDaemon/CreateSession"
 	RatchetDaemon_ListSessions_FullMethodName        = "/ratchet.RatchetDaemon/ListSessions"
+	RatchetDaemon_ListSessionMessages_FullMethodName = "/ratchet.RatchetDaemon/ListSessionMessages"
+	RatchetDaemon_CloneSession_FullMethodName        = "/ratchet.RatchetDaemon/CloneSession"
+	RatchetDaemon_ForkSession_FullMethodName         = "/ratchet.RatchetDaemon/ForkSession"
+	RatchetDaemon_GetSessionTree_FullMethodName      = "/ratchet.RatchetDaemon/GetSessionTree"
 	RatchetDaemon_AttachSession_FullMethodName       = "/ratchet.RatchetDaemon/AttachSession"
 	RatchetDaemon_DetachSession_FullMethodName       = "/ratchet.RatchetDaemon/DetachSession"
 	RatchetDaemon_KillSession_FullMethodName         = "/ratchet.RatchetDaemon/KillSession"
@@ -89,6 +93,10 @@ type RatchetDaemonClient interface {
 	// Session management
 	CreateSession(ctx context.Context, in *CreateSessionReq, opts ...grpc.CallOption) (*Session, error)
 	ListSessions(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*SessionList, error)
+	ListSessionMessages(ctx context.Context, in *SessionMessagesReq, opts ...grpc.CallOption) (*SessionHistory, error)
+	CloneSession(ctx context.Context, in *CloneSessionReq, opts ...grpc.CallOption) (*Session, error)
+	ForkSession(ctx context.Context, in *ForkSessionReq, opts ...grpc.CallOption) (*Session, error)
+	GetSessionTree(ctx context.Context, in *SessionTreeReq, opts ...grpc.CallOption) (*SessionList, error)
 	AttachSession(ctx context.Context, in *AttachReq, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ChatEvent], error)
 	DetachSession(ctx context.Context, in *DetachReq, opts ...grpc.CallOption) (*Empty, error)
 	KillSession(ctx context.Context, in *KillReq, opts ...grpc.CallOption) (*Empty, error)
@@ -189,6 +197,46 @@ func (c *ratchetDaemonClient) ListSessions(ctx context.Context, in *Empty, opts 
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SessionList)
 	err := c.cc.Invoke(ctx, RatchetDaemon_ListSessions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ratchetDaemonClient) ListSessionMessages(ctx context.Context, in *SessionMessagesReq, opts ...grpc.CallOption) (*SessionHistory, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SessionHistory)
+	err := c.cc.Invoke(ctx, RatchetDaemon_ListSessionMessages_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ratchetDaemonClient) CloneSession(ctx context.Context, in *CloneSessionReq, opts ...grpc.CallOption) (*Session, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Session)
+	err := c.cc.Invoke(ctx, RatchetDaemon_CloneSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ratchetDaemonClient) ForkSession(ctx context.Context, in *ForkSessionReq, opts ...grpc.CallOption) (*Session, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Session)
+	err := c.cc.Invoke(ctx, RatchetDaemon_ForkSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ratchetDaemonClient) GetSessionTree(ctx context.Context, in *SessionTreeReq, opts ...grpc.CallOption) (*SessionList, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SessionList)
+	err := c.cc.Invoke(ctx, RatchetDaemon_GetSessionTree_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -858,6 +906,10 @@ type RatchetDaemonServer interface {
 	// Session management
 	CreateSession(context.Context, *CreateSessionReq) (*Session, error)
 	ListSessions(context.Context, *Empty) (*SessionList, error)
+	ListSessionMessages(context.Context, *SessionMessagesReq) (*SessionHistory, error)
+	CloneSession(context.Context, *CloneSessionReq) (*Session, error)
+	ForkSession(context.Context, *ForkSessionReq) (*Session, error)
+	GetSessionTree(context.Context, *SessionTreeReq) (*SessionList, error)
 	AttachSession(*AttachReq, grpc.ServerStreamingServer[ChatEvent]) error
 	DetachSession(context.Context, *DetachReq) (*Empty, error)
 	KillSession(context.Context, *KillReq) (*Empty, error)
@@ -949,6 +1001,18 @@ func (UnimplementedRatchetDaemonServer) CreateSession(context.Context, *CreateSe
 }
 func (UnimplementedRatchetDaemonServer) ListSessions(context.Context, *Empty) (*SessionList, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListSessions not implemented")
+}
+func (UnimplementedRatchetDaemonServer) ListSessionMessages(context.Context, *SessionMessagesReq) (*SessionHistory, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListSessionMessages not implemented")
+}
+func (UnimplementedRatchetDaemonServer) CloneSession(context.Context, *CloneSessionReq) (*Session, error) {
+	return nil, status.Error(codes.Unimplemented, "method CloneSession not implemented")
+}
+func (UnimplementedRatchetDaemonServer) ForkSession(context.Context, *ForkSessionReq) (*Session, error) {
+	return nil, status.Error(codes.Unimplemented, "method ForkSession not implemented")
+}
+func (UnimplementedRatchetDaemonServer) GetSessionTree(context.Context, *SessionTreeReq) (*SessionList, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetSessionTree not implemented")
 }
 func (UnimplementedRatchetDaemonServer) AttachSession(*AttachReq, grpc.ServerStreamingServer[ChatEvent]) error {
 	return status.Error(codes.Unimplemented, "method AttachSession not implemented")
@@ -1180,6 +1244,78 @@ func _RatchetDaemon_ListSessions_Handler(srv interface{}, ctx context.Context, d
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RatchetDaemonServer).ListSessions(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RatchetDaemon_ListSessionMessages_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SessionMessagesReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RatchetDaemonServer).ListSessionMessages(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RatchetDaemon_ListSessionMessages_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RatchetDaemonServer).ListSessionMessages(ctx, req.(*SessionMessagesReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RatchetDaemon_CloneSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CloneSessionReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RatchetDaemonServer).CloneSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RatchetDaemon_CloneSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RatchetDaemonServer).CloneSession(ctx, req.(*CloneSessionReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RatchetDaemon_ForkSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ForkSessionReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RatchetDaemonServer).ForkSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RatchetDaemon_ForkSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RatchetDaemonServer).ForkSession(ctx, req.(*ForkSessionReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RatchetDaemon_GetSessionTree_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SessionTreeReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RatchetDaemonServer).GetSessionTree(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RatchetDaemon_GetSessionTree_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RatchetDaemonServer).GetSessionTree(ctx, req.(*SessionTreeReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2200,6 +2336,22 @@ var RatchetDaemon_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListSessions",
 			Handler:    _RatchetDaemon_ListSessions_Handler,
+		},
+		{
+			MethodName: "ListSessionMessages",
+			Handler:    _RatchetDaemon_ListSessionMessages_Handler,
+		},
+		{
+			MethodName: "CloneSession",
+			Handler:    _RatchetDaemon_CloneSession_Handler,
+		},
+		{
+			MethodName: "ForkSession",
+			Handler:    _RatchetDaemon_ForkSession_Handler,
+		},
+		{
+			MethodName: "GetSessionTree",
+			Handler:    _RatchetDaemon_GetSessionTree_Handler,
 		},
 		{
 			MethodName: "DetachSession",
