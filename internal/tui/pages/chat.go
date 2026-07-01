@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/client"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
@@ -30,25 +30,28 @@ type chatStreamDoneMsg struct{}
 // the model so it can be stored on the real model, not a closure-local copy.
 type chatCancelSetMsg struct{ cancel context.CancelFunc }
 
+// NavigateToSessionTreeMsg asks the root app to show the session tree browser.
+type NavigateToSessionTreeMsg struct{}
+
 type ChatModel struct {
 	client    *client.Client
 	sessionID string
 	theme     theme.Theme
 	dark      bool
 
-	viewport     viewport.Model
-	input        components.InputModel
-	statusBar    components.StatusBar
-	toolCalls    components.ToolCallListModel
+	viewport      viewport.Model
+	input         components.InputModel
+	statusBar     components.StatusBar
+	toolCalls     components.ToolCallListModel
 	autocomplete  components.AutocompleteModel
 	planView      components.PlanView
 	thinkingPanel components.ThinkingPanel
-	messages     []components.Message
-	streaming  string // current streaming response
-	width      int
-	height     int
-	ctx        context.Context
-	cancelChat context.CancelFunc
+	messages      []components.Message
+	streaming     string // current streaming response
+	width         int
+	height        int
+	ctx           context.Context
+	cancelChat    context.CancelFunc
 }
 
 func NewChat(c *client.Client, sessionID string, t theme.Theme, dark bool) ChatModel {
@@ -73,15 +76,15 @@ func NewChat(c *client.Client, sessionID string, t theme.Theme, dark bool) ChatM
 	statusBar := components.NewStatusBar()
 
 	return ChatModel{
-		client:       c,
-		sessionID:    sessionID,
-		theme:        t,
-		dark:         dark,
-		viewport:     vp,
-		input:        input,
-		statusBar:    statusBar,
-		toolCalls:    components.NewToolCallList(),
-		autocomplete: components.NewAutocomplete(),
+		client:        c,
+		sessionID:     sessionID,
+		theme:         t,
+		dark:          dark,
+		viewport:      vp,
+		input:         input,
+		statusBar:     statusBar,
+		toolCalls:     components.NewToolCallList(),
+		autocomplete:  components.NewAutocomplete(),
 		planView:      components.NewPlanView(),
 		thinkingPanel: components.NewThinkingPanel(80),
 		ctx:           context.Background(),
@@ -104,6 +107,30 @@ func (m *ChatModel) SetWorkingDir(dir string) {
 func (m *ChatModel) SetProviderModel(provider, model string) {
 	m.statusBar.Provider = provider
 	m.statusBar.Model = model
+}
+
+// SessionID returns the daemon session this chat model sends messages to.
+func (m ChatModel) SessionID() string {
+	return m.sessionID
+}
+
+// LoadHistory replaces the visible chat transcript with daemon history.
+func (m *ChatModel) LoadHistory(messages []*pb.HistoryMessage) {
+	m.messages = make([]components.Message, 0, len(messages))
+	for _, msg := range messages {
+		text := strings.TrimSpace(msg.GetContent())
+		if text == "" {
+			continue
+		}
+		m.messages = append(m.messages, components.Message{
+			Role:    historyRole(msg.GetRole()),
+			Content: text,
+		})
+	}
+	m.streaming = ""
+	m.toolCalls = components.NewToolCallList()
+	m.thinkingPanel = components.NewThinkingPanel(m.width)
+	m.refreshViewport()
 }
 
 func (m ChatModel) Init() tea.Cmd {
@@ -207,6 +234,9 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 			if result.NavigateToOnboarding {
 				return m, func() tea.Msg { return NavigateToOnboardingMsg{} }
 			}
+			if result.OpenSessionTree {
+				return m, func() tea.Msg { return NavigateToSessionTreeMsg{} }
+			}
 			if result.Quit {
 				return m, tea.Quit
 			}
@@ -270,7 +300,7 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 
 func (m *ChatModel) relayout() {
 	inputHeight := m.input.Height() + 2 // +2 for border
-	statusHeight := 2                    // two-line status bar
+	statusHeight := 2                   // two-line status bar
 	vpHeight := m.height - inputHeight - statusHeight - 1
 	if vpHeight < 1 {
 		vpHeight = 1
@@ -506,4 +536,19 @@ func (m ChatModel) View(t theme.Theme) string {
 	}
 	sb.WriteString(m.statusBar.View(t))
 	return sb.String()
+}
+
+func historyRole(role string) components.MessageRole {
+	switch strings.ToLower(role) {
+	case string(components.RoleUser):
+		return components.RoleUser
+	case string(components.RoleAssistant):
+		return components.RoleAssistant
+	case string(components.RoleTool):
+		return components.RoleTool
+	case string(components.RoleSystem):
+		return components.RoleSystem
+	default:
+		return components.RoleSystem
+	}
 }

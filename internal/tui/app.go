@@ -22,6 +22,7 @@ const (
 	pageSplash appPage = iota
 	pageOnboarding
 	pageChat
+	pageSessionTree
 )
 
 // ProvidersCheckedMsg carries the result of the async provider list check.
@@ -34,6 +35,12 @@ type VersionNoticeMsg struct {
 	Compatible        bool
 	ReloadRecommended bool
 	Message           string
+}
+
+type sessionHistoryLoadedMsg struct {
+	sessionID string
+	messages  []*pb.HistoryMessage
+	err       error
 }
 
 // RPCErrorMsg carries an error from an async RPC call.
@@ -49,6 +56,7 @@ type App struct {
 	session     *pb.Session
 	chat        pages.ChatModel
 	team        pages.TeamModel
+	sessionTree pages.SessionTreeBrowser
 	splash      pages.SplashModel
 	onboarding  pages.OnboardingModel
 	sidebar     components.SidebarModel
@@ -62,6 +70,7 @@ type App struct {
 	showJobs    bool
 	ready       bool
 	page        appPage
+	loading     bool
 
 	// Coordination between splash animation and provider check.
 	splashDone     bool
@@ -142,16 +151,25 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			a.chat.SetSize(a.width, chatHeight)
 		}
+		if a.page == pageSessionTree {
+			a.sessionTree = a.sessionTree.SetSize(a.width, a.height-1)
+		}
 
 	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+c" {
 			return a, tea.Quit
+		}
+		if a.page == pageSessionTree && msg.String() == "esc" {
+			a.page = pageChat
+			return a, nil
 		}
 		// Chat-only shortcuts
 		if a.page == pageChat {
 			switch msg.String() {
 			case "ctrl+d":
 				return a, tea.Quit
+			case "ctrl+b":
+				return a.openSessionTree()
 			case "ctrl+s":
 				a.showSidebar = !a.showSidebar
 				if a.showSidebar {
@@ -195,9 +213,21 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.page = pageOnboarding
 		return a, a.onboarding.Init()
 
+	case pages.NavigateToSessionTreeMsg:
+		return a.openSessionTree()
+
+	case components.SessionTreeSelectedMsg:
+		cmd := a.switchSession(msg.SessionID, msg.Session)
+		return a, cmd
+
 	case components.SessionSelectedMsg:
-		a.sessionID = msg.SessionID
-		a.showSidebar = false
+		cmd := a.switchSession(msg.SessionID, msg.Session)
+		return a, cmd
+
+	case components.SubmitMsg:
+		if a.loading {
+			return a, nil
+		}
 
 	case components.SessionKillMsg:
 		sessionID := msg.SessionID
@@ -225,6 +255,14 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.versionNotice = "daemon incompatible: " + msg.Message
 		} else if msg.ReloadRecommended {
 			a.versionNotice = "version mismatch: " + msg.Message
+		}
+
+	case sessionHistoryLoadedMsg:
+		if msg.sessionID == a.sessionID {
+			a.loading = false
+			if msg.err == nil {
+				a.chat.LoadHistory(msg.messages)
+			}
 		}
 	}
 
@@ -262,6 +300,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.chat, chatCmd = a.chat.Update(msg)
 			cmds = append(cmds, chatCmd)
 		}
+
+	case pageSessionTree:
+		var treeCmd tea.Cmd
+		a.sessionTree, treeCmd = a.sessionTree.Update(msg)
+		cmds = append(cmds, treeCmd)
 	}
 
 	return a, tea.Batch(cmds...)
@@ -303,6 +346,69 @@ func (a App) transitionToChat() (tea.Model, tea.Cmd) {
 	return a, tea.Batch(a.chat.Init(), a.jobPanel.Init())
 }
 
+func (a App) openSessionTree() (tea.Model, tea.Cmd) {
+	a.showSidebar = false
+	a.showTeam = false
+	a.showJobs = false
+	a.sessionTree = pages.NewSessionTreeBrowser(a.client, a.sessionID, a.theme).SetSize(a.width, a.height-1)
+	a.page = pageSessionTree
+	return a, a.sessionTree.Init()
+}
+
+func (a *App) switchSession(sessionID string, meta *pb.Session) tea.Cmd {
+	if sessionID == "" {
+		return nil
+	}
+	a.sessionID = sessionID
+	if meta != nil {
+		a.session = meta
+	} else if a.session == nil || a.session.GetId() != sessionID {
+		a.session = &pb.Session{Id: sessionID}
+	}
+
+	chat := pages.NewChat(a.client, sessionID, a.theme, a.dark)
+	chatHeight := a.height - 1
+	if chatHeight < 1 {
+		chatHeight = 1
+	}
+	chat.SetSize(a.width, chatHeight)
+	if a.session != nil {
+		chat.SetWorkingDir(a.session.GetWorkingDir())
+	}
+	for _, p := range a.providers {
+		if p.IsDefault {
+			chat.SetProviderModel(p.Type, p.Model)
+			break
+		}
+	}
+
+	a.chat = chat
+	a.sidebar = a.sidebar.SetCurrent(sessionID)
+	a.showSidebar = false
+	a.showTeam = false
+	a.showJobs = false
+	a.page = pageChat
+	cmd := a.loadSelectedSessionHistory(sessionID)
+	a.loading = cmd != nil
+	return cmd
+}
+
+func (a App) loadSelectedSessionHistory(sessionID string) tea.Cmd {
+	if a.client == nil || sessionID == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		resp, err := a.client.ListSessionMessages(context.Background(), sessionID)
+		if err != nil {
+			return sessionHistoryLoadedMsg{sessionID: sessionID, err: err}
+		}
+		if resp == nil {
+			return sessionHistoryLoadedMsg{sessionID: sessionID}
+		}
+		return sessionHistoryLoadedMsg{sessionID: sessionID, messages: resp.Messages}
+	}
+}
+
 func (a App) View() tea.View {
 	if !a.ready {
 		v := tea.NewView("Connecting to ratchet daemon...")
@@ -339,6 +445,10 @@ func (a App) View() tea.View {
 			body = a.chat.View(a.theme)
 		}
 		content = header + "\n" + body
+
+	case pageSessionTree:
+		header := a.renderHeader()
+		content = header + "\n" + a.sessionTree.SetSize(a.width, a.height-1).View()
 	}
 
 	view := tea.NewView(content)

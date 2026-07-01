@@ -27,6 +27,7 @@ type Result struct {
 	TriggerCompact       bool    // ask the caller to compress the current session's context
 	TriggerReview        bool    // ask the caller to invoke the code-reviewer agent
 	ReviewDiff           string  // git diff content to pass to the reviewer
+	OpenSessionTree      bool    // ask the caller to open the session tree browser
 	Cmd                  tea.Cmd // optional async cmd to batch after command processing
 }
 
@@ -61,6 +62,8 @@ func Parse(input string, c *client.Client, sessionID ...string) *Result {
 		return agentsCmd(c)
 	case "/sessions":
 		return sessionsCmd(c)
+	case "/tree":
+		return &Result{OpenSessionTree: true}
 	case "/exit":
 		return &Result{
 			Lines: []string{"Goodbye!"},
@@ -137,6 +140,7 @@ func helpCmd() *Result {
 		"  /cost                      Show token usage",
 		"  /agents                    List active agents",
 		"  /sessions                  List sessions",
+		"  /tree                      Open session branch tree",
 		"  /provider list             List configured providers",
 		"  /provider add              Add a new provider (opens wizard)",
 		"  /provider remove <alias>   Remove a provider",
@@ -607,4 +611,3 @@ func mcpCmd(args []string) *Result {
 		}}
 	}
 }
-

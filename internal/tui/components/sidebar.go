@@ -12,18 +12,21 @@ import (
 )
 
 // SessionSelectedMsg is sent when the user switches to a session.
-type SessionSelectedMsg struct{ SessionID string }
+type SessionSelectedMsg struct {
+	SessionID string
+	Session   *pb.Session
+}
 
 // SessionKillMsg is sent when the user kills a session from the sidebar.
 type SessionKillMsg struct{ SessionID string }
 
 // SidebarModel displays a list of sessions and allows switching or killing.
 type SidebarModel struct {
-	sessions   []*pb.Session
-	currentID  string
-	cursor     int
-	width      int
-	height     int
+	sessions  []*pb.Session
+	currentID string
+	cursor    int
+	width     int
+	height    int
 }
 
 func NewSidebar(sessions []*pb.Session, currentID string) SidebarModel {
@@ -47,6 +50,17 @@ func (s SidebarModel) SetSize(w, h int) SidebarModel {
 	return s
 }
 
+func (s SidebarModel) SetCurrent(sessionID string) SidebarModel {
+	s.currentID = sessionID
+	for i, session := range s.sessions {
+		if session.GetId() == sessionID {
+			s.cursor = i
+			break
+		}
+	}
+	return s
+}
+
 func (s SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
@@ -61,8 +75,9 @@ func (s SidebarModel) Update(msg tea.Msg) (SidebarModel, tea.Cmd) {
 			}
 		case "enter":
 			if s.cursor < len(s.sessions) {
+				session := s.sessions[s.cursor]
 				return s, func() tea.Msg {
-					return SessionSelectedMsg{SessionID: s.sessions[s.cursor].Id}
+					return SessionSelectedMsg{SessionID: session.GetId(), Session: session}
 				}
 			}
 		case "d":

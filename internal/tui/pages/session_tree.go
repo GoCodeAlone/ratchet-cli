@@ -47,6 +47,12 @@ func NewSessionTreeBrowser(c sessionTreeClient, rootID string, t theme.Theme) Se
 	}
 }
 
+// SetSize updates the embedded tree dimensions.
+func (m SessionTreeBrowser) SetSize(width, height int) SessionTreeBrowser {
+	m.tree = m.tree.SetSize(width, height)
+	return m
+}
+
 // Init loads the initial session tree.
 func (m SessionTreeBrowser) Init() tea.Cmd {
 	return m.loadTree()

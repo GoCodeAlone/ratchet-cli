@@ -126,6 +126,21 @@ func TestParseSessionsNoClient(t *testing.T) {
 	}
 }
 
+func TestParseTreeRequestsSessionTreeNavigation(t *testing.T) {
+	result := Parse("/tree", nil, "root-session-12345678")
+	if result == nil {
+		t.Fatal("expected result for /tree")
+	}
+	if !result.OpenSessionTree {
+		t.Fatal("expected /tree to request session tree navigation")
+	}
+	for _, line := range result.Lines {
+		if line != "" {
+			t.Fatalf("expected /tree to navigate without printing table output, got %v", result.Lines)
+		}
+	}
+}
+
 func TestParseProviderNoSubcommand(t *testing.T) {
 	result := Parse("/provider", nil)
 	if result == nil {
