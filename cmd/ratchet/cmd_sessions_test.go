@@ -18,11 +18,11 @@ func TestHandleSessionsHistoryCloneForkTree(t *testing.T) {
 		clone: &pb.Session{Id: "clone-1", ParentId: "sess-1", RootId: "sess-1"},
 		fork:  &pb.Session{Id: "fork-1", ParentId: "sess-1", RootId: "sess-1", ForkedFromMessageId: "msg-1"},
 		tree: &pb.SessionList{Sessions: []*pb.Session{
-			{Id: "sess-1", RootId: "sess-1", Status: "active"},
-			{Id: "fork-1", ParentId: "sess-1", RootId: "sess-1", ForkedFromMessageId: "msg-1", Status: "active"},
+			{Id: "sess-1", RootId: "sess-1", Status: "active", BranchSummary: "root summary"},
+			{Id: "fork-1", ParentId: "sess-1", RootId: "sess-1", ForkedFromMessageId: "msg-1", Status: "active", BranchSummary: "fork summary"},
 		}},
 		compactions: &pb.SessionCompactionList{Records: []*pb.CompactionRecord{
-			{Id: "comp-1", Reason: "manual", Summary: "short summary", MessagesRemoved: 4, MessagesKept: 3, FirstKeptMessageId: "msg-5", CreatedAt: timestamppb.Now()},
+			{Id: "comp-1", Reason: "manual", Summary: "short summary", MessagesRemoved: 4, MessagesKept: 3, FirstKeptMessageId: "msg-5", ArchiveSessionId: "archive-1", CreatedAt: timestamppb.Now()},
 		}},
 	}
 	withFakeSessionsClient(t, fake)
@@ -53,16 +53,23 @@ func TestHandleSessionsHistoryCloneForkTree(t *testing.T) {
 	treeOut := captureStdout(t, func() {
 		handleSessions([]string{"tree", "sess-1"})
 	})
-	for _, want := range []string{"SESSION_ID", "sess-1", "fork-1", "msg-1"} {
+	for _, want := range []string{"SESSION_ID", "SUMMARY", "sess-1", "fork-1", "msg-1", "fork summary"} {
 		if !strings.Contains(treeOut, want) {
 			t.Fatalf("tree output missing %q:\n%s", want, treeOut)
 		}
 	}
 
+	summaryOut := captureStdout(t, func() {
+		handleSessions([]string{"summary", "fork-1", "new branch summary"})
+	})
+	if !strings.Contains(summaryOut, "new branch summary") || fake.summaryText != "new branch summary" {
+		t.Fatalf("summary output/text = %q / %q", summaryOut, fake.summaryText)
+	}
+
 	compactionsOut := captureStdout(t, func() {
 		handleSessions([]string{"compactions", "sess-1"})
 	})
-	for _, want := range []string{"COMPACTION_ID", "comp-1", "manual", "msg-5", "short summary"} {
+	for _, want := range []string{"COMPACTION_ID", "ARCHIVE_SESSION", "comp-1", "manual", "msg-5", "archive-1", "short summary"} {
 		if !strings.Contains(compactionsOut, want) {
 			t.Fatalf("compactions output missing %q:\n%s", want, compactionsOut)
 		}
@@ -87,6 +94,7 @@ type fakeSessionsClient struct {
 	cloneReason   string
 	forkReason    string
 	forkMessageID string
+	summaryText   string
 }
 
 func (f *fakeSessionsClient) Close() error {
@@ -122,4 +130,9 @@ func (f *fakeSessionsClient) GetSessionTree(context.Context, string) (*pb.Sessio
 
 func (f *fakeSessionsClient) ListSessionCompactions(context.Context, string) (*pb.SessionCompactionList, error) {
 	return f.compactions, nil
+}
+
+func (f *fakeSessionsClient) UpdateSessionSummary(_ context.Context, sessionID, summary string) (*pb.Session, error) {
+	f.summaryText = summary
+	return &pb.Session{Id: sessionID, BranchSummary: summary}, nil
 }
