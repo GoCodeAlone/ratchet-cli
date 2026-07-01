@@ -19,6 +19,10 @@ message Session {
   string model = 6;
   google.protobuf.Timestamp created_at = 7;
   int32 active_agents = 8;
+  string parent_id = 9;
+  string root_id = 10;
+  string forked_from_message_id = 11;
+  string fork_reason = 12;
 }
 
 message CreateSessionReq {

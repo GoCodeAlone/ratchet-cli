@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"path/filepath"
 
@@ -178,6 +179,10 @@ func initDB(db *sql.DB) error {
 			working_dir TEXT,
 			provider TEXT,
 			model TEXT,
+			parent_id TEXT,
+			root_id TEXT,
+			forked_from_message_id TEXT,
+			fork_reason TEXT,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE TABLE IF NOT EXISTS messages (
@@ -225,13 +230,19 @@ func initDB(db *sql.DB) error {
 		}
 	}
 
+	if err := ensureColumn(db, "llm_providers", "settings", "TEXT NOT NULL DEFAULT '{}'"); err != nil {
+		log.Printf("warning: migration failed: %v", err)
+	}
+	for _, col := range []string{"parent_id", "root_id", "forked_from_message_id", "fork_reason"} {
+		if err := ensureColumn(db, "sessions", col, "TEXT"); err != nil {
+			log.Printf("warning: migration failed: %v", err)
+		}
+	}
 	// Migration: clear stale secret_name for providers that don't need API keys.
 	// Prior versions always set secret_name="provider_<alias>" even for keyless
 	// providers (ollama, llama_cpp), causing "secret not found" errors.
 	migrations := []string{
-		// Add settings column if missing (older DBs predate this column).
-		`ALTER TABLE llm_providers ADD COLUMN settings TEXT NOT NULL DEFAULT '{}'`,
-		// Clear stale secret_name for keyless providers.
+		`UPDATE sessions SET root_id = id WHERE root_id IS NULL OR root_id = ''`,
 		`UPDATE llm_providers SET secret_name = '' WHERE secret_name != '' AND type IN ('ollama', 'llama_cpp')`,
 	}
 	for _, m := range migrations {
@@ -241,4 +252,38 @@ func initDB(db *sql.DB) error {
 	}
 
 	return nil
+}
+
+func ensureColumn(db *sql.DB, table, name, definition string) error {
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", sqliteQuoteIdentifier(table)))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var columnName, typ string
+		var notNull, pk int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &columnName, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		if columnName == name {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = db.Exec(fmt.Sprintf(
+		"ALTER TABLE %s ADD COLUMN %s %s",
+		sqliteQuoteIdentifier(table),
+		sqliteQuoteIdentifier(name),
+		definition,
+	))
+	return err
+}
+
+func sqliteQuoteIdentifier(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }

@@ -59,17 +59,21 @@ func (*Empty) Descriptor() ([]byte, []int) {
 }
 
 type Session struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	Status        string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"` // active, background, completed
-	WorkingDir    string                 `protobuf:"bytes,4,opt,name=working_dir,json=workingDir,proto3" json:"working_dir,omitempty"`
-	Provider      string                 `protobuf:"bytes,5,opt,name=provider,proto3" json:"provider,omitempty"`
-	Model         string                 `protobuf:"bytes,6,opt,name=model,proto3" json:"model,omitempty"`
-	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	ActiveAgents  int32                  `protobuf:"varint,8,opt,name=active_agents,json=activeAgents,proto3" json:"active_agents,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	Id                  string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name                string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Status              string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"` // active, background, completed
+	WorkingDir          string                 `protobuf:"bytes,4,opt,name=working_dir,json=workingDir,proto3" json:"working_dir,omitempty"`
+	Provider            string                 `protobuf:"bytes,5,opt,name=provider,proto3" json:"provider,omitempty"`
+	Model               string                 `protobuf:"bytes,6,opt,name=model,proto3" json:"model,omitempty"`
+	CreatedAt           *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	ActiveAgents        int32                  `protobuf:"varint,8,opt,name=active_agents,json=activeAgents,proto3" json:"active_agents,omitempty"`
+	ParentId            string                 `protobuf:"bytes,9,opt,name=parent_id,json=parentId,proto3" json:"parent_id,omitempty"`
+	RootId              string                 `protobuf:"bytes,10,opt,name=root_id,json=rootId,proto3" json:"root_id,omitempty"`
+	ForkedFromMessageId string                 `protobuf:"bytes,11,opt,name=forked_from_message_id,json=forkedFromMessageId,proto3" json:"forked_from_message_id,omitempty"`
+	ForkReason          string                 `protobuf:"bytes,12,opt,name=fork_reason,json=forkReason,proto3" json:"fork_reason,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *Session) Reset() {
@@ -156,6 +160,34 @@ func (x *Session) GetActiveAgents() int32 {
 		return x.ActiveAgents
 	}
 	return 0
+}
+
+func (x *Session) GetParentId() string {
+	if x != nil {
+		return x.ParentId
+	}
+	return ""
+}
+
+func (x *Session) GetRootId() string {
+	if x != nil {
+		return x.RootId
+	}
+	return ""
+}
+
+func (x *Session) GetForkedFromMessageId() string {
+	if x != nil {
+		return x.ForkedFromMessageId
+	}
+	return ""
+}
+
+func (x *Session) GetForkReason() string {
+	if x != nil {
+		return x.ForkReason
+	}
+	return ""
 }
 
 type CreateSessionReq struct {
@@ -6085,7 +6117,7 @@ var File_internal_proto_ratchet_proto protoreflect.FileDescriptor
 const file_internal_proto_ratchet_proto_rawDesc = "" +
 	"\n" +
 	"\x1cinternal/proto/ratchet.proto\x12\aratchet\x1a\x1fgoogle/protobuf/timestamp.proto\"\a\n" +
-	"\x05Empty\"\xf8\x01\n" +
+	"\x05Empty\"\x84\x03\n" +
 	"\aSession\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
@@ -6096,7 +6128,13 @@ const file_internal_proto_ratchet_proto_rawDesc = "" +
 	"\x05model\x18\x06 \x01(\tR\x05model\x129\n" +
 	"\n" +
 	"created_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12#\n" +
-	"\ractive_agents\x18\b \x01(\x05R\factiveAgents\"\x8c\x01\n" +
+	"\ractive_agents\x18\b \x01(\x05R\factiveAgents\x12\x1b\n" +
+	"\tparent_id\x18\t \x01(\tR\bparentId\x12\x17\n" +
+	"\aroot_id\x18\n" +
+	" \x01(\tR\x06rootId\x123\n" +
+	"\x16forked_from_message_id\x18\v \x01(\tR\x13forkedFromMessageId\x12\x1f\n" +
+	"\vfork_reason\x18\f \x01(\tR\n" +
+	"forkReason\"\x8c\x01\n" +
 	"\x10CreateSessionReq\x12%\n" +
 	"\x0einitial_prompt\x18\x01 \x01(\tR\rinitialPrompt\x12\x1f\n" +
 	"\vworking_dir\x18\x02 \x01(\tR\n" +

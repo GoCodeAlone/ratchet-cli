@@ -256,12 +256,16 @@ func (s *Service) CreateSession(ctx context.Context, req *pb.CreateSessionReq) (
 		Project:    retro.ProjectRatchetCLI,
 	})
 	return &pb.Session{
-		Id:         si.ID,
-		Name:       si.Name,
-		Status:     si.Status,
-		WorkingDir: si.WorkingDir,
-		Provider:   si.Provider,
-		Model:      si.Model,
+		Id:                  si.ID,
+		Name:                si.Name,
+		Status:              si.Status,
+		WorkingDir:          si.WorkingDir,
+		Provider:            si.Provider,
+		Model:               si.Model,
+		ParentId:            si.ParentID,
+		RootId:              si.RootID,
+		ForkedFromMessageId: si.ForkedFromMessageID,
+		ForkReason:          si.ForkReason,
 	}, nil
 }
 
@@ -272,16 +276,24 @@ func (s *Service) ListSessions(ctx context.Context, _ *pb.Empty) (*pb.SessionLis
 	}
 	var pbSessions []*pb.Session
 	for _, si := range sessions {
-		pbSessions = append(pbSessions, &pb.Session{
-			Id:         si.ID,
-			Name:       si.Name,
-			Status:     si.Status,
-			WorkingDir: si.WorkingDir,
-			Provider:   si.Provider,
-			Model:      si.Model,
-		})
+		pbSessions = append(pbSessions, sessionToProto(si))
 	}
 	return &pb.SessionList{Sessions: pbSessions}, nil
+}
+
+func sessionToProto(si SessionInfo) *pb.Session {
+	return &pb.Session{
+		Id:                  si.ID,
+		Name:                si.Name,
+		Status:              si.Status,
+		WorkingDir:          si.WorkingDir,
+		Provider:            si.Provider,
+		Model:               si.Model,
+		ParentId:            si.ParentID,
+		RootId:              si.RootID,
+		ForkedFromMessageId: si.ForkedFromMessageID,
+		ForkReason:          si.ForkReason,
+	}
 }
 
 func (s *Service) AttachSession(req *pb.AttachReq, stream pb.RatchetDaemon_AttachSessionServer) error {
