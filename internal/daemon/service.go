@@ -283,6 +283,9 @@ func (s *Service) ListSessions(ctx context.Context, _ *pb.Empty) (*pb.SessionLis
 }
 
 func (s *Service) ListSessionMessages(ctx context.Context, req *pb.SessionMessagesReq) (*pb.SessionHistory, error) {
+	if req == nil || req.SessionId == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id is required")
+	}
 	messages, err := s.sessions.ListMessages(ctx, req.SessionId)
 	if err != nil {
 		return nil, sessionLineageStatusError("list session messages", req.SessionId, err)
@@ -295,6 +298,9 @@ func (s *Service) ListSessionMessages(ctx context.Context, req *pb.SessionMessag
 }
 
 func (s *Service) CloneSession(ctx context.Context, req *pb.CloneSessionReq) (*pb.Session, error) {
+	if req == nil || req.SessionId == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id is required")
+	}
 	si, err := s.sessions.Clone(ctx, req.SessionId, req.Reason)
 	if err != nil {
 		return nil, sessionLineageStatusError("clone session", req.SessionId, err)
@@ -303,6 +309,12 @@ func (s *Service) CloneSession(ctx context.Context, req *pb.CloneSessionReq) (*p
 }
 
 func (s *Service) ForkSession(ctx context.Context, req *pb.ForkSessionReq) (*pb.Session, error) {
+	if req == nil || req.SessionId == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id is required")
+	}
+	if req.MessageId == "" {
+		return nil, status.Error(codes.InvalidArgument, "message_id is required")
+	}
 	si, err := s.sessions.Fork(ctx, req.SessionId, req.MessageId, req.Reason)
 	if err != nil {
 		return nil, sessionLineageStatusError("fork session", req.SessionId, err)
@@ -311,6 +323,9 @@ func (s *Service) ForkSession(ctx context.Context, req *pb.ForkSessionReq) (*pb.
 }
 
 func (s *Service) GetSessionTree(ctx context.Context, req *pb.SessionTreeReq) (*pb.SessionList, error) {
+	if req == nil || req.SessionId == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id is required")
+	}
 	sessions, err := s.sessions.ListTree(ctx, req.SessionId)
 	if err != nil {
 		return nil, sessionLineageStatusError("get session tree", req.SessionId, err)

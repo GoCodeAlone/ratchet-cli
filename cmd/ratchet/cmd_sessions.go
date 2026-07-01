@@ -77,9 +77,9 @@ func handleSessions(args []string) {
 			fmt.Println("No messages.")
 			return
 		}
-		fmt.Printf("%-36s %-10s %-20s %s\n", "MESSAGE_ID", "ROLE", "TIMESTAMP", "CONTENT")
+		fmt.Printf("%-36s %-10s %-25s %s\n", "MESSAGE_ID", "ROLE", "TIMESTAMP", "CONTENT")
 		for _, msg := range resp.Messages {
-			fmt.Printf("%-36s %-10s %-20s %s\n", msg.Id, msg.Role, formatTimestamp(msg.Timestamp), msg.Content)
+			fmt.Printf("%-36s %-10s %-25s %s\n", msg.Id, msg.Role, formatTimestamp(msg.Timestamp), msg.Content)
 		}
 	case "clone":
 		if len(args) < 2 {

@@ -89,3 +89,53 @@ func TestSessionLineageHistoryCloneForkTreeRPC(t *testing.T) {
 		t.Fatalf("missing message fork code = %v, want NotFound (err=%v)", status.Code(err), err)
 	}
 }
+
+func TestSessionLineageRPCValidatesRequests(t *testing.T) {
+	h := newE2EHarness(t)
+	ctx := t.Context()
+
+	for name, call := range map[string]func() error{
+		"list nil": func() error {
+			_, err := h.Svc.ListSessionMessages(ctx, nil)
+			return err
+		},
+		"list empty session": func() error {
+			_, err := h.Client.ListSessionMessages(ctx, &pb.SessionMessagesReq{})
+			return err
+		},
+		"clone nil": func() error {
+			_, err := h.Svc.CloneSession(ctx, nil)
+			return err
+		},
+		"clone empty session": func() error {
+			_, err := h.Client.CloneSession(ctx, &pb.CloneSessionReq{})
+			return err
+		},
+		"fork nil": func() error {
+			_, err := h.Svc.ForkSession(ctx, nil)
+			return err
+		},
+		"fork empty session": func() error {
+			_, err := h.Client.ForkSession(ctx, &pb.ForkSessionReq{MessageId: "msg-1"})
+			return err
+		},
+		"fork empty message": func() error {
+			_, err := h.Client.ForkSession(ctx, &pb.ForkSessionReq{SessionId: "sess-1"})
+			return err
+		},
+		"tree nil": func() error {
+			_, err := h.Svc.GetSessionTree(ctx, nil)
+			return err
+		},
+		"tree empty session": func() error {
+			_, err := h.Client.GetSessionTree(ctx, &pb.SessionTreeReq{})
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if code := status.Code(call()); code != codes.InvalidArgument {
+				t.Fatalf("code = %v, want InvalidArgument", code)
+			}
+		})
+	}
+}
