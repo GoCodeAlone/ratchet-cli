@@ -104,6 +104,121 @@ func (s *Store) Upsert(rec SessionRecord) error {
 	return s.save(data)
 }
 
+func (s *Store) AppendQueuedPrompt(rec SessionRecord, prompt QueuedPrompt) (SessionRecord, error) {
+	if strings.TrimSpace(rec.ID) == "" {
+		return SessionRecord{}, errors.New("acp client session id is required")
+	}
+	now := time.Now().UTC()
+	if prompt.ID == "" {
+		prompt.ID = newQueueID(prompt.Prompt, now)
+	}
+	if prompt.CreatedAt.IsZero() {
+		prompt.CreatedAt = now
+	}
+	if prompt.Status == "" {
+		prompt.Status = QueuePromptStatusPending
+	}
+	existing, err := s.Get(rec.ID)
+	if err != nil {
+		if !errors.Is(err, ErrSessionNotFound) {
+			return SessionRecord{}, err
+		}
+		existing = rec
+		if existing.CreatedAt.IsZero() {
+			existing.CreatedAt = prompt.CreatedAt
+		}
+	} else {
+		existing = mergeSessionMetadata(existing, rec)
+	}
+	existing.Status = SessionStatusQueued
+	existing.UpdatedAt = prompt.CreatedAt
+	existing.PromptQueue = append(existing.PromptQueue, prompt)
+	if err := s.Upsert(existing); err != nil {
+		return SessionRecord{}, err
+	}
+	return s.Get(existing.ID)
+}
+
+func (s *Store) NextQueuedPrompt(id string) (QueuedPrompt, bool, error) {
+	rec, err := s.Get(id)
+	if err != nil {
+		return QueuedPrompt{}, false, err
+	}
+	for _, prompt := range rec.PromptQueue {
+		if prompt.Status == QueuePromptStatusPending {
+			return prompt, true, nil
+		}
+	}
+	return QueuedPrompt{}, false, nil
+}
+
+func (s *Store) MarkQueueRunning(id, queueID string, when time.Time) error {
+	return s.updateQueuedPrompt(id, queueID, when, func(rec *SessionRecord, prompt *QueuedPrompt, at time.Time) {
+		prompt.Status = QueuePromptStatusRunning
+		prompt.StartedAt = &at
+		rec.Status = SessionStatusRunning
+	})
+}
+
+func (s *Store) MarkQueueCompleted(id, queueID, response, stopReason string, when time.Time) error {
+	return s.updateQueuedPrompt(id, queueID, when, func(rec *SessionRecord, prompt *QueuedPrompt, at time.Time) {
+		prompt.Status = QueuePromptStatusCompleted
+		prompt.CompletedAt = &at
+		prompt.Response = response
+		prompt.StopReason = stopReason
+		rec.Status = SessionStatusCompleted
+		rec.LastStopReason = stopReason
+		rec.Summary = summarizeStoreText(response)
+		rec.Turns = append(rec.Turns, TurnSummary{
+			Prompt:     summarizeStoreText(prompt.Prompt),
+			Response:   summarizeStoreText(response),
+			StopReason: stopReason,
+			CreatedAt:  at,
+		})
+	})
+}
+
+func (s *Store) MarkQueueFailed(id, queueID, message string, when time.Time) error {
+	return s.updateQueuedPrompt(id, queueID, when, func(rec *SessionRecord, prompt *QueuedPrompt, at time.Time) {
+		prompt.Status = QueuePromptStatusFailed
+		prompt.CompletedAt = &at
+		prompt.Error = message
+		rec.Status = SessionStatusCompleted
+		rec.Summary = summarizeStoreText(message)
+	})
+}
+
+func (s *Store) CancelPendingQueue(id string, when time.Time) (int, error) {
+	rec, err := s.Get(id)
+	if err != nil {
+		return 0, err
+	}
+	if when.IsZero() {
+		when = time.Now().UTC()
+	}
+	when = when.UTC()
+	count := 0
+	hasRunning := false
+	for i := range rec.PromptQueue {
+		switch rec.PromptQueue[i].Status {
+		case QueuePromptStatusPending:
+			rec.PromptQueue[i].Status = QueuePromptStatusCanceled
+			rec.PromptQueue[i].CanceledAt = &when
+			count++
+		case QueuePromptStatusRunning:
+			hasRunning = true
+		}
+	}
+	if count == 0 {
+		return 0, nil
+	}
+	if !hasRunning {
+		rec.Status = SessionStatusCanceled
+	}
+	rec.UpdatedAt = when
+	return count, s.Upsert(rec)
+}
+
 func (s *Store) MarkPendingCanceled(id string, when time.Time) error {
 	rec, err := s.Get(id)
 	if err != nil {
@@ -274,6 +389,60 @@ func normalizePromptQueue(rec *SessionRecord) {
 		CreatedAt:  rec.PendingPrompt.CreatedAt,
 		CanceledAt: rec.PendingPrompt.CanceledAt,
 	})
+}
+
+func (s *Store) updateQueuedPrompt(id, queueID string, when time.Time, update func(*SessionRecord, *QueuedPrompt, time.Time)) error {
+	if strings.TrimSpace(queueID) == "" {
+		return errors.New("queue prompt id is required")
+	}
+	rec, err := s.Get(id)
+	if err != nil {
+		return err
+	}
+	if when.IsZero() {
+		when = time.Now().UTC()
+	}
+	when = when.UTC()
+	for i := range rec.PromptQueue {
+		if rec.PromptQueue[i].ID == queueID {
+			update(&rec, &rec.PromptQueue[i], when)
+			rec.UpdatedAt = when
+			return s.Upsert(rec)
+		}
+	}
+	return fmt.Errorf("%w: queue prompt %s", ErrSessionNotFound, queueID)
+}
+
+func mergeSessionMetadata(existing, update SessionRecord) SessionRecord {
+	if update.ACPSessionID != "" {
+		existing.ACPSessionID = update.ACPSessionID
+	}
+	if update.Agent != "" {
+		existing.Agent = update.Agent
+	}
+	if update.CommandFingerprint != "" {
+		existing.CommandFingerprint = update.CommandFingerprint
+	}
+	if update.Cwd != "" {
+		existing.Cwd = update.Cwd
+	}
+	if update.CreatedAt.IsZero() {
+		return existing
+	}
+	existing.CreatedAt = update.CreatedAt
+	return existing
+}
+
+func newQueueID(prompt string, when time.Time) string {
+	return storeKey(fmt.Sprintf("%s:%s", when.UTC().Format(time.RFC3339Nano), prompt))
+}
+
+func summarizeStoreText(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= 200 {
+		return value
+	}
+	return value[:200]
 }
 
 func storeKey(id string) string {

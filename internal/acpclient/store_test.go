@@ -268,3 +268,120 @@ func TestSessionStoreMigratesLegacyPendingPromptToQueue(t *testing.T) {
 		t.Fatalf("PromptQueue after upsert len = %d, want idempotent migration", len(reloaded.PromptQueue))
 	}
 }
+
+func TestSessionStoreQueueOperationsPreserveFIFOAndTurns(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	created := time.Date(2026, 7, 1, 21, 0, 0, 0, time.UTC)
+	second := created.Add(time.Minute)
+
+	first, err := store.AppendQueuedPrompt(SessionRecord{
+		ID:                 "fifo-session",
+		ACPSessionID:       "acp-session",
+		Agent:              "fixture",
+		CommandFingerprint: "fp",
+		Cwd:                "/tmp/project",
+	}, QueuedPrompt{ID: "q-1", Prompt: "first", CreatedAt: created})
+	if err != nil {
+		t.Fatalf("AppendQueuedPrompt first: %v", err)
+	}
+	if first.Status != SessionStatusQueued || len(first.PromptQueue) != 1 {
+		t.Fatalf("first append record = %#v", first)
+	}
+	if first.PromptQueue[0].Status != QueuePromptStatusPending {
+		t.Fatalf("first status = %q", first.PromptQueue[0].Status)
+	}
+
+	if _, err := store.AppendQueuedPrompt(SessionRecord{ID: "fifo-session"}, QueuedPrompt{ID: "q-2", Prompt: "second", CreatedAt: second}); err != nil {
+		t.Fatalf("AppendQueuedPrompt second: %v", err)
+	}
+	next, ok, err := store.NextQueuedPrompt("fifo-session")
+	if err != nil {
+		t.Fatalf("NextQueuedPrompt: %v", err)
+	}
+	if !ok || next.ID != "q-1" {
+		t.Fatalf("NextQueuedPrompt = %#v, %v; want q-1", next, ok)
+	}
+
+	if err := store.MarkQueueRunning("fifo-session", "q-1", created.Add(2*time.Minute)); err != nil {
+		t.Fatalf("MarkQueueRunning: %v", err)
+	}
+	if err := store.MarkQueueCompleted("fifo-session", "q-1", "first response", "end_turn", created.Add(3*time.Minute)); err != nil {
+		t.Fatalf("MarkQueueCompleted: %v", err)
+	}
+	afterFirst, err := store.Get("fifo-session")
+	if err != nil {
+		t.Fatalf("Get after first: %v", err)
+	}
+	if afterFirst.ACPSessionID != "acp-session" || afterFirst.CreatedAt.IsZero() {
+		t.Fatalf("metadata not preserved: %#v", afterFirst)
+	}
+	if afterFirst.PromptQueue[0].Status != QueuePromptStatusCompleted || afterFirst.PromptQueue[0].Response != "first response" {
+		t.Fatalf("completed prompt = %#v", afterFirst.PromptQueue[0])
+	}
+	if len(afterFirst.Turns) != 1 || afterFirst.Turns[0].Prompt != "first" || afterFirst.Turns[0].Response != "first response" {
+		t.Fatalf("turns = %#v", afterFirst.Turns)
+	}
+
+	next, ok, err = store.NextQueuedPrompt("fifo-session")
+	if err != nil {
+		t.Fatalf("NextQueuedPrompt after first: %v", err)
+	}
+	if !ok || next.ID != "q-2" {
+		t.Fatalf("NextQueuedPrompt after first = %#v, %v; want q-2", next, ok)
+	}
+	if err := store.MarkQueueFailed("fifo-session", "q-2", "boom", second.Add(4*time.Minute)); err != nil {
+		t.Fatalf("MarkQueueFailed: %v", err)
+	}
+	failed, err := store.Get("fifo-session")
+	if err != nil {
+		t.Fatalf("Get failed: %v", err)
+	}
+	if failed.PromptQueue[1].Status != QueuePromptStatusFailed || failed.PromptQueue[1].Error != "boom" {
+		t.Fatalf("failed prompt = %#v", failed.PromptQueue[1])
+	}
+}
+
+func TestSessionStoreCancelPendingQueueOnlyCancelsPendingItems(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 1, 21, 10, 0, 0, time.UTC)
+	started := now.Add(time.Minute)
+	rec := SessionRecord{
+		ID:        "cancel-queue",
+		Status:    SessionStatusRunning,
+		CreatedAt: now,
+		UpdatedAt: now,
+		PromptQueue: []QueuedPrompt{
+			{ID: "running", Prompt: "active", Status: QueuePromptStatusRunning, CreatedAt: now, StartedAt: &started},
+			{ID: "pending-1", Prompt: "one", Status: QueuePromptStatusPending, CreatedAt: now.Add(2 * time.Minute)},
+			{ID: "pending-2", Prompt: "two", Status: QueuePromptStatusPending, CreatedAt: now.Add(3 * time.Minute)},
+			{ID: "done", Prompt: "done", Status: QueuePromptStatusCompleted, CreatedAt: now.Add(4 * time.Minute)},
+		},
+	}
+	if err := store.Upsert(rec); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	count, err := store.CancelPendingQueue("cancel-queue", now.Add(5*time.Minute))
+	if err != nil {
+		t.Fatalf("CancelPendingQueue: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("canceled count = %d, want 2", count)
+	}
+	got, err := store.Get("cancel-queue")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.PromptQueue[0].Status != QueuePromptStatusRunning {
+		t.Fatalf("running item status = %q", got.PromptQueue[0].Status)
+	}
+	if got.PromptQueue[1].Status != QueuePromptStatusCanceled || got.PromptQueue[1].CanceledAt == nil {
+		t.Fatalf("pending-1 = %#v", got.PromptQueue[1])
+	}
+	if got.PromptQueue[2].Status != QueuePromptStatusCanceled || got.PromptQueue[2].CanceledAt == nil {
+		t.Fatalf("pending-2 = %#v", got.PromptQueue[2])
+	}
+	if got.PromptQueue[3].Status != QueuePromptStatusCompleted {
+		t.Fatalf("completed item status = %q", got.PromptQueue[3].Status)
+	}
+}
