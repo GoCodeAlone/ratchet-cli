@@ -41,7 +41,7 @@ document records the exact revisions used for reproducibility.
 | Priority | Follow-up | Rationale |
 |---|---|---|
 | P1 | Complete daemon direct team messaging or remove the MCP tool until backed by daemon behavior. | The current MCP schema surfaces the command but correctly returns daemon errors; full parity requires real daemon support. |
-| P1 | Add JSONL-compatible import/export for branch trees if Pi interoperability becomes a product requirement. | In-place navigation is supported through daemon sessions; JSONL storage compatibility remains explicitly out of scope for v0.16. |
+| P1 | Add JSONL-compatible import/export for branch trees if Pi interoperability becomes a product requirement. | In-place navigation is supported through daemon sessions; JSONL storage compatibility remains explicitly out of scope for v0.18. |
 | P2 | Define a policy-layer matrix for permissions, sandboxing, and trust. | Codex, Claude Code, and Zed have clearer policy surfaces than ratchet-cli currently documents. |
 | P2 | Design optional extension hooks around session/tool/retro lifecycle. | Pi and Claude Code show high leverage from hooks, but ratchet-cli must keep mutation opt-in and redacted. |
 | P3 | Extend ACP client/orchestrator mode only where product demand appears. | The v0.18.0 ACP client foundation covers typed exec, status, history metadata, and minimal queue/cancel. ACPX import/export, compare/flow, and multi-prompt FIFO remain intentionally deferred. |

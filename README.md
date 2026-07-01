@@ -45,6 +45,8 @@ ratchet acp client exec --command ./agent --session work --no-wait "prompt"
                             # Queue one pending ACP client prompt locally
 ratchet acp client sessions list
                             # List persisted ACP client sessions
+ratchet acp client sessions show ID
+                            # Show persisted ACP client session metadata
 ratchet acp client status ID
                             # Show ACP client session status
 ratchet acp client cancel ID

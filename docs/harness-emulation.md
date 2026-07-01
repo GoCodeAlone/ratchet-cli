@@ -87,7 +87,7 @@ features, and local-first channel gateways.
 | external process stdio | Supported | `TestClientRunPromptAgainstFixtureProcess`; `TestACPClientExecBinarySmoke`. |
 | one-shot prompt | Supported | `ratchet acp client exec`; human and JSON output tests. |
 | session metadata | Supported | XDG state JSON store; `TestSessionStoreLoadsMissingFileAndPersistsRecords`. |
-| sessions list/show/status | Supported | `ratchet acp client sessions list`, `sessions show <id>`, and `status <id>`; command tests cover empty, one-session, and invalid-id cases. |
+| sessions list/show/status | Supported | `ratchet acp client sessions list`, `ratchet acp client sessions show <id>`, and `ratchet acp client status <id>`; command tests cover empty, one-session, and invalid-id cases. |
 | no-wait queue primitive | Supported for one pending prompt | `ratchet acp client exec --no-wait --session <id>` stores one pending prompt locally; multi-prompt FIFO is deferred. |
 | cancel | Supported as cooperative request | `ratchet acp client cancel <id>` marks pending prompts canceled or writes a cancel-request file for active owners; active clients poll and send ACP cancel. |
 | import/export archives | Deferred | ACPX-compatible portable session archives remain out of scope. |
