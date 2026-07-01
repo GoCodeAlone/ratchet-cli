@@ -15,6 +15,15 @@ func TestDefaultConfig(t *testing.T) {
 	if len(cfg.InstructionCompat) == 0 {
 		t.Error("expected non-empty instruction_compat")
 	}
+	if cfg.Retro.Enabled {
+		t.Error("expected retro.enabled to default false")
+	}
+	if cfg.Retro.LocalChanges {
+		t.Error("expected retro.local_changes to default false")
+	}
+	if !cfg.Retro.UpstreamInstructions {
+		t.Error("expected retro.upstream_instructions to default true")
+	}
 }
 
 func TestConfigSaveLoad(t *testing.T) {
