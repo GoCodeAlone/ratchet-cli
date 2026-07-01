@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/acpclient"
@@ -31,17 +32,20 @@ type acpClientCommand struct {
 	kind      acpClientCommandKind
 	exec      acpClientExecOptions
 	sessionID string
+	json      bool
 }
 
 type acpClientExecOptions struct {
-	Agent   string
-	Command string
-	Args    []string
-	Cwd     string
-	Timeout time.Duration
-	JSON    bool
-	File    string
-	Prompt  string
+	Agent     string
+	Command   string
+	Args      []string
+	Cwd       string
+	Timeout   time.Duration
+	JSON      bool
+	File      string
+	Prompt    string
+	SessionID string
+	NoWait    bool
 }
 
 type repeatedStringFlag []string
@@ -60,6 +64,10 @@ func handleACPClient(args []string) error {
 	if err != nil {
 		return err
 	}
+	store, err := acpclient.NewDefaultStore()
+	if err != nil {
+		return err
+	}
 	switch cmd.kind {
 	case acpClientCommandHandled:
 		return nil
@@ -67,9 +75,15 @@ func handleACPClient(args []string) error {
 		printACPClientUsage(os.Stdout)
 		return nil
 	case acpClientCommandExec:
-		return executeACPClientExec(context.Background(), cmd.exec, defaultACPClientExecRunner{}, os.Stdout)
-	case acpClientCommandSessionsList, acpClientCommandSessionsShow, acpClientCommandStatus, acpClientCommandCancel:
-		return fmt.Errorf("ratchet acp client %s is planned for a later PR", cmd.kind)
+		return executeACPClientExecWithStore(context.Background(), cmd.exec, defaultACPClientExecRunner{}, store, os.Stdout)
+	case acpClientCommandSessionsList:
+		return executeACPClientSessionsList(store, cmd.json, os.Stdout)
+	case acpClientCommandSessionsShow:
+		return executeACPClientSessionShow(store, cmd.sessionID, cmd.json, os.Stdout)
+	case acpClientCommandStatus:
+		return executeACPClientStatus(store, cmd.sessionID, cmd.json, os.Stdout)
+	case acpClientCommandCancel:
+		return executeACPClientCancel(store, cmd.sessionID, cmd.json, os.Stdout)
 	default:
 		return fmt.Errorf("unknown acp client command: %s", cmd.kind)
 	}
@@ -91,6 +105,10 @@ func (defaultACPClientExecRunner) RunPrompt(ctx context.Context, spec acpclient.
 }
 
 func executeACPClientExec(ctx context.Context, opts acpClientExecOptions, runner acpClientExecRunner, w io.Writer) error {
+	return executeACPClientExecWithStore(ctx, opts, runner, nil, w)
+}
+
+func executeACPClientExecWithStore(ctx context.Context, opts acpClientExecOptions, runner acpClientExecRunner, store *acpclient.Store, w io.Writer) error {
 	prompt := opts.Prompt
 	if opts.File != "" {
 		b, err := os.ReadFile(opts.File)
@@ -119,9 +137,114 @@ func executeACPClientExec(ctx context.Context, opts acpClientExecOptions, runner
 	if err != nil {
 		return err
 	}
+	if opts.NoWait {
+		sessionID := strings.TrimSpace(opts.SessionID)
+		if sessionID == "" {
+			sessionID = newLocalACPClientID("local")
+		}
+		if store != nil {
+			now := time.Now().UTC()
+			rec := acpclient.SessionRecord{
+				ID:                 sessionID,
+				Agent:              spec.Name,
+				CommandFingerprint: spec.Fingerprint(),
+				Cwd:                cwd,
+				Status:             acpclient.SessionStatusQueued,
+				CreatedAt:          now,
+				UpdatedAt:          now,
+				Summary:            summarizeACPClientText(prompt),
+				PendingPrompt: &acpclient.PendingPrompt{
+					ID:        newLocalACPClientID("pending"),
+					Prompt:    prompt,
+					Status:    acpclient.PendingPromptStatusPending,
+					CreatedAt: now,
+				},
+			}
+			if existing, err := store.Get(sessionID); err == nil {
+				rec.CreatedAt = existing.CreatedAt
+				rec.Turns = existing.Turns
+			}
+			if err := store.Upsert(rec); err != nil {
+				return err
+			}
+		}
+		if opts.JSON {
+			return json.NewEncoder(w).Encode(struct {
+				SessionID string `json:"session_id"`
+				Status    string `json:"status"`
+			}{SessionID: sessionID, Status: acpclient.SessionStatusQueued})
+		}
+		fmt.Fprintf(w, "queued pending prompt for %s\n", sessionID)
+		return nil
+	}
+	var activeSessionID string
+	if store != nil {
+		runOpts.SessionStarted = func(sessionID string) error {
+			activeSessionID = sessionID
+			now := time.Now().UTC()
+			rec := acpclient.SessionRecord{
+				ID:                 sessionID,
+				Agent:              spec.Name,
+				CommandFingerprint: spec.Fingerprint(),
+				Cwd:                cwd,
+				Status:             acpclient.SessionStatusRunning,
+				CreatedAt:          now,
+				UpdatedAt:          now,
+			}
+			if existing, err := store.Get(sessionID); err == nil {
+				rec.CreatedAt = existing.CreatedAt
+				rec.Turns = existing.Turns
+			}
+			if err := store.Upsert(rec); err != nil {
+				return err
+			}
+			return store.WriteOwner(acpclient.OwnerLock{
+				SessionID:          sessionID,
+				PID:                os.Getpid(),
+				CommandFingerprint: spec.Fingerprint(),
+				StartedAt:          now,
+			})
+		}
+		runOpts.CancelRequested = func(sessionID string) bool {
+			_, err := store.CancelRequest(sessionID)
+			return err == nil
+		}
+		defer func() {
+			if activeSessionID != "" {
+				_ = store.ClearOwner(activeSessionID)
+			}
+		}()
+	}
 	result, err := runner.RunPrompt(ctx, spec, runOpts, prompt)
 	if err != nil {
 		return err
+	}
+	if store != nil {
+		now := time.Now().UTC()
+		rec := acpclient.SessionRecord{
+			ID:                 string(result.SessionID),
+			Agent:              spec.Name,
+			CommandFingerprint: spec.Fingerprint(),
+			Cwd:                cwd,
+			Status:             acpclient.SessionStatusCompleted,
+			CreatedAt:          now,
+			UpdatedAt:          now,
+			LastStopReason:     string(result.StopReason),
+			Summary:            summarizeACPClientText(result.Text),
+			Turns: []acpclient.TurnSummary{{
+				Prompt:     summarizeACPClientText(prompt),
+				Response:   summarizeACPClientText(result.Text),
+				StopReason: string(result.StopReason),
+				CreatedAt:  now,
+			}},
+		}
+		if existing, err := store.Get(rec.ID); err == nil {
+			rec.CreatedAt = existing.CreatedAt
+			rec.Turns = append(existing.Turns, rec.Turns...)
+		}
+		if err := store.Upsert(rec); err != nil {
+			return err
+		}
 	}
 	if opts.JSON {
 		return writeACPClientExecJSON(w, spec, result)
@@ -184,17 +307,17 @@ func parseACPClientCommandWithOutput(args []string, output io.Writer) (acpClient
 	case "sessions":
 		return parseACPClientSessions(args[1:])
 	case "status":
-		id, err := requireSessionID("status", args[1:])
+		id, jsonOut, err := parseACPClientIDCommand("status", args[1:])
 		if err != nil {
 			return acpClientCommand{}, err
 		}
-		return acpClientCommand{kind: acpClientCommandStatus, sessionID: id}, nil
+		return acpClientCommand{kind: acpClientCommandStatus, sessionID: id, json: jsonOut}, nil
 	case "cancel":
-		id, err := requireSessionID("cancel", args[1:])
+		id, jsonOut, err := parseACPClientIDCommand("cancel", args[1:])
 		if err != nil {
 			return acpClientCommand{}, err
 		}
-		return acpClientCommand{kind: acpClientCommandCancel, sessionID: id}, nil
+		return acpClientCommand{kind: acpClientCommandCancel, sessionID: id, json: jsonOut}, nil
 	case "help", "--help", "-h":
 		return acpClientCommand{kind: acpClientCommandHelp}, nil
 	default:
@@ -227,6 +350,10 @@ func parseACPClientExec(args []string, output io.Writer) (acpClientExecOptions, 
 		fmt.Fprintln(output, "    emit JSON")
 		fmt.Fprintln(output, "  --file string")
 		fmt.Fprintln(output, "    prompt file")
+		fmt.Fprintln(output, "  --session string")
+		fmt.Fprintln(output, "    existing ACP client session id for queued prompts")
+		fmt.Fprintln(output, "  --no-wait")
+		fmt.Fprintln(output, "    queue prompt locally without launching the agent")
 	}
 	fs.StringVar(&opts.Agent, "agent", "", "agent template")
 	fs.StringVar(&opts.Command, "command", "", "agent command")
@@ -235,6 +362,8 @@ func parseACPClientExec(args []string, output io.Writer) (acpClientExecOptions, 
 	fs.DurationVar(&opts.Timeout, "timeout", opts.Timeout, "prompt timeout")
 	fs.BoolVar(&opts.JSON, "json", false, "emit JSON")
 	fs.StringVar(&opts.File, "file", "", "prompt file")
+	fs.StringVar(&opts.SessionID, "session", "", "existing ACP client session id for queued prompts")
+	fs.BoolVar(&opts.NoWait, "no-wait", false, "queue prompt locally without launching the agent")
 	if err := fs.Parse(args); err != nil {
 		return acpClientExecOptions{}, err
 	}
@@ -251,19 +380,68 @@ func parseACPClientExec(args []string, output io.Writer) (acpClientExecOptions, 
 }
 
 func parseACPClientSessions(args []string) (acpClientCommand, error) {
-	if len(args) == 0 || args[0] == "list" {
-		return acpClientCommand{kind: acpClientCommandSessionsList}, nil
-	}
-	switch args[0] {
-	case "show", "history":
-		id, err := requireSessionID("sessions "+args[0], args[1:])
+	if len(args) == 0 || args[0] == "list" || strings.HasPrefix(args[0], "-") {
+		jsonOut, err := parseJSONOnlyFlags("sessions list", trimCommand(args, "list"))
 		if err != nil {
 			return acpClientCommand{}, err
 		}
-		return acpClientCommand{kind: acpClientCommandSessionsShow, sessionID: id}, nil
+		return acpClientCommand{kind: acpClientCommandSessionsList, json: jsonOut}, nil
+	}
+	switch args[0] {
+	case "show", "history":
+		jsonOut, rest, err := parseJSONAndRestFlags("sessions "+args[0], args[1:])
+		if err != nil {
+			return acpClientCommand{}, err
+		}
+		id, err := requireSessionID("sessions "+args[0], rest)
+		if err != nil {
+			return acpClientCommand{}, err
+		}
+		return acpClientCommand{kind: acpClientCommandSessionsShow, sessionID: id, json: jsonOut}, nil
 	default:
 		return acpClientCommand{}, fmt.Errorf("unknown acp client sessions command: %s", args[0])
 	}
+}
+
+func parseACPClientIDCommand(command string, args []string) (string, bool, error) {
+	jsonOut, rest, err := parseJSONAndRestFlags(command, args)
+	if err != nil {
+		return "", false, err
+	}
+	id, err := requireSessionID(command, rest)
+	if err != nil {
+		return "", false, err
+	}
+	return id, jsonOut, nil
+}
+
+func parseJSONOnlyFlags(command string, args []string) (bool, error) {
+	jsonOut, rest, err := parseJSONAndRestFlags(command, args)
+	if err != nil {
+		return false, err
+	}
+	if len(rest) > 0 {
+		return false, fmt.Errorf("usage: ratchet acp client %s [--json]", command)
+	}
+	return jsonOut, nil
+}
+
+func parseJSONAndRestFlags(command string, args []string) (bool, []string, error) {
+	var jsonOut bool
+	fs := flag.NewFlagSet("ratchet acp client "+command, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.BoolVar(&jsonOut, "json", false, "emit JSON")
+	if err := fs.Parse(args); err != nil {
+		return false, nil, err
+	}
+	return jsonOut, fs.Args(), nil
+}
+
+func trimCommand(args []string, command string) []string {
+	if len(args) > 0 && args[0] == command {
+		return args[1:]
+	}
+	return args
 }
 
 func requireSessionID(command string, args []string) (string, error) {
@@ -288,4 +466,121 @@ Commands:
 
 Run 'ratchet acp client exec --help' for exec flags.
 `)
+}
+
+func executeACPClientSessionsList(store *acpclient.Store, jsonOut bool, w io.Writer) error {
+	records, err := store.List()
+	if err != nil {
+		return err
+	}
+	if jsonOut {
+		return json.NewEncoder(w).Encode(records)
+	}
+	if len(records) == 0 {
+		fmt.Fprintln(w, "No ACP client sessions.")
+		return nil
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tSTATUS\tAGENT\tUPDATED\tSUMMARY")
+	for _, rec := range records {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", rec.ID, rec.Status, rec.Agent, rec.UpdatedAt.Format(time.RFC3339), rec.Summary)
+	}
+	return tw.Flush()
+}
+
+func executeACPClientSessionShow(store *acpclient.Store, id string, jsonOut bool, w io.Writer) error {
+	rec, err := store.Get(id)
+	if err != nil {
+		return err
+	}
+	if jsonOut {
+		return json.NewEncoder(w).Encode(rec)
+	}
+	fmt.Fprintf(w, "id: %s\nstatus: %s\nagent: %s\ncwd: %s\nupdated: %s\n", rec.ID, rec.Status, rec.Agent, rec.Cwd, rec.UpdatedAt.Format(time.RFC3339))
+	if rec.LastStopReason != "" {
+		fmt.Fprintf(w, "stop: %s\n", rec.LastStopReason)
+	}
+	if rec.Summary != "" {
+		fmt.Fprintf(w, "summary: %s\n", rec.Summary)
+	}
+	if rec.PendingPrompt != nil {
+		fmt.Fprintf(w, "pending prompt: %s\n", rec.PendingPrompt.Status)
+	}
+	return nil
+}
+
+func executeACPClientStatus(store *acpclient.Store, id string, jsonOut bool, w io.Writer) error {
+	rec, err := store.Get(id)
+	if err != nil {
+		return err
+	}
+	owner, ownerErr := store.Owner(id)
+	payload := struct {
+		acpclient.SessionRecord
+		Owner *acpclient.OwnerLock `json:"owner,omitempty"`
+	}{SessionRecord: rec}
+	if ownerErr == nil {
+		payload.Owner = &owner
+	}
+	if jsonOut {
+		return json.NewEncoder(w).Encode(payload)
+	}
+	fmt.Fprintf(w, "%s: %s\n", rec.ID, rec.Status)
+	if rec.PendingPrompt != nil {
+		fmt.Fprintf(w, "pending prompt: %s\n", rec.PendingPrompt.Status)
+	}
+	if ownerErr == nil {
+		fmt.Fprintf(w, "owner pid: %d started: %s\n", owner.PID, owner.StartedAt.Format(time.RFC3339))
+	}
+	if rec.Summary != "" {
+		fmt.Fprintf(w, "summary: %s\n", rec.Summary)
+	}
+	return nil
+}
+
+func executeACPClientCancel(store *acpclient.Store, id string, jsonOut bool, w io.Writer) error {
+	if _, err := store.Owner(id); err == nil {
+		if err := store.RequestCancel(id, time.Now().UTC()); err != nil {
+			return err
+		}
+		if jsonOut {
+			return json.NewEncoder(w).Encode(struct {
+				SessionID string `json:"session_id"`
+				Status    string `json:"status"`
+			}{SessionID: id, Status: acpclient.SessionStatusCancelRequested})
+		}
+		fmt.Fprintf(w, "requested cancel for active session %s\n", id)
+		return nil
+	}
+	rec, err := store.Get(id)
+	if err != nil {
+		return err
+	}
+	if rec.PendingPrompt == nil || rec.PendingPrompt.Status != acpclient.PendingPromptStatusPending {
+		return fmt.Errorf("session %s has no active owner or pending prompt", id)
+	}
+	if err := store.MarkPendingCanceled(id, time.Now().UTC()); err != nil {
+		return err
+	}
+	if jsonOut {
+		return json.NewEncoder(w).Encode(struct {
+			SessionID string `json:"session_id"`
+			Status    string `json:"status"`
+		}{SessionID: id, Status: acpclient.SessionStatusCanceled})
+	}
+	fmt.Fprintf(w, "canceled pending prompt for %s\n", id)
+	return nil
+}
+
+func summarizeACPClientText(text string) string {
+	text = strings.TrimSpace(text)
+	text = strings.Join(strings.Fields(text), " ")
+	if len(text) > 240 {
+		return text[:240]
+	}
+	return text
+}
+
+func newLocalACPClientID(prefix string) string {
+	return fmt.Sprintf("%s-%d", prefix, time.Now().UTC().UnixNano())
 }

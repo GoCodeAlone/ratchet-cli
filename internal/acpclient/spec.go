@@ -27,24 +27,66 @@ type AgentSpec struct {
 }
 
 type RunOptions struct {
-	Agent       string
-	Command     string
-	Args        []string
-	Cwd         string
-	AllowWrites bool
-	Timeout     time.Duration
+	Agent           string
+	Command         string
+	Args            []string
+	Cwd             string
+	AllowWrites     bool
+	Timeout         time.Duration
+	SessionStarted  func(sessionID string) error
+	CancelRequested func(sessionID string) bool
 }
 
 type SessionRecord struct {
-	ID                 string    `json:"id"`
-	Agent              string    `json:"agent"`
+	ID                 string         `json:"id"`
+	Agent              string         `json:"agent"`
+	CommandFingerprint string         `json:"commandFingerprint"`
+	Cwd                string         `json:"cwd"`
+	Status             string         `json:"status"`
+	CreatedAt          time.Time      `json:"createdAt"`
+	UpdatedAt          time.Time      `json:"updatedAt"`
+	LastStopReason     string         `json:"lastStopReason,omitempty"`
+	Summary            string         `json:"summary,omitempty"`
+	Turns              []TurnSummary  `json:"turns,omitempty"`
+	PendingPrompt      *PendingPrompt `json:"pendingPrompt,omitempty"`
+}
+
+const (
+	SessionStatusQueued          = "queued"
+	SessionStatusRunning         = "running"
+	SessionStatusCompleted       = "completed"
+	SessionStatusCanceled        = "canceled"
+	SessionStatusCancelRequested = "cancel_requested"
+
+	PendingPromptStatusPending  = "pending"
+	PendingPromptStatusCanceled = "canceled"
+)
+
+type TurnSummary struct {
+	Prompt     string    `json:"prompt"`
+	Response   string    `json:"response"`
+	StopReason string    `json:"stopReason"`
+	CreatedAt  time.Time `json:"createdAt"`
+}
+
+type PendingPrompt struct {
+	ID         string     `json:"id"`
+	Prompt     string     `json:"prompt"`
+	Status     string     `json:"status"`
+	CreatedAt  time.Time  `json:"createdAt"`
+	CanceledAt *time.Time `json:"canceledAt,omitempty"`
+}
+
+type OwnerLock struct {
+	SessionID          string    `json:"sessionId"`
+	PID                int       `json:"pid"`
 	CommandFingerprint string    `json:"commandFingerprint"`
-	Cwd                string    `json:"cwd"`
-	Status             string    `json:"status"`
-	CreatedAt          time.Time `json:"createdAt"`
-	UpdatedAt          time.Time `json:"updatedAt"`
-	LastStopReason     string    `json:"lastStopReason,omitempty"`
-	Summary            string    `json:"summary,omitempty"`
+	StartedAt          time.Time `json:"startedAt"`
+}
+
+type CancelRequest struct {
+	SessionID   string    `json:"sessionId"`
+	RequestedAt time.Time `json:"requestedAt"`
 }
 
 type Registry struct {

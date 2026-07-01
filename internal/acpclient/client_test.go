@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -92,6 +93,53 @@ func TestClientRunPromptResetsCapturedUpdates(t *testing.T) {
 	}
 	if len(second.Updates) != 1 {
 		t.Fatalf("second Updates len = %d, want 1", len(second.Updates))
+	}
+}
+
+func TestClientRunPromptInvokesSessionLifecycleHooks(t *testing.T) {
+	clientToAgentR, clientToAgentW := io.Pipe()
+	agentToClientR, agentToClientW := io.Pipe()
+	t.Cleanup(func() {
+		_ = clientToAgentR.Close()
+		_ = clientToAgentW.Close()
+		_ = agentToClientR.Close()
+		_ = agentToClientW.Close()
+	})
+
+	agent := &echoAgent{}
+	agentConn := acpsdk.NewAgentSideConnection(agent, agentToClientW, clientToAgentR)
+	agent.conn = agentConn
+
+	var started string
+	var cancelChecks atomic.Int64
+	var badSession atomic.Value
+	client := NewInProcessClient(clientToAgentW, agentToClientR, RunOptions{
+		Cwd:     t.TempDir(),
+		Timeout: 5 * time.Second,
+		SessionStarted: func(sessionID string) error {
+			started = sessionID
+			return nil
+		},
+		CancelRequested: func(sessionID string) bool {
+			if sessionID != "session-echo" {
+				badSession.Store(sessionID)
+			}
+			cancelChecks.Add(1)
+			return false
+		},
+	})
+
+	if _, err := client.RunPrompt(t.Context(), "hello"); err != nil {
+		t.Fatalf("RunPrompt: %v", err)
+	}
+	if started != "session-echo" {
+		t.Fatalf("SessionStarted got %q, want session-echo", started)
+	}
+	if got := badSession.Load(); got != nil {
+		t.Fatalf("CancelRequested sessionID = %q", got)
+	}
+	if cancelChecks.Load() == 0 {
+		t.Fatal("CancelRequested was not checked")
 	}
 }
 

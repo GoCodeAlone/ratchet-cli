@@ -21,6 +21,8 @@ type Client struct {
 	cmd       *exec.Cmd
 	stderr    *lockedBuffer
 	wait      chan error
+	onSession func(string) error
+	cancelReq func(string) bool
 }
 
 type Result struct {
@@ -38,6 +40,8 @@ func NewInProcessClient(peerInput io.Writer, peerOutput io.Reader, opts RunOptio
 		conn:      acpsdk.NewClientSideConnection(callbacks, peerInput, peerOutput),
 		callbacks: callbacks,
 		timeout:   timeoutOrDefault(opts.Timeout),
+		onSession: opts.SessionStarted,
+		cancelReq: opts.CancelRequested,
 	}
 }
 
@@ -70,6 +74,8 @@ func Start(ctx context.Context, spec AgentSpec, opts RunOptions) (*Client, error
 		cmd:       cmd,
 		stderr:    stderr,
 		wait:      make(chan error, 1),
+		onSession: opts.SessionStarted,
+		cancelReq: opts.CancelRequested,
 	}
 	go func() {
 		client.wait <- cmd.Wait()
@@ -101,6 +107,13 @@ func (c *Client) RunPrompt(ctx context.Context, prompt string) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("create acp session: %w", err)
 	}
+	if c.onSession != nil {
+		if err := c.onSession(string(session.SessionId)); err != nil {
+			return Result{}, fmt.Errorf("record acp session: %w", err)
+		}
+	}
+	stopCancelWatcher := c.startCancelWatcher(callCtx, session.SessionId)
+	defer stopCancelWatcher()
 	updateCount := c.callbacks.UpdateCount()
 	resp, err := c.conn.Prompt(callCtx, acpsdk.PromptRequest{
 		SessionId: session.SessionId,
@@ -149,6 +162,37 @@ func (c *Client) stderrString() string {
 		return ""
 	}
 	return c.stderr.String()
+}
+
+func (c *Client) startCancelWatcher(ctx context.Context, sessionID acpsdk.SessionId) func() {
+	if c == nil || c.cancelReq == nil {
+		return func() {}
+	}
+	if c.cancelReq(string(sessionID)) {
+		_ = c.conn.Cancel(ctx, acpsdk.CancelNotification{SessionId: sessionID})
+		return func() {}
+	}
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if c.cancelReq(string(sessionID)) {
+					_ = c.conn.Cancel(ctx, acpsdk.CancelNotification{SessionId: sessionID})
+					return
+				}
+			}
+		}
+	}()
+	return func() {
+		close(done)
+	}
 }
 
 func timeoutOrDefault(timeout time.Duration) time.Duration {
