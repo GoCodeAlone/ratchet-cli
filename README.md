@@ -40,7 +40,7 @@ ratchet team start "task"   # Start agent team
 | TUI | `ratchet` | Starts a daemon-backed interactive session. |
 | One-shot | `ratchet -p "prompt"` | Uses the configured default provider. |
 | Daemon | `HOME="$(mktemp -d)" ratchet daemon status` | Runs credential-free when pointed at a temp home. |
-| ACP | `ratchet acp` | Exposes the agent over ACP stdio JSON-RPC. |
+| ACP | `ratchet acp` | Exposes the agent over ACP stdio JSON-RPC; prompt smoke is covered by `TestACPStdioPromptSmoke`. |
 | MCP | `ratchet mcp blackboard` / `ratchet mcp daemon` | Exposes standalone blackboard or daemon-backed session/project MCP tools over stdio. |
 | Team | `ratchet team start "task"` | Uses daemon team orchestration with configured providers. |
 
