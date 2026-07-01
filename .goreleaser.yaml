@@ -9,6 +9,7 @@ builds:
     goos:
       - linux
       - darwin
+      - windows
     goarch:
       - amd64
       - arm64
@@ -22,6 +23,9 @@ archives:
   - id: ratchet
     ids: [ratchet]
     formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
     name_template: "ratchet_{{ .Os }}_{{ .Arch }}"
     files:
       - RATCHET.md
@@ -37,9 +41,11 @@ changelog:
       - "^test:"
       - "^chore:"
 
-brews:
+homebrew_casks:
   - name: ratchet-cli
     ids: [ratchet]
+    binaries:
+      - ratchet
     homepage: "https://github.com/GoCodeAlone/ratchet-cli"
     description: "Interactive AI agent CLI"
     license: "Apache-2.0"
@@ -51,13 +57,13 @@ brews:
     commit_author:
       name: goreleaserbot
       email: bot@goreleaser.com
-    install: |
-      bin.install "ratchet"
-    post_install: |
-      # Ad-hoc codesign so macOS Gatekeeper allows execution
-      if OS.mac?
-        system "codesign", "--force", "--sign", "-", "#{bin}/ratchet"
-      end
+    hooks:
+      post:
+        install: |
+          # Ad-hoc codesign so macOS Gatekeeper allows execution
+          if OS.mac?
+            system_command "/usr/bin/codesign", args: ["--force", "--sign", "-", "#{staged_path}/ratchet"]
+          end
 
 release:
   draft: true

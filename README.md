@@ -9,6 +9,8 @@ go install github.com/GoCodeAlone/ratchet-cli/cmd/ratchet@latest
 ```
 
 Or download a binary from [Releases](https://github.com/GoCodeAlone/ratchet-cli/releases).
+Release artifacts include Linux and macOS tar.gz archives and Windows zip
+archives for amd64 and arm64. Windows installer packages are not published yet.
 
 ## Features
 
