@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/GoCodeAlone/workflow-plugin-agent/provider"
@@ -34,6 +35,72 @@ func TestTokenTracker_ThresholdDetection(t *testing.T) {
 	}
 	if tt.Total("sess1") != 0 {
 		t.Errorf("Total after Reset: got %d want 0", tt.Total("sess1"))
+	}
+}
+
+func TestCompactManualWritesCompactionRecord(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	h := newE2EHarness(t)
+	ctx := t.Context()
+
+	session := h.createSession(t, "e2e-mock")
+	var firstKept string
+	for i := range 12 {
+		id := insertMessage(t, h.DB, session.Id, "user", fmt.Sprintf("manual-%02d", i))
+		if i == 2 {
+			firstKept = id
+		}
+	}
+
+	if err := h.Svc.handleCompact(ctx, session.Id, &noopSendServer{ctx: ctx}); err != nil {
+		t.Fatal(err)
+	}
+	records, err := listCompactionRecords(ctx, h.DB, session.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("record count = %d, want 1", len(records))
+	}
+	got := records[0]
+	if got.Reason != "manual" {
+		t.Fatalf("reason = %q, want manual", got.Reason)
+	}
+	if got.Summary == "" || got.MessagesRemoved <= 0 || got.MessagesKept <= 0 {
+		t.Fatalf("record missing summary/counts: %+v", got)
+	}
+	if got.FirstKeptMessageID != firstKept {
+		t.Fatalf("first kept = %q, want %q", got.FirstKeptMessageID, firstKept)
+	}
+}
+
+func TestAutoCompactionWritesCompactionRecord(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	h := newE2EHarness(t)
+	ctx := t.Context()
+
+	session := h.createSession(t, "e2e-mock")
+	for i := range 12 {
+		insertMessage(t, h.DB, session.Id, "user", fmt.Sprintf("auto-%02d", i))
+	}
+	h.Svc.tokens.AddTokens(session.Id, 200000, 0)
+
+	if err := h.Svc.handleChat(ctx, session.Id, "trigger auto compaction", &noopSendServer{ctx: ctx}); err != nil {
+		t.Fatal(err)
+	}
+	records, err := listCompactionRecords(ctx, h.DB, session.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("record count = %d, want 1", len(records))
+	}
+	got := records[0]
+	if got.Reason != "auto" {
+		t.Fatalf("reason = %q, want auto", got.Reason)
+	}
+	if got.Summary == "" || got.MessagesRemoved <= 0 || got.MessagesKept <= 0 || got.FirstKeptMessageID == "" {
+		t.Fatalf("record missing fields: %+v", got)
 	}
 }
 

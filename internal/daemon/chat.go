@@ -335,13 +335,28 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 		}
 		history, loadErr := s.loadHistory(ctx, sessionID)
 		if loadErr == nil && len(history) > contextCfg.PreserveMessages {
+			historyRecords, recordsErr := s.sessions.ListMessages(ctx, sessionID)
+			if recordsErr != nil {
+				log.Printf("load compaction message records: %v", recordsErr)
+			}
 			compressed, summary, compErr := Compress(ctx, history, contextCfg.PreserveMessages, prov)
 			if compErr == nil {
 				removed := len(history) - len(compressed)
+				firstKeptID := firstKeptMessageID(historyRecords, contextCfg.PreserveMessages)
 				// Persist compressed history by replacing messages in DB
 				if dbErr := s.replaceHistory(ctx, sessionID, compressed); dbErr != nil {
 					log.Printf("replace history after compression: %v", dbErr)
 				} else {
+					if _, recordErr := appendCompactionRecord(ctx, s.engine.DB, CompactionRecord{
+						SessionID:          sessionID,
+						Summary:            summary,
+						Reason:             "auto",
+						MessagesRemoved:    removed,
+						MessagesKept:       len(compressed),
+						FirstKeptMessageID: firstKeptID,
+					}); recordErr != nil {
+						log.Printf("record auto compaction: %v", recordErr)
+					}
 					s.tokens.Reset(sessionID)
 					_ = stream.Send(&pb.ChatEvent{
 						Event: &pb.ChatEvent_ContextCompressed{
@@ -451,6 +466,10 @@ func (s *Service) handleCompact(ctx context.Context, sessionID string, stream pb
 	if err != nil {
 		return sendError(stream, "load history: "+err.Error())
 	}
+	historyRecords, recordsErr := s.sessions.ListMessages(ctx, sessionID)
+	if recordsErr != nil {
+		log.Printf("load compact message records: %v", recordsErr)
+	}
 
 	cfg, _ := config.Load()
 	if cfg == nil {
@@ -492,6 +511,16 @@ func (s *Service) handleCompact(ctx context.Context, sessionID string, stream pb
 
 	if dbErr := s.replaceHistory(ctx, sessionID, compressed); dbErr != nil {
 		return sendError(stream, "persist compressed history: "+dbErr.Error())
+	}
+	if _, recordErr := appendCompactionRecord(ctx, s.engine.DB, CompactionRecord{
+		SessionID:          sessionID,
+		Summary:            summary,
+		Reason:             "manual",
+		MessagesRemoved:    removed,
+		MessagesKept:       len(compressed),
+		FirstKeptMessageID: firstKeptMessageID(historyRecords, preserveCount),
+	}); recordErr != nil {
+		log.Printf("record manual compaction: %v", recordErr)
 	}
 	s.tokens.Reset(sessionID)
 
