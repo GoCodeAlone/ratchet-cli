@@ -319,14 +319,173 @@ func TestExecuteACPClientExecNoWaitQueuesPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get queued session: %v", err)
 	}
-	if rec.Status != acpclient.SessionStatusQueued || rec.PendingPrompt == nil {
+	if rec.Status != acpclient.SessionStatusQueued || len(rec.PromptQueue) != 1 {
 		t.Fatalf("queued record = %#v", rec)
 	}
-	if rec.PendingPrompt.Prompt != "queued prompt" || rec.PendingPrompt.Status != acpclient.PendingPromptStatusPending {
-		t.Fatalf("PendingPrompt = %#v", rec.PendingPrompt)
+	if rec.PendingPrompt != nil {
+		t.Fatalf("PendingPrompt = %#v, want nil for new no-wait writes", rec.PendingPrompt)
 	}
-	if got := out.String(); !strings.Contains(got, "queued pending prompt for s-queued") {
+	if rec.PromptQueue[0].Prompt != "queued prompt" || rec.PromptQueue[0].Status != acpclient.QueuePromptStatusPending {
+		t.Fatalf("PromptQueue = %#v", rec.PromptQueue)
+	}
+	if got := out.String(); !strings.Contains(got, "queued prompt") || !strings.Contains(got, "queue depth: 1") {
 		t.Fatalf("output = %q", got)
+	}
+}
+
+func TestExecuteACPClientExecNoWaitAppendsPromptQueue(t *testing.T) {
+	store := acpclient.NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	runner := &fakeACPClientExecRunner{}
+	for _, prompt := range []string{"first queued", "second queued"} {
+		var out bytes.Buffer
+		if err := executeACPClientExecWithStore(t.Context(), acpClientExecOptions{
+			SessionID: "s-fifo",
+			Command:   "/bin/fixture-agent",
+			Prompt:    prompt,
+			Cwd:       ".",
+			Timeout:   time.Second,
+			NoWait:    true,
+		}, runner, store, &out); err != nil {
+			t.Fatalf("executeACPClientExecWithStore %q: %v", prompt, err)
+		}
+	}
+	if runner.called {
+		t.Fatal("runner called for --no-wait")
+	}
+	rec, err := store.Get("s-fifo")
+	if err != nil {
+		t.Fatalf("Get queued session: %v", err)
+	}
+	if rec.PendingPrompt != nil {
+		t.Fatalf("PendingPrompt = %#v, want new writes to use PromptQueue only", rec.PendingPrompt)
+	}
+	if len(rec.PromptQueue) != 2 {
+		t.Fatalf("PromptQueue len = %d, want 2: %#v", len(rec.PromptQueue), rec.PromptQueue)
+	}
+	if rec.PromptQueue[0].Prompt != "first queued" || rec.PromptQueue[1].Prompt != "second queued" {
+		t.Fatalf("PromptQueue = %#v, want FIFO prompts", rec.PromptQueue)
+	}
+}
+
+func TestExecuteACPClientQueueOutputsHumanAndJSON(t *testing.T) {
+	store := acpclient.NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 1, 23, 0, 0, 0, time.UTC)
+	if err := store.Upsert(acpclient.SessionRecord{
+		ID:        "s-queue",
+		Status:    acpclient.SessionStatusQueued,
+		CreatedAt: now,
+		UpdatedAt: now,
+		PromptQueue: []acpclient.QueuedPrompt{
+			{ID: "q-1", Prompt: "first", Status: acpclient.QueuePromptStatusPending, CreatedAt: now},
+			{ID: "q-2", Prompt: "second", Status: acpclient.QueuePromptStatusRunning, CreatedAt: now.Add(time.Second)},
+		},
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	var human bytes.Buffer
+	if err := executeACPClientQueue(store, "s-queue", false, &human); err != nil {
+		t.Fatalf("executeACPClientQueue human: %v", err)
+	}
+	if got := human.String(); !strings.Contains(got, "q-1") || !strings.Contains(got, "pending") || !strings.Contains(got, "q-2") || !strings.Contains(got, "running") {
+		t.Fatalf("queue human output = %q", got)
+	}
+
+	var jsonOut bytes.Buffer
+	if err := executeACPClientQueue(store, "s-queue", true, &jsonOut); err != nil {
+		t.Fatalf("executeACPClientQueue json: %v", err)
+	}
+	var payload struct {
+		SessionID string `json:"session_id"`
+		Items     []struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(jsonOut.Bytes(), &payload); err != nil {
+		t.Fatalf("queue json: %v\n%s", err, jsonOut.String())
+	}
+	if payload.SessionID != "s-queue" || len(payload.Items) != 2 || payload.Items[0].ID != "q-1" || payload.Items[1].Status != "running" {
+		t.Fatalf("queue payload = %#v", payload)
+	}
+}
+
+func TestACPClientStatusAndCancelPromptQueue(t *testing.T) {
+	store := acpclient.NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 1, 23, 5, 0, 0, time.UTC)
+	if err := store.Upsert(acpclient.SessionRecord{
+		ID:        "s-queue-status",
+		Status:    acpclient.SessionStatusQueued,
+		CreatedAt: now,
+		UpdatedAt: now,
+		PromptQueue: []acpclient.QueuedPrompt{
+			{ID: "q-1", Prompt: "first", Status: acpclient.QueuePromptStatusPending, CreatedAt: now},
+			{ID: "q-2", Prompt: "second", Status: acpclient.QueuePromptStatusPending, CreatedAt: now.Add(time.Second)},
+			{ID: "q-3", Prompt: "done", Status: acpclient.QueuePromptStatusCompleted, CreatedAt: now.Add(2 * time.Second)},
+		},
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	var statusOut bytes.Buffer
+	if err := executeACPClientStatus(store, "s-queue-status", false, &statusOut); err != nil {
+		t.Fatalf("executeACPClientStatus: %v", err)
+	}
+	if got := statusOut.String(); !strings.Contains(got, "queue: 2 pending, 0 running, 1 completed") {
+		t.Fatalf("status output = %q", got)
+	}
+
+	var cancelOut bytes.Buffer
+	if err := executeACPClientCancel(store, "s-queue-status", false, &cancelOut); err != nil {
+		t.Fatalf("executeACPClientCancel: %v", err)
+	}
+	if got := cancelOut.String(); !strings.Contains(got, "canceled 2 pending prompts") {
+		t.Fatalf("cancel output = %q", got)
+	}
+	rec, err := store.Get("s-queue-status")
+	if err != nil {
+		t.Fatalf("Get canceled queue: %v", err)
+	}
+	if rec.PromptQueue[0].Status != acpclient.QueuePromptStatusCanceled || rec.PromptQueue[1].Status != acpclient.QueuePromptStatusCanceled {
+		t.Fatalf("PromptQueue after cancel = %#v", rec.PromptQueue)
+	}
+}
+
+func TestExecuteACPClientDrainUsesInjectedRunner(t *testing.T) {
+	store := acpclient.NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 1, 23, 10, 0, 0, time.UTC)
+	if err := store.Upsert(acpclient.SessionRecord{
+		ID:        "s-drain",
+		Status:    acpclient.SessionStatusQueued,
+		CreatedAt: now,
+		UpdatedAt: now,
+		PromptQueue: []acpclient.QueuedPrompt{{
+			ID: "q-1", Prompt: "drain me", Status: acpclient.QueuePromptStatusPending, CreatedAt: now,
+		}},
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	runner := &fakeDrainPromptRunner{sessionID: "acp-drain"}
+	var out bytes.Buffer
+	if err := executeACPClientDrain(t.Context(), store, "s-drain", acpClientDrainOptions{
+		Command: "/bin/fixture-agent",
+		Cwd:     ".",
+		Timeout: time.Second,
+		Max:     1,
+	}, func(context.Context, acpclient.AgentSpec, acpclient.RunOptions, string) (acpclient.DrainPromptRunner, func() error, error) {
+		return runner, func() error { return nil }, nil
+	}, &out); err != nil {
+		t.Fatalf("executeACPClientDrain: %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "drained 1 prompt") || !strings.Contains(got, "remaining: 0") {
+		t.Fatalf("drain output = %q", got)
+	}
+	rec, err := store.Get("s-drain")
+	if err != nil {
+		t.Fatalf("Get drained: %v", err)
+	}
+	if rec.ACPSessionID != "acp-drain" || rec.PromptQueue[0].Status != acpclient.QueuePromptStatusCompleted {
+		t.Fatalf("record after drain = %#v", rec)
 	}
 }
 
@@ -552,4 +711,22 @@ func (r *fakeACPClientExecRunner) RunPrompt(_ context.Context, spec acpclient.Ag
 	r.opts = opts
 	r.prompt = prompt
 	return r.result, r.err
+}
+
+type fakeDrainPromptRunner struct {
+	sessionID acpsdk.SessionId
+	prompts   []string
+}
+
+func (r *fakeDrainPromptRunner) SessionID() acpsdk.SessionId {
+	return r.sessionID
+}
+
+func (r *fakeDrainPromptRunner) Prompt(_ context.Context, prompt string) (acpclient.Result, error) {
+	r.prompts = append(r.prompts, prompt)
+	return acpclient.Result{
+		SessionID:  r.sessionID,
+		StopReason: acpsdk.StopReasonEndTurn,
+		Text:       "drained: " + prompt,
+	}, nil
 }

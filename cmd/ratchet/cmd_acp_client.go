@@ -97,9 +97,9 @@ func handleACPClient(args []string) error {
 	case acpClientCommandCancel:
 		return executeACPClientCancel(store, cmd.sessionID, cmd.json, os.Stdout)
 	case acpClientCommandQueue:
-		return errors.New("acp client queue command is not wired yet")
+		return executeACPClientQueue(store, cmd.sessionID, cmd.json, os.Stdout)
 	case acpClientCommandDrain:
-		return errors.New("acp client drain command is not wired yet")
+		return executeACPClientDrain(context.Background(), store, cmd.sessionID, cmd.drain, nil, os.Stdout)
 	default:
 		return fmt.Errorf("unknown acp client command: %s", cmd.kind)
 	}
@@ -158,6 +158,8 @@ func executeACPClientExecWithStore(ctx context.Context, opts acpClientExecOption
 		if sessionID == "" {
 			sessionID = newLocalACPClientID("local")
 		}
+		queueID := ""
+		queueDepth := 0
 		if store != nil {
 			now := time.Now().UTC()
 			rec := acpclient.SessionRecord{
@@ -169,28 +171,30 @@ func executeACPClientExecWithStore(ctx context.Context, opts acpClientExecOption
 				CreatedAt:          now,
 				UpdatedAt:          now,
 				Summary:            summarizeACPClientText(prompt),
-				PendingPrompt: &acpclient.PendingPrompt{
-					ID:        newLocalACPClientID("pending"),
-					Prompt:    prompt,
-					Status:    acpclient.PendingPromptStatusPending,
-					CreatedAt: now,
-				},
 			}
-			if existing, err := store.Get(sessionID); err == nil {
-				rec.CreatedAt = existing.CreatedAt
-				rec.Turns = existing.Turns
-			}
-			if err := store.Upsert(rec); err != nil {
+			queued, err := store.AppendQueuedPrompt(rec, acpclient.QueuedPrompt{
+				ID:        newLocalACPClientID("queue"),
+				Prompt:    prompt,
+				Status:    acpclient.QueuePromptStatusPending,
+				CreatedAt: now,
+			})
+			if err != nil {
 				return err
+			}
+			queueDepth = len(queued.PromptQueue)
+			if queueDepth > 0 {
+				queueID = queued.PromptQueue[queueDepth-1].ID
 			}
 		}
 		if opts.JSON {
 			return json.NewEncoder(w).Encode(struct {
-				SessionID string `json:"session_id"`
-				Status    string `json:"status"`
-			}{SessionID: sessionID, Status: acpclient.SessionStatusQueued})
+				SessionID  string `json:"session_id"`
+				QueueID    string `json:"queue_id,omitempty"`
+				QueueDepth int    `json:"queue_depth"`
+				Status     string `json:"status"`
+			}{SessionID: sessionID, QueueID: queueID, QueueDepth: queueDepth, Status: acpclient.SessionStatusQueued})
 		}
-		fmt.Fprintf(w, "queued pending prompt for %s\n", sessionID)
+		fmt.Fprintf(w, "queued prompt %s for %s (queue depth: %d)\n", queueID, sessionID, queueDepth)
 		return nil
 	}
 	var activeSessionID string
@@ -592,6 +596,64 @@ func executeACPClientSessionShow(store *acpclient.Store, id string, jsonOut bool
 	return nil
 }
 
+func executeACPClientQueue(store *acpclient.Store, id string, jsonOut bool, w io.Writer) error {
+	rec, err := store.Get(id)
+	if err != nil {
+		return err
+	}
+	items := rec.PromptQueue
+	if jsonOut {
+		return json.NewEncoder(w).Encode(struct {
+			SessionID string                   `json:"session_id"`
+			Items     []acpclient.QueuedPrompt `json:"items"`
+		}{SessionID: id, Items: items})
+	}
+	if len(items) == 0 {
+		fmt.Fprintf(w, "No queued prompts for %s.\n", id)
+		return nil
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tSTATUS\tCREATED\tPROMPT")
+	for _, item := range items {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", item.ID, item.Status, item.CreatedAt.Format(time.RFC3339), summarizeACPClientText(item.Prompt))
+	}
+	return tw.Flush()
+}
+
+func executeACPClientDrain(ctx context.Context, store *acpclient.Store, id string, opts acpClientDrainOptions, startRunner func(context.Context, acpclient.AgentSpec, acpclient.RunOptions, string) (acpclient.DrainPromptRunner, func() error, error), w io.Writer) error {
+	cwd := opts.Cwd
+	if cwd == "" {
+		cwd = "."
+	}
+	if abs, err := filepath.Abs(cwd); err == nil {
+		cwd = abs
+	}
+	runOpts := acpclient.RunOptions{
+		Agent:   opts.Agent,
+		Command: opts.Command,
+		Args:    opts.Args,
+		Cwd:     cwd,
+		Timeout: opts.Timeout,
+	}
+	spec, err := acpclient.DefaultRegistry().Resolve(runOpts)
+	if err != nil {
+		return err
+	}
+	result, err := acpclient.DrainQueue(ctx, store, spec, runOpts, id, acpclient.DrainOptions{
+		Max:         opts.Max,
+		StartRunner: startRunner,
+	})
+	if err != nil {
+		return err
+	}
+	noun := "prompts"
+	if result.Completed == 1 {
+		noun = "prompt"
+	}
+	fmt.Fprintf(w, "drained %d %s for %s (failed: %d, canceled: %d, remaining: %d)\n", result.Completed, noun, id, result.Failed, result.Canceled, result.Remaining)
+	return nil
+}
+
 func executeACPClientStatus(store *acpclient.Store, id string, jsonOut bool, w io.Writer) error {
 	rec, err := store.Get(id)
 	if err != nil {
@@ -611,6 +673,10 @@ func executeACPClientStatus(store *acpclient.Store, id string, jsonOut bool, w i
 	fmt.Fprintf(w, "%s: %s\n", rec.ID, rec.Status)
 	if rec.PendingPrompt != nil {
 		fmt.Fprintf(w, "pending prompt: %s\n", rec.PendingPrompt.Status)
+	}
+	pending, running, completed, canceled, failed := countACPClientQueue(rec.PromptQueue)
+	if len(rec.PromptQueue) > 0 {
+		fmt.Fprintf(w, "queue: %d pending, %d running, %d completed, %d canceled, %d failed\n", pending, running, completed, canceled, failed)
 	}
 	if ownerErr == nil {
 		fmt.Fprintf(w, "owner pid: %d started: %s\n", owner.PID, owner.StartedAt.Format(time.RFC3339))
@@ -642,6 +708,22 @@ func executeACPClientCancel(store *acpclient.Store, id string, jsonOut bool, w i
 	if err != nil {
 		return err
 	}
+	pending, _, _, _, _ := countACPClientQueue(rec.PromptQueue)
+	if pending > 0 {
+		count, err := store.CancelPendingQueue(id, time.Now().UTC())
+		if err != nil {
+			return err
+		}
+		if jsonOut {
+			return json.NewEncoder(w).Encode(struct {
+				SessionID string `json:"session_id"`
+				Status    string `json:"status"`
+				Canceled  int    `json:"canceled"`
+			}{SessionID: id, Status: acpclient.SessionStatusCanceled, Canceled: count})
+		}
+		fmt.Fprintf(w, "canceled %d pending prompts for %s\n", count, id)
+		return nil
+	}
 	if rec.PendingPrompt == nil || rec.PendingPrompt.Status != acpclient.PendingPromptStatusPending {
 		return fmt.Errorf("session %s has no active owner or pending prompt", id)
 	}
@@ -656,6 +738,24 @@ func executeACPClientCancel(store *acpclient.Store, id string, jsonOut bool, w i
 	}
 	fmt.Fprintf(w, "canceled pending prompt for %s\n", id)
 	return nil
+}
+
+func countACPClientQueue(items []acpclient.QueuedPrompt) (pending, running, completed, canceled, failed int) {
+	for _, item := range items {
+		switch item.Status {
+		case acpclient.QueuePromptStatusPending:
+			pending++
+		case acpclient.QueuePromptStatusRunning:
+			running++
+		case acpclient.QueuePromptStatusCompleted:
+			completed++
+		case acpclient.QueuePromptStatusCanceled:
+			canceled++
+		case acpclient.QueuePromptStatusFailed:
+			failed++
+		}
+	}
+	return pending, running, completed, canceled, failed
 }
 
 func summarizeACPClientText(text string) string {
