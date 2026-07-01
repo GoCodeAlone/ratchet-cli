@@ -63,6 +63,32 @@ func TestSessionLineageMigrationAddsColumns(t *testing.T) {
 	}
 }
 
+func TestEnsureColumnQuotesSQLiteIdentifiers(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:?_journal_mode=WAL")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	if _, err := db.Exec(`CREATE TABLE "needs quote" (id TEXT PRIMARY KEY)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureColumn(db, "needs quote", "new column", "TEXT"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO "needs quote" (id, "new column") VALUES ('id-1', 'value-1')`); err != nil {
+		t.Fatal(err)
+	}
+
+	var got string
+	if err := db.QueryRow(`SELECT "new column" FROM "needs quote" WHERE id = 'id-1'`).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != "value-1" {
+		t.Fatalf(`"new column" = %q, want value-1`, got)
+	}
+}
+
 func TestSessionManagerLineageCreateCloneForkTree(t *testing.T) {
 	db := setupTestDB(t)
 	sm := NewSessionManager(db)

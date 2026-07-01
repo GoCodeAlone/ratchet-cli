@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"path/filepath"
 
@@ -254,7 +255,7 @@ func initDB(db *sql.DB) error {
 }
 
 func ensureColumn(db *sql.DB, table, name, definition string) error {
-	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", sqliteQuoteIdentifier(table)))
 	if err != nil {
 		return err
 	}
@@ -274,6 +275,15 @@ func ensureColumn(db *sql.DB, table, name, definition string) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, name, definition))
+	_, err = db.Exec(fmt.Sprintf(
+		"ALTER TABLE %s ADD COLUMN %s %s",
+		sqliteQuoteIdentifier(table),
+		sqliteQuoteIdentifier(name),
+		definition,
+	))
 	return err
+}
+
+func sqliteQuoteIdentifier(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
