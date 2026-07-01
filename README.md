@@ -28,6 +28,11 @@ ratchet                     # Launch interactive TUI
 ratchet "fix the bug"       # Implicit chat mode
 ratchet chat "prompt"       # Explicit chat mode
 ratchet sessions            # Manage sessions
+ratchet sessions history ID # Show persisted message history
+ratchet sessions clone ID   # Clone a session with full visible history
+ratchet sessions fork ID --at MESSAGE_ID
+                            # Fork a session through a specific message
+ratchet sessions tree ID    # Show root/parent/fork lineage
 ratchet daemon status       # Check daemon
 ratchet provider list       # List providers
 ratchet team start "task"   # Start agent team
