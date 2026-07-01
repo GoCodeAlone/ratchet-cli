@@ -219,6 +219,37 @@ func (s *Store) CancelPendingQueue(id string, when time.Time) (int, error) {
 	return count, s.Upsert(rec)
 }
 
+func (s *Store) RecoverStaleQueue(id string, when time.Time) (int, error) {
+	if _, err := s.Owner(id); err == nil {
+		return 0, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return 0, err
+	}
+	rec, err := s.Get(id)
+	if err != nil {
+		return 0, err
+	}
+	if when.IsZero() {
+		when = time.Now().UTC()
+	}
+	when = when.UTC()
+	count := 0
+	for i := range rec.PromptQueue {
+		if rec.PromptQueue[i].Status != QueuePromptStatusRunning {
+			continue
+		}
+		rec.PromptQueue[i].Status = QueuePromptStatusPending
+		rec.PromptQueue[i].StartedAt = nil
+		count++
+	}
+	if count == 0 {
+		return 0, nil
+	}
+	rec.Status = SessionStatusQueued
+	rec.UpdatedAt = when
+	return count, s.Upsert(rec)
+}
+
 func (s *Store) MarkPendingCanceled(id string, when time.Time) error {
 	rec, err := s.Get(id)
 	if err != nil {

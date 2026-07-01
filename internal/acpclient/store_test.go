@@ -385,3 +385,120 @@ func TestSessionStoreCancelPendingQueueOnlyCancelsPendingItems(t *testing.T) {
 		t.Fatalf("completed item status = %q", got.PromptQueue[3].Status)
 	}
 }
+
+func TestSessionStoreRecoverStaleQueueRequeuesRunningItemsWithoutOwner(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 1, 21, 20, 0, 0, time.UTC)
+	started := now.Add(time.Minute)
+	if err := store.Upsert(SessionRecord{
+		ID:        "recover-missing-owner",
+		Status:    SessionStatusRunning,
+		CreatedAt: now,
+		UpdatedAt: started,
+		PromptQueue: []QueuedPrompt{{
+			ID:        "q-running",
+			Prompt:    "active",
+			Status:    QueuePromptStatusRunning,
+			CreatedAt: now,
+			StartedAt: &started,
+		}},
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	count, err := store.RecoverStaleQueue("recover-missing-owner", now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("RecoverStaleQueue: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("recovered count = %d, want 1", count)
+	}
+	got, err := store.Get("recover-missing-owner")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Status != SessionStatusQueued {
+		t.Fatalf("session status = %q, want queued", got.Status)
+	}
+	if got.PromptQueue[0].Status != QueuePromptStatusPending || got.PromptQueue[0].StartedAt != nil {
+		t.Fatalf("recovered prompt = %#v", got.PromptQueue[0])
+	}
+}
+
+func TestSessionStoreRecoverStaleQueueKeepsRunningItemsWithReadableOwner(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 1, 21, 25, 0, 0, time.UTC)
+	started := now.Add(time.Minute)
+	if err := store.Upsert(SessionRecord{
+		ID:        "recover-readable-owner",
+		Status:    SessionStatusRunning,
+		CreatedAt: now,
+		UpdatedAt: started,
+		PromptQueue: []QueuedPrompt{{
+			ID:        "q-running",
+			Prompt:    "active",
+			Status:    QueuePromptStatusRunning,
+			CreatedAt: now,
+			StartedAt: &started,
+		}},
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	if err := store.WriteOwner(OwnerLock{SessionID: "recover-readable-owner", PID: 123, StartedAt: started}); err != nil {
+		t.Fatalf("WriteOwner: %v", err)
+	}
+
+	count, err := store.RecoverStaleQueue("recover-readable-owner", now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("RecoverStaleQueue: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("recovered count = %d, want 0", count)
+	}
+	got, err := store.Get("recover-readable-owner")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.PromptQueue[0].Status != QueuePromptStatusRunning || got.PromptQueue[0].StartedAt == nil {
+		t.Fatalf("running prompt changed = %#v", got.PromptQueue[0])
+	}
+}
+
+func TestSessionStoreRecoverStaleQueueReportsCorruptOwner(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 1, 21, 30, 0, 0, time.UTC)
+	started := now.Add(time.Minute)
+	if err := store.Upsert(SessionRecord{
+		ID:        "recover-corrupt-owner",
+		Status:    SessionStatusRunning,
+		CreatedAt: now,
+		UpdatedAt: started,
+		PromptQueue: []QueuedPrompt{{
+			ID:        "q-running",
+			Prompt:    "active",
+			Status:    QueuePromptStatusRunning,
+			CreatedAt: now,
+			StartedAt: &started,
+		}},
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	ownerPath := store.ownerPath("recover-corrupt-owner")
+	if err := os.MkdirAll(filepath.Dir(ownerPath), 0o755); err != nil {
+		t.Fatalf("mkdir owner: %v", err)
+	}
+	if err := os.WriteFile(ownerPath, []byte("{"), 0o600); err != nil {
+		t.Fatalf("write owner: %v", err)
+	}
+
+	if _, err := store.RecoverStaleQueue("recover-corrupt-owner", now.Add(2*time.Minute)); err == nil {
+		t.Fatal("RecoverStaleQueue with corrupt owner succeeded, want error")
+	}
+	got, err := store.Get("recover-corrupt-owner")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.PromptQueue[0].Status != QueuePromptStatusRunning {
+		t.Fatalf("corrupt-owner recovery changed prompt = %#v", got.PromptQueue[0])
+	}
+}
