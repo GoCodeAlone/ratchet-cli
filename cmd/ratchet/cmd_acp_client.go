@@ -18,6 +18,7 @@ import (
 type acpClientCommandKind string
 
 const (
+	acpClientCommandHandled      acpClientCommandKind = "handled"
 	acpClientCommandHelp         acpClientCommandKind = "help"
 	acpClientCommandExec         acpClientCommandKind = "exec"
 	acpClientCommandSessionsList acpClientCommandKind = "sessions-list"
@@ -55,11 +56,13 @@ func (f *repeatedStringFlag) Set(value string) error {
 }
 
 func handleACPClient(args []string) error {
-	cmd, err := parseACPClientCommand(args)
+	cmd, err := parseACPClientCommandWithOutput(args, os.Stdout)
 	if err != nil {
 		return err
 	}
 	switch cmd.kind {
+	case acpClientCommandHandled:
+		return nil
 	case acpClientCommandHelp:
 		printACPClientUsage(os.Stdout)
 		return nil
@@ -161,12 +164,19 @@ func writeACPClientExecJSON(w io.Writer, spec acpclient.AgentSpec, result acpcli
 }
 
 func parseACPClientCommand(args []string) (acpClientCommand, error) {
-	if len(args) == 0 || isHelpArg(args[0]) {
+	return parseACPClientCommandWithOutput(args, io.Discard)
+}
+
+func parseACPClientCommandWithOutput(args []string, output io.Writer) (acpClientCommand, error) {
+	if len(args) == 0 {
 		return acpClientCommand{kind: acpClientCommandHelp}, nil
 	}
 	switch args[0] {
 	case "exec":
-		execOpts, err := parseACPClientExec(args[1:])
+		execOpts, err := parseACPClientExec(args[1:], output)
+		if errors.Is(err, flag.ErrHelp) {
+			return acpClientCommand{kind: acpClientCommandHandled}, nil
+		}
 		if err != nil {
 			return acpClientCommand{}, err
 		}
@@ -192,13 +202,32 @@ func parseACPClientCommand(args []string) (acpClientCommand, error) {
 	}
 }
 
-func parseACPClientExec(args []string) (acpClientExecOptions, error) {
+func parseACPClientExec(args []string, output io.Writer) (acpClientExecOptions, error) {
 	var opts acpClientExecOptions
 	opts.Cwd = "."
 	opts.Timeout = 30 * time.Second
 
 	fs := flag.NewFlagSet("ratchet acp client exec", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs.SetOutput(output)
+	fs.Usage = func() {
+		fmt.Fprintln(output, "Usage: ratchet acp client exec [flags] <prompt>")
+		fmt.Fprintln(output)
+		fmt.Fprintln(output, "Flags:")
+		fmt.Fprintln(output, "  --agent string")
+		fmt.Fprintln(output, "    agent template")
+		fmt.Fprintln(output, "  --command string")
+		fmt.Fprintln(output, "    agent command")
+		fmt.Fprintln(output, "  --arg value")
+		fmt.Fprintln(output, "    agent command argument; repeat for multiple args")
+		fmt.Fprintln(output, "  --cwd string")
+		fmt.Fprintf(output, "    working directory (default %q)\n", opts.Cwd)
+		fmt.Fprintln(output, "  --timeout duration")
+		fmt.Fprintf(output, "    prompt timeout (default %s)\n", opts.Timeout)
+		fmt.Fprintln(output, "  --json")
+		fmt.Fprintln(output, "    emit JSON")
+		fmt.Fprintln(output, "  --file string")
+		fmt.Fprintln(output, "    prompt file")
+	}
 	fs.StringVar(&opts.Agent, "agent", "", "agent template")
 	fs.StringVar(&opts.Command, "command", "", "agent command")
 	fs.Var((*repeatedStringFlag)(&opts.Args), "arg", "agent command argument")

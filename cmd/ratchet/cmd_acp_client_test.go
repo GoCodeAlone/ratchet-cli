@@ -75,6 +75,23 @@ func TestParseACPClientExecRejectsPromptAndFile(t *testing.T) {
 	}
 }
 
+func TestParseACPClientExecHelpPrintsFlagsAndSucceeds(t *testing.T) {
+	var out bytes.Buffer
+	cmd, err := parseACPClientCommandWithOutput([]string{"exec", "--help"}, &out)
+	if err != nil {
+		t.Fatalf("parseACPClientCommandWithOutput: %v", err)
+	}
+	if cmd.kind != acpClientCommandHandled {
+		t.Fatalf("kind = %q, want handled", cmd.kind)
+	}
+	help := out.String()
+	for _, want := range []string{"Usage: ratchet acp client exec", "--command", "--agent", "--json"} {
+		if !strings.Contains(help, want) {
+			t.Fatalf("help output missing %q:\n%s", want, help)
+		}
+	}
+}
+
 func TestParseACPClientSessionCommands(t *testing.T) {
 	tests := []struct {
 		name string
