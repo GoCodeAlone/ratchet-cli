@@ -12,7 +12,11 @@ import (
 	"time"
 )
 
-var ErrSessionNotFound = errors.New("acp client session not found")
+var (
+	ErrSessionNotFound     = errors.New("acp client session not found")
+	ErrQueuePromptNotFound = errors.New("acp client queue prompt not found")
+	ErrInvalidOwnerLock    = errors.New("acp client owner lock is invalid")
+)
 
 type Store struct {
 	path string
@@ -261,6 +265,16 @@ func (s *Store) MarkPendingCanceled(id string, when time.Time) error {
 	when = when.UTC()
 	rec.PendingPrompt.Status = PendingPromptStatusCanceled
 	rec.PendingPrompt.CanceledAt = &when
+	pendingID := rec.PendingPrompt.ID
+	if pendingID == "" {
+		pendingID = storeKey(rec.PendingPrompt.Prompt)
+	}
+	for i := range rec.PromptQueue {
+		if rec.PromptQueue[i].ID == pendingID {
+			rec.PromptQueue[i].Status = QueuePromptStatusCanceled
+			rec.PromptQueue[i].CanceledAt = &when
+		}
+	}
 	rec.Status = SessionStatusCanceled
 	rec.UpdatedAt = when
 	return s.Upsert(rec)
@@ -283,6 +297,9 @@ func (s *Store) Owner(id string) (OwnerLock, error) {
 	}
 	if owner.SessionID == "" {
 		owner.SessionID = id
+	}
+	if owner.PID == 0 || owner.StartedAt.IsZero() {
+		return OwnerLock{}, fmt.Errorf("%w: %s", ErrInvalidOwnerLock, id)
 	}
 	return owner, nil
 }
@@ -441,7 +458,7 @@ func (s *Store) updateQueuedPrompt(id, queueID string, when time.Time, update fu
 			return s.Upsert(rec)
 		}
 	}
-	return fmt.Errorf("%w: queue prompt %s", ErrSessionNotFound, queueID)
+	return fmt.Errorf("%w: session %s queue prompt %s", ErrQueuePromptNotFound, id, queueID)
 }
 
 func mergeSessionMetadata(existing, update SessionRecord) SessionRecord {
@@ -470,10 +487,11 @@ func newQueueID(prompt string, when time.Time) string {
 
 func summarizeStoreText(value string) string {
 	value = strings.TrimSpace(value)
-	if len(value) <= 200 {
+	runes := []rune(value)
+	if len(runes) <= 200 {
 		return value
 	}
-	return value[:200]
+	return string(runes[:200])
 }
 
 func storeKey(id string) string {

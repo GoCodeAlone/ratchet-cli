@@ -2,10 +2,13 @@ package acpclient
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestDefaultStorePathUsesXDGStateHome(t *testing.T) {
@@ -166,6 +169,12 @@ func TestSessionStorePendingPromptAndOwnerLifecycle(t *testing.T) {
 	}
 	if canceled.Status != SessionStatusCanceled || canceled.PendingPrompt.Status != PendingPromptStatusCanceled {
 		t.Fatalf("canceled record = %#v", canceled)
+	}
+	if len(canceled.PromptQueue) != 1 || canceled.PromptQueue[0].Status != QueuePromptStatusCanceled {
+		t.Fatalf("migrated queued prompt after legacy cancel = %#v, want canceled", canceled.PromptQueue)
+	}
+	if next, ok, err := store.NextQueuedPrompt("sess-queued"); err != nil || ok {
+		t.Fatalf("NextQueuedPrompt after legacy cancel = %#v, %v, %v; want none", next, ok, err)
 	}
 
 	owner := OwnerLock{SessionID: "sess-active", PID: 12345, CommandFingerprint: "fp", StartedAt: now}
@@ -341,6 +350,26 @@ func TestSessionStoreQueueOperationsPreserveFIFOAndTurns(t *testing.T) {
 	}
 }
 
+func TestSessionStoreQueueOperationsReportMissingQueueItem(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 1, 21, 5, 0, 0, time.UTC)
+	if _, err := store.AppendQueuedPrompt(SessionRecord{ID: "missing-queue-item"}, QueuedPrompt{
+		ID:        "existing",
+		Prompt:    "hello",
+		CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("AppendQueuedPrompt: %v", err)
+	}
+
+	err := store.MarkQueueRunning("missing-queue-item", "absent", now.Add(time.Minute))
+	if !errors.Is(err, ErrQueuePromptNotFound) {
+		t.Fatalf("MarkQueueRunning error = %v, want ErrQueuePromptNotFound", err)
+	}
+	if errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("MarkQueueRunning error wraps ErrSessionNotFound for an existing session: %v", err)
+	}
+}
+
 func TestSessionStoreCancelPendingQueueOnlyCancelsPendingItems(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
 	now := time.Date(2026, 7, 1, 21, 10, 0, 0, time.UTC)
@@ -464,6 +493,45 @@ func TestSessionStoreRecoverStaleQueueKeepsRunningItemsWithReadableOwner(t *test
 	}
 }
 
+func TestSessionStoreRecoverStaleQueueReportsInvalidOwner(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 1, 21, 27, 0, 0, time.UTC)
+	started := now.Add(time.Minute)
+	if err := store.Upsert(SessionRecord{
+		ID:        "recover-invalid-owner",
+		Status:    SessionStatusRunning,
+		CreatedAt: now,
+		UpdatedAt: started,
+		PromptQueue: []QueuedPrompt{{
+			ID:        "q-running",
+			Prompt:    "active",
+			Status:    QueuePromptStatusRunning,
+			CreatedAt: now,
+			StartedAt: &started,
+		}},
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	ownerPath := store.ownerPath("recover-invalid-owner")
+	if err := os.MkdirAll(filepath.Dir(ownerPath), 0o755); err != nil {
+		t.Fatalf("mkdir owner: %v", err)
+	}
+	if err := os.WriteFile(ownerPath, []byte("{}"), 0o600); err != nil {
+		t.Fatalf("write owner: %v", err)
+	}
+
+	if _, err := store.RecoverStaleQueue("recover-invalid-owner", now.Add(2*time.Minute)); err == nil {
+		t.Fatal("RecoverStaleQueue with invalid owner succeeded, want error")
+	}
+	got, err := store.Get("recover-invalid-owner")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.PromptQueue[0].Status != QueuePromptStatusRunning {
+		t.Fatalf("invalid-owner recovery changed prompt = %#v", got.PromptQueue[0])
+	}
+}
+
 func TestSessionStoreRecoverStaleQueueReportsCorruptOwner(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
 	now := time.Date(2026, 7, 1, 21, 30, 0, 0, time.UTC)
@@ -500,5 +568,17 @@ func TestSessionStoreRecoverStaleQueueReportsCorruptOwner(t *testing.T) {
 	}
 	if got.PromptQueue[0].Status != QueuePromptStatusRunning {
 		t.Fatalf("corrupt-owner recovery changed prompt = %#v", got.PromptQueue[0])
+	}
+}
+
+func TestSummarizeStoreTextTruncatesAtRuneBoundary(t *testing.T) {
+	value := strings.Repeat("界", 201)
+
+	got := summarizeStoreText(value)
+	if !utf8.ValidString(got) {
+		t.Fatalf("summary is not valid UTF-8: %q", got)
+	}
+	if utf8.RuneCountInString(got) != 200 {
+		t.Fatalf("summary rune count = %d, want 200", utf8.RuneCountInString(got))
 	}
 }
