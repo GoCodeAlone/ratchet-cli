@@ -48,7 +48,7 @@ func TestSessionLineageMigrationAddsColumns(t *testing.T) {
 	}
 
 	columns := tableColumns(t, db, "sessions")
-	for _, name := range []string{"parent_id", "root_id", "forked_from_message_id", "fork_reason"} {
+	for _, name := range []string{"parent_id", "root_id", "forked_from_message_id", "fork_reason", "branch_summary"} {
 		if !slices.Contains(columns, name) {
 			t.Fatalf("expected sessions column %q after migration; got %v", name, columns)
 		}

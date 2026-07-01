@@ -16,6 +16,7 @@ type CompactionRecord struct {
 	MessagesRemoved    int
 	MessagesKept       int
 	FirstKeptMessageID string
+	ArchiveSessionID   string
 	CreatedAt          time.Time
 }
 
@@ -24,8 +25,8 @@ func appendCompactionRecord(ctx context.Context, db *sql.DB, record CompactionRe
 	record.CreatedAt = time.Now().UTC()
 	_, err := db.ExecContext(ctx,
 		`INSERT INTO session_compactions
-		 (id, session_id, summary, reason, messages_removed, messages_kept, first_kept_message_id, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		 (id, session_id, summary, reason, messages_removed, messages_kept, first_kept_message_id, archive_session_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		record.ID,
 		record.SessionID,
 		record.Summary,
@@ -33,6 +34,7 @@ func appendCompactionRecord(ctx context.Context, db *sql.DB, record CompactionRe
 		record.MessagesRemoved,
 		record.MessagesKept,
 		record.FirstKeptMessageID,
+		record.ArchiveSessionID,
 		record.CreatedAt,
 	)
 	if err != nil {
@@ -43,7 +45,7 @@ func appendCompactionRecord(ctx context.Context, db *sql.DB, record CompactionRe
 
 func listCompactionRecords(ctx context.Context, db *sql.DB, sessionID string) ([]CompactionRecord, error) {
 	rows, err := db.QueryContext(ctx,
-		`SELECT id, session_id, summary, reason, messages_removed, messages_kept, COALESCE(first_kept_message_id, ''), created_at
+		`SELECT id, session_id, summary, reason, messages_removed, messages_kept, COALESCE(first_kept_message_id, ''), COALESCE(archive_session_id, ''), created_at
 		 FROM session_compactions
 		 WHERE session_id = ?
 		 ORDER BY created_at DESC, id DESC`,
@@ -65,6 +67,7 @@ func listCompactionRecords(ctx context.Context, db *sql.DB, sessionID string) ([
 			&record.MessagesRemoved,
 			&record.MessagesKept,
 			&record.FirstKeptMessageID,
+			&record.ArchiveSessionID,
 			&record.CreatedAt,
 		); err != nil {
 			return nil, err

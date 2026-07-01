@@ -10,7 +10,7 @@ func TestCompactionRecordSchemaAppendList(t *testing.T) {
 	}
 
 	columns := tableColumns(t, db, "session_compactions")
-	for _, name := range []string{"id", "session_id", "summary", "reason", "messages_removed", "messages_kept", "first_kept_message_id", "created_at"} {
+	for _, name := range []string{"id", "session_id", "summary", "reason", "messages_removed", "messages_kept", "first_kept_message_id", "archive_session_id", "created_at"} {
 		if !containsString(columns, name) {
 			t.Fatalf("session_compactions missing column %q; got %v", name, columns)
 		}
@@ -27,6 +27,7 @@ func TestCompactionRecordSchemaAppendList(t *testing.T) {
 		MessagesRemoved:    8,
 		MessagesKept:       3,
 		FirstKeptMessageID: "msg-9",
+		ArchiveSessionID:   "archive-1",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -43,7 +44,7 @@ func TestCompactionRecordSchemaAppendList(t *testing.T) {
 		t.Fatalf("record count = %d, want 1", len(records))
 	}
 	got := records[0]
-	if got.Summary != "short summary" || got.Reason != "manual" || got.MessagesRemoved != 8 || got.MessagesKept != 3 || got.FirstKeptMessageID != "msg-9" {
+	if got.Summary != "short summary" || got.Reason != "manual" || got.MessagesRemoved != 8 || got.MessagesKept != 3 || got.FirstKeptMessageID != "msg-9" || got.ArchiveSessionID != "archive-1" {
 		t.Fatalf("record = %+v", got)
 	}
 }
