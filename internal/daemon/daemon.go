@@ -53,7 +53,7 @@ func Start(ctx context.Context, debug bool) error {
 	svc.engine.Debug = debug
 	pb.RegisterRatchetDaemonServer(srv, svc)
 
-	// Graceful shutdown on SIGINT/SIGTERM.
+	// Graceful shutdown on the platform's configured daemon shutdown signals.
 	ctx, stop := signal.NotifyContext(ctx, shutdownSignals()...)
 	defer stop()
 
@@ -125,7 +125,7 @@ func StartBackground(debug bool) error {
 	return fmt.Errorf("daemon did not start within 5s")
 }
 
-// Stop sends SIGTERM to the running daemon.
+// Stop sends the platform's configured termination signal to the running daemon.
 func Stop() error {
 	pid, err := ReadPID()
 	if err != nil {
@@ -147,8 +147,9 @@ func Status() (string, error) {
 	return fmt.Sprintf("daemon running (pid %d, socket %s)", pid, SocketPath()), nil
 }
 
-// TriggerReload sends SIGUSR1 to the running daemon, which causes it to
-// checkpoint and exit gracefully. The caller is responsible for restarting.
+// TriggerReload sends the platform's configured reload signal to the running
+// daemon, causing it to checkpoint and exit gracefully. The caller is
+// responsible for restarting. Platforms without reload signals return an error.
 func TriggerReload() error {
 	if !reloadSignalsSupported() {
 		return fmt.Errorf("daemon reload signal is not supported on this platform")

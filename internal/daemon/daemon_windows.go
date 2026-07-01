@@ -14,7 +14,7 @@ func shutdownSignals() []os.Signal {
 }
 
 func terminateSignal() os.Signal {
-	return os.Kill
+	return os.Interrupt
 }
 
 func reloadSignalsSupported() bool {
@@ -22,5 +22,5 @@ func reloadSignalsSupported() bool {
 }
 
 func backgroundSysProcAttr() *syscall.SysProcAttr {
-	return &syscall.SysProcAttr{}
+	return &syscall.SysProcAttr{CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP}
 }
