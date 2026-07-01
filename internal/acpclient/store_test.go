@@ -196,3 +196,75 @@ func TestSessionStorePendingPromptAndOwnerLifecycle(t *testing.T) {
 		t.Fatal("Owner after ClearOwner succeeded, want error")
 	}
 }
+
+func TestSessionStoreMigratesLegacyPendingPromptToQueue(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	created := time.Date(2026, 7, 1, 20, 45, 0, 0, time.UTC)
+	updated := created.Add(5 * time.Minute)
+	payload := storeFile{Sessions: []SessionRecord{{
+		ID:                 "legacy-queued",
+		Agent:              "custom",
+		CommandFingerprint: "fp",
+		Cwd:                "/tmp/project",
+		Status:             SessionStatusQueued,
+		CreatedAt:          created,
+		UpdatedAt:          updated,
+		Turns: []TurnSummary{{
+			Prompt:     "old prompt",
+			Response:   "old response",
+			StopReason: "end_turn",
+			CreatedAt:  created,
+		}},
+		PendingPrompt: &PendingPrompt{
+			ID:        "pending-legacy",
+			Prompt:    "queued prompt",
+			Status:    PendingPromptStatusPending,
+			CreatedAt: created.Add(time.Minute),
+		},
+	}}}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(store.Path()), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(store.Path(), b, 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	got, err := store.Get("legacy-queued")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.ACPSessionID != "" {
+		t.Fatalf("ACPSessionID = %q, want empty for legacy queued record", got.ACPSessionID)
+	}
+	if !got.CreatedAt.Equal(created) || !got.UpdatedAt.Equal(updated) {
+		t.Fatalf("timestamps = %s/%s, want %s/%s", got.CreatedAt, got.UpdatedAt, created, updated)
+	}
+	if len(got.Turns) != 1 || got.Turns[0].Prompt != "old prompt" {
+		t.Fatalf("Turns = %#v, want preserved legacy turns", got.Turns)
+	}
+	if len(got.PromptQueue) != 1 {
+		t.Fatalf("PromptQueue len = %d, want 1: %#v", len(got.PromptQueue), got.PromptQueue)
+	}
+	queued := got.PromptQueue[0]
+	if queued.ID != "pending-legacy" || queued.Prompt != "queued prompt" || queued.Status != QueuePromptStatusPending {
+		t.Fatalf("queued prompt = %#v", queued)
+	}
+	if !queued.CreatedAt.Equal(created.Add(time.Minute)) {
+		t.Fatalf("queued CreatedAt = %s", queued.CreatedAt)
+	}
+
+	if err := store.Upsert(got); err != nil {
+		t.Fatalf("Upsert migrated record: %v", err)
+	}
+	reloaded, err := store.Get("legacy-queued")
+	if err != nil {
+		t.Fatalf("Get reloaded: %v", err)
+	}
+	if len(reloaded.PromptQueue) != 1 {
+		t.Fatalf("PromptQueue after upsert len = %d, want idempotent migration", len(reloaded.PromptQueue))
+	}
+}

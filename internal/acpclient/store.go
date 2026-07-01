@@ -235,7 +235,45 @@ func normalizeRecords(records []SessionRecord) {
 		if records[i].Status == "" {
 			records[i].Status = SessionStatusCompleted
 		}
+		normalizePromptQueue(&records[i])
 	}
+}
+
+func normalizePromptQueue(rec *SessionRecord) {
+	if rec == nil {
+		return
+	}
+	for i := range rec.PromptQueue {
+		if rec.PromptQueue[i].Status == "" {
+			rec.PromptQueue[i].Status = QueuePromptStatusPending
+		}
+		if rec.PromptQueue[i].CreatedAt.IsZero() {
+			rec.PromptQueue[i].CreatedAt = rec.CreatedAt
+		}
+	}
+	if rec.PendingPrompt == nil {
+		return
+	}
+	pendingID := rec.PendingPrompt.ID
+	if pendingID == "" {
+		pendingID = storeKey(rec.PendingPrompt.Prompt)
+	}
+	for _, queued := range rec.PromptQueue {
+		if queued.ID == pendingID {
+			return
+		}
+	}
+	status := QueuePromptStatusPending
+	if rec.PendingPrompt.Status == PendingPromptStatusCanceled {
+		status = QueuePromptStatusCanceled
+	}
+	rec.PromptQueue = append(rec.PromptQueue, QueuedPrompt{
+		ID:         pendingID,
+		Prompt:     rec.PendingPrompt.Prompt,
+		Status:     status,
+		CreatedAt:  rec.PendingPrompt.CreatedAt,
+		CanceledAt: rec.PendingPrompt.CanceledAt,
+	})
 }
 
 func storeKey(id string) string {

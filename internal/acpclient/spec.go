@@ -39,6 +39,7 @@ type RunOptions struct {
 
 type SessionRecord struct {
 	ID                 string         `json:"id"`
+	ACPSessionID       string         `json:"acpSessionId,omitempty"`
 	Agent              string         `json:"agent"`
 	CommandFingerprint string         `json:"commandFingerprint"`
 	Cwd                string         `json:"cwd"`
@@ -49,6 +50,7 @@ type SessionRecord struct {
 	Summary            string         `json:"summary,omitempty"`
 	Turns              []TurnSummary  `json:"turns,omitempty"`
 	PendingPrompt      *PendingPrompt `json:"pendingPrompt,omitempty"`
+	PromptQueue        []QueuedPrompt `json:"promptQueue,omitempty"`
 }
 
 const (
@@ -60,6 +62,12 @@ const (
 
 	PendingPromptStatusPending  = "pending"
 	PendingPromptStatusCanceled = "canceled"
+
+	QueuePromptStatusPending   = "pending"
+	QueuePromptStatusRunning   = "running"
+	QueuePromptStatusCompleted = "completed"
+	QueuePromptStatusCanceled  = "canceled"
+	QueuePromptStatusFailed    = "failed"
 )
 
 type TurnSummary struct {
@@ -75,6 +83,19 @@ type PendingPrompt struct {
 	Status     string     `json:"status"`
 	CreatedAt  time.Time  `json:"createdAt"`
 	CanceledAt *time.Time `json:"canceledAt,omitempty"`
+}
+
+type QueuedPrompt struct {
+	ID          string     `json:"id"`
+	Prompt      string     `json:"prompt"`
+	Status      string     `json:"status"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	StartedAt   *time.Time `json:"startedAt,omitempty"`
+	CompletedAt *time.Time `json:"completedAt,omitempty"`
+	CanceledAt  *time.Time `json:"canceledAt,omitempty"`
+	Response    string     `json:"response,omitempty"`
+	StopReason  string     `json:"stopReason,omitempty"`
+	Error       string     `json:"error,omitempty"`
 }
 
 type OwnerLock struct {
