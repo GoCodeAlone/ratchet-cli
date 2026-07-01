@@ -383,13 +383,13 @@ func (s *Service) AddProvider(ctx context.Context, req *pb.AddProviderReq) (*pb.
 		if err := s.engine.SecretsProvider.Set(ctx, secretName, req.ApiKey); err != nil {
 			return nil, status.Errorf(codes.Internal, "store api key: %v", err)
 		}
-		if s.engine.SecretsRedactor != nil {
-			s.engine.SecretsRedactor.AddValue(secretName, req.ApiKey)
-		}
 	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, status.Errorf(codes.Internal, "commit: %v", err)
+	}
+	if req.ApiKey != "" && s.engine.SecretsRedactor != nil {
+		s.engine.SecretsRedactor.AddValue(secretName, req.ApiKey)
 	}
 
 	s.engine.ProviderRegistry.InvalidateCacheAlias(req.Alias)
