@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/client"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
@@ -125,7 +126,7 @@ func handleSessions(args []string) {
 		}
 		fmt.Printf("%-36s %-10s %-36s %-36s %-36s %s\n", "SESSION_ID", "STATUS", "PARENT_ID", "ROOT_ID", "FORKED_FROM", "SUMMARY")
 		for _, s := range resp.Sessions {
-			fmt.Printf("%-36s %-10s %-36s %-36s %-36s %s\n", s.Id, s.Status, s.ParentId, s.RootId, s.ForkedFromMessageId, s.BranchSummary)
+			fmt.Printf("%-36s %-10s %-36s %-36s %-36s %s\n", s.Id, s.Status, s.ParentId, s.RootId, s.ForkedFromMessageId, formatSummary(s.BranchSummary))
 		}
 	case "summary":
 		if len(args) < 3 {
@@ -139,7 +140,7 @@ func handleSessions(args []string) {
 			os.Exit(1)
 		}
 		fmt.Printf("Updated session summary: %s\n", session.Id)
-		fmt.Printf("Summary: %s\n", session.BranchSummary)
+		fmt.Printf("Summary: %s\n", sanitizeSummary(session.BranchSummary))
 	case "compactions":
 		if len(args) < 2 {
 			fmt.Println("Usage: ratchet sessions compactions <id>")
@@ -192,9 +193,30 @@ func formatTimestamp(ts *timestamppb.Timestamp) string {
 
 func formatSummary(summary string) string {
 	const maxSummaryRunes = 32
+	summary = sanitizeSummary(summary)
 	runes := []rune(summary)
 	if len(runes) <= maxSummaryRunes {
 		return summary
 	}
 	return string(runes[:maxSummaryRunes-3]) + "..."
+}
+
+func sanitizeSummary(summary string) string {
+	var b strings.Builder
+	lastSpace := false
+	for _, r := range summary {
+		if unicode.IsSpace(r) {
+			if !lastSpace {
+				b.WriteByte(' ')
+				lastSpace = true
+			}
+			continue
+		}
+		if unicode.IsControl(r) {
+			continue
+		}
+		b.WriteRune(r)
+		lastSpace = false
+	}
+	return strings.TrimSpace(b.String())
 }
