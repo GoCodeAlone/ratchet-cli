@@ -411,6 +411,41 @@ message MeshEvent {
   }
 }
 
+message BlackboardEntry {
+  string section = 1;
+  string key = 2;
+  string value = 3;
+  string author = 4;
+  int64 revision = 5;
+  string timestamp = 6;
+}
+
+message BlackboardReadReq {
+  string section = 1;
+  string key = 2;
+}
+
+message BlackboardReadResp {
+  bool found = 1;
+  BlackboardEntry entry = 2;
+}
+
+message BlackboardWriteReq {
+  string section = 1;
+  string key = 2;
+  string value = 3;
+  string author = 4;
+}
+
+message BlackboardListReq {
+  string section = 1;
+}
+
+message BlackboardListResp {
+  repeated string sections = 1;
+  repeated BlackboardEntry entries = 2;
+}
+
 // === New messages for team lifecycle ===
 
 message ListTeamsReq {
@@ -625,6 +660,11 @@ service RatchetDaemon {
   // Agent Mesh (scaffolded — handlers return Unimplemented)
   rpc RegisterMeshNode(RegisterNodeReq) returns (RegisterNodeResp);
   rpc MeshStream(stream MeshEvent) returns (stream MeshEvent);
+
+  // Blackboard
+  rpc BlackboardRead(BlackboardReadReq) returns (BlackboardReadResp);
+  rpc BlackboardWrite(BlackboardWriteReq) returns (BlackboardEntry);
+  rpc BlackboardList(BlackboardListReq) returns (BlackboardListResp);
 
   // Teams (extended)
   rpc ListTeams(ListTeamsReq) returns (TeamList);

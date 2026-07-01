@@ -13,7 +13,7 @@ possible.
 | one-shot | `ratchet -p "prompt"` | daemon session + default provider | Supported when provider configured | CLI binary smoke covers command dispatch; mock provider roundtrip covers daemon path. |
 | daemon | `ratchet daemon status` | pid/socket state under `~/.ratchet` | Supported | `TestHarnessSmokeVersionHelpAndDaemonStatus`. |
 | ACP | `ratchet acp` | ACP stdio JSON-RPC agent wrapping daemon service | Supported for initialize/new/load/prompt/cancel/model/mode | `TestACPStdioPromptSmoke`; `TestHarnessSmokeInitializeNewAndLoadSession`; `TestParityNewSessionIDCanBeLoaded`. |
-| MCP | `ratchet mcp blackboard` / `ratchet mcp daemon` | stdio JSON-RPC blackboard or daemon server | Supported for standalone blackboard and daemon session/project tools | `TestHarnessSmokeJSONRPCInitializeToolsListAndCall`; `TestDaemonMCPToolCallsUseDaemonClient`. |
+| MCP | `ratchet mcp blackboard` / `ratchet mcp daemon` | stdio JSON-RPC blackboard or daemon server | Supported for standalone blackboard plus daemon session/project/blackboard/team status tools | `TestHarnessSmokeJSONRPCInitializeToolsListAndCall`; `TestDaemonMCPToolCallsUseDaemonClient`. |
 | team | `ratchet team start "task"` | daemon team manager / mesh executor | Supported when provider configured | Existing team and mesh tests cover service behavior. |
 
 ## Temp Home Mock Provider Smoke
@@ -81,15 +81,18 @@ design pass:
 | MCP tool/config | Status | Evidence |
 |---|---|---|
 | initialize | Supported | `BBMCPServer.handleInitialize`; JSON-RPC smoke. |
-| tools/list | Supported | Exposes blackboard tools in standalone mode and daemon tools in daemon mode. |
-| `bb_write` | Supported | JSON-RPC smoke writes `smoke/status`. |
-| `bb_read` | Supported | JSON-RPC smoke reads back `ok`. |
-| `bb_list` | Supported | Existing blackboard tests. |
+| tools/list | Supported | Exposes blackboard tools in standalone mode and daemon blackboard/session/project/team tools in daemon mode. |
+| `bb_write` | Supported | JSON-RPC smoke writes `smoke/status`; daemon mode calls unary `BlackboardWrite`. |
+| `bb_read` | Supported | JSON-RPC smoke reads back `ok`; daemon mode calls unary `BlackboardRead`. |
+| `bb_list` | Supported | Existing blackboard tests; daemon mode calls unary `BlackboardList`. |
 | `session_list` | Supported | `ratchet mcp daemon`; `TestDaemonMCPToolCallsUseDaemonClient`. |
 | `session_kill` | Supported | `ratchet mcp daemon`; calls daemon session kill through the client adapter. |
 | `project_list` | Supported | `ratchet mcp daemon`; calls daemon project list through the client adapter. |
+| `team_list` | Supported | `ratchet mcp daemon`; calls daemon team list through the client adapter. |
+| `team_status` | Supported | `ratchet mcp daemon`; calls daemon team status through the client adapter. |
+| `team_message` | Deferred by daemon | MCP exposes the tool and surfaces daemon errors; daemon `DirectMessage` still returns unimplemented. |
 | Claude Code config | Supported | `WriteMCPConfig` tests. |
 | Copilot config | Supported | `WriteCopilotMCPConfig` API and `ratchet mcp config copilot`. |
 | generic MCP config | Supported | `WriteGenericMCPConfig` and `ratchet mcp config generic`. |
-| daemon-backed blackboard | Deferred | Blackboard daemon sharing currently uses mesh stream events, not a stable unary daemon API for MCP calls. |
-| daemon-backed team tools | Deferred | Team status/control MCP tools require narrowing the daemon tool contract beyond PR3. |
+| daemon-backed blackboard | Supported | Unary daemon API added for MCP reads, writes, and lists; `TestBlackboardRPCReadWriteList`. |
+| daemon-backed team tools | Partial | Team list/status are daemon-backed; direct message remains daemon-deferred. |
