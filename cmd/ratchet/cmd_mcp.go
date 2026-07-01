@@ -2,22 +2,30 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
+	"github.com/GoCodeAlone/ratchet-cli/internal/client"
 	"github.com/GoCodeAlone/ratchet-cli/internal/mcp"
 	"github.com/GoCodeAlone/ratchet-cli/internal/mesh"
+	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 )
 
 func handleMCP(args []string) {
 	if len(args) == 0 {
-		fmt.Println("Usage: ratchet mcp <blackboard> [flags]")
+		fmt.Println("Usage: ratchet mcp <blackboard|daemon|config> [flags]")
 		return
 	}
 
 	switch args[0] {
 	case "blackboard":
 		handleMCPBlackboard(args[1:])
+	case "daemon":
+		handleMCPDaemon(args[1:])
+	case "config":
+		handleMCPConfig(args[1:])
 	default:
 		fmt.Printf("unknown mcp command: %s\n", args[0])
 	}
@@ -33,5 +41,112 @@ func handleMCPBlackboard(_ []string) {
 	if err := srv.Serve(bufio.NewReader(os.Stdin), os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "mcp server error: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+func handleMCPDaemon(_ []string) {
+	c, err := client.EnsureDaemon()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	defer c.Close()
+
+	srv := mcp.NewDaemonMCPServer(mcpDaemonClient{client: c})
+	if err := srv.Serve(bufio.NewReader(os.Stdin), os.Stdout); err != nil {
+		fmt.Fprintf(os.Stderr, "mcp server error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+type mcpDaemonClient struct {
+	client *client.Client
+}
+
+func (c mcpDaemonClient) ListSessions() ([]*pb.Session, error) {
+	resp, err := c.client.ListSessions(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return resp.Sessions, nil
+}
+
+func (c mcpDaemonClient) KillSession(id string) error {
+	return c.client.KillSession(context.Background(), id)
+}
+
+func (c mcpDaemonClient) ListProjects() ([]*pb.ProjectStatus, error) {
+	resp, err := c.client.ListProjects(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return resp.Projects, nil
+}
+
+func handleMCPConfig(args []string) {
+	if len(args) == 0 {
+		fmt.Println("Usage: ratchet mcp config <claude|copilot|generic> [path] [blackboard|daemon]")
+		return
+	}
+	format := args[0]
+	target := "daemon"
+	if len(args) > 2 {
+		target = args[2]
+	}
+	entry, err := mcpConfigEntry(target)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	path := ""
+	if len(args) > 1 {
+		path = args[1]
+	}
+	if path == "" {
+		path = defaultMCPConfigPath(format)
+	}
+
+	const serverName = "ratchet"
+	switch format {
+	case "claude":
+		err = mcp.WriteMCPConfig(path, serverName, entry)
+	case "copilot":
+		err = mcp.WriteCopilotMCPConfig(path, serverName, entry)
+	case "generic":
+		err = mcp.WriteGenericMCPConfig(path, serverName, entry)
+	default:
+		fmt.Fprintf(os.Stderr, "unknown mcp config format: %s\n", format)
+		os.Exit(1)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("wrote %s MCP config: %s\n", format, path)
+}
+
+func mcpConfigEntry(target string) (mcp.MCPServerEntry, error) {
+	switch target {
+	case "blackboard":
+		return mcp.MCPServerEntry{Command: "ratchet", Args: []string{"mcp", "blackboard"}}, nil
+	case "daemon":
+		return mcp.MCPServerEntry{Command: "ratchet", Args: []string{"mcp", "daemon"}}, nil
+	default:
+		return mcp.MCPServerEntry{}, fmt.Errorf("unknown mcp target: %s", target)
+	}
+}
+
+func defaultMCPConfigPath(format string) string {
+	switch format {
+	case "claude":
+		return filepath.Join(".claude", "mcp.json")
+	case "copilot":
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			return filepath.Join(home, ".copilot", "mcp-config.json")
+		}
+		return filepath.Join(".copilot", "mcp-config.json")
+	default:
+		return "mcp.json"
 	}
 }

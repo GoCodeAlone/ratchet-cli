@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/mesh"
+	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 )
 
 // jsonRPCRequest is a JSON-RPC 2.0 request.
@@ -28,12 +29,25 @@ type jsonRPCResponse struct {
 
 // BBMCPServer exposes Blackboard operations as MCP tools over stdio.
 type BBMCPServer struct {
-	bb *mesh.Blackboard
+	bb     *mesh.Blackboard
+	daemon DaemonClient
+}
+
+// DaemonClient is the daemon surface exposed as MCP tools.
+type DaemonClient interface {
+	ListSessions() ([]*pb.Session, error)
+	KillSession(id string) error
+	ListProjects() ([]*pb.ProjectStatus, error)
 }
 
 // NewBBMCPServer creates an MCP server backed by the given Blackboard.
 func NewBBMCPServer(bb *mesh.Blackboard) *BBMCPServer {
 	return &BBMCPServer{bb: bb}
+}
+
+// NewDaemonMCPServer creates an MCP server backed by a running ratchet daemon.
+func NewDaemonMCPServer(daemon DaemonClient) *BBMCPServer {
+	return &BBMCPServer{daemon: daemon}
 }
 
 // Serve reads JSON-RPC requests from r and writes responses to w.
@@ -108,42 +122,70 @@ func (s *BBMCPServer) handleInitialize(_ map[string]any) (any, map[string]any) {
 }
 
 func (s *BBMCPServer) handleToolsList() (any, error) {
-	tools := []map[string]any{
-		{
-			"name":        "bb_read",
-			"description": "Read a value from the shared Blackboard.",
-			"inputSchema": map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"section": map[string]any{"type": "string", "description": "Blackboard section name"},
-					"key":     map[string]any{"type": "string", "description": "Key to read"},
-				},
-				"required": []string{"section", "key"},
-			},
-		},
-		{
-			"name":        "bb_write",
-			"description": "Write a value to the shared Blackboard.",
-			"inputSchema": map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"section": map[string]any{"type": "string", "description": "Blackboard section name"},
-					"key":     map[string]any{"type": "string", "description": "Key to write"},
-					"value":   map[string]any{"type": "string", "description": "Value to store"},
-				},
-				"required": []string{"section", "key", "value"},
-			},
-		},
-		{
-			"name":        "bb_list",
-			"description": "List Blackboard sections, or keys within a section.",
-			"inputSchema": map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"section": map[string]any{"type": "string", "description": "Section name (optional — omit to list all sections)"},
+	var tools []map[string]any
+	if s.bb != nil {
+		tools = append(tools,
+			map[string]any{
+				"name":        "bb_read",
+				"description": "Read a value from the shared Blackboard.",
+				"inputSchema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"section": map[string]any{"type": "string", "description": "Blackboard section name"},
+						"key":     map[string]any{"type": "string", "description": "Key to read"},
+					},
+					"required": []string{"section", "key"},
 				},
 			},
-		},
+			map[string]any{
+				"name":        "bb_write",
+				"description": "Write a value to the shared Blackboard.",
+				"inputSchema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"section": map[string]any{"type": "string", "description": "Blackboard section name"},
+						"key":     map[string]any{"type": "string", "description": "Key to write"},
+						"value":   map[string]any{"type": "string", "description": "Value to store"},
+					},
+					"required": []string{"section", "key", "value"},
+				},
+			},
+			map[string]any{
+				"name":        "bb_list",
+				"description": "List Blackboard sections, or keys within a section.",
+				"inputSchema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"section": map[string]any{"type": "string", "description": "Section name (optional — omit to list all sections)"},
+					},
+				},
+			},
+		)
+	}
+	if s.daemon != nil {
+		tools = append(tools,
+			map[string]any{
+				"name":        "session_list",
+				"description": "List sessions from the ratchet daemon.",
+				"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+			},
+			map[string]any{
+				"name":        "session_kill",
+				"description": "Mark a ratchet daemon session completed.",
+				"inputSchema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"id": map[string]any{"type": "string", "description": "Session ID"},
+					},
+					"required": []string{"id"},
+				},
+			},
+			map[string]any{
+				"name":        "project_list",
+				"description": "List projects from the ratchet daemon.",
+				"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+			},
+		)
 	}
 	return map[string]any{"tools": tools}, nil
 }
@@ -156,12 +198,21 @@ func (s *BBMCPServer) handleToolCall(name string, args map[string]any) (any, err
 		return s.toolWrite(args)
 	case "bb_list":
 		return s.toolList(args)
+	case "session_list":
+		return s.toolSessionList()
+	case "session_kill":
+		return s.toolSessionKill(args)
+	case "project_list":
+		return s.toolProjectList()
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
 	}
 }
 
 func (s *BBMCPServer) toolRead(args map[string]any) (any, error) {
+	if s.bb == nil {
+		return nil, fmt.Errorf("blackboard tools are not enabled")
+	}
 	section, _ := args["section"].(string)
 	key, _ := args["key"].(string)
 	if section == "" || key == "" {
@@ -175,6 +226,9 @@ func (s *BBMCPServer) toolRead(args map[string]any) (any, error) {
 }
 
 func (s *BBMCPServer) toolWrite(args map[string]any) (any, error) {
+	if s.bb == nil {
+		return nil, fmt.Errorf("blackboard tools are not enabled")
+	}
 	section, _ := args["section"].(string)
 	key, _ := args["key"].(string)
 	value, _ := args["value"].(string)
@@ -186,6 +240,9 @@ func (s *BBMCPServer) toolWrite(args map[string]any) (any, error) {
 }
 
 func (s *BBMCPServer) toolList(args map[string]any) (any, error) {
+	if s.bb == nil {
+		return nil, fmt.Errorf("blackboard tools are not enabled")
+	}
 	section, _ := args["section"].(string)
 	if section == "" {
 		sections := s.bb.ListSections()
@@ -200,6 +257,56 @@ func (s *BBMCPServer) toolList(args map[string]any) (any, error) {
 		keys = append(keys, k)
 	}
 	return mcpTextResult(strings.Join(keys, ", ")), nil
+}
+
+func (s *BBMCPServer) toolSessionList() (any, error) {
+	if s.daemon == nil {
+		return nil, fmt.Errorf("daemon tools are not enabled")
+	}
+	sessions, err := s.daemon.ListSessions()
+	if err != nil {
+		return nil, err
+	}
+	if len(sessions) == 0 {
+		return mcpTextResult("No sessions."), nil
+	}
+	var b strings.Builder
+	for _, session := range sessions {
+		fmt.Fprintf(&b, "%s\t%s\t%s\t%s\n", session.Id, session.Status, session.Provider, session.WorkingDir)
+	}
+	return mcpTextResult(strings.TrimSpace(b.String())), nil
+}
+
+func (s *BBMCPServer) toolSessionKill(args map[string]any) (any, error) {
+	if s.daemon == nil {
+		return nil, fmt.Errorf("daemon tools are not enabled")
+	}
+	id, _ := args["id"].(string)
+	if id == "" {
+		return nil, fmt.Errorf("id is required")
+	}
+	if err := s.daemon.KillSession(id); err != nil {
+		return nil, err
+	}
+	return mcpTextResult("killed " + id), nil
+}
+
+func (s *BBMCPServer) toolProjectList() (any, error) {
+	if s.daemon == nil {
+		return nil, fmt.Errorf("daemon tools are not enabled")
+	}
+	projects, err := s.daemon.ListProjects()
+	if err != nil {
+		return nil, err
+	}
+	if len(projects) == 0 {
+		return mcpTextResult("No projects."), nil
+	}
+	var b strings.Builder
+	for _, project := range projects {
+		fmt.Fprintf(&b, "%s\t%s\t%s\n", project.Id, project.Name, project.Status)
+	}
+	return mcpTextResult(strings.TrimSpace(b.String())), nil
 }
 
 func mcpTextResult(text string) map[string]any {

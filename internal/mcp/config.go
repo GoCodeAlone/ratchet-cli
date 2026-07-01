@@ -24,6 +24,11 @@ type CopilotMCPConfig struct {
 	Servers map[string]MCPServerEntry `json:"servers"`
 }
 
+// GenericMCPConfig is a portable MCP config shape for clients that accept a servers map.
+type GenericMCPConfig struct {
+	Servers map[string]MCPServerEntry `json:"servers"`
+}
+
 // WriteMCPConfig merges a server entry into a Claude Code-format MCP config file.
 // Creates the file and parent directories if they don't exist.
 func WriteMCPConfig(path, serverName string, entry MCPServerEntry) error {
@@ -52,6 +57,26 @@ func WriteCopilotMCPConfig(path, serverName string, entry MCPServerEntry) error 
 	}
 
 	var config CopilotMCPConfig
+	if data, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(data, &config); err != nil {
+			return fmt.Errorf("parse config: %w", err)
+		}
+	}
+	if config.Servers == nil {
+		config.Servers = make(map[string]MCPServerEntry)
+	}
+	config.Servers[serverName] = entry
+
+	return writeJSON(path, config)
+}
+
+// WriteGenericMCPConfig merges a server entry into a generic MCP config file.
+func WriteGenericMCPConfig(path, serverName string, entry MCPServerEntry) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+
+	var config GenericMCPConfig
 	if data, err := os.ReadFile(path); err == nil {
 		if err := json.Unmarshal(data, &config); err != nil {
 			return fmt.Errorf("parse config: %w", err)
