@@ -1,13 +1,18 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/GoCodeAlone/ratchet-cli/internal/acpclient"
 )
 
 type acpClientCommandKind string
@@ -59,12 +64,100 @@ func handleACPClient(args []string) error {
 		printACPClientUsage(os.Stdout)
 		return nil
 	case acpClientCommandExec:
-		return errors.New("ratchet acp client exec is not wired yet")
+		return executeACPClientExec(context.Background(), cmd.exec, defaultACPClientExecRunner{}, os.Stdout)
 	case acpClientCommandSessionsList, acpClientCommandSessionsShow, acpClientCommandStatus, acpClientCommandCancel:
 		return fmt.Errorf("ratchet acp client %s is planned for a later PR", cmd.kind)
 	default:
 		return fmt.Errorf("unknown acp client command: %s", cmd.kind)
 	}
+}
+
+type acpClientExecRunner interface {
+	RunPrompt(ctx context.Context, spec acpclient.AgentSpec, opts acpclient.RunOptions, prompt string) (acpclient.Result, error)
+}
+
+type defaultACPClientExecRunner struct{}
+
+func (defaultACPClientExecRunner) RunPrompt(ctx context.Context, spec acpclient.AgentSpec, opts acpclient.RunOptions, prompt string) (acpclient.Result, error) {
+	client, err := acpclient.Start(ctx, spec, opts)
+	if err != nil {
+		return acpclient.Result{}, err
+	}
+	defer client.Close() //nolint:errcheck
+	return client.RunPrompt(ctx, prompt)
+}
+
+func executeACPClientExec(ctx context.Context, opts acpClientExecOptions, runner acpClientExecRunner, w io.Writer) error {
+	prompt := opts.Prompt
+	if opts.File != "" {
+		b, err := os.ReadFile(opts.File)
+		if err != nil {
+			return fmt.Errorf("read prompt file: %w", err)
+		}
+		prompt = string(b)
+	}
+
+	cwd := opts.Cwd
+	if cwd == "" {
+		cwd = "."
+	}
+	if abs, err := filepath.Abs(cwd); err == nil {
+		cwd = abs
+	}
+
+	runOpts := acpclient.RunOptions{
+		Agent:   opts.Agent,
+		Command: opts.Command,
+		Args:    opts.Args,
+		Cwd:     cwd,
+		Timeout: opts.Timeout,
+	}
+	spec, err := acpclient.DefaultRegistry().Resolve(runOpts)
+	if err != nil {
+		return err
+	}
+	result, err := runner.RunPrompt(ctx, spec, runOpts, prompt)
+	if err != nil {
+		return err
+	}
+	if opts.JSON {
+		return writeACPClientExecJSON(w, spec, result)
+	}
+	writeACPClientExecHuman(w, result)
+	return nil
+}
+
+func writeACPClientExecHuman(w io.Writer, result acpclient.Result) {
+	if result.Text != "" {
+		fmt.Fprint(w, result.Text)
+		if !strings.HasSuffix(result.Text, "\n") {
+			fmt.Fprintln(w)
+		}
+	}
+	fmt.Fprintf(w, "[stop: %s]\n", result.StopReason)
+}
+
+func writeACPClientExecJSON(w io.Writer, spec acpclient.AgentSpec, result acpclient.Result) error {
+	fingerprint := spec.Fingerprint()
+	if len(fingerprint) > 12 {
+		fingerprint = fingerprint[:12]
+	}
+	payload := struct {
+		Command         string `json:"command"`
+		SessionID       string `json:"session_id"`
+		StopReason      string `json:"stop_reason"`
+		Text            string `json:"text"`
+		DurationMillis  int64  `json:"duration_ms"`
+		CommandFpPrefix string `json:"command_fp_prefix"`
+	}{
+		Command:         spec.Command,
+		SessionID:       string(result.SessionID),
+		StopReason:      string(result.StopReason),
+		Text:            result.Text,
+		DurationMillis:  result.Duration.Milliseconds(),
+		CommandFpPrefix: fingerprint,
+	}
+	return json.NewEncoder(w).Encode(payload)
 }
 
 func parseACPClientCommand(args []string) (acpClientCommand, error) {

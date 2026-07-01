@@ -1,9 +1,17 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/GoCodeAlone/ratchet-cli/internal/acpclient"
+	acpsdk "github.com/coder/acp-go-sdk"
 )
 
 func TestParseACPClientExecCommand(t *testing.T) {
@@ -93,4 +101,130 @@ func TestParseACPClientSessionCommands(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestExecuteACPClientExecHumanOutput(t *testing.T) {
+	runner := &fakeACPClientExecRunner{
+		result: acpclient.Result{
+			SessionID:  "s1",
+			StopReason: acpsdk.StopReasonEndTurn,
+			Text:       "hello from fixture",
+		},
+	}
+	var out bytes.Buffer
+	err := executeACPClientExec(t.Context(), acpClientExecOptions{
+		Command: "/bin/fixture-agent",
+		Prompt:  "hello",
+		Cwd:     ".",
+		Timeout: time.Second,
+	}, runner, &out)
+	if err != nil {
+		t.Fatalf("executeACPClientExec: %v", err)
+	}
+	if got := out.String(); got != "hello from fixture\n[stop: end_turn]\n" {
+		t.Fatalf("output = %q", got)
+	}
+	if runner.prompt != "hello" {
+		t.Fatalf("prompt = %q", runner.prompt)
+	}
+	if runner.spec.Command != "/bin/fixture-agent" {
+		t.Fatalf("command = %q", runner.spec.Command)
+	}
+}
+
+func TestExecuteACPClientExecJSONOutput(t *testing.T) {
+	runner := &fakeACPClientExecRunner{
+		result: acpclient.Result{
+			SessionID:  "s1",
+			StopReason: acpsdk.StopReasonEndTurn,
+			Text:       "json fixture",
+			Duration:   25 * time.Millisecond,
+		},
+	}
+	var out bytes.Buffer
+	err := executeACPClientExec(t.Context(), acpClientExecOptions{
+		Command: "/bin/fixture-agent",
+		Prompt:  "hello",
+		Cwd:     ".",
+		Timeout: time.Second,
+		JSON:    true,
+	}, runner, &out)
+	if err != nil {
+		t.Fatalf("executeACPClientExec: %v", err)
+	}
+	var payload struct {
+		Command         string `json:"command"`
+		SessionID       string `json:"session_id"`
+		StopReason      string `json:"stop_reason"`
+		Text            string `json:"text"`
+		DurationMillis  int64  `json:"duration_ms"`
+		CommandFpPrefix string `json:"command_fp_prefix"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("json output: %v\n%s", err, out.String())
+	}
+	if payload.Command != "/bin/fixture-agent" || payload.SessionID != "s1" || payload.StopReason != "end_turn" || payload.Text != "json fixture" {
+		t.Fatalf("payload = %#v", payload)
+	}
+	if payload.DurationMillis != 25 {
+		t.Fatalf("DurationMillis = %d, want 25", payload.DurationMillis)
+	}
+	if payload.CommandFpPrefix == "" {
+		t.Fatal("CommandFpPrefix is empty")
+	}
+}
+
+func TestExecuteACPClientExecReadsPromptFile(t *testing.T) {
+	promptFile := filepath.Join(t.TempDir(), "prompt.txt")
+	if err := os.WriteFile(promptFile, []byte("from file"), 0o644); err != nil {
+		t.Fatalf("write prompt file: %v", err)
+	}
+	runner := &fakeACPClientExecRunner{result: acpclient.Result{StopReason: acpsdk.StopReasonEndTurn}}
+	var out bytes.Buffer
+	err := executeACPClientExec(t.Context(), acpClientExecOptions{
+		Command: "/bin/fixture-agent",
+		File:    promptFile,
+		Cwd:     ".",
+		Timeout: time.Second,
+	}, runner, &out)
+	if err != nil {
+		t.Fatalf("executeACPClientExec: %v", err)
+	}
+	if runner.prompt != "from file" {
+		t.Fatalf("prompt = %q, want file contents", runner.prompt)
+	}
+}
+
+func TestExecuteACPClientExecRejectsMissingCommand(t *testing.T) {
+	runner := &fakeACPClientExecRunner{}
+	var out bytes.Buffer
+	err := executeACPClientExec(t.Context(), acpClientExecOptions{
+		Agent:   "custom",
+		Prompt:  "hello",
+		Cwd:     ".",
+		Timeout: time.Second,
+	}, runner, &out)
+	if err == nil || !strings.Contains(err.Error(), "command is required") {
+		t.Fatalf("error = %v, want missing command", err)
+	}
+	if runner.called {
+		t.Fatal("runner was called despite missing command")
+	}
+}
+
+type fakeACPClientExecRunner struct {
+	called bool
+	spec   acpclient.AgentSpec
+	opts   acpclient.RunOptions
+	prompt string
+	result acpclient.Result
+	err    error
+}
+
+func (r *fakeACPClientExecRunner) RunPrompt(_ context.Context, spec acpclient.AgentSpec, opts acpclient.RunOptions, prompt string) (acpclient.Result, error) {
+	r.called = true
+	r.spec = spec
+	r.opts = opts
+	r.prompt = prompt
+	return r.result, r.err
 }
