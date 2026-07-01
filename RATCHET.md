@@ -9,6 +9,8 @@ Interactive AI agent CLI with multi-provider support, multi-agent orchestration,
 - **Multi-agent**: Orchestrate teams of agents with role definitions
 - **Workflow engine**: Built on the GoCodeAlone/workflow engine with 54 ratchetplugin tools
 - **Plugin support**: Load external workflow plugins at runtime
+- **Harness protocols**: ACP stdio agent mode plus MCP blackboard and daemon-backed session/project tools
+- **Optional retros**: Disabled-by-default retro analyzer for local action suggestions and upstream PR instructions
 
 ## Usage
 
@@ -19,6 +21,9 @@ ratchet chat "prompt"       # Explicit chat mode
 ratchet sessions            # Manage sessions
 ratchet daemon status       # Check daemon
 ratchet provider list       # List providers
+ratchet acp                 # Run as an ACP stdio agent
+ratchet mcp daemon          # Run daemon-backed MCP tools
+ratchet config show         # Show configuration, including retro settings
 ```
 
 ## Install
