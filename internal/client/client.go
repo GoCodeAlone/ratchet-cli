@@ -404,3 +404,7 @@ func (c *Client) KillJob(ctx context.Context, jobID string) error {
 func (c *Client) KillAgent(ctx context.Context, agentID string) error {
 	return c.KillJob(ctx, agentID)
 }
+
+func (c *Client) ListProjects(ctx context.Context) (*pb.ProjectList, error) {
+	return c.daemon.ListProjects(ctx, &pb.Empty{})
+}

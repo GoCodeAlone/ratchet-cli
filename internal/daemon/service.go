@@ -310,6 +310,16 @@ func (s *Service) KillSession(ctx context.Context, req *pb.KillReq) (*pb.Empty, 
 	return &pb.Empty{}, nil
 }
 
+func (s *Service) UpdateSessionModel(ctx context.Context, sessionID, model string) error {
+	if err := s.sessions.UpdateModel(ctx, sessionID, model); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return status.Errorf(codes.NotFound, "session %s not found", sessionID)
+		}
+		return status.Errorf(codes.Internal, "update session model: %v", err)
+	}
+	return nil
+}
+
 func (s *Service) SendMessage(req *pb.SendMessageReq, stream pb.RatchetDaemon_SendMessageServer) error {
 	return s.handleChat(stream.Context(), req.SessionId, req.Content, stream)
 }

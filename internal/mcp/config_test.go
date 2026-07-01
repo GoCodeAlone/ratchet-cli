@@ -65,6 +65,35 @@ func TestWriteClaudeCodeMCPConfig_MergeExisting(t *testing.T) {
 	}
 }
 
+func TestWriteGenericMCPConfig(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "mcp.json")
+
+	err := WriteGenericMCPConfig(configPath, "ratchet-daemon", MCPServerEntry{
+		Command: "ratchet",
+		Args:    []string{"mcp", "daemon"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config GenericMCPConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := config.Servers["ratchet-daemon"]
+	if !ok {
+		t.Fatal("missing ratchet-daemon entry")
+	}
+	if entry.Command != "ratchet" {
+		t.Fatalf("expected command=ratchet, got %s", entry.Command)
+	}
+}
+
 func TestRemoveMCPConfig(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, ".claude", "mcp.json")

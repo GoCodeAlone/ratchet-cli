@@ -39,7 +39,7 @@ func TestHarnessSmokeInitializeNewAndLoadSession(t *testing.T) {
 		t.Fatal("expected ACP session id")
 	}
 
-	if _, err := agent.LoadSession(context.Background(), acpsdk.LoadSessionRequest{SessionId: newResp.SessionId}); err == nil {
-		t.Fatal("expected direct LoadSession with ACP id to fail; ratchet session id is intentionally separate")
+	if _, err := agent.LoadSession(context.Background(), acpsdk.LoadSessionRequest{SessionId: newResp.SessionId}); err != nil {
+		t.Fatalf("LoadSession with returned id: %v", err)
 	}
 }

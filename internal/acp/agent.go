@@ -7,7 +7,6 @@ import (
 	"sync"
 
 	acpsdk "github.com/coder/acp-go-sdk"
-	"github.com/google/uuid"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/daemon"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
@@ -22,6 +21,7 @@ type RatchetAgent struct {
 	mu       sync.Mutex
 	sessions map[string]string // ACP sessionId → ratchet sessionId
 	cancels  map[string]context.CancelFunc
+	modes    map[string]acpsdk.SessionModeId
 }
 
 // NewRatchetAgent creates a new ACP agent wrapping the given ratchet Service.
@@ -30,6 +30,7 @@ func NewRatchetAgent(svc *daemon.Service) *RatchetAgent {
 		svc:      svc,
 		sessions: make(map[string]string),
 		cancels:  make(map[string]context.CancelFunc),
+		modes:    make(map[string]acpsdk.SessionModeId),
 	}
 }
 
@@ -66,14 +67,13 @@ func (a *RatchetAgent) Cancel(_ context.Context, params acpsdk.CancelNotificatio
 }
 
 func (a *RatchetAgent) NewSession(ctx context.Context, params acpsdk.NewSessionRequest) (acpsdk.NewSessionResponse, error) {
-	acpID := acpsdk.SessionId(uuid.New().String())
-
 	sess, err := a.svc.CreateSession(ctx, &pb.CreateSessionReq{
 		WorkingDir: params.Cwd,
 	})
 	if err != nil {
 		return acpsdk.NewSessionResponse{}, fmt.Errorf("create session: %w", err)
 	}
+	acpID := acpsdk.SessionId(sess.Id)
 
 	a.mu.Lock()
 	a.sessions[string(acpID)] = sess.Id
@@ -106,6 +106,13 @@ func (a *RatchetAgent) LoadSession(ctx context.Context, params acpsdk.LoadSessio
 	a.mu.Unlock()
 
 	return acpsdk.LoadSessionResponse{}, nil
+}
+
+func (a *RatchetAgent) ratchetSessionID(acpID acpsdk.SessionId) (string, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	ratchetID, ok := a.sessions[string(acpID)]
+	return ratchetID, ok
 }
 
 // Prompt sends a message and streams responses as ACP session updates.
@@ -199,17 +206,24 @@ func (a *RatchetAgent) handlePermission(ctx context.Context, sessionID acpsdk.Se
 	}
 }
 
-func (a *RatchetAgent) SetSessionMode(_ context.Context, _ acpsdk.SetSessionModeRequest) (acpsdk.SetSessionModeResponse, error) {
+func (a *RatchetAgent) SetSessionMode(_ context.Context, params acpsdk.SetSessionModeRequest) (acpsdk.SetSessionModeResponse, error) {
+	if _, ok := a.ratchetSessionID(params.SessionId); !ok {
+		return acpsdk.SetSessionModeResponse{}, fmt.Errorf("unknown session: %s", params.SessionId)
+	}
+	a.mu.Lock()
+	a.modes[string(params.SessionId)] = params.ModeId
+	a.mu.Unlock()
 	return acpsdk.SetSessionModeResponse{}, nil
 }
 
 // SetSessionModel implements acp.AgentExperimental.
 func (a *RatchetAgent) SetSessionModel(ctx context.Context, params acpsdk.SetSessionModelRequest) (acpsdk.SetSessionModelResponse, error) {
+	ratchetID, ok := a.ratchetSessionID(params.SessionId)
+	if !ok {
+		return acpsdk.SetSessionModelResponse{}, fmt.Errorf("unknown session: %s", params.SessionId)
+	}
 	if params.ModelId != "" {
-		_, err := a.svc.UpdateProviderModel(ctx, &pb.UpdateProviderModelReq{
-			Model: string(params.ModelId),
-		})
-		if err != nil {
+		if err := a.svc.UpdateSessionModel(ctx, ratchetID, string(params.ModelId)); err != nil {
 			return acpsdk.SetSessionModelResponse{}, fmt.Errorf("update model: %w", err)
 		}
 	}

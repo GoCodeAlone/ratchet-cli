@@ -94,6 +94,21 @@ func (sm *SessionManager) Get(ctx context.Context, id string) (*SessionInfo, err
 	return &s, nil
 }
 
+func (sm *SessionManager) UpdateModel(ctx context.Context, id, model string) error {
+	result, err := sm.db.ExecContext(ctx, `UPDATE sessions SET model = ? WHERE id = ?`, model, id)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (sm *SessionManager) Kill(ctx context.Context, id string) error {
 	_, err := sm.db.ExecContext(ctx, `UPDATE sessions SET status = 'completed' WHERE id = ?`, id)
 	if err != nil {
