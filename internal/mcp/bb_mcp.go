@@ -44,7 +44,7 @@ type DaemonClient interface {
 	ListBlackboard(section string) (*pb.BlackboardListResp, error)
 	ListTeams() ([]*pb.TeamStatus, error)
 	GetTeamStatus(teamID string) (*pb.TeamStatus, error)
-	DirectMessage(teamID, fromAgent, toAgent, content string) error
+	DirectMessage(teamID, toAgent, content string) error
 }
 
 // NewBBMCPServer creates an MCP server backed by the given Blackboard.
@@ -210,16 +210,15 @@ func (s *BBMCPServer) handleToolsList() (any, error) {
 			},
 			map[string]any{
 				"name":        "team_message",
-				"description": "Send a direct message to a team agent when the daemon supports it.",
+				"description": "Send a direct message to a team agent when the daemon supports it. Sender identity is not part of the current daemon RPC.",
 				"inputSchema": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"team_id":    map[string]any{"type": "string", "description": "Team ID or name"},
-						"from_agent": map[string]any{"type": "string", "description": "Sender agent name"},
-						"to_agent":   map[string]any{"type": "string", "description": "Recipient agent name"},
-						"content":    map[string]any{"type": "string", "description": "Message content"},
+						"team_id":  map[string]any{"type": "string", "description": "Team ID or name"},
+						"to_agent": map[string]any{"type": "string", "description": "Recipient agent name"},
+						"content":  map[string]any{"type": "string", "description": "Message content"},
 					},
-					"required": []string{"team_id", "from_agent", "to_agent", "content"},
+					"required": []string{"team_id", "to_agent", "content"},
 				},
 			},
 		)
@@ -430,13 +429,12 @@ func (s *BBMCPServer) toolTeamMessage(args map[string]any) (any, error) {
 		return nil, fmt.Errorf("daemon tools are not enabled")
 	}
 	teamID, _ := args["team_id"].(string)
-	fromAgent, _ := args["from_agent"].(string)
 	toAgent, _ := args["to_agent"].(string)
 	content, _ := args["content"].(string)
-	if teamID == "" || fromAgent == "" || toAgent == "" || content == "" {
-		return nil, fmt.Errorf("team_id, from_agent, to_agent, and content are required")
+	if teamID == "" || toAgent == "" || content == "" {
+		return nil, fmt.Errorf("team_id, to_agent, and content are required")
 	}
-	if err := s.daemon.DirectMessage(teamID, fromAgent, toAgent, content); err != nil {
+	if err := s.daemon.DirectMessage(teamID, toAgent, content); err != nil {
 		return nil, err
 	}
 	return mcpTextResult("sent"), nil

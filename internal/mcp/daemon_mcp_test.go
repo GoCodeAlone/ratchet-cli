@@ -80,7 +80,7 @@ func (f *fakeDaemon) GetTeamStatus(teamID string) (*pb.TeamStatus, error) {
 	return &pb.TeamStatus{TeamId: teamID, Status: "unknown"}, nil
 }
 
-func (f *fakeDaemon) DirectMessage(teamID, fromAgent, toAgent, content string) error {
+func (f *fakeDaemon) DirectMessage(teamID, toAgent, content string) error {
 	return f.msgErr
 }
 
@@ -90,12 +90,24 @@ func TestDaemonMCPToolsListIncludesSessionAndProjectTools(t *testing.T) {
 
 	tools := resp[0]["result"].(map[string]any)["tools"].([]any)
 	names := make(map[string]bool, len(tools))
+	var teamMessage map[string]any
 	for _, tool := range tools {
-		names[tool.(map[string]any)["name"].(string)] = true
+		item := tool.(map[string]any)
+		name := item["name"].(string)
+		names[name] = true
+		if name == "team_message" {
+			teamMessage = item
+		}
 	}
 	for _, want := range []string{"bb_read", "bb_write", "bb_list", "session_list", "session_kill", "project_list", "team_list", "team_status", "team_message"} {
 		if !names[want] {
 			t.Fatalf("tools/list missing %s: %#v", want, names)
+		}
+	}
+	required := teamMessage["inputSchema"].(map[string]any)["required"].([]any)
+	for _, field := range required {
+		if field == "from_agent" {
+			t.Fatal("team_message must not require unsupported from_agent field")
 		}
 	}
 }
@@ -140,7 +152,7 @@ func TestDaemonMCPToolCallsUseDaemonClient(t *testing.T) {
 func TestDaemonMCPTeamMessageSurfacesDaemonError(t *testing.T) {
 	srv := NewDaemonMCPServer(&fakeDaemon{msgErr: errors.New("DirectMessage not yet implemented")})
 	resp := runMCPSequence(t, srv,
-		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"team_message","arguments":{"team_id":"t1","from_agent":"lead","to_agent":"worker","content":"hello"}}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"team_message","arguments":{"team_id":"t1","to_agent":"worker","content":"hello"}}}`,
 	)
 
 	errObj, ok := resp[0]["error"].(map[string]any)

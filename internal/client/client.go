@@ -276,7 +276,7 @@ func (c *Client) BlackboardList(ctx context.Context, section string) (*pb.Blackb
 	return c.daemon.BlackboardList(ctx, &pb.BlackboardListReq{Section: section})
 }
 
-func (c *Client) DirectMessage(ctx context.Context, teamID, fromAgent, toAgent, content string) error {
+func (c *Client) DirectMessage(ctx context.Context, teamID, toAgent, content string) error {
 	_, err := c.daemon.DirectMessage(ctx, &pb.DirectMessageReq{
 		TeamId:  teamID,
 		ToAgent: toAgent,

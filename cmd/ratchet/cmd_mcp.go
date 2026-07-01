@@ -107,8 +107,8 @@ func (c mcpDaemonClient) GetTeamStatus(teamID string) (*pb.TeamStatus, error) {
 	return c.client.GetTeamStatus(context.Background(), teamID)
 }
 
-func (c mcpDaemonClient) DirectMessage(teamID, fromAgent, toAgent, content string) error {
-	return c.client.DirectMessage(context.Background(), teamID, fromAgent, toAgent, content)
+func (c mcpDaemonClient) DirectMessage(teamID, toAgent, content string) error {
+	return c.client.DirectMessage(context.Background(), teamID, toAgent, content)
 }
 
 func handleMCPConfig(args []string) {
