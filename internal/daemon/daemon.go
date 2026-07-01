@@ -8,17 +8,12 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"syscall"
 	"time"
 
 	"google.golang.org/grpc"
 
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 )
-
-// reloadSignal is the signal used to trigger graceful reload. Exported as a
-// variable so tests can override it on platforms where SIGUSR1 is unavailable.
-var reloadSignal = syscall.SIGUSR1
 
 // Start runs the daemon in the foreground. It creates the Unix socket,
 // starts the gRPC server, and blocks until signal.
@@ -58,8 +53,8 @@ func Start(ctx context.Context, debug bool) error {
 	svc.engine.Debug = debug
 	pb.RegisterRatchetDaemonServer(srv, svc)
 
-	// Graceful shutdown on SIGINT/SIGTERM.
-	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	// Graceful shutdown on the platform's configured daemon shutdown signals.
+	ctx, stop := signal.NotifyContext(ctx, shutdownSignals()...)
 	defer stop()
 
 	go func() {
@@ -68,27 +63,29 @@ func Start(ctx context.Context, debug bool) error {
 		srv.GracefulStop()
 	}()
 
-	// SIGUSR1 triggers a graceful reload: checkpoint state then stop so the
-	// caller (CLI or new binary) can restart the daemon with the checkpoint.
-	sigReload := make(chan os.Signal, 1)
-	signal.Notify(sigReload, reloadSignal)
-	go func() {
-		<-sigReload
-		log.Println("reload signal received, checkpointing...")
-		cp, err := ExportCheckpoint(svc)
-		if err != nil {
-			log.Printf("checkpoint failed: %v", err)
+	if reloadSignalsSupported() {
+		// SIGUSR1 triggers a graceful reload: checkpoint state then stop so the
+		// caller (CLI or new binary) can restart the daemon with the checkpoint.
+		sigReload := make(chan os.Signal, 1)
+		signal.Notify(sigReload, reloadSignal)
+		go func() {
+			<-sigReload
+			log.Println("reload signal received, checkpointing...")
+			cp, err := ExportCheckpoint(svc)
+			if err != nil {
+				log.Printf("checkpoint failed: %v", err)
+				srv.GracefulStop()
+				return
+			}
+			if err := SaveCheckpoint(cp); err != nil {
+				log.Printf("save checkpoint failed: %v", err)
+			} else {
+				log.Printf("checkpoint saved to %s", CheckpointPath())
+			}
+			log.Println("stopping daemon for reload...")
 			srv.GracefulStop()
-			return
-		}
-		if err := SaveCheckpoint(cp); err != nil {
-			log.Printf("save checkpoint failed: %v", err)
-		} else {
-			log.Printf("checkpoint saved to %s", CheckpointPath())
-		}
-		log.Println("stopping daemon for reload...")
-		srv.GracefulStop()
-	}()
+		}()
+	}
 
 	log.Printf("daemon listening on %s (pid %d)", SocketPath(), os.Getpid())
 	return srv.Serve(lis)
@@ -112,7 +109,7 @@ func StartBackground(debug bool) error {
 	cmd := exec.Command(exe, args...)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.SysProcAttr = backgroundSysProcAttr()
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start daemon: %w", err)
@@ -128,7 +125,7 @@ func StartBackground(debug bool) error {
 	return fmt.Errorf("daemon did not start within 5s")
 }
 
-// Stop sends SIGTERM to the running daemon.
+// Stop sends the platform's configured termination signal to the running daemon.
 func Stop() error {
 	pid, err := ReadPID()
 	if err != nil {
@@ -138,7 +135,7 @@ func Stop() error {
 	if err != nil {
 		return fmt.Errorf("find process %d: %w", pid, err)
 	}
-	return proc.Signal(syscall.SIGTERM)
+	return proc.Signal(terminateSignal())
 }
 
 // Status returns daemon health info.
@@ -150,9 +147,13 @@ func Status() (string, error) {
 	return fmt.Sprintf("daemon running (pid %d, socket %s)", pid, SocketPath()), nil
 }
 
-// TriggerReload sends SIGUSR1 to the running daemon, which causes it to
-// checkpoint and exit gracefully. The caller is responsible for restarting.
+// TriggerReload sends the platform's configured reload signal to the running
+// daemon, causing it to checkpoint and exit gracefully. The caller is
+// responsible for restarting. Platforms without reload signals return an error.
 func TriggerReload() error {
+	if !reloadSignalsSupported() {
+		return fmt.Errorf("daemon reload signal is not supported on this platform")
+	}
 	pid, err := ReadPID()
 	if err != nil {
 		return fmt.Errorf("no daemon running")
@@ -197,7 +198,7 @@ func ReloadDaemon(newBinaryPath string) error {
 	cmd := exec.Command(newBinaryPath, "daemon", "start")
 	cmd.Stdout = nil
 	cmd.Stderr = nil
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.SysProcAttr = backgroundSysProcAttr()
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start new daemon: %w", err)
 	}
