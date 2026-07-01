@@ -33,6 +33,7 @@ ratchet sessions clone ID   # Clone a session with full visible history
 ratchet sessions fork ID --at MESSAGE_ID
                             # Fork a session through a specific message
 ratchet sessions tree ID    # Show root/parent/fork lineage
+ratchet sessions browse ID  # Browse branch tree interactively
 ratchet sessions summary ID "short label"
                             # Update the branch summary shown in lineage views
 ratchet sessions compactions ID
@@ -41,6 +42,15 @@ ratchet daemon status       # Check daemon
 ratchet provider list       # List providers
 ratchet team start "task"   # Start agent team
 ```
+
+In the TUI, press `ctrl+b` or submit `/tree` to open the in-place session
+branch browser. Use arrow keys or `j`/`k` to move, left/right or `h`/`l` to
+collapse and expand, `Enter` to switch to a branch, `r` to refresh, and `Esc`
+to return to chat. Switching through the tree or sidebar rebuilds chat for the
+selected branch before new sends are accepted.
+
+The v0.16.0 release includes this tree navigation flow and continues publishing
+Windows amd64/arm64 zip artifacts alongside Linux and macOS archives.
 
 ## Harness Modes
 
