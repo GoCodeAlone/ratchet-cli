@@ -440,34 +440,6 @@ func (s *Service) saveMessage(ctx context.Context, sessionID, role, content, too
 	return err
 }
 
-// replaceHistory deletes all messages for a session and re-inserts the compressed set.
-func (s *Service) replaceHistory(ctx context.Context, sessionID string, messages []provider.Message, messageIDs ...string) error {
-	tx, err := s.engine.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE session_id = ?`, sessionID); err != nil {
-		return err
-	}
-	for _, m := range messages {
-		id := uuid.New().String()
-		if len(messageIDs) > 0 {
-			if messageIDs[0] != "" {
-				id = messageIDs[0]
-			}
-			messageIDs = messageIDs[1:]
-		}
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO messages (id, session_id, role, content, tool_name, tool_call_id) VALUES (?, ?, ?, ?, ?, ?)`,
-			id, sessionID, string(m.Role), m.Content, "", "",
-		); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
-
 func (s *Service) compactHistoryWithArchive(ctx context.Context, sessionID string, original []SessionHistoryMessage, compressed []provider.Message, replacementIDs []string, record CompactionRecord) (*CompactionRecord, error) {
 	source, err := s.sessions.Get(ctx, sessionID)
 	if err != nil {
