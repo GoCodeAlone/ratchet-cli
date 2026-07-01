@@ -48,6 +48,25 @@ message KillReq {
   string session_id = 1;
 }
 
+message SessionMessagesReq {
+  string session_id = 1;
+}
+
+message CloneSessionReq {
+  string session_id = 1;
+  string reason = 2;
+}
+
+message ForkSessionReq {
+  string session_id = 1;
+  string message_id = 2;
+  string reason = 3;
+}
+
+message SessionTreeReq {
+  string session_id = 1;
+}
+
 // Chat streaming
 message SendMessageReq {
   string session_id = 1;
@@ -152,6 +171,7 @@ message HistoryMessage {
   string tool_name = 3;
   string tool_call_id = 4;
   google.protobuf.Timestamp timestamp = 5;
+  string id = 6;
 }
 
 // Provider management
@@ -605,6 +625,10 @@ service RatchetDaemon {
   // Session management
   rpc CreateSession(CreateSessionReq) returns (Session);
   rpc ListSessions(Empty) returns (SessionList);
+  rpc ListSessionMessages(SessionMessagesReq) returns (SessionHistory);
+  rpc CloneSession(CloneSessionReq) returns (Session);
+  rpc ForkSession(ForkSessionReq) returns (Session);
+  rpc GetSessionTree(SessionTreeReq) returns (SessionList);
   rpc AttachSession(AttachReq) returns (stream ChatEvent);
   rpc DetachSession(DetachReq) returns (Empty);
   rpc KillSession(KillReq) returns (Empty);

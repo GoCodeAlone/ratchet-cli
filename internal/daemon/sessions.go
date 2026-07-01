@@ -25,6 +25,15 @@ type SessionInfo struct {
 	Agents              int
 }
 
+type SessionHistoryMessage struct {
+	ID         string
+	Role       string
+	Content    string
+	ToolName   string
+	ToolCallID string
+	CreatedAt  time.Time
+}
+
 type SessionManager struct {
 	db          *sql.DB
 	mu          sync.RWMutex
@@ -111,6 +120,33 @@ func (sm *SessionManager) Get(ctx context.Context, id string) (*SessionInfo, err
 		return nil, err
 	}
 	return &s, nil
+}
+
+func (sm *SessionManager) ListMessages(ctx context.Context, sessionID string) ([]SessionHistoryMessage, error) {
+	if _, err := sm.Get(ctx, sessionID); err != nil {
+		return nil, err
+	}
+	rows, err := sm.db.QueryContext(ctx,
+		`SELECT id, role, content, tool_name, tool_call_id, created_at
+		 FROM messages
+		 WHERE session_id = ?
+		 ORDER BY rowid`,
+		sessionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var messages []SessionHistoryMessage
+	for rows.Next() {
+		var m SessionHistoryMessage
+		if err := rows.Scan(&m.ID, &m.Role, &m.Content, &m.ToolName, &m.ToolCallID, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		messages = append(messages, m)
+	}
+	return messages, rows.Err()
 }
 
 // Clone creates a new child session with all visible messages copied from the source.

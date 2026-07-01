@@ -1,0 +1,108 @@
+package main
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
+)
+
+func TestHandleSessionsHistoryCloneForkTree(t *testing.T) {
+	fake := &fakeSessionsClient{
+		history: &pb.SessionHistory{Messages: []*pb.HistoryMessage{
+			{Id: "msg-1", Role: "user", Content: "hello", Timestamp: timestamppb.Now()},
+			{Id: "msg-2", Role: "assistant", Content: "world", Timestamp: timestamppb.Now()},
+		}},
+		clone: &pb.Session{Id: "clone-1", ParentId: "sess-1", RootId: "sess-1"},
+		fork:  &pb.Session{Id: "fork-1", ParentId: "sess-1", RootId: "sess-1", ForkedFromMessageId: "msg-1"},
+		tree: &pb.SessionList{Sessions: []*pb.Session{
+			{Id: "sess-1", RootId: "sess-1", Status: "active"},
+			{Id: "fork-1", ParentId: "sess-1", RootId: "sess-1", ForkedFromMessageId: "msg-1", Status: "active"},
+		}},
+	}
+	withFakeSessionsClient(t, fake)
+
+	historyOut := captureStdout(t, func() {
+		handleSessions([]string{"history", "sess-1"})
+	})
+	for _, want := range []string{"MESSAGE_ID", "msg-1", "user", "hello"} {
+		if !strings.Contains(historyOut, want) {
+			t.Fatalf("history output missing %q:\n%s", want, historyOut)
+		}
+	}
+
+	cloneOut := captureStdout(t, func() {
+		handleSessions([]string{"clone", "sess-1"})
+	})
+	if !strings.Contains(cloneOut, "clone-1") || fake.cloneReason != "manual clone" {
+		t.Fatalf("clone output/reason = %q / %q", cloneOut, fake.cloneReason)
+	}
+
+	forkOut := captureStdout(t, func() {
+		handleSessions([]string{"fork", "sess-1", "--at", "msg-1"})
+	})
+	if !strings.Contains(forkOut, "fork-1") || fake.forkMessageID != "msg-1" {
+		t.Fatalf("fork output/message = %q / %q", forkOut, fake.forkMessageID)
+	}
+
+	treeOut := captureStdout(t, func() {
+		handleSessions([]string{"tree", "sess-1"})
+	})
+	for _, want := range []string{"SESSION_ID", "sess-1", "fork-1", "msg-1"} {
+		if !strings.Contains(treeOut, want) {
+			t.Fatalf("tree output missing %q:\n%s", want, treeOut)
+		}
+	}
+}
+
+func withFakeSessionsClient(t *testing.T, fake *fakeSessionsClient) {
+	t.Helper()
+	old := ensureSessionsClient
+	ensureSessionsClient = func() (sessionsClient, error) {
+		return fake, nil
+	}
+	t.Cleanup(func() { ensureSessionsClient = old })
+}
+
+type fakeSessionsClient struct {
+	history       *pb.SessionHistory
+	clone         *pb.Session
+	fork          *pb.Session
+	tree          *pb.SessionList
+	cloneReason   string
+	forkReason    string
+	forkMessageID string
+}
+
+func (f *fakeSessionsClient) Close() error {
+	return nil
+}
+
+func (f *fakeSessionsClient) ListSessions(context.Context) (*pb.SessionList, error) {
+	return f.tree, nil
+}
+
+func (f *fakeSessionsClient) KillSession(context.Context, string) error {
+	return nil
+}
+
+func (f *fakeSessionsClient) ListSessionMessages(_ context.Context, _ string) (*pb.SessionHistory, error) {
+	return f.history, nil
+}
+
+func (f *fakeSessionsClient) CloneSession(_ context.Context, _ string, reason string) (*pb.Session, error) {
+	f.cloneReason = reason
+	return f.clone, nil
+}
+
+func (f *fakeSessionsClient) ForkSession(_ context.Context, _ string, messageID, reason string) (*pb.Session, error) {
+	f.forkMessageID = messageID
+	f.forkReason = reason
+	return f.fork, nil
+}
+
+func (f *fakeSessionsClient) GetSessionTree(context.Context, string) (*pb.SessionList, error) {
+	return f.tree, nil
+}
