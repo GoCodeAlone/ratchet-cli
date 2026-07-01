@@ -91,7 +91,7 @@ func (r Registry) Resolve(opts RunOptions) (AgentSpec, error) {
 		}
 	}
 	if opts.Command != "" {
-		spec.Command = opts.Command
+		spec.Command = strings.TrimSpace(opts.Command)
 		spec.Args = slices.Clone(opts.Args)
 		if spec.Name == "" {
 			spec.Name = "custom"
@@ -110,6 +110,9 @@ func (s AgentSpec) Validate() error {
 	if command == "" {
 		return ErrMissingCommand
 	}
+	if command != s.Command {
+		return fmt.Errorf("%w: command must not have leading or trailing whitespace", ErrShellCommand)
+	}
 	if looksShellCommand(command) {
 		return fmt.Errorf("%w: %q", ErrShellCommand, command)
 	}
@@ -122,12 +125,16 @@ func (s AgentSpec) Validate() error {
 }
 
 func (s AgentSpec) Fingerprint() string {
+	args := slices.Clone(s.Args)
+	if args == nil {
+		args = []string{}
+	}
 	payload := struct {
 		Command string   `json:"command"`
 		Args    []string `json:"args"`
 	}{
-		Command: s.Command,
-		Args:    s.Args,
+		Command: strings.TrimSpace(s.Command),
+		Args:    args,
 	}
 	b, _ := json.Marshal(payload)
 	sum := sha256.Sum256(b)

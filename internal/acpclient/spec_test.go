@@ -62,6 +62,16 @@ func TestRegistryResolveReportsMissingCommand(t *testing.T) {
 	}
 }
 
+func TestRegistryResolveTrimsExplicitCommand(t *testing.T) {
+	spec, err := DefaultRegistry().Resolve(RunOptions{Command: " codex "})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if spec.Command != "codex" {
+		t.Fatalf("Command = %q, want trimmed command", spec.Command)
+	}
+}
+
 func TestCommandFingerprintIsStableAndArgSensitive(t *testing.T) {
 	a := AgentSpec{Command: "codex", Args: []string{"acp", "--model", "gpt-5"}}
 	b := AgentSpec{Command: "codex", Args: []string{"acp", "--model", "gpt-5"}}
@@ -75,5 +85,13 @@ func TestCommandFingerprintIsStableAndArgSensitive(t *testing.T) {
 	}
 	if a.Fingerprint() == c.Fingerprint() {
 		t.Fatalf("fingerprints should differ when args differ: %q", a.Fingerprint())
+	}
+}
+
+func TestCommandFingerprintNormalizesCommandAndEmptyArgs(t *testing.T) {
+	a := AgentSpec{Command: " codex "}
+	b := AgentSpec{Command: "codex", Args: []string{}}
+	if a.Fingerprint() != b.Fingerprint() {
+		t.Fatalf("fingerprints differ for logically identical specs: %q != %q", a.Fingerprint(), b.Fingerprint())
 	}
 }

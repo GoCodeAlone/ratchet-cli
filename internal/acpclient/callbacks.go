@@ -20,6 +20,7 @@ var (
 
 type Callbacks struct {
 	cwd         string
+	realCwd     string
 	allowWrites bool
 
 	mu      sync.Mutex
@@ -40,7 +41,12 @@ func NewCallbacks(opts RunOptions) *Callbacks {
 	if abs, err := filepath.Abs(cwd); err == nil {
 		cwd = abs
 	}
-	return &Callbacks{cwd: filepath.Clean(cwd), allowWrites: opts.AllowWrites, notify: make(chan struct{}, 1)}
+	cwd = filepath.Clean(cwd)
+	realCwd := cwd
+	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
+		realCwd = filepath.Clean(resolved)
+	}
+	return &Callbacks{cwd: cwd, realCwd: realCwd, allowWrites: opts.AllowWrites, notify: make(chan struct{}, 1)}
 }
 
 func (c *Callbacks) Cwd() string {
@@ -73,6 +79,20 @@ func (c *Callbacks) Snapshot() ([]acpsdk.SessionNotification, string) {
 	return slices.Clone(c.updates), c.text.String()
 }
 
+func (c *Callbacks) Reset() {
+	c.mu.Lock()
+	c.updates = nil
+	c.text.Reset()
+	c.mu.Unlock()
+	for {
+		select {
+		case <-c.notify:
+		default:
+			return
+		}
+	}
+}
+
 func (c *Callbacks) UpdateCount() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -96,7 +116,7 @@ func (c *Callbacks) WaitForUpdate(ctx context.Context, previous int) {
 }
 
 func (c *Callbacks) ReadTextFile(_ context.Context, p acpsdk.ReadTextFileRequest) (acpsdk.ReadTextFileResponse, error) {
-	path, err := c.resolvePath(p.Path)
+	path, err := c.resolvePath(p.Path, true)
 	if err != nil {
 		return acpsdk.ReadTextFileResponse{}, err
 	}
@@ -115,7 +135,7 @@ func (c *Callbacks) WriteTextFile(_ context.Context, p acpsdk.WriteTextFileReque
 	if !c.allowWrites {
 		return acpsdk.WriteTextFileResponse{}, ErrWritesDisabled
 	}
-	path, err := c.resolvePath(p.Path)
+	path, err := c.resolvePath(p.Path, false)
 	if err != nil {
 		return acpsdk.WriteTextFileResponse{}, err
 	}
@@ -158,7 +178,7 @@ func (*Callbacks) WaitForTerminalExit(context.Context, acpsdk.WaitForTerminalExi
 	return acpsdk.WaitForTerminalExitResponse{}, nil
 }
 
-func (c *Callbacks) resolvePath(path string) (string, error) {
+func (c *Callbacks) resolvePath(path string, mustExist bool) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("path is required")
 	}
@@ -177,7 +197,42 @@ func (c *Callbacks) resolvePath(path string) (string, error) {
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		return "", fmt.Errorf("%w: %s", ErrPathOutsideCWD, abs)
 	}
+	if err := c.validateRealPath(abs, mustExist); err != nil {
+		return "", err
+	}
 	return abs, nil
+}
+
+func (c *Callbacks) validateRealPath(path string, mustExist bool) error {
+	realPath, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return c.requireWithinRealCWD(filepath.Clean(realPath))
+	}
+	if mustExist {
+		return err
+	}
+
+	parent := filepath.Dir(path)
+	for {
+		if parent == "." || parent == string(filepath.Separator) || parent == filepath.Dir(parent) {
+			return err
+		}
+		if realParent, parentErr := filepath.EvalSymlinks(parent); parentErr == nil {
+			return c.requireWithinRealCWD(filepath.Clean(realParent))
+		}
+		parent = filepath.Dir(parent)
+	}
+}
+
+func (c *Callbacks) requireWithinRealCWD(path string) error {
+	rel, err := filepath.Rel(c.realCwd, path)
+	if err != nil {
+		return err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return fmt.Errorf("%w: %s", ErrPathOutsideCWD, path)
+	}
+	return nil
 }
 
 func sliceLines(text string, line *int, limit *int) string {

@@ -81,6 +81,7 @@ func (c *Client) RunPrompt(ctx context.Context, prompt string) (Result, error) {
 	started := time.Now()
 	callCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
+	c.callbacks.Reset()
 
 	if _, err := c.conn.Initialize(callCtx, acpsdk.InitializeRequest{
 		ProtocolVersion: acpsdk.ProtocolVersionNumber,
@@ -126,13 +127,18 @@ func (c *Client) Close() error {
 	if c == nil || c.cmd == nil || c.cmd.Process == nil {
 		return nil
 	}
-	_ = c.cmd.Process.Kill()
 	if c.wait == nil {
 		return nil
 	}
 	select {
 	case err := <-c.wait:
 		return err
+	default:
+	}
+	_ = c.cmd.Process.Kill()
+	select {
+	case <-c.wait:
+		return nil
 	case <-time.After(5 * time.Second):
 		return context.DeadlineExceeded
 	}

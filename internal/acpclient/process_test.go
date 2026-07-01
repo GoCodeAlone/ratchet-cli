@@ -21,7 +21,6 @@ func TestClientRunPromptAgainstFixtureProcess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	t.Cleanup(func() { _ = client.Close() })
 
 	result, err := client.RunPrompt(ctx, "process hello")
 	if err != nil {
@@ -32,5 +31,8 @@ func TestClientRunPromptAgainstFixtureProcess(t *testing.T) {
 	}
 	if got, want := result.Text, "fixture: process hello"; got != want {
 		t.Fatalf("Text = %q, want %q", got, want)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
 	}
 }
