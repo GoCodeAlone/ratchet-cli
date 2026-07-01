@@ -14,6 +14,7 @@ possible.
 | daemon | `ratchet daemon status` | pid/socket state under `~/.ratchet` | Supported | `TestHarnessSmokeVersionHelpAndDaemonStatus`. |
 | session lineage | `ratchet sessions history`, `ratchet sessions clone`, `ratchet sessions fork`, `ratchet sessions tree`, `ratchet sessions browse`, `ratchet sessions summary`, `ratchet sessions compactions` | daemon gRPC session history/clone/fork/tree/summary/compaction APIs plus Bubble Tea session tree browser | Supported for separate fork/clone sessions, branch summaries, persisted compaction records, archive session links, and Pi-style in-place branch navigation through `ctrl+b`, `/tree`, and `sessions browse` | `TestSessionLineageHistoryCloneForkTreeRPC`; `TestCompactionRecordRPC`; `TestHandleSessionsHistoryCloneForkTree`; `TestAppCtrlBOpensSessionTreeBrowser`; `TestParseTreeRequestsSessionTreeNavigation`; `TestHandleSessionsBrowseRunsInjectedBrowser`. |
 | ACP | `ratchet acp` | ACP stdio JSON-RPC agent wrapping daemon service | Supported for initialize/new/load/prompt/cancel/model/mode | `TestACPStdioPromptSmoke`; `TestHarnessSmokeInitializeNewAndLoadSession`; `TestParityNewSessionIDCanBeLoaded`. |
+| ACP client | `ratchet acp client exec --command <agent> "prompt"` | typed `acp-go-sdk` client over child-process stdio plus local JSON state under XDG state | Supported for one-shot exec, persisted session metadata, sessions list/show/status, one pending `--no-wait` prompt, and cooperative cancel requests | `TestACPClientExecBinarySmoke`; `TestClientRunPromptAgainstFixtureProcess`; `TestSessionStoreLoadsMissingFileAndPersistsRecords`. |
 | MCP | `ratchet mcp blackboard` / `ratchet mcp daemon` | stdio JSON-RPC blackboard or daemon server | Supported for standalone blackboard plus daemon session/project/blackboard/team status tools | `TestHarnessSmokeJSONRPCInitializeToolsListAndCall`; `TestDaemonMCPToolCallsUseDaemonClient`. |
 | team | `ratchet team start "task"` | daemon team manager / mesh executor | Supported when provider configured | Existing team and mesh tests cover service behavior. |
 
@@ -54,14 +55,15 @@ go test ./internal/acp -run TestACPStdioPromptSmoke -count=1
 The dated source-backed matrix lives in
 [competitor-parity.md](competitor-parity.md). The snapshot was refreshed on
 2026-07-01 from current Zed, ACP, Pi, Codex, Claude Code, Hermes, OpenClaw, and ACPX
-sources. ratchet-cli now supports Windows release artifacts, ACP prompt
-stdio smoke, daemon-backed MCP blackboard/session/project/team status tools,
-session lineage history/clone/fork/tree commands, branch summaries, compaction
-records with archive session links, Pi-style in-place branch navigation, and
-opt-in redacted retro evidence. The v0.16.0 release keeps Windows amd64/arm64
-zip artifacts in the GoReleaser output. Deferred rows remain broader policy
-layering, extension hooks, full daemon direct team messaging, ACP
-client/orchestrator mode, and local-first channel gateways.
+sources. ratchet-cli now supports Windows release artifacts, ACP prompt stdio
+smoke, headless ACP client exec/session/status/cancel primitives,
+daemon-backed MCP blackboard/session/project/team status tools, session lineage
+history/clone/fork/tree commands, branch summaries, compaction records with
+archive session links, Pi-style in-place branch navigation, and opt-in redacted
+retro evidence. The v0.18.0 release keeps Windows amd64/arm64 zip artifacts in
+the GoReleaser output. Deferred rows remain broader policy layering, extension
+hooks, full daemon direct team messaging, ACPX import/export and compare/flow
+features, and local-first channel gateways.
 
 ## ACP Matrix
 
@@ -77,6 +79,19 @@ client/orchestrator mode, and local-first channel gateways.
 | session mode | Supported in-memory | `SetSessionMode` validates known sessions and records the ACP mode for the agent process; daemon-wide persistence is deferred. |
 | session list/resume/close/delete | Deferred | `acp-go-sdk v0.6.3` exposes no agent methods for these schema-v2 lifecycle operations. |
 | HTTP/SSE MCP via ACP | Deferred | Agent capabilities intentionally do not advertise HTTP/SSE MCP support. |
+
+## ACP Client Matrix
+
+| ACP client capability | Status | Evidence |
+|---|---|---|
+| external process stdio | Supported | `TestClientRunPromptAgainstFixtureProcess`; `TestACPClientExecBinarySmoke`. |
+| one-shot prompt | Supported | `ratchet acp client exec`; human and JSON output tests. |
+| session metadata | Supported | XDG state JSON store; `TestSessionStoreLoadsMissingFileAndPersistsRecords`. |
+| sessions list/show/status | Supported | `ratchet acp client sessions list`, `sessions show <id>`, and `status <id>`; command tests cover empty, one-session, and invalid-id cases. |
+| no-wait queue primitive | Supported for one pending prompt | `ratchet acp client exec --no-wait --session <id>` stores one pending prompt locally; multi-prompt FIFO is deferred. |
+| cancel | Supported as cooperative request | `ratchet acp client cancel <id>` marks pending prompts canceled or writes a cancel-request file for active owners; active clients poll and send ACP cancel. |
+| import/export archives | Deferred | ACPX-compatible portable session archives remain out of scope. |
+| compare/flow commands | Deferred | ACPX flow language remains out of scope. |
 
 ## MCP Matrix
 
