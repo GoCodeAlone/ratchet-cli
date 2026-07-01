@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -33,8 +34,10 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 	}
 
 	cwd := t.TempDir()
+	env := append(os.Environ(), "XDG_STATE_HOME="+t.TempDir())
 	human := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "exec", "--command", fixtureBin, "--cwd", cwd, "binary hello")
 	human.Dir = repoRoot
+	human.Env = env
 	humanOut, err := human.CombinedOutput()
 	if err != nil {
 		t.Fatalf("human exec: %v\n%s", err, humanOut)
@@ -45,6 +48,7 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 
 	jsonCmd := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "exec", "--command", fixtureBin, "--cwd", cwd, "--json", "json hello")
 	jsonCmd.Dir = repoRoot
+	jsonCmd.Env = env
 	var jsonErr bytes.Buffer
 	jsonCmd.Stderr = &jsonErr
 	jsonOut, err := jsonCmd.Output()
@@ -61,5 +65,49 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 	}
 	if payload.Command != fixtureBin || payload.StopReason != "end_turn" || payload.Text != "fixture: json hello" {
 		t.Fatalf("payload = %#v", payload)
+	}
+
+	sessions := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "sessions", "list")
+	sessions.Dir = repoRoot
+	sessions.Env = env
+	sessionsOut, err := sessions.CombinedOutput()
+	if err != nil {
+		t.Fatalf("sessions list: %v\n%s", err, sessionsOut)
+	}
+	if got := string(sessionsOut); !strings.Contains(got, "fixture-session") || !strings.Contains(got, "completed") {
+		t.Fatalf("sessions output = %q", got)
+	}
+
+	queue := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "exec", "--command", fixtureBin, "--cwd", cwd, "--session", "queued-binary", "--no-wait", "queued binary")
+	queue.Dir = repoRoot
+	queue.Env = env
+	queueOut, err := queue.CombinedOutput()
+	if err != nil {
+		t.Fatalf("queue exec: %v\n%s", err, queueOut)
+	}
+	if got := string(queueOut); !strings.Contains(got, "queued pending prompt for queued-binary") {
+		t.Fatalf("queue output = %q", got)
+	}
+
+	status := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "status", "queued-binary")
+	status.Dir = repoRoot
+	status.Env = env
+	statusOut, err := status.CombinedOutput()
+	if err != nil {
+		t.Fatalf("status: %v\n%s", err, statusOut)
+	}
+	if got := string(statusOut); !strings.Contains(got, "pending prompt: pending") {
+		t.Fatalf("status output = %q", got)
+	}
+
+	cancel := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "cancel", "queued-binary")
+	cancel.Dir = repoRoot
+	cancel.Env = env
+	cancelOut, err := cancel.CombinedOutput()
+	if err != nil {
+		t.Fatalf("cancel: %v\n%s", err, cancelOut)
+	}
+	if got := string(cancelOut); !strings.Contains(got, "canceled pending prompt for queued-binary") {
+		t.Fatalf("cancel output = %q", got)
 	}
 }
