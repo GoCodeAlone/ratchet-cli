@@ -195,6 +195,17 @@ func initDB(db *sql.DB) error {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (session_id) REFERENCES sessions(id)
 		)`,
+		`CREATE TABLE IF NOT EXISTS session_compactions (
+			id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			summary TEXT NOT NULL,
+			reason TEXT NOT NULL,
+			messages_removed INTEGER NOT NULL,
+			messages_kept INTEGER NOT NULL,
+			first_kept_message_id TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (session_id) REFERENCES sessions(id)
+		)`,
 		`CREATE TABLE IF NOT EXISTS llm_providers (
 			id TEXT PRIMARY KEY,
 			alias TEXT UNIQUE NOT NULL,

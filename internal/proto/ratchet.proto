@@ -67,6 +67,25 @@ message SessionTreeReq {
   string session_id = 1;
 }
 
+message SessionCompactionsReq {
+  string session_id = 1;
+}
+
+message CompactionRecord {
+  string id = 1;
+  string session_id = 2;
+  string summary = 3;
+  string reason = 4;
+  int32 messages_removed = 5;
+  int32 messages_kept = 6;
+  string first_kept_message_id = 7;
+  google.protobuf.Timestamp created_at = 8;
+}
+
+message SessionCompactionList {
+  repeated CompactionRecord records = 1;
+}
+
 // Chat streaming
 message SendMessageReq {
   string session_id = 1;
@@ -629,6 +648,7 @@ service RatchetDaemon {
   rpc CloneSession(CloneSessionReq) returns (Session);
   rpc ForkSession(ForkSessionReq) returns (Session);
   rpc GetSessionTree(SessionTreeReq) returns (SessionList);
+  rpc ListSessionCompactions(SessionCompactionsReq) returns (SessionCompactionList);
   rpc AttachSession(AttachReq) returns (stream ChatEvent);
   rpc DetachSession(DetachReq) returns (Empty);
   rpc KillSession(KillReq) returns (Empty);

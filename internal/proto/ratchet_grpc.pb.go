@@ -19,71 +19,72 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	RatchetDaemon_CreateSession_FullMethodName       = "/ratchet.RatchetDaemon/CreateSession"
-	RatchetDaemon_ListSessions_FullMethodName        = "/ratchet.RatchetDaemon/ListSessions"
-	RatchetDaemon_ListSessionMessages_FullMethodName = "/ratchet.RatchetDaemon/ListSessionMessages"
-	RatchetDaemon_CloneSession_FullMethodName        = "/ratchet.RatchetDaemon/CloneSession"
-	RatchetDaemon_ForkSession_FullMethodName         = "/ratchet.RatchetDaemon/ForkSession"
-	RatchetDaemon_GetSessionTree_FullMethodName      = "/ratchet.RatchetDaemon/GetSessionTree"
-	RatchetDaemon_AttachSession_FullMethodName       = "/ratchet.RatchetDaemon/AttachSession"
-	RatchetDaemon_DetachSession_FullMethodName       = "/ratchet.RatchetDaemon/DetachSession"
-	RatchetDaemon_KillSession_FullMethodName         = "/ratchet.RatchetDaemon/KillSession"
-	RatchetDaemon_SendMessage_FullMethodName         = "/ratchet.RatchetDaemon/SendMessage"
-	RatchetDaemon_RespondToPermission_FullMethodName = "/ratchet.RatchetDaemon/RespondToPermission"
-	RatchetDaemon_AddProvider_FullMethodName         = "/ratchet.RatchetDaemon/AddProvider"
-	RatchetDaemon_ListProviders_FullMethodName       = "/ratchet.RatchetDaemon/ListProviders"
-	RatchetDaemon_TestProvider_FullMethodName        = "/ratchet.RatchetDaemon/TestProvider"
-	RatchetDaemon_RemoveProvider_FullMethodName      = "/ratchet.RatchetDaemon/RemoveProvider"
-	RatchetDaemon_SetDefaultProvider_FullMethodName  = "/ratchet.RatchetDaemon/SetDefaultProvider"
-	RatchetDaemon_UpdateProviderModel_FullMethodName = "/ratchet.RatchetDaemon/UpdateProviderModel"
-	RatchetDaemon_ListAgents_FullMethodName          = "/ratchet.RatchetDaemon/ListAgents"
-	RatchetDaemon_GetAgentStatus_FullMethodName      = "/ratchet.RatchetDaemon/GetAgentStatus"
-	RatchetDaemon_StartTeam_FullMethodName           = "/ratchet.RatchetDaemon/StartTeam"
-	RatchetDaemon_GetTeamStatus_FullMethodName       = "/ratchet.RatchetDaemon/GetTeamStatus"
-	RatchetDaemon_ApprovePlan_FullMethodName         = "/ratchet.RatchetDaemon/ApprovePlan"
-	RatchetDaemon_RejectPlan_FullMethodName          = "/ratchet.RatchetDaemon/RejectPlan"
-	RatchetDaemon_StartFleet_FullMethodName          = "/ratchet.RatchetDaemon/StartFleet"
-	RatchetDaemon_GetFleetStatus_FullMethodName      = "/ratchet.RatchetDaemon/GetFleetStatus"
-	RatchetDaemon_KillFleetWorker_FullMethodName     = "/ratchet.RatchetDaemon/KillFleetWorker"
-	RatchetDaemon_CreateCron_FullMethodName          = "/ratchet.RatchetDaemon/CreateCron"
-	RatchetDaemon_ListCrons_FullMethodName           = "/ratchet.RatchetDaemon/ListCrons"
-	RatchetDaemon_PauseCron_FullMethodName           = "/ratchet.RatchetDaemon/PauseCron"
-	RatchetDaemon_ResumeCron_FullMethodName          = "/ratchet.RatchetDaemon/ResumeCron"
-	RatchetDaemon_StopCron_FullMethodName            = "/ratchet.RatchetDaemon/StopCron"
-	RatchetDaemon_ListJobs_FullMethodName            = "/ratchet.RatchetDaemon/ListJobs"
-	RatchetDaemon_PauseJob_FullMethodName            = "/ratchet.RatchetDaemon/PauseJob"
-	RatchetDaemon_ResumeJob_FullMethodName           = "/ratchet.RatchetDaemon/ResumeJob"
-	RatchetDaemon_KillJob_FullMethodName             = "/ratchet.RatchetDaemon/KillJob"
-	RatchetDaemon_Health_FullMethodName              = "/ratchet.RatchetDaemon/Health"
-	RatchetDaemon_Shutdown_FullMethodName            = "/ratchet.RatchetDaemon/Shutdown"
-	RatchetDaemon_CheckVersion_FullMethodName        = "/ratchet.RatchetDaemon/CheckVersion"
-	RatchetDaemon_RequestReload_FullMethodName       = "/ratchet.RatchetDaemon/RequestReload"
-	RatchetDaemon_RegisterMeshNode_FullMethodName    = "/ratchet.RatchetDaemon/RegisterMeshNode"
-	RatchetDaemon_MeshStream_FullMethodName          = "/ratchet.RatchetDaemon/MeshStream"
-	RatchetDaemon_BlackboardRead_FullMethodName      = "/ratchet.RatchetDaemon/BlackboardRead"
-	RatchetDaemon_BlackboardWrite_FullMethodName     = "/ratchet.RatchetDaemon/BlackboardWrite"
-	RatchetDaemon_BlackboardList_FullMethodName      = "/ratchet.RatchetDaemon/BlackboardList"
-	RatchetDaemon_ListTeams_FullMethodName           = "/ratchet.RatchetDaemon/ListTeams"
-	RatchetDaemon_KillTeam_FullMethodName            = "/ratchet.RatchetDaemon/KillTeam"
-	RatchetDaemon_RenameTeam_FullMethodName          = "/ratchet.RatchetDaemon/RenameTeam"
-	RatchetDaemon_TeamAddAgent_FullMethodName        = "/ratchet.RatchetDaemon/TeamAddAgent"
-	RatchetDaemon_TeamRemoveAgent_FullMethodName     = "/ratchet.RatchetDaemon/TeamRemoveAgent"
-	RatchetDaemon_AttachTeam_FullMethodName          = "/ratchet.RatchetDaemon/AttachTeam"
-	RatchetDaemon_SteerTeam_FullMethodName           = "/ratchet.RatchetDaemon/SteerTeam"
-	RatchetDaemon_DirectMessage_FullMethodName       = "/ratchet.RatchetDaemon/DirectMessage"
-	RatchetDaemon_RespondToHuman_FullMethodName      = "/ratchet.RatchetDaemon/RespondToHuman"
-	RatchetDaemon_ListPendingHuman_FullMethodName    = "/ratchet.RatchetDaemon/ListPendingHuman"
-	RatchetDaemon_StartProject_FullMethodName        = "/ratchet.RatchetDaemon/StartProject"
-	RatchetDaemon_ListProjects_FullMethodName        = "/ratchet.RatchetDaemon/ListProjects"
-	RatchetDaemon_PauseProject_FullMethodName        = "/ratchet.RatchetDaemon/PauseProject"
-	RatchetDaemon_ResumeProject_FullMethodName       = "/ratchet.RatchetDaemon/ResumeProject"
-	RatchetDaemon_KillProject_FullMethodName         = "/ratchet.RatchetDaemon/KillProject"
-	RatchetDaemon_GetProjectStatus_FullMethodName    = "/ratchet.RatchetDaemon/GetProjectStatus"
-	RatchetDaemon_CreateTask_FullMethodName          = "/ratchet.RatchetDaemon/CreateTask"
-	RatchetDaemon_ClaimTask_FullMethodName           = "/ratchet.RatchetDaemon/ClaimTask"
-	RatchetDaemon_UpdateTask_FullMethodName          = "/ratchet.RatchetDaemon/UpdateTask"
-	RatchetDaemon_ListTasks_FullMethodName           = "/ratchet.RatchetDaemon/ListTasks"
-	RatchetDaemon_GetTask_FullMethodName             = "/ratchet.RatchetDaemon/GetTask"
+	RatchetDaemon_CreateSession_FullMethodName          = "/ratchet.RatchetDaemon/CreateSession"
+	RatchetDaemon_ListSessions_FullMethodName           = "/ratchet.RatchetDaemon/ListSessions"
+	RatchetDaemon_ListSessionMessages_FullMethodName    = "/ratchet.RatchetDaemon/ListSessionMessages"
+	RatchetDaemon_CloneSession_FullMethodName           = "/ratchet.RatchetDaemon/CloneSession"
+	RatchetDaemon_ForkSession_FullMethodName            = "/ratchet.RatchetDaemon/ForkSession"
+	RatchetDaemon_GetSessionTree_FullMethodName         = "/ratchet.RatchetDaemon/GetSessionTree"
+	RatchetDaemon_ListSessionCompactions_FullMethodName = "/ratchet.RatchetDaemon/ListSessionCompactions"
+	RatchetDaemon_AttachSession_FullMethodName          = "/ratchet.RatchetDaemon/AttachSession"
+	RatchetDaemon_DetachSession_FullMethodName          = "/ratchet.RatchetDaemon/DetachSession"
+	RatchetDaemon_KillSession_FullMethodName            = "/ratchet.RatchetDaemon/KillSession"
+	RatchetDaemon_SendMessage_FullMethodName            = "/ratchet.RatchetDaemon/SendMessage"
+	RatchetDaemon_RespondToPermission_FullMethodName    = "/ratchet.RatchetDaemon/RespondToPermission"
+	RatchetDaemon_AddProvider_FullMethodName            = "/ratchet.RatchetDaemon/AddProvider"
+	RatchetDaemon_ListProviders_FullMethodName          = "/ratchet.RatchetDaemon/ListProviders"
+	RatchetDaemon_TestProvider_FullMethodName           = "/ratchet.RatchetDaemon/TestProvider"
+	RatchetDaemon_RemoveProvider_FullMethodName         = "/ratchet.RatchetDaemon/RemoveProvider"
+	RatchetDaemon_SetDefaultProvider_FullMethodName     = "/ratchet.RatchetDaemon/SetDefaultProvider"
+	RatchetDaemon_UpdateProviderModel_FullMethodName    = "/ratchet.RatchetDaemon/UpdateProviderModel"
+	RatchetDaemon_ListAgents_FullMethodName             = "/ratchet.RatchetDaemon/ListAgents"
+	RatchetDaemon_GetAgentStatus_FullMethodName         = "/ratchet.RatchetDaemon/GetAgentStatus"
+	RatchetDaemon_StartTeam_FullMethodName              = "/ratchet.RatchetDaemon/StartTeam"
+	RatchetDaemon_GetTeamStatus_FullMethodName          = "/ratchet.RatchetDaemon/GetTeamStatus"
+	RatchetDaemon_ApprovePlan_FullMethodName            = "/ratchet.RatchetDaemon/ApprovePlan"
+	RatchetDaemon_RejectPlan_FullMethodName             = "/ratchet.RatchetDaemon/RejectPlan"
+	RatchetDaemon_StartFleet_FullMethodName             = "/ratchet.RatchetDaemon/StartFleet"
+	RatchetDaemon_GetFleetStatus_FullMethodName         = "/ratchet.RatchetDaemon/GetFleetStatus"
+	RatchetDaemon_KillFleetWorker_FullMethodName        = "/ratchet.RatchetDaemon/KillFleetWorker"
+	RatchetDaemon_CreateCron_FullMethodName             = "/ratchet.RatchetDaemon/CreateCron"
+	RatchetDaemon_ListCrons_FullMethodName              = "/ratchet.RatchetDaemon/ListCrons"
+	RatchetDaemon_PauseCron_FullMethodName              = "/ratchet.RatchetDaemon/PauseCron"
+	RatchetDaemon_ResumeCron_FullMethodName             = "/ratchet.RatchetDaemon/ResumeCron"
+	RatchetDaemon_StopCron_FullMethodName               = "/ratchet.RatchetDaemon/StopCron"
+	RatchetDaemon_ListJobs_FullMethodName               = "/ratchet.RatchetDaemon/ListJobs"
+	RatchetDaemon_PauseJob_FullMethodName               = "/ratchet.RatchetDaemon/PauseJob"
+	RatchetDaemon_ResumeJob_FullMethodName              = "/ratchet.RatchetDaemon/ResumeJob"
+	RatchetDaemon_KillJob_FullMethodName                = "/ratchet.RatchetDaemon/KillJob"
+	RatchetDaemon_Health_FullMethodName                 = "/ratchet.RatchetDaemon/Health"
+	RatchetDaemon_Shutdown_FullMethodName               = "/ratchet.RatchetDaemon/Shutdown"
+	RatchetDaemon_CheckVersion_FullMethodName           = "/ratchet.RatchetDaemon/CheckVersion"
+	RatchetDaemon_RequestReload_FullMethodName          = "/ratchet.RatchetDaemon/RequestReload"
+	RatchetDaemon_RegisterMeshNode_FullMethodName       = "/ratchet.RatchetDaemon/RegisterMeshNode"
+	RatchetDaemon_MeshStream_FullMethodName             = "/ratchet.RatchetDaemon/MeshStream"
+	RatchetDaemon_BlackboardRead_FullMethodName         = "/ratchet.RatchetDaemon/BlackboardRead"
+	RatchetDaemon_BlackboardWrite_FullMethodName        = "/ratchet.RatchetDaemon/BlackboardWrite"
+	RatchetDaemon_BlackboardList_FullMethodName         = "/ratchet.RatchetDaemon/BlackboardList"
+	RatchetDaemon_ListTeams_FullMethodName              = "/ratchet.RatchetDaemon/ListTeams"
+	RatchetDaemon_KillTeam_FullMethodName               = "/ratchet.RatchetDaemon/KillTeam"
+	RatchetDaemon_RenameTeam_FullMethodName             = "/ratchet.RatchetDaemon/RenameTeam"
+	RatchetDaemon_TeamAddAgent_FullMethodName           = "/ratchet.RatchetDaemon/TeamAddAgent"
+	RatchetDaemon_TeamRemoveAgent_FullMethodName        = "/ratchet.RatchetDaemon/TeamRemoveAgent"
+	RatchetDaemon_AttachTeam_FullMethodName             = "/ratchet.RatchetDaemon/AttachTeam"
+	RatchetDaemon_SteerTeam_FullMethodName              = "/ratchet.RatchetDaemon/SteerTeam"
+	RatchetDaemon_DirectMessage_FullMethodName          = "/ratchet.RatchetDaemon/DirectMessage"
+	RatchetDaemon_RespondToHuman_FullMethodName         = "/ratchet.RatchetDaemon/RespondToHuman"
+	RatchetDaemon_ListPendingHuman_FullMethodName       = "/ratchet.RatchetDaemon/ListPendingHuman"
+	RatchetDaemon_StartProject_FullMethodName           = "/ratchet.RatchetDaemon/StartProject"
+	RatchetDaemon_ListProjects_FullMethodName           = "/ratchet.RatchetDaemon/ListProjects"
+	RatchetDaemon_PauseProject_FullMethodName           = "/ratchet.RatchetDaemon/PauseProject"
+	RatchetDaemon_ResumeProject_FullMethodName          = "/ratchet.RatchetDaemon/ResumeProject"
+	RatchetDaemon_KillProject_FullMethodName            = "/ratchet.RatchetDaemon/KillProject"
+	RatchetDaemon_GetProjectStatus_FullMethodName       = "/ratchet.RatchetDaemon/GetProjectStatus"
+	RatchetDaemon_CreateTask_FullMethodName             = "/ratchet.RatchetDaemon/CreateTask"
+	RatchetDaemon_ClaimTask_FullMethodName              = "/ratchet.RatchetDaemon/ClaimTask"
+	RatchetDaemon_UpdateTask_FullMethodName             = "/ratchet.RatchetDaemon/UpdateTask"
+	RatchetDaemon_ListTasks_FullMethodName              = "/ratchet.RatchetDaemon/ListTasks"
+	RatchetDaemon_GetTask_FullMethodName                = "/ratchet.RatchetDaemon/GetTask"
 )
 
 // RatchetDaemonClient is the client API for RatchetDaemon service.
@@ -97,6 +98,7 @@ type RatchetDaemonClient interface {
 	CloneSession(ctx context.Context, in *CloneSessionReq, opts ...grpc.CallOption) (*Session, error)
 	ForkSession(ctx context.Context, in *ForkSessionReq, opts ...grpc.CallOption) (*Session, error)
 	GetSessionTree(ctx context.Context, in *SessionTreeReq, opts ...grpc.CallOption) (*SessionList, error)
+	ListSessionCompactions(ctx context.Context, in *SessionCompactionsReq, opts ...grpc.CallOption) (*SessionCompactionList, error)
 	AttachSession(ctx context.Context, in *AttachReq, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ChatEvent], error)
 	DetachSession(ctx context.Context, in *DetachReq, opts ...grpc.CallOption) (*Empty, error)
 	KillSession(ctx context.Context, in *KillReq, opts ...grpc.CallOption) (*Empty, error)
@@ -237,6 +239,16 @@ func (c *ratchetDaemonClient) GetSessionTree(ctx context.Context, in *SessionTre
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SessionList)
 	err := c.cc.Invoke(ctx, RatchetDaemon_GetSessionTree_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ratchetDaemonClient) ListSessionCompactions(ctx context.Context, in *SessionCompactionsReq, opts ...grpc.CallOption) (*SessionCompactionList, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SessionCompactionList)
+	err := c.cc.Invoke(ctx, RatchetDaemon_ListSessionCompactions_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -910,6 +922,7 @@ type RatchetDaemonServer interface {
 	CloneSession(context.Context, *CloneSessionReq) (*Session, error)
 	ForkSession(context.Context, *ForkSessionReq) (*Session, error)
 	GetSessionTree(context.Context, *SessionTreeReq) (*SessionList, error)
+	ListSessionCompactions(context.Context, *SessionCompactionsReq) (*SessionCompactionList, error)
 	AttachSession(*AttachReq, grpc.ServerStreamingServer[ChatEvent]) error
 	DetachSession(context.Context, *DetachReq) (*Empty, error)
 	KillSession(context.Context, *KillReq) (*Empty, error)
@@ -1013,6 +1026,9 @@ func (UnimplementedRatchetDaemonServer) ForkSession(context.Context, *ForkSessio
 }
 func (UnimplementedRatchetDaemonServer) GetSessionTree(context.Context, *SessionTreeReq) (*SessionList, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetSessionTree not implemented")
+}
+func (UnimplementedRatchetDaemonServer) ListSessionCompactions(context.Context, *SessionCompactionsReq) (*SessionCompactionList, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListSessionCompactions not implemented")
 }
 func (UnimplementedRatchetDaemonServer) AttachSession(*AttachReq, grpc.ServerStreamingServer[ChatEvent]) error {
 	return status.Error(codes.Unimplemented, "method AttachSession not implemented")
@@ -1316,6 +1332,24 @@ func _RatchetDaemon_GetSessionTree_Handler(srv interface{}, ctx context.Context,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RatchetDaemonServer).GetSessionTree(ctx, req.(*SessionTreeReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RatchetDaemon_ListSessionCompactions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SessionCompactionsReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RatchetDaemonServer).ListSessionCompactions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RatchetDaemon_ListSessionCompactions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RatchetDaemonServer).ListSessionCompactions(ctx, req.(*SessionCompactionsReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2352,6 +2386,10 @@ var RatchetDaemon_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetSessionTree",
 			Handler:    _RatchetDaemon_GetSessionTree_Handler,
+		},
+		{
+			MethodName: "ListSessionCompactions",
+			Handler:    _RatchetDaemon_ListSessionCompactions_Handler,
 		},
 		{
 			MethodName: "DetachSession",
