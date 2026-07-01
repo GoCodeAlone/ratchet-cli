@@ -17,6 +17,14 @@ type Config struct {
 	ModelRouting      ModelRouting     `yaml:"model_routing"`
 	Context           ContextConfig    `yaml:"context"`
 	Trust             TrustConfig      `yaml:"trust"`
+	Retro             RetroConfig      `yaml:"retro"`
+}
+
+// RetroConfig controls optional self-improvement retrospectives.
+type RetroConfig struct {
+	Enabled              bool `yaml:"enabled"`
+	LocalChanges         bool `yaml:"local_changes"`
+	UpstreamInstructions bool `yaml:"upstream_instructions"`
 }
 
 // ContextConfig controls automatic context-window compression behaviour.
@@ -72,6 +80,11 @@ func DefaultConfig() *Config {
 		},
 		Trust: TrustConfig{
 			Mode: "conservative",
+		},
+		Retro: RetroConfig{
+			Enabled:              false,
+			LocalChanges:         false,
+			UpstreamInstructions: true,
 		},
 		Context: ContextConfig{
 			CompressionThreshold: 0.9,

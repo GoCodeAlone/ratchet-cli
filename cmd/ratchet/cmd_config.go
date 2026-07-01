@@ -22,6 +22,9 @@ func handleConfig(args []string) {
 		fmt.Printf("DefaultProvider: %s\n", cfg.DefaultProvider)
 		fmt.Printf("DefaultModel:    %s\n", cfg.DefaultModel)
 		fmt.Printf("Theme:           %s\n", cfg.Theme)
+		fmt.Printf("RetroEnabled:   %t\n", cfg.Retro.Enabled)
+		fmt.Printf("RetroLocal:     %t\n", cfg.Retro.LocalChanges)
+		fmt.Printf("RetroUpstream:  %t\n", cfg.Retro.UpstreamInstructions)
 	default:
 		fmt.Printf("unknown config command: %s\n", args[0])
 	}
