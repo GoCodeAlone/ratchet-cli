@@ -25,4 +25,40 @@ func (r *engineSecretRedactor) CheckAndRedact(msg *provider.Message) {
 		return
 	}
 	msg.Content = r.Redact(msg.Content)
+	for i := range msg.ToolCalls {
+		msg.ToolCalls[i].Arguments = r.redactArguments(msg.ToolCalls[i].Arguments)
+	}
+}
+
+func (r *engineSecretRedactor) redactArguments(args map[string]any) map[string]any {
+	for k, v := range args {
+		args[k] = r.redactValue(v)
+	}
+	return args
+}
+
+func (r *engineSecretRedactor) redactValue(v any) any {
+	switch typed := v.(type) {
+	case string:
+		return r.Redact(typed)
+	case map[string]any:
+		return r.redactArguments(typed)
+	case []any:
+		for i, item := range typed {
+			typed[i] = r.redactValue(item)
+		}
+		return typed
+	case []string:
+		for i, item := range typed {
+			typed[i] = r.Redact(item)
+		}
+		return typed
+	case map[string]string:
+		for k, item := range typed {
+			typed[k] = r.Redact(item)
+		}
+		return typed
+	default:
+		return v
+	}
 }
