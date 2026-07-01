@@ -35,7 +35,7 @@ require (
 	github.com/GoCodeAlone/modular v1.13.4 // indirect
 	github.com/GoCodeAlone/modular/modules/auth v1.17.0 // indirect
 	github.com/GoCodeAlone/modular/modules/eventbus/v2 v2.10.0 // indirect
-	github.com/GoCodeAlone/workflow-plugin-authz v0.5.4 // indirect
+	github.com/GoCodeAlone/workflow-plugin-authz v0.5.13 // indirect
 	github.com/GoCodeAlone/yaegi v0.17.2 // indirect
 	github.com/IBM/sarama v1.50.3 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
@@ -195,6 +195,8 @@ require (
 	github.com/openai/openai-go v1.12.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
+	github.com/ory/keto-client-go/v25 v25.4.0 // indirect
+	github.com/permitio/permit-golang v1.2.8 // indirect
 	github.com/pierrec/lz4/v4 v4.1.27 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/prometheus/client_golang v1.23.2 // indirect
