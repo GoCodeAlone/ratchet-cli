@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -13,7 +14,23 @@ import (
 	acpsdk "github.com/coder/acp-go-sdk"
 )
 
-func runACP(_ []string) error {
+func runACP(args []string) error {
+	return runACPWithArgs(args)
+}
+
+func runACPWithArgs(args []string) error {
+	if len(args) > 0 {
+		switch {
+		case args[0] == "client":
+			return handleACPClient(args[1:])
+		case isHelpArg(args[0]):
+			printACPUsage(os.Stdout)
+			return nil
+		default:
+			return fmt.Errorf("unknown acp command: %s", args[0])
+		}
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -41,4 +58,15 @@ func runACP(_ []string) error {
 		log.Println("ratchet: shutting down on signal")
 	}
 	return nil
+}
+
+func printACPUsage(w io.Writer) {
+	fmt.Fprint(w, `Usage: ratchet acp [client] [command]
+
+Commands:
+  (default)   Run ratchet as an ACP agent over stdio JSON-RPC
+  client      Spawn and control external ACP-compatible agents
+
+Run 'ratchet acp client --help' for client commands.
+`)
 }
