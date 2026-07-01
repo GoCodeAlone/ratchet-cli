@@ -206,6 +206,32 @@ func TestSessionStorePendingPromptAndOwnerLifecycle(t *testing.T) {
 	}
 }
 
+func TestSessionStoreAcquireOwnerDoesNotOverwriteExistingOwner(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 1, 20, 0, 0, 0, time.UTC)
+	original := OwnerLock{SessionID: "sess-lock", PID: 111, CommandFingerprint: "first", StartedAt: now}
+	if err := store.WriteOwner(original); err != nil {
+		t.Fatalf("WriteOwner: %v", err)
+	}
+
+	err := store.AcquireOwner(OwnerLock{
+		SessionID:          "sess-lock",
+		PID:                222,
+		CommandFingerprint: "second",
+		StartedAt:          now.Add(time.Second),
+	})
+	if !errors.Is(err, os.ErrExist) {
+		t.Fatalf("AcquireOwner error = %v, want os.ErrExist", err)
+	}
+	got, err := store.Owner("sess-lock")
+	if err != nil {
+		t.Fatalf("Owner: %v", err)
+	}
+	if got.PID != original.PID || got.CommandFingerprint != original.CommandFingerprint {
+		t.Fatalf("owner overwritten = %#v, want %#v", got, original)
+	}
+}
+
 func TestSessionStoreMigratesLegacyPendingPromptToQueue(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
 	created := time.Date(2026, 7, 1, 20, 45, 0, 0, time.UTC)

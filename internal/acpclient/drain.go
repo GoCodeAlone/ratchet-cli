@@ -43,20 +43,22 @@ func DrainQueue(ctx context.Context, store *Store, spec AgentSpec, opts RunOptio
 		return DrainResult{}, errors.New("acp client store is required")
 	}
 	now := drainOpts.now()
-	if _, err := store.Owner(sessionID); err == nil {
-		return DrainResult{}, fmt.Errorf("%w: %s", ErrDrainBusy, sessionID)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return DrainResult{}, err
-	}
-	if _, err := store.RecoverStaleQueue(sessionID, now); err != nil {
-		return DrainResult{}, err
-	}
-	if err := store.WriteOwner(OwnerLock{
+	if err := store.AcquireOwner(OwnerLock{
 		SessionID:          sessionID,
 		PID:                os.Getpid(),
 		CommandFingerprint: spec.Fingerprint(),
 		StartedAt:          now,
 	}); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			if _, ownerErr := store.Owner(sessionID); ownerErr != nil {
+				return DrainResult{}, ownerErr
+			}
+			return DrainResult{}, fmt.Errorf("%w: %s", ErrDrainBusy, sessionID)
+		}
+		return DrainResult{}, err
+	}
+	if _, err := store.recoverRunningQueueItems(sessionID, now); err != nil {
+		_ = store.ClearOwner(sessionID)
 		return DrainResult{}, err
 	}
 

@@ -152,6 +152,48 @@ func TestDrainQueueStopsOnFirstFailureAndClearsOwner(t *testing.T) {
 	}
 }
 
+func TestDrainQueueRecoversRunningItemAfterAcquiringOwner(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 1, 22, 12, 0, 0, time.UTC)
+	started := now.Add(time.Second)
+	if err := store.Upsert(SessionRecord{
+		ID:        "drain-recover-owned",
+		Status:    SessionStatusRunning,
+		CreatedAt: now,
+		UpdatedAt: started,
+		PromptQueue: []QueuedPrompt{{
+			ID:        "q-1",
+			Prompt:    "recover me",
+			Status:    QueuePromptStatusRunning,
+			CreatedAt: now,
+			StartedAt: &started,
+		}},
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	runner := &fakeDrainRunner{sessionID: "acp-created"}
+
+	result, err := DrainQueue(t.Context(), store, AgentSpec{Name: "fixture", Command: "fixture"}, RunOptions{}, "drain-recover-owned", DrainOptions{
+		Now: fixedClock(now.Add(time.Minute)),
+		StartRunner: func(context.Context, AgentSpec, RunOptions, string) (DrainPromptRunner, func() error, error) {
+			return runner, func() error { return nil }, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("DrainQueue: %v", err)
+	}
+	if result.Completed != 1 || strings.Join(runner.prompts, ",") != "recover me" {
+		t.Fatalf("result/prompts = %#v/%#v, want recovered prompt processed", result, runner.prompts)
+	}
+	got, err := store.Get("drain-recover-owned")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.PromptQueue[0].Status != QueuePromptStatusCompleted || got.PromptQueue[0].StartedAt == nil {
+		t.Fatalf("recovered prompt = %#v, want completed", got.PromptQueue[0])
+	}
+}
+
 func TestDrainQueueCancelRequestCancelsPendingBeforePrompt(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
 	now := time.Date(2026, 7, 1, 22, 15, 0, 0, time.UTC)
