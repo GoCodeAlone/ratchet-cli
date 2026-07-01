@@ -12,7 +12,7 @@ possible.
 | TUI | `ratchet` | daemon gRPC + Bubble Tea UI | Supported | Covered by daemon/session tests; full TUI remains manual. |
 | one-shot | `ratchet -p "prompt"` | daemon session + default provider | Supported when provider configured | CLI binary smoke covers command dispatch; mock provider roundtrip covers daemon path. |
 | daemon | `ratchet daemon status` | pid/socket state under `~/.ratchet` | Supported | `TestHarnessSmokeVersionHelpAndDaemonStatus`. |
-| session lineage | `ratchet sessions history`, `ratchet sessions clone`, `ratchet sessions fork`, `ratchet sessions tree` | daemon gRPC session history/clone/fork/tree APIs | Supported for separate fork/clone sessions | `TestSessionLineageHistoryCloneForkTreeRPC`; `TestHandleSessionsHistoryCloneForkTree`. |
+| session lineage | `ratchet sessions history`, `ratchet sessions clone`, `ratchet sessions fork`, `ratchet sessions tree`, `ratchet sessions compactions` | daemon gRPC session history/clone/fork/tree/compaction APIs | Supported for separate fork/clone sessions and persisted compaction records | `TestSessionLineageHistoryCloneForkTreeRPC`; `TestCompactionRecordRPC`; `TestHandleSessionsHistoryCloneForkTree`. |
 | ACP | `ratchet acp` | ACP stdio JSON-RPC agent wrapping daemon service | Supported for initialize/new/load/prompt/cancel/model/mode | `TestACPStdioPromptSmoke`; `TestHarnessSmokeInitializeNewAndLoadSession`; `TestParityNewSessionIDCanBeLoaded`. |
 | MCP | `ratchet mcp blackboard` / `ratchet mcp daemon` | stdio JSON-RPC blackboard or daemon server | Supported for standalone blackboard plus daemon session/project/blackboard/team status tools | `TestHarnessSmokeJSONRPCInitializeToolsListAndCall`; `TestDaemonMCPToolCallsUseDaemonClient`. |
 | team | `ratchet team start "task"` | daemon team manager / mesh executor | Supported when provider configured | Existing team and mesh tests cover service behavior. |
@@ -56,10 +56,11 @@ The dated source-backed matrix lives in
 2026-07-01 from current Zed, ACP, Pi, Codex, Claude Code, OpenClaw, and ACPX
 sources. ratchet-cli is now supported for Windows release artifacts, ACP prompt
 stdio smoke, daemon-backed MCP blackboard/session/project/team status tools,
-session lineage history/clone/fork/tree commands, and opt-in redacted retro
-evidence. Deferred rows remain compaction records, broader policy layering,
-extension hooks, full daemon direct team messaging, ACP client/orchestrator
-mode, and local-first channel gateways.
+session lineage history/clone/fork/tree commands, compaction records, and
+opt-in redacted retro evidence. Deferred rows remain Pi-style in-place tree
+navigation, pre-compaction archive forks, broader policy layering, extension
+hooks, full daemon direct team messaging, ACP client/orchestrator mode, and
+local-first channel gateways.
 
 ## ACP Matrix
 
