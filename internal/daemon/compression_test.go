@@ -45,8 +45,9 @@ func TestCompactManualWritesCompactionRecord(t *testing.T) {
 	ctx := t.Context()
 
 	session := h.createSession(t, "e2e-mock")
+	const originalMessages = 12
 	var firstKept string
-	for i := range 12 {
+	for i := range originalMessages {
 		id := insertMessage(t, h.DB, session.Id, "user", fmt.Sprintf("manual-%02d", i))
 		if i == 2 {
 			firstKept = id
@@ -73,6 +74,22 @@ func TestCompactManualWritesCompactionRecord(t *testing.T) {
 	if got.FirstKeptMessageID != firstKept {
 		t.Fatalf("first kept = %q, want %q", got.FirstKeptMessageID, firstKept)
 	}
+	if got.ArchiveSessionID == "" {
+		t.Fatal("expected archive session id on manual compaction record")
+	}
+	archive, err := h.Svc.sessions.Get(ctx, got.ArchiveSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if archive.ParentID != session.Id || archive.RootID != session.Id {
+		t.Fatalf("archive lineage parent=%q root=%q, want %s/%s", archive.ParentID, archive.RootID, session.Id, session.Id)
+	}
+	if archive.BranchSummary == "" {
+		t.Fatal("archive branch summary should not be empty")
+	}
+	if got := countMessages(t, h.DB, archive.ID); got != originalMessages {
+		t.Fatalf("archive message count = %d, want %d", got, originalMessages)
+	}
 	if !messageExists(t, h.DB, session.Id, got.FirstKeptMessageID) {
 		t.Fatalf("first kept message %q was not preserved in compacted history", got.FirstKeptMessageID)
 	}
@@ -84,7 +101,8 @@ func TestAutoCompactionWritesCompactionRecord(t *testing.T) {
 	ctx := t.Context()
 
 	session := h.createSession(t, "e2e-mock")
-	for i := range 12 {
+	const originalMessages = 12
+	for i := range originalMessages {
 		insertMessage(t, h.DB, session.Id, "user", fmt.Sprintf("auto-%02d", i))
 	}
 	h.Svc.tokens.AddTokens(session.Id, 200000, 0)
@@ -106,8 +124,42 @@ func TestAutoCompactionWritesCompactionRecord(t *testing.T) {
 	if got.Summary == "" || got.MessagesRemoved <= 0 || got.MessagesKept <= 0 || got.FirstKeptMessageID == "" {
 		t.Fatalf("record missing fields: %+v", got)
 	}
+	if got.ArchiveSessionID == "" {
+		t.Fatal("expected archive session id on auto compaction record")
+	}
+	wantArchiveMessages := originalMessages + 2 // current user prompt and assistant response are saved before auto compaction.
+	if got := countMessages(t, h.DB, got.ArchiveSessionID); got != wantArchiveMessages {
+		t.Fatalf("auto archive message count = %d, want %d", got, wantArchiveMessages)
+	}
 	if !messageExists(t, h.DB, session.Id, got.FirstKeptMessageID) {
 		t.Fatalf("first kept message %q was not preserved in compacted history", got.FirstKeptMessageID)
+	}
+}
+
+func TestCompactNoOpDoesNotCreateArchive(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	h := newE2EHarness(t)
+	ctx := t.Context()
+
+	session := h.createSession(t, "e2e-mock")
+	insertMessage(t, h.DB, session.Id, "user", "short")
+
+	if err := h.Svc.handleCompact(ctx, session.Id, &noopSendServer{ctx: ctx}); err != nil {
+		t.Fatal(err)
+	}
+	records, err := listCompactionRecords(ctx, h.DB, session.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("record count = %d, want 0", len(records))
+	}
+	tree, err := h.Svc.sessions.ListTree(ctx, session.Id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tree) != 1 {
+		t.Fatalf("tree length = %d, want only source session", len(tree))
 	}
 }
 

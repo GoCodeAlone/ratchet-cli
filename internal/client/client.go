@@ -132,6 +132,13 @@ func (c *Client) ListSessionCompactions(ctx context.Context, sessionID string) (
 	return c.daemon.ListSessionCompactions(ctx, &pb.SessionCompactionsReq{SessionId: sessionID})
 }
 
+func (c *Client) UpdateSessionSummary(ctx context.Context, sessionID, summary string) (*pb.Session, error) {
+	return c.daemon.UpdateSessionSummary(ctx, &pb.UpdateSessionSummaryReq{
+		SessionId: sessionID,
+		Summary:   summary,
+	})
+}
+
 func (c *Client) KillSession(ctx context.Context, id string) error {
 	_, err := c.daemon.KillSession(ctx, &pb.KillReq{SessionId: id})
 	return err

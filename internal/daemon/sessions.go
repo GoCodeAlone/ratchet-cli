@@ -21,6 +21,7 @@ type SessionInfo struct {
 	RootID              string
 	ForkedFromMessageID string
 	ForkReason          string
+	BranchSummary       string
 	CreatedAt           time.Time
 	Agents              int
 }
@@ -54,8 +55,8 @@ func (sm *SessionManager) Create(ctx context.Context, workingDir, provider, mode
 	name := generateSessionName(initialPrompt)
 
 	_, err := sm.db.ExecContext(ctx,
-		`INSERT INTO sessions (id, name, status, working_dir, provider, model, root_id) VALUES (?, ?, 'active', ?, ?, ?, ?)`,
-		id, name, workingDir, provider, model, id,
+		`INSERT INTO sessions (id, name, status, working_dir, provider, model, root_id, branch_summary) VALUES (?, ?, 'active', ?, ?, ?, ?, ?)`,
+		id, name, workingDir, provider, model, id, initialPrompt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert session: %w", err)
@@ -66,21 +67,22 @@ func (sm *SessionManager) Create(ctx context.Context, workingDir, provider, mode
 	sm.mu.Unlock()
 
 	return &SessionInfo{
-		ID:         id,
-		Name:       name,
-		Status:     "active",
-		WorkingDir: workingDir,
-		Provider:   provider,
-		Model:      model,
-		RootID:     id,
-		CreatedAt:  time.Now(),
+		ID:            id,
+		Name:          name,
+		Status:        "active",
+		WorkingDir:    workingDir,
+		Provider:      provider,
+		Model:         model,
+		RootID:        id,
+		BranchSummary: initialPrompt,
+		CreatedAt:     time.Now(),
 	}, nil
 }
 
 func (sm *SessionManager) List(ctx context.Context) ([]SessionInfo, error) {
 	rows, err := sm.db.QueryContext(ctx,
 		`SELECT id, name, status, working_dir, provider, model,
-		 COALESCE(parent_id, ''), COALESCE(NULLIF(root_id, ''), id), COALESCE(forked_from_message_id, ''), COALESCE(fork_reason, ''),
+		 COALESCE(parent_id, ''), COALESCE(NULLIF(root_id, ''), id), COALESCE(forked_from_message_id, ''), COALESCE(fork_reason, ''), COALESCE(branch_summary, ''),
 		 created_at
 		 FROM sessions ORDER BY created_at DESC`,
 	)
@@ -94,7 +96,7 @@ func (sm *SessionManager) List(ctx context.Context) ([]SessionInfo, error) {
 		var s SessionInfo
 		if err := rows.Scan(
 			&s.ID, &s.Name, &s.Status, &s.WorkingDir, &s.Provider, &s.Model,
-			&s.ParentID, &s.RootID, &s.ForkedFromMessageID, &s.ForkReason,
+			&s.ParentID, &s.RootID, &s.ForkedFromMessageID, &s.ForkReason, &s.BranchSummary,
 			&s.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -108,12 +110,12 @@ func (sm *SessionManager) Get(ctx context.Context, id string) (*SessionInfo, err
 	var s SessionInfo
 	err := sm.db.QueryRowContext(ctx,
 		`SELECT id, name, status, working_dir, provider, model,
-		 COALESCE(parent_id, ''), COALESCE(NULLIF(root_id, ''), id), COALESCE(forked_from_message_id, ''), COALESCE(fork_reason, ''),
+		 COALESCE(parent_id, ''), COALESCE(NULLIF(root_id, ''), id), COALESCE(forked_from_message_id, ''), COALESCE(fork_reason, ''), COALESCE(branch_summary, ''),
 		 created_at
 		 FROM sessions WHERE id = ?`, id,
 	).Scan(
 		&s.ID, &s.Name, &s.Status, &s.WorkingDir, &s.Provider, &s.Model,
-		&s.ParentID, &s.RootID, &s.ForkedFromMessageID, &s.ForkReason,
+		&s.ParentID, &s.RootID, &s.ForkedFromMessageID, &s.ForkReason, &s.BranchSummary,
 		&s.CreatedAt,
 	)
 	if err != nil {
@@ -186,7 +188,7 @@ func (sm *SessionManager) ListTree(ctx context.Context, rootOrSessionID string) 
 	}
 	rows, err := sm.db.QueryContext(ctx,
 		`SELECT id, name, status, working_dir, provider, model,
-		 COALESCE(parent_id, ''), COALESCE(NULLIF(root_id, ''), id), COALESCE(forked_from_message_id, ''), COALESCE(fork_reason, ''),
+		 COALESCE(parent_id, ''), COALESCE(NULLIF(root_id, ''), id), COALESCE(forked_from_message_id, ''), COALESCE(fork_reason, ''), COALESCE(branch_summary, ''),
 		 created_at
 		 FROM sessions
 		 WHERE id = ? OR root_id = ?
@@ -203,7 +205,7 @@ func (sm *SessionManager) ListTree(ctx context.Context, rootOrSessionID string) 
 		var s SessionInfo
 		if err := rows.Scan(
 			&s.ID, &s.Name, &s.Status, &s.WorkingDir, &s.Provider, &s.Model,
-			&s.ParentID, &s.RootID, &s.ForkedFromMessageID, &s.ForkReason,
+			&s.ParentID, &s.RootID, &s.ForkedFromMessageID, &s.ForkReason, &s.BranchSummary,
 			&s.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -223,6 +225,10 @@ func (sm *SessionManager) createChild(ctx context.Context, source *SessionInfo, 
 	if rootID == "" {
 		rootID = source.ID
 	}
+	branchSummary := reason
+	if branchSummary == "" {
+		branchSummary = source.BranchSummary
+	}
 
 	tx, err := sm.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -231,9 +237,9 @@ func (sm *SessionManager) createChild(ctx context.Context, source *SessionInfo, 
 	defer tx.Rollback()
 
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO sessions (id, name, status, working_dir, provider, model, parent_id, root_id, forked_from_message_id, fork_reason)
-		 VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)`,
-		id, name, source.WorkingDir, source.Provider, source.Model, source.ID, rootID, forkedFromMessageID, reason,
+		`INSERT INTO sessions (id, name, status, working_dir, provider, model, parent_id, root_id, forked_from_message_id, fork_reason, branch_summary)
+		 VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, name, source.WorkingDir, source.Provider, source.Model, source.ID, rootID, forkedFromMessageID, reason, branchSummary,
 	); err != nil {
 		return nil, fmt.Errorf("insert child session: %w", err)
 	}
@@ -283,8 +289,24 @@ func (sm *SessionManager) createChild(ctx context.Context, source *SessionInfo, 
 		RootID:              rootID,
 		ForkedFromMessageID: forkedFromMessageID,
 		ForkReason:          reason,
+		BranchSummary:       branchSummary,
 		CreatedAt:           time.Now(),
 	}, nil
+}
+
+func (sm *SessionManager) UpdateSummary(ctx context.Context, id, summary string) error {
+	result, err := sm.db.ExecContext(ctx, `UPDATE sessions SET branch_summary = ? WHERE id = ?`, summary, id)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func (sm *SessionManager) UpdateModel(ctx context.Context, id, model string) error {

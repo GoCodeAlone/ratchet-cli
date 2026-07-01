@@ -338,17 +338,19 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 			historyRecords, recordsErr := s.sessions.ListMessages(ctx, sessionID)
 			if recordsErr != nil {
 				log.Printf("load compaction message records: %v", recordsErr)
+				return stream.Send(&pb.ChatEvent{
+					Event: &pb.ChatEvent_Complete{
+						Complete: &pb.SessionComplete{Summary: "done"},
+					},
+				})
 			}
 			compressed, summary, compErr := Compress(ctx, history, contextCfg.PreserveMessages, prov)
 			if compErr == nil {
 				removed := len(history) - len(compressed)
-				firstKeptID := firstKeptMessageID(historyRecords, contextCfg.PreserveMessages)
-				replacementIDs := compactionReplacementMessageIDs(historyRecords, contextCfg.PreserveMessages, len(compressed))
-				// Persist compressed history by replacing messages in DB
-				if dbErr := s.replaceHistory(ctx, sessionID, compressed, replacementIDs...); dbErr != nil {
-					log.Printf("replace history after compression: %v", dbErr)
-				} else {
-					if _, recordErr := appendCompactionRecord(ctx, s.engine.DB, CompactionRecord{
+				if removed > 0 {
+					firstKeptID := firstKeptMessageID(historyRecords, contextCfg.PreserveMessages)
+					replacementIDs := compactionReplacementMessageIDs(historyRecords, contextCfg.PreserveMessages, len(compressed))
+					if _, recordErr := s.compactHistoryWithArchive(ctx, sessionID, historyRecords, compressed, replacementIDs, CompactionRecord{
 						SessionID:          sessionID,
 						Summary:            summary,
 						Reason:             "auto",
@@ -356,7 +358,7 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 						MessagesKept:       len(compressed),
 						FirstKeptMessageID: firstKeptID,
 					}); recordErr != nil {
-						log.Printf("record auto compaction: %v", recordErr)
+						log.Printf("archive/record auto compaction: %v", recordErr)
 					}
 					s.tokens.Reset(sessionID)
 					_ = stream.Send(&pb.ChatEvent{
@@ -438,32 +440,80 @@ func (s *Service) saveMessage(ctx context.Context, sessionID, role, content, too
 	return err
 }
 
-// replaceHistory deletes all messages for a session and re-inserts the compressed set.
-func (s *Service) replaceHistory(ctx context.Context, sessionID string, messages []provider.Message, messageIDs ...string) error {
+func (s *Service) compactHistoryWithArchive(ctx context.Context, sessionID string, original []SessionHistoryMessage, compressed []provider.Message, replacementIDs []string, record CompactionRecord) (*CompactionRecord, error) {
+	source, err := s.sessions.Get(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	rootID := source.RootID
+	if rootID == "" {
+		rootID = source.ID
+	}
+	archiveID := uuid.New().String()
+	archiveSummary := fmt.Sprintf("Archive before %s compaction", record.Reason)
+	archiveReason := "pre-compaction archive"
+	if record.Reason != "" {
+		archiveReason += ": " + record.Reason
+	}
+
 	tx, err := s.engine.DB.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE session_id = ?`, sessionID); err != nil {
-		return err
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO sessions (id, name, status, working_dir, provider, model, parent_id, root_id, fork_reason, branch_summary)
+		 VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?)`,
+		archiveID,
+		source.Name,
+		source.WorkingDir,
+		source.Provider,
+		source.Model,
+		source.ID,
+		rootID,
+		archiveReason,
+		archiveSummary,
+	); err != nil {
+		return nil, fmt.Errorf("insert archive session: %w", err)
 	}
-	for _, m := range messages {
+	for _, msg := range original {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO messages (id, session_id, role, content, tool_name, tool_call_id) VALUES (?, ?, ?, ?, ?, ?)`,
+			uuid.New().String(), archiveID, msg.Role, msg.Content, msg.ToolName, msg.ToolCallID,
+		); err != nil {
+			return nil, fmt.Errorf("copy archive message: %w", err)
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE session_id = ?`, sessionID); err != nil {
+		return nil, fmt.Errorf("delete source history: %w", err)
+	}
+	for _, m := range compressed {
 		id := uuid.New().String()
-		if len(messageIDs) > 0 {
-			if messageIDs[0] != "" {
-				id = messageIDs[0]
+		if len(replacementIDs) > 0 {
+			if replacementIDs[0] != "" {
+				id = replacementIDs[0]
 			}
-			messageIDs = messageIDs[1:]
+			replacementIDs = replacementIDs[1:]
 		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO messages (id, session_id, role, content, tool_name, tool_call_id) VALUES (?, ?, ?, ?, ?, ?)`,
 			id, sessionID, string(m.Role), m.Content, "", "",
 		); err != nil {
-			return err
+			return nil, fmt.Errorf("insert compressed message: %w", err)
 		}
 	}
-	return tx.Commit()
+
+	record.ArchiveSessionID = archiveID
+	stored, err := appendCompactionRecordExec(ctx, tx, record)
+	if err != nil {
+		return nil, fmt.Errorf("insert compaction record: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return stored, nil
 }
 
 // handleCompact immediately compresses the session's conversation history and
@@ -475,7 +525,7 @@ func (s *Service) handleCompact(ctx context.Context, sessionID string, stream pb
 	}
 	historyRecords, recordsErr := s.sessions.ListMessages(ctx, sessionID)
 	if recordsErr != nil {
-		log.Printf("load compact message records: %v", recordsErr)
+		return sendError(stream, "load compact message records: "+recordsErr.Error())
 	}
 
 	cfg, _ := config.Load()
@@ -517,18 +567,15 @@ func (s *Service) handleCompact(ctx context.Context, sessionID string, stream pb
 	}
 
 	replacementIDs := compactionReplacementMessageIDs(historyRecords, preserveCount, len(compressed))
-	if dbErr := s.replaceHistory(ctx, sessionID, compressed, replacementIDs...); dbErr != nil {
-		return sendError(stream, "persist compressed history: "+dbErr.Error())
-	}
-	if _, recordErr := appendCompactionRecord(ctx, s.engine.DB, CompactionRecord{
+	if _, dbErr := s.compactHistoryWithArchive(ctx, sessionID, historyRecords, compressed, replacementIDs, CompactionRecord{
 		SessionID:          sessionID,
 		Summary:            summary,
 		Reason:             "manual",
 		MessagesRemoved:    removed,
 		MessagesKept:       len(compressed),
 		FirstKeptMessageID: firstKeptMessageID(historyRecords, preserveCount),
-	}); recordErr != nil {
-		log.Printf("record manual compaction: %v", recordErr)
+	}); dbErr != nil {
+		return sendError(stream, "persist compressed history: "+dbErr.Error())
 	}
 	s.tokens.Reset(sessionID)
 

@@ -183,6 +183,7 @@ func initDB(db *sql.DB) error {
 			root_id TEXT,
 			forked_from_message_id TEXT,
 			fork_reason TEXT,
+			branch_summary TEXT,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
 		`CREATE TABLE IF NOT EXISTS messages (
@@ -203,6 +204,7 @@ func initDB(db *sql.DB) error {
 			messages_removed INTEGER NOT NULL,
 			messages_kept INTEGER NOT NULL,
 			first_kept_message_id TEXT,
+			archive_session_id TEXT,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (session_id) REFERENCES sessions(id)
 		)`,
@@ -244,10 +246,13 @@ func initDB(db *sql.DB) error {
 	if err := ensureColumn(db, "llm_providers", "settings", "TEXT NOT NULL DEFAULT '{}'"); err != nil {
 		log.Printf("warning: migration failed: %v", err)
 	}
-	for _, col := range []string{"parent_id", "root_id", "forked_from_message_id", "fork_reason"} {
+	for _, col := range []string{"parent_id", "root_id", "forked_from_message_id", "fork_reason", "branch_summary"} {
 		if err := ensureColumn(db, "sessions", col, "TEXT"); err != nil {
 			log.Printf("warning: migration failed: %v", err)
 		}
+	}
+	if err := ensureColumn(db, "session_compactions", "archive_session_id", "TEXT"); err != nil {
+		log.Printf("warning: migration failed: %v", err)
 	}
 	// Migration: clear stale secret_name for providers that don't need API keys.
 	// Prior versions always set secret_name="provider_<alias>" even for keyless
