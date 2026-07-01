@@ -10,6 +10,7 @@ import (
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/client"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
+	"github.com/GoCodeAlone/ratchet-cli/internal/tui"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -29,9 +30,17 @@ var ensureSessionsClient = func() (sessionsClient, error) {
 	return client.EnsureDaemon()
 }
 
+var runSessionBrowser = func(ctx context.Context, c sessionsClient, rootID string) error {
+	return tui.RunSessionBrowser(ctx, c, rootID)
+}
+
 func handleSessions(args []string) {
 	if len(args) == 0 {
 		printSessionsUsage()
+		return
+	}
+	if args[0] == "browse" && len(args) < 2 {
+		fmt.Println("Usage: ratchet sessions browse <id>")
 		return
 	}
 
@@ -128,6 +137,11 @@ func handleSessions(args []string) {
 		for _, s := range resp.Sessions {
 			fmt.Printf("%-36s %-10s %-36s %-36s %-36s %s\n", s.Id, s.Status, s.ParentId, s.RootId, s.ForkedFromMessageId, formatSummary(s.BranchSummary))
 		}
+	case "browse":
+		if err := runSessionBrowser(context.Background(), c, args[1]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
 	case "summary":
 		if len(args) < 3 {
 			fmt.Println("Usage: ratchet sessions summary <id> <text>")
@@ -174,7 +188,7 @@ func handleSessions(args []string) {
 }
 
 func printSessionsUsage() {
-	fmt.Println("Usage: ratchet sessions <list|kill|history|clone|fork|tree|summary|compactions>")
+	fmt.Println("Usage: ratchet sessions <list|kill|history|clone|fork|tree|browse|summary|compactions>")
 }
 
 func parseForkArgs(args []string) (sessionID, messageID string, ok bool) {

@@ -10,13 +10,15 @@ document records the exact revisions used for reproducibility.
 
 | System | Source | Checked revision or doc |
 |---|---|---|
-| Zed | https://github.com/zed-industries/zed | `40d20036af34343a09f0ce6a2eb38c9e5a60e9ae` |
-| ACP | https://github.com/agentclientprotocol/agent-client-protocol | `703f42901c9ccd48d775c61aa8053e944be0b4b2` |
-| Pi | https://github.com/earendil-works/pi | `dd87c02cbf2681c9301cf809146651483ff16030` |
+| Zed | https://github.com/zed-industries/zed | `35c3d272828328b7217efccc146dc5b7d53490ff` |
+| ACP | https://github.com/agentclientprotocol/agent-client-protocol | `fb3b258dd9589a3664e83e9449dd0ed17da73a47` |
+| Pi | https://github.com/earendil-works/pi | `f58c11562605a21bcf3d3e45553c78fe105809f9` |
 | Codex | https://github.com/openai/codex | `db887d03e1f907467e33271572dffb73bceecd6b` |
 | Claude Code | https://code.claude.com/docs | Official docs: subagents, hooks, settings, Agent SDK |
-| OpenClaw | https://github.com/openclaw/openclaw | `6495358f179911e7297ee092b342f633b5856960` |
-| ACPX | https://github.com/openclaw/acpx | README on 2026-07-01 |
+| Hermes | https://github.com/NousResearch/hermes-agent | `9be292f1e678437644396b47b3410b433ba3433f` |
+| Hermes meta-harness | https://github.com/howdymary/hermes-agent-metaharness | `a0179af552ab179e6967ab4a846a1bab2ca83206` |
+| OpenClaw | https://github.com/openclaw/openclaw | `adcfebc276ccf2f1f4ddab9ef9a8e35f5011c317` |
+| ACPX | https://github.com/openclaw/acpx | `1d882575e34e18621e59229f0e711723cef223ae` |
 
 ## Matrix
 
@@ -27,8 +29,9 @@ document records the exact revisions used for reproducibility.
 | MCP and tool surfaces | Zed may forward configured MCP servers to External Agents; Codex and Claude Code both document MCP as a configurable tool extension surface. | Supported for stdio MCP blackboard plus daemon-backed session/project/blackboard/team tools through `ratchet mcp daemon`. `team_message` remains exposed but daemon-deferred because daemon `DirectMessage` is still unimplemented. |
 | Permissions, sandbox, and trust | Zed tracks sandbox/tool permissions in agent threads; Codex publishes sandbox/approval configuration docs; Claude Code has hierarchical settings, permissions, sandbox settings, and managed policy precedence. | Partial. ratchet-cli has trust policy concepts and permission prompts, but it does not yet match Codex/Claude policy layering or Zed-style per-tool sandbox escalation UX. Follow-up: document and test a policy matrix before adding new controls. |
 | Hooks and extension points | Claude Code hooks and settings reload across scopes; Pi extensions can intercept lifecycle/tool events and register tools/commands/UI; Codex has lifecycle hook config docs. | Partial. ratchet-cli has workflow/agent extensibility and retro recording, but not a broad runtime extension SDK. Follow-up: define optional extension hooks around session lifecycle, tool execution, and retro reporting without allowing unreviewed local mutation by default. |
-| Session history and compaction | Pi stores sessions as JSONL trees, supports `/tree`, `/fork`, `/clone`, `/compact`, branch summaries, and extension-customized compaction. ACPX stores session metadata and turn history. | Partial. ratchet-cli now exposes daemon-backed `ratchet sessions history`, `ratchet sessions clone`, `ratchet sessions fork`, `ratchet sessions tree`, `ratchet sessions summary`, and `ratchet sessions compactions` for separate branch sessions, persisted branch summaries, compaction records, and linked pre-compaction archive sessions. Full Pi-style in-place tree navigation remains deferred. |
+| Session history and compaction | Pi stores sessions as JSONL trees, supports `/tree`, `/fork`, `/clone`, `/compact`, branch summaries, and extension-customized compaction. ACPX stores session metadata and turn history. | Supported for daemon-backed branch navigation. ratchet-cli exposes `ratchet sessions history`, `clone`, `fork`, `tree`, `browse`, `summary`, and `compactions`; the TUI supports Pi-style in-place branch browsing through `ctrl+b` and `/tree`, selected-history reload, and stale-event protection. JSONL compatibility remains out of scope. |
 | Multi-agent orchestration | Claude Code subagents have scoped tools, permissions, MCP, hooks, memory, optional worktree isolation, and background behavior; OpenClaw routes channels/accounts/peers to isolated agents and workspaces. | Partial. ratchet-cli has daemon team management and MCP team list/status. Worktree isolation, per-agent permission scopes, and channel routing remain future work. |
+| Flexible harness composition | Hermes emphasizes a composable multi-agent harness pattern; the Hermes meta-harness layers additional orchestration around agent roles and workflows. | Partial. ratchet-cli has team orchestration, workflow integration, ACP/MCP surfaces, and the new branch browser, but it still lacks a runtime extension SDK for swapping harness behaviors without rebuilds. |
 | Local-first gateway/channels | OpenClaw positions a local-first gateway for sessions, channels, tools, events, multi-channel inboxes, companion apps, and sandboxing for non-main sessions. | Deferred. Voice/mobile/canvas/channel gateway support is out of scope for this ratchet-cli release. Track as a separate product direction rather than expanding this release. |
 | Windows distribution | OpenClaw documents Windows onboarding and a Windows Hub; Claude docs include Windows config path behavior. | Supported for release artifacts. ratchet-cli now cross-builds Windows amd64/arm64 binaries and GoReleaser emits Windows zip archives. No MSI, winget, or Windows service installer is claimed. |
 | Self-improvement loop | Pi can share session data and customize compaction through extensions; Claude Code supports skills/subagents/hooks/memory; Codex supports repo instruction files and hooks. | Supported as opt-in reporting/evidence only. ratchet-cli records redacted evidence when `retro.enabled` is true and routes findings to local project, ratchet-cli upstream, workflow integration, or general process buckets. Automatic local mutation and upstream PR creation remain disabled by default. |
@@ -38,7 +41,7 @@ document records the exact revisions used for reproducibility.
 | Priority | Follow-up | Rationale |
 |---|---|---|
 | P1 | Complete daemon direct team messaging or remove the MCP tool until backed by daemon behavior. | The current MCP schema surfaces the command but correctly returns daemon errors; full parity requires real daemon support. |
-| P1 | Add Pi-style in-place message tree navigation. | Branch summaries, separate session fork/clone, compaction records, and archive session links are implemented; interactive navigation across turns remains deferred. |
+| P1 | Add JSONL-compatible import/export for branch trees if Pi interoperability becomes a product requirement. | In-place navigation is supported through daemon sessions; JSONL storage compatibility remains explicitly out of scope for v0.16. |
 | P2 | Define a policy-layer matrix for permissions, sandboxing, and trust. | Codex, Claude Code, and Zed have clearer policy surfaces than ratchet-cli currently documents. |
 | P2 | Design optional extension hooks around session/tool/retro lifecycle. | Pi and Claude Code show high leverage from hooks, but ratchet-cli must keep mutation opt-in and redacted. |
 | P3 | Evaluate ACP client/orchestrator mode. | ACPX demonstrates demand for headless ACP clients that drive other agents; ratchet-cli currently focuses on being an agent/server. |
@@ -46,17 +49,19 @@ document records the exact revisions used for reproducibility.
 
 ## Verification Links
 
-- Zed External Agents source: https://github.com/zed-industries/zed/blob/40d20036af34343a09f0ce6a2eb38c9e5a60e9ae/docs/src/ai/external-agents.md
-- Zed ACP thread source: https://github.com/zed-industries/zed/blob/40d20036af34343a09f0ce6a2eb38c9e5a60e9ae/crates/acp_thread/src/acp_thread.rs
-- ACP README: https://github.com/agentclientprotocol/agent-client-protocol/blob/703f42901c9ccd48d775c61aa8053e944be0b4b2/README.md
-- Pi sessions: https://github.com/earendil-works/pi/blob/dd87c02cbf2681c9301cf809146651483ff16030/packages/coding-agent/docs/sessions.md
-- Pi compaction: https://github.com/earendil-works/pi/blob/dd87c02cbf2681c9301cf809146651483ff16030/packages/coding-agent/docs/compaction.md
-- Pi extensions: https://github.com/earendil-works/pi/blob/dd87c02cbf2681c9301cf809146651483ff16030/packages/coding-agent/docs/extensions.md
+- Zed External Agents source: https://github.com/zed-industries/zed/blob/35c3d272828328b7217efccc146dc5b7d53490ff/docs/src/ai/external-agents.md
+- Zed ACP thread source: https://github.com/zed-industries/zed/blob/35c3d272828328b7217efccc146dc5b7d53490ff/crates/acp_thread/src/acp_thread.rs
+- ACP README: https://github.com/agentclientprotocol/agent-client-protocol/blob/fb3b258dd9589a3664e83e9449dd0ed17da73a47/README.md
+- Pi sessions: https://github.com/earendil-works/pi/blob/f58c11562605a21bcf3d3e45553c78fe105809f9/packages/coding-agent/docs/sessions.md
+- Pi compaction: https://github.com/earendil-works/pi/blob/f58c11562605a21bcf3d3e45553c78fe105809f9/packages/coding-agent/docs/compaction.md
+- Pi extensions: https://github.com/earendil-works/pi/blob/f58c11562605a21bcf3d3e45553c78fe105809f9/packages/coding-agent/docs/extensions.md
 - Codex config docs: https://github.com/openai/codex/blob/db887d03e1f907467e33271572dffb73bceecd6b/docs/config.md
 - Codex sandbox docs: https://github.com/openai/codex/blob/db887d03e1f907467e33271572dffb73bceecd6b/docs/sandbox.md
 - Claude Code subagents: https://code.claude.com/docs/en/sub-agents
 - Claude Code hooks: https://code.claude.com/docs/en/hooks
 - Claude Code settings: https://code.claude.com/docs/en/settings
 - Claude Code Agent SDK: https://code.claude.com/docs/en/agent-sdk/overview
-- OpenClaw README: https://github.com/openclaw/openclaw/blob/6495358f179911e7297ee092b342f633b5856960/README.md
-- ACPX README: https://github.com/openclaw/acpx/blob/main/README.md
+- Hermes README: https://github.com/NousResearch/hermes-agent/blob/9be292f1e678437644396b47b3410b433ba3433f/README.md
+- Hermes meta-harness README: https://github.com/howdymary/hermes-agent-metaharness/blob/a0179af552ab179e6967ab4a846a1bab2ca83206/README.md
+- OpenClaw README: https://github.com/openclaw/openclaw/blob/adcfebc276ccf2f1f4ddab9ef9a8e35f5011c317/README.md
+- ACPX README: https://github.com/openclaw/acpx/blob/1d882575e34e18621e59229f0e711723cef223ae/README.md

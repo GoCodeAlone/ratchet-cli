@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -83,6 +84,46 @@ func TestHandleSessionsHistoryCloneForkTree(t *testing.T) {
 		if !strings.Contains(compactionsOut, want) {
 			t.Fatalf("compactions output missing %q:\n%s", want, compactionsOut)
 		}
+	}
+}
+
+func TestHandleSessionsBrowseRunsInjectedBrowser(t *testing.T) {
+	fake := &fakeSessionsClient{tree: &pb.SessionList{}}
+	withFakeSessionsClient(t, fake)
+	oldRun := runSessionBrowser
+	var gotID string
+	runSessionBrowser = func(_ context.Context, _ sessionsClient, rootID string) error {
+		gotID = rootID
+		return nil
+	}
+	t.Cleanup(func() { runSessionBrowser = oldRun })
+
+	handleSessions([]string{"browse", "sess-1"})
+
+	if gotID != "sess-1" {
+		t.Fatalf("browser root ID = %q, want sess-1", gotID)
+	}
+}
+
+func TestHandleSessionsBrowseValidatesID(t *testing.T) {
+	oldEnsure := ensureSessionsClient
+	ensureSessionsClient = func() (sessionsClient, error) {
+		t.Fatal("ensureSessionsClient should not run for browse without id")
+		return nil, nil
+	}
+	t.Cleanup(func() { ensureSessionsClient = oldEnsure })
+	oldRun := runSessionBrowser
+	runSessionBrowser = func(context.Context, sessionsClient, string) error {
+		return fmt.Errorf("browser should not run without id")
+	}
+	t.Cleanup(func() { runSessionBrowser = oldRun })
+
+	out := captureStdout(t, func() {
+		handleSessions([]string{"browse"})
+	})
+
+	if !strings.Contains(out, "Usage: ratchet sessions browse <id>") {
+		t.Fatalf("missing browse usage:\n%s", out)
 	}
 }
 
