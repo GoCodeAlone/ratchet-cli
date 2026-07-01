@@ -26,11 +26,14 @@ const (
 	acpClientCommandSessionsShow acpClientCommandKind = "sessions-show"
 	acpClientCommandStatus       acpClientCommandKind = "status"
 	acpClientCommandCancel       acpClientCommandKind = "cancel"
+	acpClientCommandQueue        acpClientCommandKind = "queue"
+	acpClientCommandDrain        acpClientCommandKind = "drain"
 )
 
 type acpClientCommand struct {
 	kind      acpClientCommandKind
 	exec      acpClientExecOptions
+	drain     acpClientDrainOptions
 	sessionID string
 	json      bool
 }
@@ -46,6 +49,15 @@ type acpClientExecOptions struct {
 	Prompt    string
 	SessionID string
 	NoWait    bool
+}
+
+type acpClientDrainOptions struct {
+	Agent   string
+	Command string
+	Args    []string
+	Cwd     string
+	Timeout time.Duration
+	Max     int
 }
 
 type repeatedStringFlag []string
@@ -84,6 +96,10 @@ func handleACPClient(args []string) error {
 		return executeACPClientStatus(store, cmd.sessionID, cmd.json, os.Stdout)
 	case acpClientCommandCancel:
 		return executeACPClientCancel(store, cmd.sessionID, cmd.json, os.Stdout)
+	case acpClientCommandQueue:
+		return errors.New("acp client queue command is not wired yet")
+	case acpClientCommandDrain:
+		return errors.New("acp client drain command is not wired yet")
 	default:
 		return fmt.Errorf("unknown acp client command: %s", cmd.kind)
 	}
@@ -318,6 +334,18 @@ func parseACPClientCommandWithOutput(args []string, output io.Writer) (acpClient
 			return acpClientCommand{}, err
 		}
 		return acpClientCommand{kind: acpClientCommandCancel, sessionID: id, json: jsonOut}, nil
+	case "queue":
+		id, jsonOut, err := parseACPClientQueue(args[1:])
+		if err != nil {
+			return acpClientCommand{}, err
+		}
+		return acpClientCommand{kind: acpClientCommandQueue, sessionID: id, json: jsonOut}, nil
+	case "drain":
+		id, drainOpts, err := parseACPClientDrain(args[1:], output)
+		if err != nil {
+			return acpClientCommand{}, err
+		}
+		return acpClientCommand{kind: acpClientCommandDrain, sessionID: id, drain: drainOpts}, nil
 	case "help", "--help", "-h":
 		return acpClientCommand{kind: acpClientCommandHelp}, nil
 	default:
@@ -377,6 +405,59 @@ func parseACPClientExec(args []string, output io.Writer) (acpClientExecOptions, 
 		opts.Prompt = strings.Join(promptArgs, " ")
 	}
 	return opts, nil
+}
+
+func parseACPClientQueue(args []string) (string, bool, error) {
+	var id string
+	var jsonOut bool
+	for _, arg := range args {
+		switch {
+		case arg == "--json":
+			jsonOut = true
+		case strings.TrimSpace(arg) == "":
+			return "", false, errors.New("usage: ratchet acp client queue <session-id> [--json]")
+		case id == "":
+			id = arg
+		default:
+			return "", false, errors.New("usage: ratchet acp client queue <session-id> [--json]")
+		}
+	}
+	if id == "" {
+		return "", false, errors.New("usage: ratchet acp client queue <session-id> [--json]")
+	}
+	return id, jsonOut, nil
+}
+
+func parseACPClientDrain(args []string, output io.Writer) (string, acpClientDrainOptions, error) {
+	if len(args) == 0 || strings.TrimSpace(args[0]) == "" {
+		return "", acpClientDrainOptions{}, errors.New("usage: ratchet acp client drain <session-id> [flags]")
+	}
+	id := args[0]
+	opts := acpClientDrainOptions{Cwd: ".", Timeout: 30 * time.Second}
+	fs := flag.NewFlagSet("ratchet acp client drain", flag.ContinueOnError)
+	fs.SetOutput(output)
+	fs.StringVar(&opts.Agent, "agent", "", "agent template")
+	fs.StringVar(&opts.Command, "command", "", "agent command")
+	fs.Var((*repeatedStringFlag)(&opts.Args), "arg", "agent command argument")
+	fs.StringVar(&opts.Cwd, "cwd", opts.Cwd, "working directory")
+	fs.DurationVar(&opts.Timeout, "timeout", opts.Timeout, "prompt timeout")
+	fs.IntVar(&opts.Max, "max", 0, "maximum queued prompts to drain")
+	if err := fs.Parse(args[1:]); err != nil {
+		return "", acpClientDrainOptions{}, err
+	}
+	if len(fs.Args()) > 0 {
+		return "", acpClientDrainOptions{}, errors.New("usage: ratchet acp client drain <session-id> [flags]")
+	}
+	maxSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "max" {
+			maxSet = true
+		}
+	})
+	if maxSet && opts.Max <= 0 {
+		return "", acpClientDrainOptions{}, errors.New("--max must be greater than 0")
+	}
+	return id, opts, nil
 }
 
 func parseACPClientSessions(args []string) (acpClientCommand, error) {
@@ -461,6 +542,8 @@ func printACPClientUsage(w io.Writer) {
 Commands:
   exec       Run one prompt against an external ACP agent
   sessions   List or inspect ACP client sessions
+  queue      List queued prompts for an ACP client session
+  drain      Drain queued prompts through an external ACP agent
   status     Show ACP client session status
   cancel     Cancel an ACP client session
 

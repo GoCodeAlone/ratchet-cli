@@ -130,6 +130,69 @@ func TestParseACPClientSessionCommands(t *testing.T) {
 	}
 }
 
+func TestParseACPClientQueueCommand(t *testing.T) {
+	cmd, err := parseACPClientCommand([]string{"queue", "fifo-session", "--json"})
+	if err != nil {
+		t.Fatalf("parseACPClientCommand: %v", err)
+	}
+	if cmd.kind != acpClientCommandQueue {
+		t.Fatalf("kind = %q, want queue", cmd.kind)
+	}
+	if cmd.sessionID != "fifo-session" {
+		t.Fatalf("sessionID = %q, want fifo-session", cmd.sessionID)
+	}
+	if !cmd.json {
+		t.Fatal("json = false, want true")
+	}
+}
+
+func TestParseACPClientDrainCommand(t *testing.T) {
+	cmd, err := parseACPClientCommand([]string{
+		"drain",
+		"fifo-session",
+		"--command", "/bin/acp-agent",
+		"--arg", "--stdio",
+		"--arg", "--profile=work",
+		"--agent", "custom",
+		"--cwd", "/tmp/project",
+		"--timeout", "5s",
+		"--max", "2",
+	})
+	if err != nil {
+		t.Fatalf("parseACPClientCommand: %v", err)
+	}
+	if cmd.kind != acpClientCommandDrain {
+		t.Fatalf("kind = %q, want drain", cmd.kind)
+	}
+	if cmd.sessionID != "fifo-session" {
+		t.Fatalf("sessionID = %q, want fifo-session", cmd.sessionID)
+	}
+	if cmd.drain.Command != "/bin/acp-agent" || cmd.drain.Agent != "custom" || cmd.drain.Cwd != "/tmp/project" {
+		t.Fatalf("drain options = %#v", cmd.drain)
+	}
+	if got, want := strings.Join(cmd.drain.Args, ","), "--stdio,--profile=work"; got != want {
+		t.Fatalf("drain args = %q, want %q", got, want)
+	}
+	if cmd.drain.Timeout != 5*time.Second || cmd.drain.Max != 2 {
+		t.Fatalf("drain timeout/max = %s/%d, want 5s/2", cmd.drain.Timeout, cmd.drain.Max)
+	}
+}
+
+func TestParseACPClientDrainRejectsInvalidArgs(t *testing.T) {
+	tests := [][]string{
+		{"drain"},
+		{"drain", "fifo-session", "--max", "0"},
+		{"drain", "fifo-session", "--command", "agent", "extra"},
+	}
+	for _, args := range tests {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			if _, err := parseACPClientCommand(args); err == nil {
+				t.Fatalf("parseACPClientCommand(%#v) succeeded, want error", args)
+			}
+		})
+	}
+}
+
 func TestExecuteACPClientExecHumanOutput(t *testing.T) {
 	runner := &fakeACPClientExecRunner{
 		result: acpclient.Result{
