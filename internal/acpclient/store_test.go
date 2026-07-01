@@ -69,6 +69,39 @@ func TestSessionStoreLoadsMissingFileAndPersistsRecords(t *testing.T) {
 	}
 }
 
+func TestSessionStoreUpsertPreservesCreatedAtWhenUpdateOmitsIt(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	created := time.Date(2026, 7, 1, 19, 10, 0, 0, time.UTC)
+	updated := created.Add(time.Hour)
+
+	if err := store.Upsert(SessionRecord{
+		ID:        "sess-preserve",
+		Status:    SessionStatusRunning,
+		CreatedAt: created,
+		UpdatedAt: created,
+	}); err != nil {
+		t.Fatalf("initial Upsert: %v", err)
+	}
+	if err := store.Upsert(SessionRecord{
+		ID:        "sess-preserve",
+		Status:    SessionStatusCompleted,
+		UpdatedAt: updated,
+	}); err != nil {
+		t.Fatalf("update Upsert: %v", err)
+	}
+
+	got, err := store.Get("sess-preserve")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !got.CreatedAt.Equal(created) {
+		t.Fatalf("CreatedAt = %s, want %s", got.CreatedAt, created)
+	}
+	if !got.UpdatedAt.Equal(updated) {
+		t.Fatalf("UpdatedAt = %s, want %s", got.UpdatedAt, updated)
+	}
+}
+
 func TestSessionStoreToleratesMissingAndNewFields(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
 	payload := map[string]any{

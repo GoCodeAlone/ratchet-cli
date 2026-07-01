@@ -84,7 +84,8 @@ func (s *Store) Upsert(rec SessionRecord) error {
 		return err
 	}
 	now := time.Now().UTC()
-	if rec.CreatedAt.IsZero() {
+	createdAtZero := rec.CreatedAt.IsZero()
+	if createdAtZero {
 		rec.CreatedAt = now
 	}
 	if rec.UpdatedAt.IsZero() {
@@ -92,7 +93,7 @@ func (s *Store) Upsert(rec SessionRecord) error {
 	}
 	for i, existing := range data.Sessions {
 		if existing.ID == rec.ID {
-			if rec.CreatedAt.IsZero() {
+			if createdAtZero {
 				rec.CreatedAt = existing.CreatedAt
 			}
 			data.Sessions[i] = rec
@@ -272,6 +273,10 @@ func writeJSONFileAtomic(path string, value any, perm os.FileMode) error {
 		return err
 	}
 	if err := tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
 		return err
 	}

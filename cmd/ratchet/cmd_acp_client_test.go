@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -379,6 +380,45 @@ func TestACPClientStatusAndCancelActiveOwner(t *testing.T) {
 	}
 	if req.SessionID != "s-active" {
 		t.Fatalf("CancelRequest = %#v", req)
+	}
+}
+
+func TestACPClientCancelReturnsCorruptOwnerError(t *testing.T) {
+	store := acpclient.NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 1, 19, 50, 0, 0, time.UTC)
+	if err := store.Upsert(acpclient.SessionRecord{
+		ID:        "s-corrupt-owner",
+		Status:    acpclient.SessionStatusQueued,
+		CreatedAt: now,
+		UpdatedAt: now,
+		PendingPrompt: &acpclient.PendingPrompt{
+			ID:        "pending-1",
+			Prompt:    "queued prompt",
+			Status:    acpclient.PendingPromptStatusPending,
+			CreatedAt: now,
+		},
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	ownerPath := filepath.Join(filepath.Dir(store.Path()), "owners", base64.RawURLEncoding.EncodeToString([]byte("s-corrupt-owner"))+".json")
+	if err := os.MkdirAll(filepath.Dir(ownerPath), 0o755); err != nil {
+		t.Fatalf("mkdir owner dir: %v", err)
+	}
+	if err := os.WriteFile(ownerPath, []byte("{not-json"), 0o600); err != nil {
+		t.Fatalf("write corrupt owner: %v", err)
+	}
+
+	var out bytes.Buffer
+	err := executeACPClientCancel(store, "s-corrupt-owner", false, &out)
+	if err == nil || !strings.Contains(err.Error(), "read") {
+		t.Fatalf("executeACPClientCancel error = %v, want corrupt owner error", err)
+	}
+	rec, err := store.Get("s-corrupt-owner")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if rec.PendingPrompt.Status != acpclient.PendingPromptStatusPending {
+		t.Fatalf("pending prompt status = %q, want pending", rec.PendingPrompt.Status)
 	}
 }
 

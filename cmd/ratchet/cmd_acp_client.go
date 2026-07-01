@@ -539,7 +539,8 @@ func executeACPClientStatus(store *acpclient.Store, id string, jsonOut bool, w i
 }
 
 func executeACPClientCancel(store *acpclient.Store, id string, jsonOut bool, w io.Writer) error {
-	if _, err := store.Owner(id); err == nil {
+	_, ownerErr := store.Owner(id)
+	if ownerErr == nil {
 		if err := store.RequestCancel(id, time.Now().UTC()); err != nil {
 			return err
 		}
@@ -551,6 +552,8 @@ func executeACPClientCancel(store *acpclient.Store, id string, jsonOut bool, w i
 		}
 		fmt.Fprintf(w, "requested cancel for active session %s\n", id)
 		return nil
+	} else if !errors.Is(ownerErr, os.ErrNotExist) {
+		return ownerErr
 	}
 	rec, err := store.Get(id)
 	if err != nil {
