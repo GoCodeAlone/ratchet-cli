@@ -60,6 +60,23 @@ func TestEvidenceStoreLoadMissingFile(t *testing.T) {
 	}
 }
 
+func TestEvidenceStoreLoadSkipsOversizedMalformedLine(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "evidence.jsonl")
+	longMalformed := strings.Repeat("x", 70*1024) + "\n"
+	valid := `{"kind":"error","message":"kept"}` + "\n"
+	if err := os.WriteFile(path, []byte(longMalformed+valid), 0600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	events, err := NewEvidenceStore(path, nil).Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(events) != 1 || events[0].Message != "kept" {
+		t.Fatalf("events = %#v", events)
+	}
+}
+
 func mustRead(t *testing.T, path string) []byte {
 	t.Helper()
 	data, err := os.ReadFile(path)

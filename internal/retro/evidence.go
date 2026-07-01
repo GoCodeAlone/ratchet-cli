@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -21,7 +22,7 @@ func NewEvidenceStore(path string, redactor *secrets.Redactor) *EvidenceStore {
 	return &EvidenceStore{path: path, redactor: redactor}
 }
 
-func (s *EvidenceStore) Append(event Event) error {
+func (s *EvidenceStore) Append(event Event) (err error) {
 	if s == nil {
 		return nil
 	}
@@ -43,7 +44,11 @@ func (s *EvidenceStore) Append(event Event) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); err == nil {
+			err = closeErr
+		}
+	}()
 	_, err = f.Write(data)
 	return err
 }
@@ -61,17 +66,23 @@ func (s *EvidenceStore) Load() ([]Event, error) {
 	}
 	defer f.Close()
 
+	reader := bufio.NewReader(f)
 	var events []Event
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		var event Event
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			continue
+	for {
+		line, err := reader.ReadBytes('\n')
+		if errors.Is(err, io.EOF) && len(line) == 0 {
+			break
 		}
-		events = append(events, event)
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
+		if err != nil && !errors.Is(err, io.EOF) {
+			return nil, err
+		}
+		var event Event
+		if err := json.Unmarshal(line, &event); err == nil {
+			events = append(events, event)
+		}
+		if errors.Is(err, io.EOF) {
+			break
+		}
 	}
 	return events, nil
 }
