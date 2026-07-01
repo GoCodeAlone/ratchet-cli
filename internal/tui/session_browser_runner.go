@@ -17,19 +17,26 @@ type SessionBrowserClient interface {
 	ListSessionMessages(context.Context, string) (*pb.SessionHistory, error)
 }
 
-func RunSessionBrowser(ctx context.Context, c SessionBrowserClient, rootID string) error {
+func RunSessionBrowser(ctx context.Context, c SessionBrowserClient, rootID string) (string, error) {
 	if rootID == "" {
-		return fmt.Errorf("session id is required")
+		return "", fmt.Errorf("session id is required")
 	}
 	model := sessionBrowserProgram{
 		browser: pages.NewSessionTreeBrowser(c, rootID, theme.Dark()).SetSize(100, 30),
 	}
-	_, err := tea.NewProgram(model, tea.WithContext(ctx)).Run()
-	return err
+	finalModel, err := tea.NewProgram(model, tea.WithContext(ctx)).Run()
+	if err != nil {
+		return "", err
+	}
+	if final, ok := finalModel.(sessionBrowserProgram); ok {
+		return final.selectedSessionID, nil
+	}
+	return "", nil
 }
 
 type sessionBrowserProgram struct {
-	browser pages.SessionTreeBrowser
+	browser           pages.SessionTreeBrowser
+	selectedSessionID string
 }
 
 func (m sessionBrowserProgram) Init() tea.Cmd {
@@ -47,6 +54,7 @@ func (m sessionBrowserProgram) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 	case components.SessionTreeSelectedMsg:
+		m.selectedSessionID = msg.SessionID
 		return m, tea.Quit
 	}
 	var cmd tea.Cmd

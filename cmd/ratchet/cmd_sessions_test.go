@@ -92,16 +92,21 @@ func TestHandleSessionsBrowseRunsInjectedBrowser(t *testing.T) {
 	withFakeSessionsClient(t, fake)
 	oldRun := runSessionBrowser
 	var gotID string
-	runSessionBrowser = func(_ context.Context, _ sessionsClient, rootID string) error {
+	runSessionBrowser = func(_ context.Context, _ sessionsClient, rootID string) (string, error) {
 		gotID = rootID
-		return nil
+		return "fork-1", nil
 	}
 	t.Cleanup(func() { runSessionBrowser = oldRun })
 
-	handleSessions([]string{"browse", "sess-1"})
+	out := captureStdout(t, func() {
+		handleSessions([]string{"browse", "sess-1"})
+	})
 
 	if gotID != "sess-1" {
 		t.Fatalf("browser root ID = %q, want sess-1", gotID)
+	}
+	if !strings.Contains(out, "Selected session: fork-1") {
+		t.Fatalf("browse output missing selected session:\n%s", out)
 	}
 }
 
@@ -113,8 +118,8 @@ func TestHandleSessionsBrowseValidatesID(t *testing.T) {
 	}
 	t.Cleanup(func() { ensureSessionsClient = oldEnsure })
 	oldRun := runSessionBrowser
-	runSessionBrowser = func(context.Context, sessionsClient, string) error {
-		return fmt.Errorf("browser should not run without id")
+	runSessionBrowser = func(context.Context, sessionsClient, string) (string, error) {
+		return "", fmt.Errorf("browser should not run without id")
 	}
 	t.Cleanup(func() { runSessionBrowser = oldRun })
 
