@@ -83,6 +83,34 @@ func (c mcpDaemonClient) ListProjects() ([]*pb.ProjectStatus, error) {
 	return resp.Projects, nil
 }
 
+func (c mcpDaemonClient) ReadBlackboard(section, key string) (*pb.BlackboardReadResp, error) {
+	return c.client.BlackboardRead(context.Background(), section, key)
+}
+
+func (c mcpDaemonClient) WriteBlackboard(section, key, value string) (*pb.BlackboardEntry, error) {
+	return c.client.BlackboardWrite(context.Background(), section, key, value, "mcp-client")
+}
+
+func (c mcpDaemonClient) ListBlackboard(section string) (*pb.BlackboardListResp, error) {
+	return c.client.BlackboardList(context.Background(), section)
+}
+
+func (c mcpDaemonClient) ListTeams() ([]*pb.TeamStatus, error) {
+	resp, err := c.client.ListTeams(context.Background(), "")
+	if err != nil {
+		return nil, err
+	}
+	return resp.Teams, nil
+}
+
+func (c mcpDaemonClient) GetTeamStatus(teamID string) (*pb.TeamStatus, error) {
+	return c.client.GetTeamStatus(context.Background(), teamID)
+}
+
+func (c mcpDaemonClient) DirectMessage(teamID, toAgent, content string) error {
+	return c.client.DirectMessage(context.Background(), teamID, toAgent, content)
+}
+
 func handleMCPConfig(args []string) {
 	if len(args) == 0 {
 		fmt.Println("Usage: ratchet mcp config <claude|copilot|generic> [path] [blackboard|daemon]")

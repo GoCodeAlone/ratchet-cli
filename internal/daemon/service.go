@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -848,6 +849,59 @@ func (s *Service) MeshStream(stream pb.RatchetDaemon_MeshStreamServer) error {
 			return err
 		}
 		s.handleMeshEvent(ev)
+	}
+}
+
+func (s *Service) BlackboardRead(ctx context.Context, req *pb.BlackboardReadReq) (*pb.BlackboardReadResp, error) {
+	if req.Section == "" || req.Key == "" {
+		return nil, status.Error(codes.InvalidArgument, "section and key are required")
+	}
+	entry, ok := s.meshBB.Read(req.Section, req.Key)
+	if !ok {
+		return &pb.BlackboardReadResp{}, nil
+	}
+	return &pb.BlackboardReadResp{Found: true, Entry: blackboardEntryToPB(req.Section, entry)}, nil
+}
+
+func (s *Service) BlackboardWrite(ctx context.Context, req *pb.BlackboardWriteReq) (*pb.BlackboardEntry, error) {
+	if req.Section == "" || req.Key == "" {
+		return nil, status.Error(codes.InvalidArgument, "section and key are required")
+	}
+	author := req.Author
+	if author == "" {
+		author = "daemon-client"
+	}
+	entry := s.meshBB.Write(req.Section, req.Key, req.Value, author)
+	return blackboardEntryToPB(req.Section, entry), nil
+}
+
+func (s *Service) BlackboardList(ctx context.Context, req *pb.BlackboardListReq) (*pb.BlackboardListResp, error) {
+	if req.Section == "" {
+		sections := s.meshBB.ListSections()
+		sort.Strings(sections)
+		return &pb.BlackboardListResp{Sections: sections}, nil
+	}
+	entries := s.meshBB.List(req.Section)
+	resp := &pb.BlackboardListResp{}
+	keys := make([]string, 0, len(entries))
+	for key := range entries {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		resp.Entries = append(resp.Entries, blackboardEntryToPB(req.Section, entries[key]))
+	}
+	return resp, nil
+}
+
+func blackboardEntryToPB(section string, entry mesh.Entry) *pb.BlackboardEntry {
+	return &pb.BlackboardEntry{
+		Section:   section,
+		Key:       entry.Key,
+		Value:     fmt.Sprint(entry.Value),
+		Author:    entry.Author,
+		Revision:  entry.Revision,
+		Timestamp: entry.Timestamp.Format(time.RFC3339Nano),
 	}
 }
 

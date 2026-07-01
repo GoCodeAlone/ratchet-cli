@@ -259,6 +259,32 @@ func (c *Client) ListTeams(ctx context.Context, projectID string) (*pb.TeamList,
 	return c.daemon.ListTeams(ctx, &pb.ListTeamsReq{ProjectId: projectID})
 }
 
+func (c *Client) BlackboardRead(ctx context.Context, section, key string) (*pb.BlackboardReadResp, error) {
+	return c.daemon.BlackboardRead(ctx, &pb.BlackboardReadReq{Section: section, Key: key})
+}
+
+func (c *Client) BlackboardWrite(ctx context.Context, section, key, value, author string) (*pb.BlackboardEntry, error) {
+	return c.daemon.BlackboardWrite(ctx, &pb.BlackboardWriteReq{
+		Section: section,
+		Key:     key,
+		Value:   value,
+		Author:  author,
+	})
+}
+
+func (c *Client) BlackboardList(ctx context.Context, section string) (*pb.BlackboardListResp, error) {
+	return c.daemon.BlackboardList(ctx, &pb.BlackboardListReq{Section: section})
+}
+
+func (c *Client) DirectMessage(ctx context.Context, teamID, toAgent, content string) error {
+	_, err := c.daemon.DirectMessage(ctx, &pb.DirectMessageReq{
+		TeamId:  teamID,
+		ToAgent: toAgent,
+		Content: content,
+	})
+	return err
+}
+
 // CompactSession requests immediate context compression for the given session.
 // It sends a special sentinel message that handleChat recognises as a compression
 // request rather than a user turn — the daemon compresses history and responds
