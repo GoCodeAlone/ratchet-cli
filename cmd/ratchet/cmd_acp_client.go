@@ -158,33 +158,32 @@ func executeACPClientExecWithStore(ctx context.Context, opts acpClientExecOption
 		if sessionID == "" {
 			sessionID = newLocalACPClientID("local")
 		}
+		if store == nil {
+			return errors.New("acp client store is required for --no-wait")
+		}
 		queueID := ""
 		queueDepth := 0
-		if store != nil {
-			now := time.Now().UTC()
-			rec := acpclient.SessionRecord{
-				ID:                 sessionID,
-				Agent:              spec.Name,
-				CommandFingerprint: spec.Fingerprint(),
-				Cwd:                cwd,
-				Status:             acpclient.SessionStatusQueued,
-				CreatedAt:          now,
-				UpdatedAt:          now,
-				Summary:            summarizeACPClientText(prompt),
-			}
-			queued, err := store.AppendQueuedPrompt(rec, acpclient.QueuedPrompt{
-				ID:        newLocalACPClientID("queue"),
-				Prompt:    prompt,
-				Status:    acpclient.QueuePromptStatusPending,
-				CreatedAt: now,
-			})
-			if err != nil {
-				return err
-			}
-			queueDepth = len(queued.PromptQueue)
-			if queueDepth > 0 {
-				queueID = queued.PromptQueue[queueDepth-1].ID
-			}
+		now := time.Now().UTC()
+		rec := acpclient.SessionRecord{
+			ID:                 sessionID,
+			Agent:              spec.Name,
+			CommandFingerprint: spec.Fingerprint(),
+			Cwd:                cwd,
+			Status:             acpclient.SessionStatusQueued,
+			Summary:            summarizeACPClientText(prompt),
+		}
+		queued, err := store.AppendQueuedPrompt(rec, acpclient.QueuedPrompt{
+			ID:        newLocalACPClientID("queue"),
+			Prompt:    prompt,
+			Status:    acpclient.QueuePromptStatusPending,
+			CreatedAt: now,
+		})
+		if err != nil {
+			return err
+		}
+		queueDepth = len(queued.PromptQueue)
+		if queueDepth > 0 {
+			queueID = queued.PromptQueue[queueDepth-1].ID
 		}
 		if opts.JSON {
 			return json.NewEncoder(w).Encode(struct {

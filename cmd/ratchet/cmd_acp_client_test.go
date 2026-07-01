@@ -365,6 +365,28 @@ func TestExecuteACPClientExecNoWaitAppendsPromptQueue(t *testing.T) {
 	if rec.PromptQueue[0].Prompt != "first queued" || rec.PromptQueue[1].Prompt != "second queued" {
 		t.Fatalf("PromptQueue = %#v, want FIFO prompts", rec.PromptQueue)
 	}
+	if !rec.CreatedAt.Equal(rec.PromptQueue[0].CreatedAt) {
+		t.Fatalf("CreatedAt = %s, want first queue item CreatedAt %s", rec.CreatedAt, rec.PromptQueue[0].CreatedAt)
+	}
+}
+
+func TestExecuteACPClientExecNoWaitRequiresStore(t *testing.T) {
+	runner := &fakeACPClientExecRunner{}
+	var out bytes.Buffer
+	err := executeACPClientExec(t.Context(), acpClientExecOptions{
+		SessionID: "s-queued",
+		Command:   "/bin/fixture-agent",
+		Prompt:    "queued prompt",
+		Cwd:       ".",
+		Timeout:   time.Second,
+		NoWait:    true,
+	}, runner, &out)
+	if err == nil || !strings.Contains(err.Error(), "store is required") {
+		t.Fatalf("executeACPClientExec no-wait without store error = %v, want store required", err)
+	}
+	if runner.called {
+		t.Fatal("runner called for failed --no-wait")
+	}
 }
 
 func TestExecuteACPClientQueueOutputsHumanAndJSON(t *testing.T) {
