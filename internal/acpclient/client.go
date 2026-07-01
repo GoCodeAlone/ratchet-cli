@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"sync"
 	"time"
 
 	acpsdk "github.com/coder/acp-go-sdk"
@@ -18,7 +19,7 @@ type Client struct {
 	callbacks *Callbacks
 	timeout   time.Duration
 	cmd       *exec.Cmd
-	stderr    *bytes.Buffer
+	stderr    *lockedBuffer
 	wait      chan error
 }
 
@@ -56,7 +57,7 @@ func Start(ctx context.Context, spec AgentSpec, opts RunOptions) (*Client, error
 	if err != nil {
 		return nil, fmt.Errorf("open acp agent stdout: %w", err)
 	}
-	stderr := &bytes.Buffer{}
+	stderr := &lockedBuffer{}
 	cmd.Stderr = stderr
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start acp agent %q: %w", spec.Command, err)
@@ -149,4 +150,21 @@ func timeoutOrDefault(timeout time.Duration) time.Duration {
 		return timeout
 	}
 	return defaultTimeout
+}
+
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
