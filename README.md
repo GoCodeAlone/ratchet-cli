@@ -45,4 +45,5 @@ ratchet team start "task"   # Start agent team
 | Team | `ratchet team start "task"` | Uses daemon team orchestration with configured providers. |
 
 See [docs/harness-emulation.md](docs/harness-emulation.md) for credential-free
-mock provider recipes and parity notes.
+mock provider recipes, and [docs/competitor-parity.md](docs/competitor-parity.md)
+for the dated source-backed parity matrix.

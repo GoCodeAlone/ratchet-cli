@@ -50,16 +50,14 @@ go test ./internal/acp -run TestACPStdioPromptSmoke -count=1
 
 ## Competitor parity
 
-Source snapshots used for this matrix were captured during the June 30, 2026
-design pass:
-
-| Harness | Source snapshot | Useful capability | ratchet-cli status |
-|---|---|---|---|
-| Zed / ACP | `zed-industries/zed@df33d78`, `agent-client-protocol@a0186bd` | ACP session lifecycle, plan updates, tool metadata, sandbox approvals | Partial; PR3 expands ACP lifecycle/config parity. |
-| Pi | `earendil-works/pi@dd87c02` | JSONL session tree, fork/compact, extension/skills/themes | Partial; sessions exist, fork/compact parity deferred. |
-| Codex | `openai/codex@db887d0` | filesystem sandbox, exec policy, hooks, MCP contributors, daemon/cloud tasks | Partial; trust policy and hooks exist, broader sandbox/extension parity deferred. |
-| Claude Code | official docs checked during design | MCP, hooks, permissions, subagents, memory, policy layers | Partial; MCP config helpers and agent/team concepts exist, policy-layer parity deferred. |
-| OpenClaw | `openclaw@a841c278` | local-first gateway, isolated agents/workspaces/channel routing, ACPX plugin | Deferred; voice/mobile/canvas/channel gateway is out of scope for this phase. |
+The dated source-backed matrix lives in
+[competitor-parity.md](competitor-parity.md). The snapshot was refreshed on
+2026-07-01 from current Zed, ACP, Pi, Codex, Claude Code, OpenClaw, and ACPX
+sources. ratchet-cli is now supported for Windows release artifacts, ACP prompt
+stdio smoke, daemon-backed MCP blackboard/session/project/team status tools, and
+opt-in redacted retro evidence. Deferred rows remain session
+lineage/compaction, broader policy layering, extension hooks, full daemon direct
+team messaging, ACP client/orchestrator mode, and local-first channel gateways.
 
 ## ACP Matrix
 
