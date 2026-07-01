@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"testing"
 
@@ -72,6 +73,9 @@ func TestCompactManualWritesCompactionRecord(t *testing.T) {
 	if got.FirstKeptMessageID != firstKept {
 		t.Fatalf("first kept = %q, want %q", got.FirstKeptMessageID, firstKept)
 	}
+	if !messageExists(t, h.DB, session.Id, got.FirstKeptMessageID) {
+		t.Fatalf("first kept message %q was not preserved in compacted history", got.FirstKeptMessageID)
+	}
 }
 
 func TestAutoCompactionWritesCompactionRecord(t *testing.T) {
@@ -102,6 +106,18 @@ func TestAutoCompactionWritesCompactionRecord(t *testing.T) {
 	if got.Summary == "" || got.MessagesRemoved <= 0 || got.MessagesKept <= 0 || got.FirstKeptMessageID == "" {
 		t.Fatalf("record missing fields: %+v", got)
 	}
+	if !messageExists(t, h.DB, session.Id, got.FirstKeptMessageID) {
+		t.Fatalf("first kept message %q was not preserved in compacted history", got.FirstKeptMessageID)
+	}
+}
+
+func messageExists(t *testing.T, db *sql.DB, sessionID, messageID string) bool {
+	t.Helper()
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM messages WHERE session_id = ? AND id = ?`, sessionID, messageID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	return count > 0
 }
 
 func TestTokenTracker_MultipleSessionsIsolated(t *testing.T) {

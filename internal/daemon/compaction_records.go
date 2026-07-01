@@ -80,3 +80,23 @@ func firstKeptMessageID(messages []SessionHistoryMessage, preserveCount int) str
 	}
 	return messages[len(messages)-preserveCount].ID
 }
+
+func compactionReplacementMessageIDs(messages []SessionHistoryMessage, preserveCount, compressedCount int) []string {
+	if compressedCount <= 0 {
+		return nil
+	}
+	ids := make([]string, compressedCount)
+	if preserveCount <= 0 || len(messages) <= preserveCount {
+		return ids
+	}
+	kept := messages[len(messages)-preserveCount:]
+	for i, msg := range kept {
+		// compressed[0] is the generated summary, so preserved messages start at index 1.
+		idx := i + 1
+		if idx >= len(ids) {
+			break
+		}
+		ids[idx] = msg.ID
+	}
+	return ids
+}

@@ -5,6 +5,9 @@ import "testing"
 func TestCompactionRecordSchemaAppendList(t *testing.T) {
 	db := setupTestDB(t)
 	ctx := t.Context()
+	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
+		t.Fatal(err)
+	}
 
 	columns := tableColumns(t, db, "session_compactions")
 	for _, name := range []string{"id", "session_id", "summary", "reason", "messages_removed", "messages_kept", "first_kept_message_id", "created_at"} {
@@ -13,8 +16,12 @@ func TestCompactionRecordSchemaAppendList(t *testing.T) {
 		}
 	}
 
+	session, err := NewSessionManager(db).Create(ctx, t.TempDir(), "mock", "mock-model", "compaction records")
+	if err != nil {
+		t.Fatal(err)
+	}
 	record, err := appendCompactionRecord(ctx, db, CompactionRecord{
-		SessionID:          "sess-1",
+		SessionID:          session.ID,
 		Summary:            "short summary",
 		Reason:             "manual",
 		MessagesRemoved:    8,
@@ -28,7 +35,7 @@ func TestCompactionRecordSchemaAppendList(t *testing.T) {
 		t.Fatalf("record missing ID/CreatedAt: %+v", record)
 	}
 
-	records, err := listCompactionRecords(ctx, db, "sess-1")
+	records, err := listCompactionRecords(ctx, db, session.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
