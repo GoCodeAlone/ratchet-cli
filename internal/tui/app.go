@@ -229,6 +229,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 
+	case pages.ChatEventMsg:
+		if msg.SessionID != "" && msg.SessionID != a.sessionID {
+			return a, nil
+		}
+
 	case components.SessionKillMsg:
 		sessionID := msg.SessionID
 		return a, func() tea.Msg {
@@ -260,7 +265,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sessionHistoryLoadedMsg:
 		if msg.sessionID == a.sessionID {
 			a.loading = false
-			if msg.err == nil {
+			if msg.err != nil {
+				a.chat.AddSystemMessage("Could not load session history: " + msg.err.Error())
+			} else {
 				a.chat.LoadHistory(msg.messages)
 			}
 		}
@@ -365,6 +372,7 @@ func (a *App) switchSession(sessionID string, meta *pb.Session) tea.Cmd {
 	} else if a.session == nil || a.session.GetId() != sessionID {
 		a.session = &pb.Session{Id: sessionID}
 	}
+	a.chat.CancelStream()
 
 	chat := pages.NewChat(a.client, sessionID, a.theme, a.dark)
 	chatHeight := a.height - 1

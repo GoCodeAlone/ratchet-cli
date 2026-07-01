@@ -19,8 +19,9 @@ import (
 // ChatEventMsg wraps an incoming proto ChatEvent for the TUI.
 // The channel is carried so handleChatEvent can schedule the next read.
 type ChatEventMsg struct {
-	Event *pb.ChatEvent
-	ch    <-chan *pb.ChatEvent
+	SessionID string
+	Event     *pb.ChatEvent
+	ch        <-chan *pb.ChatEvent
 }
 
 // chatStreamDoneMsg signals the event channel was closed.
@@ -133,6 +134,23 @@ func (m *ChatModel) LoadHistory(messages []*pb.HistoryMessage) {
 	m.refreshViewport()
 }
 
+// AddSystemMessage appends a non-streaming status message to the transcript.
+func (m *ChatModel) AddSystemMessage(content string) {
+	m.messages = append(m.messages, components.Message{
+		Role:    components.RoleSystem,
+		Content: content,
+	})
+	m.refreshViewport()
+}
+
+// CancelStream cancels any in-flight chat stream owned by this model.
+func (m *ChatModel) CancelStream() {
+	if m.cancelChat != nil {
+		m.cancelChat()
+		m.cancelChat = nil
+	}
+}
+
 func (m ChatModel) Init() tea.Cmd {
 	return m.input.Init()
 }
@@ -182,15 +200,18 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 			cmds = append(cmds, func() tea.Msg {
 				ch, err := m.client.ApprovePlan(m.ctx, m.sessionID, planID, skipSteps)
 				if err != nil {
-					return ChatEventMsg{Event: &pb.ChatEvent{
-						Event: &pb.ChatEvent_Error{Error: &pb.ErrorEvent{Message: err.Error()}},
-					}}
+					return ChatEventMsg{
+						SessionID: m.sessionID,
+						Event: &pb.ChatEvent{
+							Event: &pb.ChatEvent_Error{Error: &pb.ErrorEvent{Message: err.Error()}},
+						},
+					}
 				}
 				event, ok := <-ch
 				if !ok {
 					return chatStreamDoneMsg{}
 				}
-				return ChatEventMsg{Event: event, ch: ch}
+				return ChatEventMsg{SessionID: m.sessionID, Event: event, ch: ch}
 			})
 		}
 
@@ -357,11 +378,14 @@ func (m ChatModel) sendMessage(content string) tea.Cmd {
 			}
 			ch, err := m.client.SendMessage(ctx, m.sessionID, content)
 			if err != nil {
-				return ChatEventMsg{Event: &pb.ChatEvent{
-					Event: &pb.ChatEvent_Error{
-						Error: &pb.ErrorEvent{Message: err.Error()},
+				return ChatEventMsg{
+					SessionID: m.sessionID,
+					Event: &pb.ChatEvent{
+						Event: &pb.ChatEvent_Error{
+							Error: &pb.ErrorEvent{Message: err.Error()},
+						},
 					},
-				}}
+				}
 			}
 
 			// Read first event and carry channel for subsequent reads
@@ -369,7 +393,7 @@ func (m ChatModel) sendMessage(content string) tea.Cmd {
 			if !ok {
 				return chatStreamDoneMsg{}
 			}
-			return ChatEventMsg{Event: event, ch: ch}
+			return ChatEventMsg{SessionID: m.sessionID, Event: event, ch: ch}
 		},
 	)
 }
@@ -386,30 +410,33 @@ func (m ChatModel) compactSession() tea.Cmd {
 			}
 			ch, err := m.client.CompactSession(ctx, m.sessionID)
 			if err != nil {
-				return ChatEventMsg{Event: &pb.ChatEvent{
-					Event: &pb.ChatEvent_Error{
-						Error: &pb.ErrorEvent{Message: err.Error()},
+				return ChatEventMsg{
+					SessionID: m.sessionID,
+					Event: &pb.ChatEvent{
+						Event: &pb.ChatEvent_Error{
+							Error: &pb.ErrorEvent{Message: err.Error()},
+						},
 					},
-				}}
+				}
 			}
 
 			event, ok := <-ch
 			if !ok {
 				return chatStreamDoneMsg{}
 			}
-			return ChatEventMsg{Event: event, ch: ch}
+			return ChatEventMsg{SessionID: m.sessionID, Event: event, ch: ch}
 		},
 	)
 }
 
 // nextEvent returns a Cmd that reads the next event from the channel.
-func nextEvent(ch <-chan *pb.ChatEvent) tea.Cmd {
+func nextEvent(sessionID string, ch <-chan *pb.ChatEvent) tea.Cmd {
 	return func() tea.Msg {
 		event, ok := <-ch
 		if !ok {
 			return chatStreamDoneMsg{}
 		}
-		return ChatEventMsg{Event: event, ch: ch}
+		return ChatEventMsg{SessionID: sessionID, Event: event, ch: ch}
 	}
 }
 
@@ -517,7 +544,7 @@ func (m *ChatModel) handleChatEvent(msg ChatEventMsg) []tea.Cmd {
 
 	// Schedule read of next event from the channel
 	if msg.ch != nil {
-		cmds = append(cmds, nextEvent(msg.ch))
+		cmds = append(cmds, nextEvent(msg.SessionID, msg.ch))
 	}
 	return cmds
 }
