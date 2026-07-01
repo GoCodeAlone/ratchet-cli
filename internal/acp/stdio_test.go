@@ -21,12 +21,13 @@ type stdioSmokeClient struct {
 
 var _ acpsdk.Client = (*stdioSmokeClient)(nil)
 
-func (c *stdioSmokeClient) SessionUpdate(_ context.Context, n acpsdk.SessionNotification) error {
+func (c *stdioSmokeClient) SessionUpdate(ctx context.Context, n acpsdk.SessionNotification) error {
 	select {
 	case c.updates <- n:
-	default:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-	return nil
 }
 
 func (*stdioSmokeClient) RequestPermission(_ context.Context, p acpsdk.RequestPermissionRequest) (acpsdk.RequestPermissionResponse, error) {
@@ -167,12 +168,12 @@ func TestACPStdioPromptSmoke(t *testing.T) {
 			}
 			if n.Update.AgentMessageChunk != nil && n.Update.AgentMessageChunk.Content.Text != nil {
 				received.WriteString(n.Update.AgentMessageChunk.Content.Text.Text)
+				if strings.TrimSpace(received.String()) != "" {
+					return
+				}
 			}
-		default:
-			if strings.TrimSpace(received.String()) == "" {
-				t.Fatal("expected at least one agent message update over ACP stdio")
-			}
-			return
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for agent message update over ACP stdio: %v", ctx.Err())
 		}
 	}
 }
