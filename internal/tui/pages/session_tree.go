@@ -124,10 +124,10 @@ func (m SessionTreeBrowser) loadTree() tea.Cmd {
 }
 
 func (m SessionTreeBrowser) loadPreview(sessionID string) tea.Cmd {
+	if sessionID == "" {
+		return nil
+	}
 	return func() tea.Msg {
-		if sessionID == "" {
-			return sessionPreviewLoadedMsg{}
-		}
 		if m.client == nil {
 			return sessionPreviewLoadedMsg{sessionID: sessionID, err: fmt.Errorf("session tree client is nil")}
 		}

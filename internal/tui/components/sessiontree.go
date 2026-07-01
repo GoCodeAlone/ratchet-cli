@@ -132,6 +132,7 @@ func (m SessionTreeModel) View(t theme.Theme) string {
 		return strings.Join(lines, "\n")
 	}
 
+	hasChildren := m.childIDSet()
 	for i, row := range m.rows {
 		s := row.session
 		indicator := "  "
@@ -140,7 +141,7 @@ func (m SessionTreeModel) View(t theme.Theme) string {
 		}
 		prefix := strings.Repeat("  ", row.depth)
 		childMark := " "
-		if m.hasChildren(s.GetId()) {
+		if hasChildren[s.GetId()] {
 			if m.collapsed[s.GetId()] {
 				childMark = "▸"
 			} else {
@@ -234,6 +235,16 @@ func (m SessionTreeModel) hasChildren(id string) bool {
 		}
 	}
 	return false
+}
+
+func (m SessionTreeModel) childIDSet() map[string]bool {
+	hasChildren := make(map[string]bool)
+	for _, s := range m.sessions {
+		if s.GetParentId() != "" {
+			hasChildren[s.GetParentId()] = true
+		}
+	}
+	return hasChildren
 }
 
 func (m SessionTreeModel) previewLines() []string {

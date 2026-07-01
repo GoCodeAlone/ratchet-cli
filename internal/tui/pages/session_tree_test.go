@@ -39,6 +39,23 @@ func TestSessionTreeBrowserLoadsTreeAndSelectedPreview(t *testing.T) {
 	}
 }
 
+func TestSessionTreeBrowserEmptyTreeDoesNotLoadPreview(t *testing.T) {
+	client := &fakeSessionTreeClient{tree: &pb.SessionList{}}
+	model := NewSessionTreeBrowser(client, "root-1", theme.Dark())
+
+	var cmd tea.Cmd
+	model, cmd = model.Update(runCmd(t, model.Init()))
+	if cmd != nil {
+		t.Fatalf("empty tree returned preview command")
+	}
+	if len(client.historyIDs) != 0 {
+		t.Fatalf("history calls = %v, want none", client.historyIDs)
+	}
+	if !strings.Contains(model.View(), "No sessions") {
+		t.Fatalf("view missing empty tree state:\n%s", model.View())
+	}
+}
+
 func TestSessionTreeBrowserSelectionRefreshesPreviewAndSelects(t *testing.T) {
 	client := &fakeSessionTreeClient{
 		tree: sampleSessionList(),
