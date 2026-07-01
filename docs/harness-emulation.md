@@ -12,7 +12,7 @@ possible.
 | TUI | `ratchet` | daemon gRPC + Bubble Tea UI | Supported | Covered by daemon/session tests; full TUI remains manual. |
 | one-shot | `ratchet -p "prompt"` | daemon session + default provider | Supported when provider configured | CLI binary smoke covers command dispatch; mock provider roundtrip covers daemon path. |
 | daemon | `ratchet daemon status` | pid/socket state under `~/.ratchet` | Supported | `TestHarnessSmokeVersionHelpAndDaemonStatus`. |
-| ACP | `ratchet acp` | ACP stdio JSON-RPC agent wrapping daemon service | Partial | `TestHarnessSmokeInitializeNewAndLoadSession`; `TestParityNewSessionIDCanBeLoaded`; prompt streaming needs a real ACP client connection. |
+| ACP | `ratchet acp` | ACP stdio JSON-RPC agent wrapping daemon service | Supported for initialize/new/load/prompt/cancel/model/mode | `TestACPStdioPromptSmoke`; `TestHarnessSmokeInitializeNewAndLoadSession`; `TestParityNewSessionIDCanBeLoaded`. |
 | MCP | `ratchet mcp blackboard` / `ratchet mcp daemon` | stdio JSON-RPC blackboard or daemon server | Supported for standalone blackboard and daemon session/project tools | `TestHarnessSmokeJSONRPCInitializeToolsListAndCall`; `TestDaemonMCPToolCallsUseDaemonClient`. |
 | team | `ratchet team start "task"` | daemon team manager / mesh executor | Supported when provider configured | Existing team and mesh tests cover service behavior. |
 
@@ -41,6 +41,13 @@ The CLI binary smoke is also hermetic and uses a temp home:
 go test ./cmd/ratchet -run TestHarnessSmokeVersionHelpAndDaemonStatus -count=1
 ```
 
+The ACP prompt smoke uses `acp-go-sdk` client and agent-side connections over
+stdio-style pipes, a real ratchet daemon service, and the built-in mock provider:
+
+```sh
+go test ./internal/acp -run TestACPStdioPromptSmoke -count=1
+```
+
 ## Competitor parity
 
 Source snapshots used for this matrix were captured during the June 30, 2026
@@ -61,7 +68,7 @@ design pass:
 | initialize | Supported | `RatchetAgent.Initialize`; `TestHarnessSmokeInitializeNewAndLoadSession`. |
 | new session | Supported | `RatchetAgent.NewSession`; service-backed test. |
 | load session | Supported | `NewSession` returns the ratchet session ID as the ACP ID; `TestParityNewSessionIDCanBeLoaded`. |
-| prompt | Partial | Implemented through daemon `SendMessageChan`; full stdio client smoke deferred beyond this phase. |
+| prompt | Supported | `TestACPStdioPromptSmoke` negotiates initialize/new-session/prompt over stdio-style ACP connections and receives agent message updates from daemon `SendMessageChan`. |
 | cancel | Supported | `RatchetAgent.Cancel`. |
 | plan updates | Partial | Chat event conversion supports plan proposed/step update events. |
 | session model | Supported | `SetSessionModel` updates the ratchet session model; `TestParitySetSessionModelUpdatesSession`. |
