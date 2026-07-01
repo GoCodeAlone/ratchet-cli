@@ -46,7 +46,7 @@ func buildRatchetSmokeBinary(t *testing.T) string {
 	if os.PathSeparator == '\\' {
 		bin += ".exe"
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "go", "build", "-o", bin, ".")
 	var buf bytes.Buffer

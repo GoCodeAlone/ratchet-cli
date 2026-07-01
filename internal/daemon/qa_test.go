@@ -169,10 +169,23 @@ func TestQA_CronScheduling_LoopAndVerifyTicks(t *testing.T) {
 		t.Fatalf("PauseCron: %v", err)
 	}
 
+	listAtPause, err := client.ListCrons(ctx, &pb.Empty{})
+	if err != nil {
+		t.Fatalf("ListCrons after pause: %v", err)
+	}
 	countAtPause := found.RunCount
+	for _, j := range listAtPause.Jobs {
+		if j.Id == job.Id {
+			countAtPause = j.RunCount
+			break
+		}
+	}
 	time.Sleep(200 * time.Millisecond)
 
-	list2, _ := client.ListCrons(ctx, &pb.Empty{})
+	list2, err := client.ListCrons(ctx, &pb.Empty{})
+	if err != nil {
+		t.Fatalf("ListCrons while paused: %v", err)
+	}
 	for _, j := range list2.Jobs {
 		if j.Id == job.Id && j.RunCount > countAtPause {
 			t.Errorf("QA30: paused job should not tick (was %d, now %d)", countAtPause, j.RunCount)

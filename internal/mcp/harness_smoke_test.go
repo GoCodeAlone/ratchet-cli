@@ -54,8 +54,24 @@ func readJSONRPCResponses(t *testing.T, r io.Reader) []map[string]any {
 
 func resultText(t *testing.T, resp map[string]any) string {
 	t.Helper()
-	result := resp["result"].(map[string]any)
-	content := result["content"].([]any)
-	first := content[0].(map[string]any)
-	return first["text"].(string)
+	if rpcErr, ok := resp["error"]; ok && rpcErr != nil {
+		t.Fatalf("JSON-RPC error response: %#v", rpcErr)
+	}
+	result, ok := resp["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("result has type %T, want object: %#v", resp["result"], resp)
+	}
+	content, ok := result["content"].([]any)
+	if !ok || len(content) == 0 {
+		t.Fatalf("content has type %T length %d, want non-empty array: %#v", result["content"], len(content), result)
+	}
+	first, ok := content[0].(map[string]any)
+	if !ok {
+		t.Fatalf("first content item has type %T, want object: %#v", content[0], content[0])
+	}
+	text, ok := first["text"].(string)
+	if !ok {
+		t.Fatalf("text has type %T, want string: %#v", first["text"], first)
+	}
+	return text
 }
