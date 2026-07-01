@@ -25,6 +25,7 @@ type Callbacks struct {
 	mu      sync.Mutex
 	updates []acpsdk.SessionNotification
 	text    strings.Builder
+	notify  chan struct{}
 }
 
 var _ acpsdk.Client = (*Callbacks)(nil)
@@ -39,7 +40,7 @@ func NewCallbacks(opts RunOptions) *Callbacks {
 	if abs, err := filepath.Abs(cwd); err == nil {
 		cwd = abs
 	}
-	return &Callbacks{cwd: filepath.Clean(cwd), allowWrites: opts.AllowWrites}
+	return &Callbacks{cwd: filepath.Clean(cwd), allowWrites: opts.AllowWrites, notify: make(chan struct{}, 1)}
 }
 
 func (c *Callbacks) Cwd() string {
@@ -59,6 +60,10 @@ func (c *Callbacks) SessionUpdate(ctx context.Context, n acpsdk.SessionNotificat
 	if n.Update.AgentMessageChunk != nil && n.Update.AgentMessageChunk.Content.Text != nil {
 		c.text.WriteString(n.Update.AgentMessageChunk.Content.Text.Text)
 	}
+	select {
+	case c.notify <- struct{}{}:
+	default:
+	}
 	return nil
 }
 
@@ -66,6 +71,28 @@ func (c *Callbacks) Snapshot() ([]acpsdk.SessionNotification, string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return slices.Clone(c.updates), c.text.String()
+}
+
+func (c *Callbacks) UpdateCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.updates)
+}
+
+func (c *Callbacks) WaitForUpdate(ctx context.Context, previous int) {
+	for {
+		c.mu.Lock()
+		current := len(c.updates)
+		c.mu.Unlock()
+		if current > previous {
+			return
+		}
+		select {
+		case <-c.notify:
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 func (c *Callbacks) ReadTextFile(_ context.Context, p acpsdk.ReadTextFileRequest) (acpsdk.ReadTextFileResponse, error) {

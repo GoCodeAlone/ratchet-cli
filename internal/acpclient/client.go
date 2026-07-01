@@ -99,6 +99,7 @@ func (c *Client) RunPrompt(ctx context.Context, prompt string) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("create acp session: %w", err)
 	}
+	updateCount := c.callbacks.UpdateCount()
 	resp, err := c.conn.Prompt(callCtx, acpsdk.PromptRequest{
 		SessionId: session.SessionId,
 		Prompt:    []acpsdk.ContentBlock{acpsdk.TextBlock(prompt)},
@@ -106,6 +107,9 @@ func (c *Client) RunPrompt(ctx context.Context, prompt string) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("send acp prompt: %w", err)
 	}
+	waitCtx, waitCancel := context.WithTimeout(ctx, min(c.timeout, 500*time.Millisecond))
+	defer waitCancel()
+	c.callbacks.WaitForUpdate(waitCtx, updateCount)
 	updates, text := c.callbacks.Snapshot()
 	return Result{
 		SessionID:  session.SessionId,
