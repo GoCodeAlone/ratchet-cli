@@ -3,9 +3,11 @@ package acpclient
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,6 +34,11 @@ type Result struct {
 	Text       string
 	Stderr     string
 	Duration   time.Duration
+}
+
+type SessionRunner struct {
+	client    *Client
+	sessionID acpsdk.SessionId
 }
 
 func NewInProcessClient(peerInput io.Writer, peerOutput io.Reader, opts RunOptions) *Client {
@@ -84,12 +91,18 @@ func Start(ctx context.Context, spec AgentSpec, opts RunOptions) (*Client, error
 }
 
 func (c *Client) RunPrompt(ctx context.Context, prompt string) (Result, error) {
-	started := time.Now()
+	runner, err := c.StartSession(ctx, "")
+	if err != nil {
+		return Result{}, err
+	}
+	return runner.Prompt(ctx, prompt)
+}
+
+func (c *Client) StartSession(ctx context.Context, existingSessionID string) (*SessionRunner, error) {
 	callCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
-	c.callbacks.Reset()
 
-	if _, err := c.conn.Initialize(callCtx, acpsdk.InitializeRequest{
+	initResp, err := c.conn.Initialize(callCtx, acpsdk.InitializeRequest{
 		ProtocolVersion: acpsdk.ProtocolVersionNumber,
 		ClientCapabilities: acpsdk.ClientCapabilities{
 			Fs: acpsdk.FileSystemCapability{
@@ -97,26 +110,61 @@ func (c *Client) RunPrompt(ctx context.Context, prompt string) (Result, error) {
 				WriteTextFile: c.callbacks.allowWrites,
 			},
 		},
-	}); err != nil {
-		return Result{}, fmt.Errorf("initialize acp agent: %w", err)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("initialize acp agent: %w", err)
+	}
+	existingSessionID = strings.TrimSpace(existingSessionID)
+	if existingSessionID != "" {
+		if !initResp.AgentCapabilities.LoadSession {
+			return nil, fmt.Errorf("load existing acp session %s: agent does not support loadSession", existingSessionID)
+		}
+		sessionID := acpsdk.SessionId(existingSessionID)
+		if _, err := c.conn.LoadSession(callCtx, acpsdk.LoadSessionRequest{
+			Cwd:        c.callbacks.Cwd(),
+			McpServers: []acpsdk.McpServer{},
+			SessionId:  sessionID,
+		}); err != nil {
+			return nil, fmt.Errorf("load existing acp session %s: %w", existingSessionID, err)
+		}
+		return &SessionRunner{client: c, sessionID: sessionID}, nil
 	}
 	session, err := c.conn.NewSession(callCtx, acpsdk.NewSessionRequest{
 		Cwd:        c.callbacks.Cwd(),
 		McpServers: []acpsdk.McpServer{},
 	})
 	if err != nil {
-		return Result{}, fmt.Errorf("create acp session: %w", err)
+		return nil, fmt.Errorf("create acp session: %w", err)
 	}
 	if c.onSession != nil {
 		if err := c.onSession(string(session.SessionId)); err != nil {
-			return Result{}, fmt.Errorf("record acp session: %w", err)
+			return nil, fmt.Errorf("record acp session: %w", err)
 		}
 	}
-	stopCancelWatcher := c.startCancelWatcher(callCtx, session.SessionId)
+	return &SessionRunner{client: c, sessionID: session.SessionId}, nil
+}
+
+func (r *SessionRunner) SessionID() acpsdk.SessionId {
+	if r == nil {
+		return ""
+	}
+	return r.sessionID
+}
+
+func (r *SessionRunner) Prompt(ctx context.Context, prompt string) (Result, error) {
+	if r == nil || r.client == nil {
+		return Result{}, errors.New("acp session runner is not initialized")
+	}
+	started := time.Now()
+	c := r.client
+	callCtx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+	c.callbacks.Reset()
+	stopCancelWatcher := c.startCancelWatcher(callCtx, r.sessionID)
 	defer stopCancelWatcher()
 	updateCount := c.callbacks.UpdateCount()
 	resp, err := c.conn.Prompt(callCtx, acpsdk.PromptRequest{
-		SessionId: session.SessionId,
+		SessionId: r.sessionID,
 		Prompt:    []acpsdk.ContentBlock{acpsdk.TextBlock(prompt)},
 	})
 	if err != nil {
@@ -127,7 +175,7 @@ func (c *Client) RunPrompt(ctx context.Context, prompt string) (Result, error) {
 	c.callbacks.WaitForUpdate(waitCtx, updateCount)
 	updates, text := c.callbacks.Snapshot()
 	return Result{
-		SessionID:  session.SessionId,
+		SessionID:  r.sessionID,
 		StopReason: resp.StopReason,
 		Updates:    updates,
 		Text:       text,

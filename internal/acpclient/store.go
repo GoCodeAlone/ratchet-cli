@@ -229,6 +229,10 @@ func (s *Store) RecoverStaleQueue(id string, when time.Time) (int, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return 0, err
 	}
+	return s.recoverRunningQueueItems(id, when)
+}
+
+func (s *Store) recoverRunningQueueItems(id string, when time.Time) (int, error) {
 	rec, err := s.Get(id)
 	if err != nil {
 		return 0, err
@@ -288,6 +292,47 @@ func (s *Store) WriteOwner(owner OwnerLock) error {
 		owner.StartedAt = time.Now().UTC()
 	}
 	return writeJSONFileAtomic(s.ownerPath(owner.SessionID), owner, 0o600)
+}
+
+func (s *Store) AcquireOwner(owner OwnerLock) error {
+	if strings.TrimSpace(owner.SessionID) == "" {
+		return errors.New("owner session id is required")
+	}
+	if owner.StartedAt.IsZero() {
+		owner.StartedAt = time.Now().UTC()
+	}
+	path := s.ownerPath(owner.SessionID)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(owner, "", "  ")
+	if err != nil {
+		return err
+	}
+	b = append(b, '\n')
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	removeOnError := true
+	defer func() {
+		if removeOnError {
+			_ = os.Remove(path)
+		}
+	}()
+	if _, err := f.Write(b); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	removeOnError = false
+	return nil
 }
 
 func (s *Store) Owner(id string) (OwnerLock, error) {
