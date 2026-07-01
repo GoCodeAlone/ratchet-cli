@@ -1,10 +1,10 @@
 # Competitor Parity
 
-This snapshot was refreshed on 2026-07-01 for the follow-up release. It uses
-primary public sources pinned to the latest commits or official docs available
-at the time of review. The user asked for a June 30, 2026 parity check; several
-upstream repositories had newer commits by 2026-07-01, so this document records
-the exact source revisions used instead of relying on memory.
+This snapshot was refreshed on 2026-07-01 for the follow-up release. Repository
+sources are pinned to the reviewed commit where available; hosted documentation
+sources are recorded as official docs checked on the review date. Because some
+upstream repositories changed after the 2026-06-30 planning window, this
+document records the exact revisions used for reproducibility.
 
 ## Source Snapshot
 
