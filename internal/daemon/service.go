@@ -21,6 +21,7 @@ import (
 	"github.com/GoCodeAlone/ratchet-cli/internal/hooks"
 	"github.com/GoCodeAlone/ratchet-cli/internal/mesh"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
+	"github.com/GoCodeAlone/ratchet-cli/internal/retro"
 	"github.com/GoCodeAlone/ratchet-cli/internal/version"
 	"github.com/GoCodeAlone/workflow-plugin-agent/policy"
 )
@@ -32,26 +33,27 @@ const ProtoVersion = 1
 
 type Service struct {
 	pb.UnimplementedRatchetDaemonServer
-	startedAt    time.Time
-	engine       *EngineContext
-	sessions     *SessionManager
-	permGate     *permissionGate
-	approvalGate *ApprovalGate
-	plans        *PlanManager
-	cron         *CronScheduler
-	fleet        *FleetManager
-	teams        *TeamManager
-	tokens       *TokenTracker
-	jobs         *JobRegistry
-	broadcaster  *SessionBroadcaster
-	shutdownFn   func()
-	meshBB       *mesh.Blackboard
-	meshRouter   *mesh.Router
-	humanGate    *HumanGate
-	autorespond  *Autoresponder
-	projects     *ProjectRegistry
-	tracker      *mesh.Tracker
-	trustEngine  *policy.TrustEngine
+	startedAt     time.Time
+	engine        *EngineContext
+	sessions      *SessionManager
+	permGate      *permissionGate
+	approvalGate  *ApprovalGate
+	plans         *PlanManager
+	cron          *CronScheduler
+	fleet         *FleetManager
+	teams         *TeamManager
+	tokens        *TokenTracker
+	jobs          *JobRegistry
+	broadcaster   *SessionBroadcaster
+	shutdownFn    func()
+	meshBB        *mesh.Blackboard
+	meshRouter    *mesh.Router
+	humanGate     *HumanGate
+	autorespond   *Autoresponder
+	projects      *ProjectRegistry
+	tracker       *mesh.Tracker
+	trustEngine   *policy.TrustEngine
+	retroRecorder *retro.Recorder
 }
 
 func NewService(ctx context.Context) (*Service, error) {
@@ -94,6 +96,9 @@ func NewService(ctx context.Context) (*Service, error) {
 	wd, _ := os.Getwd()
 	svc.autorespond = LoadAutoresponder(wd)
 	svc.projects = NewProjectRegistry()
+	if cfg != nil {
+		svc.retroRecorder = newRetroRecorder(cfg.Retro, DataDir(), engine.SecretsRedactor)
+	}
 
 	// Initialize TrustEngine from config.
 	trustMode := "conservative"
@@ -243,6 +248,13 @@ func (s *Service) CreateSession(ctx context.Context, req *pb.CreateSessionReq) (
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "create session: %v", err)
 	}
+	s.recordRetroEvidence(retro.Event{
+		SessionID:  si.ID,
+		Kind:       retro.EventSessionCreated,
+		Message:    fmt.Sprintf("session created provider=%s model=%s working_dir=%s", si.Provider, si.Model, si.WorkingDir),
+		WorkingDir: si.WorkingDir,
+		Project:    retro.ProjectRatchetCLI,
+	})
 	return &pb.Session{
 		Id:         si.ID,
 		Name:       si.Name,
@@ -308,6 +320,12 @@ func (s *Service) KillSession(ctx context.Context, req *pb.KillReq) (*pb.Empty, 
 	if err := s.sessions.Kill(ctx, req.SessionId); err != nil {
 		return nil, status.Errorf(codes.Internal, "kill session: %v", err)
 	}
+	s.recordRetroEvidence(retro.Event{
+		SessionID: req.SessionId,
+		Kind:      retro.EventSessionCompleted,
+		Message:   "session completed",
+		Project:   retro.ProjectRatchetCLI,
+	})
 	return &pb.Empty{}, nil
 }
 

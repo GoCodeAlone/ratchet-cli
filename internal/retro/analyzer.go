@@ -2,6 +2,8 @@ package retro
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/config"
 	"github.com/GoCodeAlone/workflow/secrets"
@@ -12,14 +14,25 @@ const (
 	EventTestFailure      = "test_failure"
 	EventPermissionDenied = "permission_denied"
 	EventCommandOutcome   = "command_outcome"
+	EventSessionCreated   = "session_created"
+	EventSessionCompleted = "session_completed"
+)
+
+const (
+	ProjectLocalConfig = "local_config"
+	ProjectRatchetCLI  = "ratchet-cli"
 )
 
 // Event is one piece of session evidence available to the retro analyzer.
 type Event struct {
-	Kind    string
-	Message string
-	Command string
-	Outcome string
+	Timestamp  time.Time `json:"timestamp"`
+	SessionID  string    `json:"session_id,omitempty"`
+	Kind       string    `json:"kind"`
+	Message    string    `json:"message,omitempty"`
+	Command    string    `json:"command,omitempty"`
+	Outcome    string    `json:"outcome,omitempty"`
+	WorkingDir string    `json:"working_dir,omitempty"`
+	Project    string    `json:"project,omitempty"`
 }
 
 // Input is the bounded session context analyzed by the optional retro loop.
@@ -33,6 +46,7 @@ type Input struct {
 type Finding struct {
 	Pattern        string
 	Evidence       string
+	Project        string
 	LocalAction    string
 	UpstreamAction string
 }
@@ -70,6 +84,7 @@ func (a *Analyzer) findingForEvent(event Event) (Finding, bool) {
 		return Finding{
 			Pattern:        "permission denial",
 			Evidence:       evidence,
+			Project:        firstNonEmpty(event.Project, ProjectLocalConfig),
 			LocalAction:    "Review local trust or permission configuration for this command class.",
 			UpstreamAction: "If the denial reflects missing ratchet-cli policy ergonomics, submit a PR with the denied command and expected policy behavior.",
 		}, true
@@ -77,6 +92,7 @@ func (a *Analyzer) findingForEvent(event Event) (Finding, bool) {
 		return Finding{
 			Pattern:        "test failure",
 			Evidence:       evidence,
+			Project:        firstNonEmpty(event.Project, ProjectRatchetCLI),
 			LocalAction:    "Record the failing command and rerun the focused test before changing code.",
 			UpstreamAction: "If the failure class requires harness support, submit a PR with a regression test and the local failure evidence.",
 		}, true
@@ -84,6 +100,7 @@ func (a *Analyzer) findingForEvent(event Event) (Finding, bool) {
 		return Finding{
 			Pattern:        "runtime error",
 			Evidence:       evidence,
+			Project:        firstNonEmpty(event.Project, ProjectRatchetCLI),
 			LocalAction:    "Check whether local configuration or missing credentials caused the error.",
 			UpstreamAction: "If the error requires ratchet-cli code changes, submit a PR with the stack or command evidence and a proposed fix path.",
 		}, true
@@ -92,10 +109,15 @@ func (a *Analyzer) findingForEvent(event Event) (Finding, bool) {
 			return Finding{
 				Pattern:        "failed command",
 				Evidence:       evidence,
+				Project:        firstNonEmpty(event.Project, ProjectRatchetCLI),
 				LocalAction:    "Prefer a focused retry or config adjustment before broad workflow changes.",
 				UpstreamAction: "If retries show the command path is unsupported, submit a PR describing the missing command capability.",
 			}, true
 		}
+	case EventSessionCreated:
+		return Finding{}, false
+	case EventSessionCompleted:
+		return Finding{}, false
 	}
 	return Finding{}, false
 }
@@ -130,8 +152,24 @@ func RouteFindings(cfg config.RetroConfig, report Report) RoutedActions {
 	for _, finding := range report.Findings {
 		if cfg.LocalChanges && finding.LocalAction != "" {
 			routed.LocalActions = append(routed.LocalActions, finding.LocalAction)
+			if finding.Project == ProjectLocalConfig {
+				continue
+			}
 		}
-		if cfg.UpstreamInstructions && finding.UpstreamAction != "" {
+		if !cfg.UpstreamInstructions {
+			continue
+		}
+		switch {
+		case finding.Project == ProjectLocalConfig && finding.LocalAction != "":
+			routed.UpstreamInstructions = append(routed.UpstreamInstructions,
+				"local changes are disabled; apply manually if appropriate: "+finding.LocalAction)
+		case finding.Project == ProjectRatchetCLI && finding.UpstreamAction != "":
+			routed.UpstreamInstructions = append(routed.UpstreamInstructions,
+				"ratchet-cli PR instruction: "+finding.UpstreamAction)
+		case finding.Project != "" && finding.Project != ProjectLocalConfig && finding.UpstreamAction != "":
+			routed.UpstreamInstructions = append(routed.UpstreamInstructions,
+				fmt.Sprintf("third-party project %s instruction: %s", finding.Project, finding.UpstreamAction))
+		case finding.UpstreamAction != "":
 			routed.UpstreamInstructions = append(routed.UpstreamInstructions, finding.UpstreamAction)
 		}
 	}
