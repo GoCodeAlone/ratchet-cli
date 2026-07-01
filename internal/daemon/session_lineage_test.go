@@ -101,6 +101,9 @@ func TestSessionManagerLineageCreateCloneForkTree(t *testing.T) {
 	if source.RootID != source.ID {
 		t.Fatalf("source RootID = %q, want %q", source.RootID, source.ID)
 	}
+	if source.BranchSummary != "investigate lineage" {
+		t.Fatalf("source BranchSummary = %q, want initial prompt", source.BranchSummary)
+	}
 
 	firstID := insertMessage(t, db, source.ID, "user", "first")
 	secondID := insertMessage(t, db, source.ID, "assistant", "second")
@@ -115,6 +118,9 @@ func TestSessionManagerLineageCreateCloneForkTree(t *testing.T) {
 	}
 	if clone.RootID != source.ID {
 		t.Fatalf("clone RootID = %q, want %q", clone.RootID, source.ID)
+	}
+	if clone.BranchSummary != "parallel attempt" {
+		t.Fatalf("clone BranchSummary = %q, want reason", clone.BranchSummary)
 	}
 	if got := countMessages(t, db, clone.ID); got != 3 {
 		t.Fatalf("clone message count = %d, want 3", got)
@@ -132,6 +138,9 @@ func TestSessionManagerLineageCreateCloneForkTree(t *testing.T) {
 	}
 	if fork.ForkedFromMessageID != secondID {
 		t.Fatalf("fork ForkedFromMessageID = %q, want %q", fork.ForkedFromMessageID, secondID)
+	}
+	if fork.BranchSummary != "branch from second" {
+		t.Fatalf("fork BranchSummary = %q, want reason", fork.BranchSummary)
 	}
 	if got := countMessages(t, db, fork.ID); got != 2 {
 		t.Fatalf("fork message count = %d, want 2", got)
@@ -158,6 +167,17 @@ func TestSessionManagerLineageCreateCloneForkTree(t *testing.T) {
 	if firstID == "" {
 		t.Fatal("test setup did not create first message")
 	}
+
+	if err := sm.UpdateSummary(ctx, fork.ID, "manual summary"); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := sm.Get(ctx, fork.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.BranchSummary != "manual summary" {
+		t.Fatalf("updated BranchSummary = %q, want manual summary", updated.BranchSummary)
+	}
 }
 
 func TestServiceReturnsSessionLineageMetadata(t *testing.T) {
@@ -175,6 +195,9 @@ func TestServiceReturnsSessionLineageMetadata(t *testing.T) {
 	}
 	if session.RootId != session.Id {
 		t.Fatalf("RootId = %q, want %q", session.RootId, session.Id)
+	}
+	if session.BranchSummary != "lineage metadata" {
+		t.Fatalf("BranchSummary = %q, want initial prompt", session.BranchSummary)
 	}
 
 	got, err := h.Svc.ListSessions(ctx, &pb.Empty{})

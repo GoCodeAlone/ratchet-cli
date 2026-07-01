@@ -225,6 +225,10 @@ func (sm *SessionManager) createChild(ctx context.Context, source *SessionInfo, 
 	if rootID == "" {
 		rootID = source.ID
 	}
+	branchSummary := reason
+	if branchSummary == "" {
+		branchSummary = source.BranchSummary
+	}
 
 	tx, err := sm.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -233,9 +237,9 @@ func (sm *SessionManager) createChild(ctx context.Context, source *SessionInfo, 
 	defer tx.Rollback()
 
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO sessions (id, name, status, working_dir, provider, model, parent_id, root_id, forked_from_message_id, fork_reason)
-		 VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)`,
-		id, name, source.WorkingDir, source.Provider, source.Model, source.ID, rootID, forkedFromMessageID, reason,
+		`INSERT INTO sessions (id, name, status, working_dir, provider, model, parent_id, root_id, forked_from_message_id, fork_reason, branch_summary)
+		 VALUES (?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, name, source.WorkingDir, source.Provider, source.Model, source.ID, rootID, forkedFromMessageID, reason, branchSummary,
 	); err != nil {
 		return nil, fmt.Errorf("insert child session: %w", err)
 	}
@@ -285,8 +289,24 @@ func (sm *SessionManager) createChild(ctx context.Context, source *SessionInfo, 
 		RootID:              rootID,
 		ForkedFromMessageID: forkedFromMessageID,
 		ForkReason:          reason,
+		BranchSummary:       branchSummary,
 		CreatedAt:           time.Now(),
 	}, nil
+}
+
+func (sm *SessionManager) UpdateSummary(ctx context.Context, id, summary string) error {
+	result, err := sm.db.ExecContext(ctx, `UPDATE sessions SET branch_summary = ? WHERE id = ?`, summary, id)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func (sm *SessionManager) UpdateModel(ctx context.Context, id, model string) error {

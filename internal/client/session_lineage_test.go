@@ -59,6 +59,14 @@ func TestSessionLineageClientWrappers(t *testing.T) {
 	if fork.ForkedFromMessageId != "msg-1" {
 		t.Fatalf("forked from = %q, want msg-1", fork.ForkedFromMessageId)
 	}
+
+	updated, err := c.UpdateSessionSummary(ctx, "fork-1", "new summary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.BranchSummary != "new summary" {
+		t.Fatalf("updated summary = %q, want new summary", updated.BranchSummary)
+	}
 	tree, err := c.GetSessionTree(ctx, "sess-1")
 	if err != nil {
 		t.Fatal(err)
@@ -86,4 +94,8 @@ func (lineageServer) ForkSession(context.Context, *pb.ForkSessionReq) (*pb.Sessi
 
 func (lineageServer) GetSessionTree(context.Context, *pb.SessionTreeReq) (*pb.SessionList, error) {
 	return &pb.SessionList{Sessions: []*pb.Session{{Id: "sess-1", RootId: "sess-1"}, {Id: "fork-1", ParentId: "sess-1", RootId: "sess-1"}}}, nil
+}
+
+func (lineageServer) UpdateSessionSummary(_ context.Context, req *pb.UpdateSessionSummaryReq) (*pb.Session, error) {
+	return &pb.Session{Id: req.SessionId, BranchSummary: req.Summary}, nil
 }

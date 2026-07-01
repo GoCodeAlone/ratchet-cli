@@ -267,6 +267,7 @@ func (s *Service) CreateSession(ctx context.Context, req *pb.CreateSessionReq) (
 		RootId:              si.RootID,
 		ForkedFromMessageId: si.ForkedFromMessageID,
 		ForkReason:          si.ForkReason,
+		BranchSummary:       si.BranchSummary,
 	}, nil
 }
 
@@ -355,6 +356,20 @@ func (s *Service) ListSessionCompactions(ctx context.Context, req *pb.SessionCom
 	return &pb.SessionCompactionList{Records: pbRecords}, nil
 }
 
+func (s *Service) UpdateSessionSummary(ctx context.Context, req *pb.UpdateSessionSummaryReq) (*pb.Session, error) {
+	if req == nil || req.SessionId == "" {
+		return nil, status.Error(codes.InvalidArgument, "session_id is required")
+	}
+	if err := s.sessions.UpdateSummary(ctx, req.SessionId, req.Summary); err != nil {
+		return nil, sessionLineageStatusError("update session summary", req.SessionId, err)
+	}
+	si, err := s.sessions.Get(ctx, req.SessionId)
+	if err != nil {
+		return nil, sessionLineageStatusError("get updated session", req.SessionId, err)
+	}
+	return sessionToProto(*si), nil
+}
+
 func sessionToProto(si SessionInfo) *pb.Session {
 	return &pb.Session{
 		Id:                  si.ID,
@@ -367,6 +382,7 @@ func sessionToProto(si SessionInfo) *pb.Session {
 		RootId:              si.RootID,
 		ForkedFromMessageId: si.ForkedFromMessageID,
 		ForkReason:          si.ForkReason,
+		BranchSummary:       si.BranchSummary,
 	}
 }
 
@@ -380,6 +396,7 @@ func compactionRecordToProto(record CompactionRecord) *pb.CompactionRecord {
 		MessagesKept:       int32(record.MessagesKept),
 		FirstKeptMessageId: record.FirstKeptMessageID,
 		CreatedAt:          timestamppb.New(record.CreatedAt),
+		ArchiveSessionId:   record.ArchiveSessionID,
 	}
 }
 

@@ -80,6 +80,17 @@ func TestSessionLineageHistoryCloneForkTreeRPC(t *testing.T) {
 		}
 	}
 
+	updated, err := h.Client.UpdateSessionSummary(ctx, &pb.UpdateSessionSummaryReq{
+		SessionId: fork.Id,
+		Summary:   "try a shorter branch",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.BranchSummary != "try a shorter branch" {
+		t.Fatalf("updated summary = %q, want try a shorter branch", updated.BranchSummary)
+	}
+
 	_, err = h.Client.ForkSession(ctx, &pb.ForkSessionReq{
 		SessionId: source.Id,
 		MessageId: "missing-message",
@@ -129,6 +140,14 @@ func TestSessionLineageRPCValidatesRequests(t *testing.T) {
 		},
 		"tree empty session": func() error {
 			_, err := h.Client.GetSessionTree(ctx, &pb.SessionTreeReq{})
+			return err
+		},
+		"summary nil": func() error {
+			_, err := h.Svc.UpdateSessionSummary(ctx, nil)
+			return err
+		},
+		"summary empty session": func() error {
+			_, err := h.Client.UpdateSessionSummary(ctx, &pb.UpdateSessionSummaryReq{Summary: "summary"})
 			return err
 		},
 	} {
