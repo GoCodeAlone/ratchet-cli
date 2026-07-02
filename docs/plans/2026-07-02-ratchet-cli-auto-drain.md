@@ -33,7 +33,7 @@
 |------|-------|-------|--------|
 | 1 | `feat: add explicit ACP client watch drain` | Task 1, Task 2, Task 3, Task 4, Task 5, Task 6 | `feat/ratchet-cli-auto-drain-policy` |
 
-**Status:** Locked 2026-07-02T15:29:55Z
+**Status:** Complete 2026-07-02T16:44:55Z
 
 ## Integration Matrix
 
