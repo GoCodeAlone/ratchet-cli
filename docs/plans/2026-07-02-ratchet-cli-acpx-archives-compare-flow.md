@@ -173,6 +173,7 @@ Add parser/executor tests for:
 - `sessions events <id> [--json] [--output events.ndjson]`.
 - raw export without sidecar surfaces raw-history-unavailable.
 - import ACPX fixture through CLI writes sidecar event metadata.
+- live `exec` with a store writes `Result.Events` to the session sidecar before `--history raw` export.
 
 **Step 2: Extend binary smoke**
 
@@ -203,6 +204,7 @@ Add:
 - parser for `--history`.
 - `sessions events` subcommand.
 - JSON output with `session_id`, `path`, `events`, `status`.
+- command-level event persistence helper used by `executeACPClientExecWithStore` and queue drain/watch completion paths when a `Result` contains events.
 - no raw event payloads in human summaries.
 
 **Step 5: Verify**
@@ -237,7 +239,7 @@ Rollback: revert PR1 branch; summary archive CLI remains available from previous
 **Step 1: Write failing tests**
 
 Add tests for:
-- compare rows include optional `run_id`/`run_dir` only when saved.
+- saved compare JSON uses wrapper shape `{run_id, run_dir, status, rows}`; unsaved compare JSON remains row array for backwards compatibility.
 - `CompareRunStore` writes `compare.json` and per-agent `events.ndjson` with safe agent path segments.
 - compare save copies `Result.Events` from fake runner rows.
 - parser accepts `compare --save --run-id fixed --run-root <dir>`.
@@ -274,7 +276,7 @@ Rollback: revert test-only commit.
 **Step 1: Implement compare store/runtime**
 
 Add:
-- `CompareRunResult {RunID, RunDir, Rows}` wrapper or additive fields on rows/result.
+- `CompareRunResult {RunID, RunDir, Status, Rows}` wrapper used only when `Save` is true.
 - `CompareOptions.RunID`, `RunRoot`, `Save`.
 - `CompareRunStore` with `compare.json`, `agents/<safe-agent>/events.ndjson`.
 - stable status: `completed` when all rows non-error, `completed_with_errors` when any row error.
@@ -285,7 +287,7 @@ Add:
 - `--save`
 - `--run-id`
 - `--run-root`
-- JSON output includes `run_id`/`run_dir` when saved.
+- JSON output is the wrapper when saved and the existing row array when not saved.
 - human output appends `run dir: <path>` after table when saved.
 
 **Step 3: Verify**
@@ -321,7 +323,7 @@ Rollback: revert PR2; compare table/JSON rows from prior release remain supporte
 Add tests for:
 - `FlowRunStore` writes `manifest.json`, `trace.ndjson`, `projections/run.json`, `projections/live.json`, `projections/steps.json`.
 - action node writes stdout/stderr/output artifacts by sha256 path.
-- ACP node writes prompt artifact and session event bundle when runner implements event access.
+- ACP node writes prompt artifact and session event bundle when runner satisfies `interface{ LastEvents() []EventLogLine }`.
 - trace seq starts at 1 and increments.
 - replay loader rejects manifest paths outside run dir.
 - CLI parses `flow replay <run-dir> [--json]`.
@@ -364,7 +366,7 @@ Add:
 - trace event struct and append-only writer.
 - projection writers.
 - content-addressed artifact writer.
-- optional flow-session event bundle from `LastEvents()`.
+- optional flow-session event bundle through a helper that type-asserts `interface{ LastEvents() []EventLogLine }`; do not add `LastEvents` to `FlowPromptRunner`.
 - `FlowReplaySummary` loader with path containment validation.
 
 **Step 2: Implement CLI replay**
@@ -397,19 +399,15 @@ Rollback: revert PR3; existing `state.json`/`steps/*.json` files are still writt
 ### Task 8: Cross-Surface Verification Hardening
 
 **Files:**
-- Modify: `cmd/ratchet/harness_docs_test.go`
 - Modify: `cmd/ratchet/acp_client_binary_test.go` only if smoke consolidation is needed
 - Modify: `internal/acpclient/*_test.go` only for discovered edge regressions
 
-**Step 1: Add regression guard**
+**Step 1: Add cross-surface regression guard**
 
-Extend docs/test guard expectations for:
-- `ratchet acp client sessions events`
-- `--history raw`
-- `compare --save`
-- `flow replay`
-- `raw ACPX event logs`
-- `ACPX TypeScript flow runtime compatibility remains deferred`
+Add or consolidate non-doc regression assertions that prove archive, compare,
+and flow replay can run in the same binary smoke environment without leaking raw
+payloads in human summaries. Do not update `HarnessEmulationDocs` in this task;
+Task 9 owns docs and docs-guard expectations.
 
 **Step 2: Run focused suite**
 
@@ -419,7 +417,7 @@ Run:
 go test ./internal/acpclient ./cmd/ratchet -run 'EventLog|Archive|Compare|Flow|HarnessEmulationDocs|ACPClientExecBinarySmoke' -count=1 -timeout=12m
 ```
 
-Expected: PASS.
+Expected: PASS. `HarnessEmulationDocs` remains at the previous docs contract until Task 9.
 
 **Step 3: Full local gate**
 
@@ -441,7 +439,7 @@ Expected: all PASS; no `ratchet.exe` remains.
 **Step 4: Commit**
 
 ```bash
-gofmt -w cmd/ratchet/harness_docs_test.go cmd/ratchet/acp_client_binary_test.go internal/acpclient/*_test.go
+gofmt -w cmd/ratchet/acp_client_binary_test.go internal/acpclient/*_test.go
 git add cmd/ratchet internal/acpclient
 git commit -m "test: harden acp replay parity coverage"
 ```
@@ -470,6 +468,14 @@ Document:
 - TypeScript `.flow.ts` runtime still deferred
 - credentialed third-party CI still deferred
 - source snapshot still `ACPX@1d882575e34e18621e59229f0e711723cef223ae`, `ACP@a90d7e3a7a77bad4d9af35bbb08962daa0167453`
+
+Extend `cmd/ratchet/harness_docs_test.go` expectations for:
+- `ratchet acp client sessions events`
+- `--history raw`
+- `compare --save`
+- `flow replay`
+- `raw ACPX event logs`
+- `ACPX TypeScript flow runtime compatibility remains deferred`
 
 **Step 2: Run docs guard**
 
@@ -542,10 +548,10 @@ Expected: release workflow succeeds; assets include Windows amd64/arm64 zips; Ho
 
 **Step 3: Close lock and retro**
 
-Run from the autodev plugin checkout:
+Run from the ratchet closeout worktree with the absolute helper path:
 
 ```bash
-bash hooks/scope-lock-complete docs/plans/2026-07-02-ratchet-cli-acpx-archives-compare-flow.md --evidence "<PRs merged, local gates, release workflow, assets, Homebrew>"
+bash "<autodev-plugin-dir>/hooks/scope-lock-complete" docs/plans/2026-07-02-ratchet-cli-acpx-archives-compare-flow.md --evidence "<PRs merged, local gates, release workflow, assets, Homebrew>"
 ```
 
 Create retro covering:
