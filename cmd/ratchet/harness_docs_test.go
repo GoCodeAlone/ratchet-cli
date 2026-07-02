@@ -33,6 +33,45 @@ func TestHarnessEmulationDocsCoverSupportedModesAndParity(t *testing.T) {
 	}
 }
 
+func TestHarnessEmulationDocsCoverPolicyMatrixLayers(t *testing.T) {
+	readme := readHarnessDoc(t, "../../README.md")
+	harness := readHarnessDoc(t, "../../docs/harness-emulation.md")
+	parity := readHarnessDoc(t, "../../docs/competitor-parity.md")
+	matrix := readHarnessDoc(t, "../../docs/policy-matrix.md")
+
+	for _, required := range []string{
+		"Static config trust rules",
+		"Runtime trust rules",
+		"Persistent trust grants",
+		"Permission prompts",
+		"ACP client queue/drain",
+		"Sandbox/path/network controls",
+		"Hooks/extensions",
+		"Retro/self-improvement",
+		"Per-agent/team scopes",
+		"Supported",
+		"Partial",
+		"Deferred",
+		"Explicit drain only",
+		"sensitive local policy metadata",
+	} {
+		if !strings.Contains(matrix, required) {
+			t.Fatalf("policy matrix doc missing %q", required)
+		}
+	}
+
+	publicDocs := strings.Join([]string{readme, harness, parity}, "\n")
+	for _, required := range []string{
+		"docs/policy-matrix.md",
+		"background drain",
+		"extension hooks",
+	} {
+		if !strings.Contains(publicDocs, required) {
+			t.Fatalf("public harness docs missing %q", required)
+		}
+	}
+}
+
 func readHarnessDoc(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)

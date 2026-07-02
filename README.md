@@ -92,6 +92,11 @@ in the daemon's local state database through
 as sensitive local policy metadata because patterns can reveal local paths,
 commands, or workflow conventions.
 
+See [docs/policy-matrix.md](docs/policy-matrix.md) for the Policy Matrix
+covering static config trust rules, runtime trust rules, persistent trust
+grants, permission prompts, explicit ACP client drain, partial sandbox/path/network
+controls, retro evidence, and deferred background drain and extension hooks.
+
 The ACP client queue persists prompt text under the user's XDG state directory.
 Do not use `--no-wait` for prompts that should not be written to local disk.
 ACP client archives are explicit JSON exports and can contain prompt text,
@@ -161,4 +166,6 @@ ratchet acp client flow run flow.json \
 
 See [docs/harness-emulation.md](docs/harness-emulation.md) for credential-free
 mock provider recipes, and [docs/competitor-parity.md](docs/competitor-parity.md)
-for the dated source-backed parity matrix.
+for the dated source-backed parity matrix. Policy boundaries for trust,
+permissions, queue drain, hooks, and sandbox follow-ups are in
+[docs/policy-matrix.md](docs/policy-matrix.md).
