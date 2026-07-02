@@ -37,7 +37,7 @@
 | 3 | `feat: add acp flow replay bundles` | Task 6, Task 7, Task 8 | `feat/acp-flow-replay-bundles` |
 | 4 | `docs: release acpx archive flow parity` | Task 9, Task 10 | `docs/acpx-archive-flow-release` |
 
-**Status:** Draft
+**Status:** Locked 2026-07-02T22:09:54Z
 
 ## Integration Matrix
 
