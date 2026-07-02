@@ -172,3 +172,136 @@ func TestHooks_OnTokenLimit(t *testing.T) {
 	waitFor(t, func() bool { return fired(hooks.OnTokenLimit) }, 2*time.Second, "OnTokenLimit hook")
 }
 
+func TestHooks_ProjectHookRequiresTrustForSessionWorkdir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workDir := t.TempDir()
+	sentinel := filepath.Join(t.TempDir(), "project-fired")
+	if err := os.MkdirAll(filepath.Join(workDir, ".ratchet"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workDir, ".ratchet", "hooks.yaml"), []byte(`
+hooks:
+  post-command:
+    - command: "touch `+sentinel+`"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	engine := newTestEngine(t)
+	sessionID := "sess-project-hooks"
+	if _, err := engine.DB.Exec(
+		`INSERT INTO sessions (id, name, status, provider, working_dir, model) VALUES (?, ?, 'active', 'default', ?, '')`,
+		sessionID, sessionID, workDir,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := engine.RunHooks(context.Background(), hooks.PostCommand, map[string]string{"session_id": sessionID}); err != nil {
+		t.Fatalf("RunHooks untrusted: %v", err)
+	}
+	if _, err := os.Stat(sentinel); err == nil {
+		t.Fatal("untrusted project hook fired")
+	}
+
+	store, err := hooks.LoadTrustStore(hooks.DefaultTrustStorePath())
+	if err != nil {
+		t.Fatalf("LoadTrustStore: %v", err)
+	}
+	cfg, err := hooks.LoadWithOptions(hooks.LoadOptions{WorkingDir: workDir, TrustStore: store})
+	if err != nil {
+		t.Fatalf("LoadWithOptions: %v", err)
+	}
+	hash := cfg.Hooks[hooks.PostCommand][0].Hash
+	if err := store.Trust(hash); err != nil {
+		t.Fatalf("Trust: %v", err)
+	}
+
+	if err := engine.RunHooks(context.Background(), hooks.PostCommand, map[string]string{"session_id": sessionID}); err != nil {
+		t.Fatalf("RunHooks trusted: %v", err)
+	}
+	waitFor(t, func() bool {
+		_, err := os.Stat(sentinel)
+		return err == nil
+	}, time.Second, "trusted project hook")
+}
+
+func TestHooks_ProjectHookSkippedWithoutWorkdir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workDir := t.TempDir()
+	sentinel := filepath.Join(t.TempDir(), "project-fired")
+	if err := os.MkdirAll(filepath.Join(workDir, ".ratchet"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workDir, ".ratchet", "hooks.yaml"), []byte(`
+hooks:
+  on-cron-tick:
+    - command: "touch `+sentinel+`"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := hooks.LoadTrustStore(hooks.DefaultTrustStorePath())
+	if err != nil {
+		t.Fatalf("LoadTrustStore: %v", err)
+	}
+	cfg, err := hooks.LoadWithOptions(hooks.LoadOptions{WorkingDir: workDir, TrustStore: store})
+	if err != nil {
+		t.Fatalf("LoadWithOptions: %v", err)
+	}
+	if err := store.Trust(cfg.Hooks[hooks.OnCronTick][0].Hash); err != nil {
+		t.Fatalf("Trust: %v", err)
+	}
+
+	engine := newTestEngine(t)
+	if err := engine.RunHooks(context.Background(), hooks.OnCronTick, map[string]string{"command": "ping"}); err != nil {
+		t.Fatalf("RunHooks: %v", err)
+	}
+	if _, err := os.Stat(sentinel); err == nil {
+		t.Fatal("project hook fired without a workdir")
+	}
+}
+
+func TestHooks_ChangedPluginHookRequiresRetrust(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := t.TempDir()
+	firstSentinel := filepath.Join(dir, "first")
+	secondSentinel := filepath.Join(dir, "second")
+	engine := newTestEngine(t)
+	pluginHook := hooks.Hook{
+		Command:       "touch " + firstSentinel,
+		SourceKind:    hooks.SourcePlugin,
+		SourceID:      "plugin:test@1.0.0:hooks.yaml",
+		SourcePath:    filepath.Join(dir, "hooks.yaml"),
+		PluginName:    "test",
+		PluginVersion: "1.0.0",
+	}
+	pluginHook.Hash = pluginHook.DescriptorHash()
+	engine.Hooks = &hooks.HookConfig{Hooks: map[hooks.Event][]hooks.Hook{
+		hooks.PostCommand: {pluginHook},
+	}}
+
+	store, err := hooks.LoadTrustStore(hooks.DefaultTrustStorePath())
+	if err != nil {
+		t.Fatalf("LoadTrustStore: %v", err)
+	}
+	if err := store.Trust(pluginHook.Hash); err != nil {
+		t.Fatalf("Trust: %v", err)
+	}
+	if err := engine.RunHooks(context.Background(), hooks.PostCommand, map[string]string{}); err != nil {
+		t.Fatalf("RunHooks original: %v", err)
+	}
+	waitFor(t, func() bool {
+		_, err := os.Stat(firstSentinel)
+		return err == nil
+	}, time.Second, "trusted plugin hook")
+
+	engine.Hooks.Hooks[hooks.PostCommand][0].Command = "touch " + secondSentinel
+	if err := engine.RunHooks(context.Background(), hooks.PostCommand, map[string]string{}); err != nil {
+		t.Fatalf("RunHooks changed: %v", err)
+	}
+	if _, err := os.Stat(secondSentinel); err == nil {
+		t.Fatal("changed plugin hook fired under stale trust")
+	}
+}

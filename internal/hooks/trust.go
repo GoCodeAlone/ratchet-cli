@@ -7,6 +7,12 @@ import (
 	"path/filepath"
 )
 
+// DefaultTrustStorePath returns the user-scoped hook trust store location.
+func DefaultTrustStorePath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".ratchet", "hook-trust.json")
+}
+
 // TrustStore persists explicit hook trust and disable decisions by descriptor
 // hash. Disabled hashes always win over trusted hashes.
 type TrustStore struct {

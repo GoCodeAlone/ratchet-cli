@@ -86,7 +86,7 @@ func NewService(ctx context.Context) (*Service, error) {
 		sessions:     sm,
 		permGate:     newPermissionGate(),
 		approvalGate: NewApprovalGate(),
-		plans:        NewPlanManager(engine.Hooks),
+		plans:        NewPlanManagerWithEngine(engine, engine.Hooks),
 	}
 	cfg, _ := config.Load()
 	routing := config.ModelRouting{}
@@ -141,9 +141,7 @@ func NewService(ctx context.Context) (*Service, error) {
 		go func() {
 			tickCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
-			if engine.Hooks != nil {
-				_ = engine.Hooks.Run(hooks.OnCronTick, map[string]string{"session_id": sessionID, "command": command})
-			}
+			_ = engine.RunHooks(tickCtx, hooks.OnCronTick, map[string]string{"session_id": sessionID, "command": command})
 			ns := &noopSendServer{ctx: tickCtx}
 			if err := svc.handleChat(tickCtx, sessionID, command, ns); err != nil {
 				log.Printf("cron tick session=%s command=%q: %v", sessionID, command, err)

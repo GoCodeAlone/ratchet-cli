@@ -93,6 +93,9 @@ func generateTeamShortID() string {
 
 // NewTeamManager returns an initialized TeamManager.
 func NewTeamManager(engine *EngineContext, hks *hooks.HookConfig) *TeamManager {
+	if engine != nil && engine.Hooks == nil && hks != nil {
+		engine.Hooks = hks
+	}
 	tm := &TeamManager{
 		teams:  make(map[string]*teamInstance),
 		names:  make(map[string]string),
@@ -386,7 +389,13 @@ func (tm *TeamManager) run(ctx context.Context, ti *teamInstance, req *pb.StartT
 				},
 			},
 		}
-		if tm.hooks != nil {
+		if tm.engine != nil {
+			_ = tm.engine.RunHooks(ctx, hooks.OnAgentSpawn, map[string]string{
+				"session_id": req.SessionId,
+				"agent_name": ag.name,
+				"agent_role": ag.role,
+			})
+		} else if tm.hooks != nil {
 			_ = tm.hooks.Run(hooks.OnAgentSpawn, map[string]string{"agent_name": ag.name, "agent_role": ag.role})
 		}
 	}
@@ -415,7 +424,12 @@ func (tm *TeamManager) run(ctx context.Context, ti *teamInstance, req *pb.StartT
 			orch.mu.Lock()
 			orch.status = "completed"
 			orch.mu.Unlock()
-			if tm.hooks != nil {
+			if tm.engine != nil {
+				_ = tm.engine.RunHooks(ctx, hooks.OnAgentComplete, map[string]string{
+					"session_id": req.SessionId,
+					"agent_name": orch.name,
+				})
+			} else if tm.hooks != nil {
 				_ = tm.hooks.Run(hooks.OnAgentComplete, map[string]string{"agent_name": orch.name})
 			}
 			if worker != nil {
@@ -438,7 +452,12 @@ func (tm *TeamManager) run(ctx context.Context, ti *teamInstance, req *pb.StartT
 			worker.mu.Lock()
 			worker.status = "completed"
 			worker.mu.Unlock()
-			if tm.hooks != nil {
+			if tm.engine != nil {
+				_ = tm.engine.RunHooks(ctx, hooks.OnAgentComplete, map[string]string{
+					"session_id": req.SessionId,
+					"agent_name": worker.name,
+				})
+			} else if tm.hooks != nil {
 				_ = tm.hooks.Run(hooks.OnAgentComplete, map[string]string{"agent_name": worker.name})
 			}
 			if orch != nil {

@@ -95,8 +95,10 @@ type HookConfig struct {
 
 // LoadOptions controls hook loading and trust annotation.
 type LoadOptions struct {
-	WorkingDir string
-	TrustStore *TrustStore
+	WorkingDir  string
+	TrustStore  *TrustStore
+	SkipUser    bool
+	SkipProject bool
 }
 
 // Load reads hook configs from ~/.ratchet/hooks.yaml and .ratchet/hooks.yaml.
@@ -113,7 +115,7 @@ func LoadWithOptions(opts LoadOptions) (*HookConfig, error) {
 	}
 
 	home, _ := os.UserHomeDir()
-	sources := []struct {
+	allSources := []struct {
 		kind SourceKind
 		id   string
 		path string
@@ -128,6 +130,20 @@ func LoadWithOptions(opts LoadOptions) (*HookConfig, error) {
 			id:   "project:.ratchet/hooks.yaml",
 			path: filepath.Join(opts.WorkingDir, ".ratchet", "hooks.yaml"),
 		},
+	}
+	sources := make([]struct {
+		kind SourceKind
+		id   string
+		path string
+	}, 0, len(allSources))
+	for _, src := range allSources {
+		if src.kind == SourceUser && opts.SkipUser {
+			continue
+		}
+		if src.kind == SourceProject && opts.SkipProject {
+			continue
+		}
+		sources = append(sources, src)
 	}
 
 	for _, src := range sources {
@@ -195,6 +211,35 @@ func (hc *HookConfig) AnnotateSource(meta SourceMetadata) {
 			}
 			if _, ok := h.commandForGOOS(runtime.GOOS); !ok {
 				h.UnsupportedPlatform = true
+			}
+		}
+		hc.Hooks[event] = hookList
+	}
+}
+
+// ApplyTrust refreshes hook hashes and trust decisions against the supplied
+// store. This lets long-running daemons observe trust changes without restart.
+func (hc *HookConfig) ApplyTrust(store *TrustStore) {
+	if hc == nil {
+		return
+	}
+	for event, hookList := range hc.Hooks {
+		for i := range hookList {
+			h := &hookList[i]
+			h.Hash = h.DescriptorHash()
+			h.Trusted = h.SourceKind == "" || h.SourceKind == SourceUser
+			h.Disabled = false
+			if store != nil {
+				h.Disabled = store.IsDisabled(h.Hash)
+				h.Trusted = h.Trusted || store.IsTrusted(h.Hash)
+				if h.Disabled {
+					h.Trusted = false
+				}
+			}
+			if _, ok := h.commandForGOOS(runtime.GOOS); !ok {
+				h.UnsupportedPlatform = true
+			} else {
+				h.UnsupportedPlatform = false
 			}
 		}
 		hc.Hooks[event] = hookList

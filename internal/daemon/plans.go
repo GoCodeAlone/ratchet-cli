@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"sync"
@@ -17,14 +18,20 @@ type PlanManager struct {
 	mu          sync.RWMutex
 	plans       map[string]*pb.Plan
 	completedAt map[string]time.Time
+	engine      *EngineContext
 	hooks       *hooks.HookConfig
 	stop        chan struct{}
 }
 
 func NewPlanManager(hks *hooks.HookConfig) *PlanManager {
+	return NewPlanManagerWithEngine(nil, hks)
+}
+
+func NewPlanManagerWithEngine(engine *EngineContext, hks *hooks.HookConfig) *PlanManager {
 	pm := &PlanManager{
 		plans:       make(map[string]*pb.Plan),
 		completedAt: make(map[string]time.Time),
+		engine:      engine,
 		hooks:       hks,
 		stop:        make(chan struct{}),
 	}
@@ -123,7 +130,12 @@ func (pm *PlanManager) Approve(planID string, skipSteps []string) error {
 	}
 	plan.Status = "approved"
 	pm.completedAt[planID] = time.Now()
-	if pm.hooks != nil {
+	if pm.engine != nil {
+		_ = pm.engine.RunHooks(context.Background(), hooks.PrePlan, map[string]string{
+			"plan_id":    planID,
+			"session_id": plan.SessionId,
+		})
+	} else if pm.hooks != nil {
 		_ = pm.hooks.Run(hooks.PrePlan, map[string]string{"plan_id": planID})
 	}
 	return nil
@@ -183,10 +195,14 @@ func (pm *PlanManager) UpdateStep(planID, stepID, stepStatus, errMsg string) err
 	}
 	if allDone && plan.Status == "executing" {
 		plan.Status = "completed"
-		if pm.hooks != nil {
+		if pm.engine != nil {
+			_ = pm.engine.RunHooks(context.Background(), hooks.PostPlan, map[string]string{
+				"plan_id":    planID,
+				"session_id": plan.SessionId,
+			})
+		} else if pm.hooks != nil {
 			_ = pm.hooks.Run(hooks.PostPlan, map[string]string{"plan_id": planID})
 		}
 	}
 	return nil
 }
-
