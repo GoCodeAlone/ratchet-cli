@@ -69,9 +69,9 @@ selected branch before new sends are accepted.
 The ACP client queue persists prompt text under the user's XDG state directory.
 Do not use `--no-wait` for prompts that should not be written to local disk.
 
-The v0.19.0 release adds multi-prompt ACP client FIFO queue/drain support and
-continues publishing Windows amd64/arm64 zip artifacts alongside Linux and
-macOS archives.
+The v0.19.0 release adds multi-prompt ACP client FIFO queue/drain support,
+refreshes the source-backed harness parity snapshot, and continues publishing
+Windows amd64/arm64 zip artifacts alongside Linux and macOS archives.
 
 ## Harness Modes
 
