@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -229,7 +230,7 @@ func resolveArchiveCWD(cwdRelative, home string) string {
 }
 
 func startsWithParent(path string) bool {
-	return path == ".." || len(path) > 3 && path[:3] == ".."+string(filepath.Separator)
+	return path == ".." || strings.HasPrefix(path, ".."+string(filepath.Separator))
 }
 
 func archiveHomeDir(home string) string {
