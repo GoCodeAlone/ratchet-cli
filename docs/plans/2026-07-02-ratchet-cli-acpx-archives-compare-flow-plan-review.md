@@ -54,3 +54,59 @@
 2. Use a result wrapper for compare JSON: `{run_id, run_dir, status, rows}` is cleaner than adding run fields to every row.
 
 **Verdict reasoning:** FAIL until P1-P4 are revised; P5 can be handled as a minor clarity improvement in the same plan patch.
+
+## Cycle 2
+
+### Adversarial Review Report
+
+**Phase:** plan
+**Artifact:** `docs/plans/2026-07-02-ratchet-cli-acpx-archives-compare-flow.md`
+**Status:** PASS
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- None.
+
+**Findings (Minor):**
+- `P6` [Over-decomposition] Task 10 mixes release, retro, and workspace state. Acceptable because this repo's recent release plans use a closeout task after feature PRs, and the verification steps are explicit.
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Clean | Windows, SDK reuse, local-sensitive metadata, and deferred automation are wired into tasks. |
+| Assumptions under attack | Clean | Live event sidecar persistence and raw export fail-closed behavior are now task requirements. |
+| Repo-precedent conflicts | Clean | Follows prior ratchet-cli plan/PR/release closeout pattern. |
+| Artifact-class precedent | Clean | Test, CLI, docs, and retro artifacts follow sibling layout. |
+| YAGNI violations | Clean | Scope maps to archive/compare/flow/release ask. |
+| Missing failure modes | Clean | Raw-history-unavailable path, path containment, invalid JSON-RPC, and no-payload human summaries are covered. |
+| Security/privacy architecture | Clean | Sensitive artifact warnings and local-only proof included. |
+| Infrastructure impact | Clean | Local state plus release assets; release verification is explicit. |
+| Multi-component validation | Clean | Fixture ACP agent, CLI, sidecars, compare bundles, flow replay, docs, release are covered. |
+| Declared integration proof | Clean | Matrix classifies runtime/config/deferred surfaces. |
+| Contributed UI rendering proof | Clean | No UI. |
+| Rollback story | Clean | Runtime tasks have rollback notes; release rollback avoids rewriting public history. |
+| Simpler alternative not considered | Clean | Covered in design review. |
+| User-intent drift | Clean | Archive, compare, flow orchestration, Windows, release, workspace state all included. |
+| Existence/runtime-validity | Clean | Scope-lock helper invocation is now from ratchet worktree with explicit helper path placeholder. |
+| Over/under-decomposition | Minor | Task 10 is broad but matches closeout precedent. |
+| Verification-class mismatch | Clean | CLI, runtime-integrated, docs, release, and Windows checks match change classes. |
+| Auth/authz chain composition | Clean | No auth chain added. |
+| Hidden serial dependencies | Clean | Docs guard moved to docs task; PR3 no longer depends on PR4 docs updates. |
+| Missing rollback wiring | Clean | Present in runtime and release tasks. |
+| Missing integration proof | Clean | Live event sidecar persistence now required in Task 3. |
+| Missing declared integration matrix | Clean | Present. |
+| Missing contributed UI route proof | Clean | No UI. |
+| Infrastructure verification mismatch | Clean | GoReleaser check, release workflow, assets, and Homebrew cask check are required. |
+| Plugin-loader runtime layout | Clean | No plugin loading change. |
+| Config-validation schema rules | Clean | No generated config schema. |
+| Identifier/naming convention match | Clean | CLI names match existing `acp client` hierarchy. |
+| Planned-code compile-validity | Clean | Optional flow event access now uses Go type assertion instead of interface mutation. |
+
+**Options the author may not have considered:**
+1. Split release/retro/workspace into separate plans: rejected because recent ratchet release closeouts already use a release-closeout PR plus workspace PR.
+2. Store compare bundles only when `--json`: rejected because `--save` is the explicit artifact control independent of output format.
+
+**Verdict reasoning:** PASS. Prior Important findings P1-P4 and minor P5 were resolved in plan commit `381363b`; no remaining blocker.
