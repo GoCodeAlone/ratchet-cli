@@ -301,7 +301,7 @@ Run:
 ```bash
 bash <autodev-plugin>/tests/plan-scope-check.sh --verify-lock docs/plans/2026-07-02-acpx-flow-hardening.md
 git diff --check
-rg -n "/Users/|/home/|/var/folders" docs/plans/2026-07-02-acpx-flow-hardening*.md README.md docs/harness-emulation.md docs/competitor-parity.md docs/policy-matrix.md || true
+rg -n "$(printf '/%s/|/%s/|/var/%s' Users home folders)" docs/plans/2026-07-02-acpx-flow-hardening*.md README.md docs/harness-emulation.md docs/competitor-parity.md docs/policy-matrix.md || true
 ```
 
 Expected: scope-lock PASS after lock, no whitespace errors, no machine-local paths.
