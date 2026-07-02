@@ -101,6 +101,21 @@ func TestParseACPClientExecHelpPrintsFlagsAndSucceeds(t *testing.T) {
 	}
 }
 
+func TestACPClientUsageLabelsHistoryAsShowAlias(t *testing.T) {
+	var out bytes.Buffer
+	cmd, err := parseACPClientCommandWithOutput(nil, &out)
+	if err != nil {
+		t.Fatalf("parseACPClientCommandWithOutput: %v", err)
+	}
+	if cmd.kind != acpClientCommandHelp {
+		t.Fatalf("kind = %q, want help", cmd.kind)
+	}
+	printACPClientUsage(&out)
+	if !strings.Contains(out.String(), "history (alias for show)") {
+		t.Fatalf("usage output missing history alias label:\n%s", out.String())
+	}
+}
+
 func TestParseACPClientSessionCommands(t *testing.T) {
 	tests := []struct {
 		name string
@@ -125,6 +140,52 @@ func TestParseACPClientSessionCommands(t *testing.T) {
 			}
 			if cmd.sessionID != tt.id {
 				t.Fatalf("sessionID = %q, want %q", cmd.sessionID, tt.id)
+			}
+		})
+	}
+}
+
+func TestParseACPClientArchiveSessionCommands(t *testing.T) {
+	exportCmd, err := parseACPClientCommand([]string{"sessions", "export", "s-export", "--output", "archive.json", "--json"})
+	if err != nil {
+		t.Fatalf("parse export: %v", err)
+	}
+	if exportCmd.kind != acpClientCommandSessionsExport || exportCmd.sessionID != "s-export" || exportCmd.archive.Output != "archive.json" || !exportCmd.json {
+		t.Fatalf("export command = %#v", exportCmd)
+	}
+
+	importCmd, err := parseACPClientCommand([]string{
+		"sessions", "import", "archive.json",
+		"--session", "s-imported",
+		"--cwd", "/tmp/imported",
+		"--agent", "custom",
+		"--command", "/bin/fixture-agent",
+		"--arg", "--load-session",
+		"--json",
+	})
+	if err != nil {
+		t.Fatalf("parse import: %v", err)
+	}
+	if importCmd.kind != acpClientCommandSessionsImport || importCmd.archive.Path != "archive.json" ||
+		importCmd.archive.SessionID != "s-imported" || importCmd.archive.Cwd != "/tmp/imported" ||
+		importCmd.archive.Agent != "custom" || importCmd.archive.Command != "/bin/fixture-agent" ||
+		len(importCmd.archive.Args) != 1 || importCmd.archive.Args[0] != "--load-session" || !importCmd.json {
+		t.Fatalf("import command = %#v", importCmd)
+	}
+}
+
+func TestParseACPClientArchiveSessionCommandsRejectInvalidArgs(t *testing.T) {
+	tests := [][]string{
+		{"sessions", "export", "s1"},
+		{"sessions", "export", "s1", "--output"},
+		{"sessions", "export", "s1", "--output", "archive.json", "extra"},
+		{"sessions", "import"},
+		{"sessions", "import", "archive.json", "--session"},
+	}
+	for _, args := range tests {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			if _, err := parseACPClientCommand(args); err == nil {
+				t.Fatalf("parseACPClientCommand(%#v) succeeded, want error", args)
 			}
 		})
 	}
@@ -508,6 +569,66 @@ func TestExecuteACPClientDrainUsesInjectedRunner(t *testing.T) {
 	}
 	if rec.ACPSessionID != "acp-drain" || rec.PromptQueue[0].Status != acpclient.QueuePromptStatusCompleted {
 		t.Fatalf("record after drain = %#v", rec)
+	}
+}
+
+func TestExecuteACPClientArchiveExportAndImport(t *testing.T) {
+	store := acpclient.NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 2, 9, 0, 0, 0, time.UTC)
+	if err := store.Upsert(acpclient.SessionRecord{
+		ID:                 "s-export",
+		ACPSessionID:       "provider-session",
+		Agent:              "fixture",
+		CommandFingerprint: "fp-export",
+		Cwd:                "/tmp/source",
+		Status:             acpclient.SessionStatusCompleted,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+		Summary:            "export me",
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	archivePath := filepath.Join(t.TempDir(), "archive.json")
+
+	var exportOut bytes.Buffer
+	if err := executeACPClientSessionExport(store, "s-export", acpClientArchiveOptions{Output: archivePath}, false, &exportOut); err != nil {
+		t.Fatalf("execute export: %v", err)
+	}
+	if got := exportOut.String(); !strings.Contains(got, "exported s-export") || !strings.Contains(got, archivePath) {
+		t.Fatalf("export output = %q", got)
+	}
+	if _, err := os.Stat(archivePath); err != nil {
+		t.Fatalf("stat archive: %v", err)
+	}
+
+	var importOut bytes.Buffer
+	if err := executeACPClientSessionImport(store, acpClientArchiveOptions{
+		Path:      archivePath,
+		SessionID: "s-imported",
+		Cwd:       "/tmp/imported",
+		Agent:     "custom",
+		Command:   "/bin/fixture-agent",
+		Args:      []string{"--load-session"},
+	}, true, &importOut); err != nil {
+		t.Fatalf("execute import: %v", err)
+	}
+	var payload struct {
+		SessionID string `json:"session_id"`
+		Path      string `json:"path"`
+		Status    string `json:"status"`
+	}
+	if err := json.Unmarshal(importOut.Bytes(), &payload); err != nil {
+		t.Fatalf("import json: %v\n%s", err, importOut.String())
+	}
+	if payload.SessionID != "s-imported" || payload.Path != archivePath || payload.Status != acpclient.SessionStatusCompleted {
+		t.Fatalf("payload = %#v", payload)
+	}
+	imported, err := store.Get("s-imported")
+	if err != nil {
+		t.Fatalf("Get imported: %v", err)
+	}
+	if imported.Cwd != "/tmp/imported" || imported.Agent != "custom" || imported.CommandFingerprint == "" || imported.ACPSessionID != "provider-session" {
+		t.Fatalf("imported = %#v", imported)
 	}
 }
 
