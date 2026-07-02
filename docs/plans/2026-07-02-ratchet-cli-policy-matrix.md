@@ -35,7 +35,7 @@
 |------|-------|-------|--------|
 | 1 | Add ratchet-cli policy matrix docs and guards | Task 1, Task 2, Task 3, Task 4 | `feat/ratchet-cli-policy-matrix` |
 
-**Status:** Draft
+**Status:** Locked 2026-07-02T14:23:35Z
 
 ## Integration Matrix
 
@@ -190,4 +190,3 @@ git commit -m "docs: record policy matrix verification"
 Skip the commit if no plan/design files changed.
 
 Rollback: revert the PR. No runtime state or release tag is affected.
-
