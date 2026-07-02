@@ -32,6 +32,10 @@ const (
 	RatchetDaemon_KillSession_FullMethodName            = "/ratchet.RatchetDaemon/KillSession"
 	RatchetDaemon_SendMessage_FullMethodName            = "/ratchet.RatchetDaemon/SendMessage"
 	RatchetDaemon_RespondToPermission_FullMethodName    = "/ratchet.RatchetDaemon/RespondToPermission"
+	RatchetDaemon_GetTrustState_FullMethodName          = "/ratchet.RatchetDaemon/GetTrustState"
+	RatchetDaemon_SetTrustMode_FullMethodName           = "/ratchet.RatchetDaemon/SetTrustMode"
+	RatchetDaemon_AddTrustRule_FullMethodName           = "/ratchet.RatchetDaemon/AddTrustRule"
+	RatchetDaemon_ResetTrust_FullMethodName             = "/ratchet.RatchetDaemon/ResetTrust"
 	RatchetDaemon_AddProvider_FullMethodName            = "/ratchet.RatchetDaemon/AddProvider"
 	RatchetDaemon_ListProviders_FullMethodName          = "/ratchet.RatchetDaemon/ListProviders"
 	RatchetDaemon_TestProvider_FullMethodName           = "/ratchet.RatchetDaemon/TestProvider"
@@ -108,6 +112,11 @@ type RatchetDaemonClient interface {
 	SendMessage(ctx context.Context, in *SendMessageReq, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ChatEvent], error)
 	// Permissions
 	RespondToPermission(ctx context.Context, in *PermissionResponse, opts ...grpc.CallOption) (*Empty, error)
+	// Trust policy
+	GetTrustState(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*TrustState, error)
+	SetTrustMode(ctx context.Context, in *SetTrustModeReq, opts ...grpc.CallOption) (*TrustState, error)
+	AddTrustRule(ctx context.Context, in *AddTrustRuleReq, opts ...grpc.CallOption) (*TrustState, error)
+	ResetTrust(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*TrustState, error)
 	// Providers
 	AddProvider(ctx context.Context, in *AddProviderReq, opts ...grpc.CallOption) (*Provider, error)
 	ListProviders(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ProviderList, error)
@@ -329,6 +338,46 @@ func (c *ratchetDaemonClient) RespondToPermission(ctx context.Context, in *Permi
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Empty)
 	err := c.cc.Invoke(ctx, RatchetDaemon_RespondToPermission_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ratchetDaemonClient) GetTrustState(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*TrustState, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TrustState)
+	err := c.cc.Invoke(ctx, RatchetDaemon_GetTrustState_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ratchetDaemonClient) SetTrustMode(ctx context.Context, in *SetTrustModeReq, opts ...grpc.CallOption) (*TrustState, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TrustState)
+	err := c.cc.Invoke(ctx, RatchetDaemon_SetTrustMode_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ratchetDaemonClient) AddTrustRule(ctx context.Context, in *AddTrustRuleReq, opts ...grpc.CallOption) (*TrustState, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TrustState)
+	err := c.cc.Invoke(ctx, RatchetDaemon_AddTrustRule_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ratchetDaemonClient) ResetTrust(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*TrustState, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TrustState)
+	err := c.cc.Invoke(ctx, RatchetDaemon_ResetTrust_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -943,6 +992,11 @@ type RatchetDaemonServer interface {
 	SendMessage(*SendMessageReq, grpc.ServerStreamingServer[ChatEvent]) error
 	// Permissions
 	RespondToPermission(context.Context, *PermissionResponse) (*Empty, error)
+	// Trust policy
+	GetTrustState(context.Context, *Empty) (*TrustState, error)
+	SetTrustMode(context.Context, *SetTrustModeReq) (*TrustState, error)
+	AddTrustRule(context.Context, *AddTrustRuleReq) (*TrustState, error)
+	ResetTrust(context.Context, *Empty) (*TrustState, error)
 	// Providers
 	AddProvider(context.Context, *AddProviderReq) (*Provider, error)
 	ListProviders(context.Context, *Empty) (*ProviderList, error)
@@ -1060,6 +1114,18 @@ func (UnimplementedRatchetDaemonServer) SendMessage(*SendMessageReq, grpc.Server
 }
 func (UnimplementedRatchetDaemonServer) RespondToPermission(context.Context, *PermissionResponse) (*Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method RespondToPermission not implemented")
+}
+func (UnimplementedRatchetDaemonServer) GetTrustState(context.Context, *Empty) (*TrustState, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetTrustState not implemented")
+}
+func (UnimplementedRatchetDaemonServer) SetTrustMode(context.Context, *SetTrustModeReq) (*TrustState, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetTrustMode not implemented")
+}
+func (UnimplementedRatchetDaemonServer) AddTrustRule(context.Context, *AddTrustRuleReq) (*TrustState, error) {
+	return nil, status.Error(codes.Unimplemented, "method AddTrustRule not implemented")
+}
+func (UnimplementedRatchetDaemonServer) ResetTrust(context.Context, *Empty) (*TrustState, error) {
+	return nil, status.Error(codes.Unimplemented, "method ResetTrust not implemented")
 }
 func (UnimplementedRatchetDaemonServer) AddProvider(context.Context, *AddProviderReq) (*Provider, error) {
 	return nil, status.Error(codes.Unimplemented, "method AddProvider not implemented")
@@ -1460,6 +1526,78 @@ func _RatchetDaemon_RespondToPermission_Handler(srv interface{}, ctx context.Con
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RatchetDaemonServer).RespondToPermission(ctx, req.(*PermissionResponse))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RatchetDaemon_GetTrustState_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RatchetDaemonServer).GetTrustState(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RatchetDaemon_GetTrustState_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RatchetDaemonServer).GetTrustState(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RatchetDaemon_SetTrustMode_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetTrustModeReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RatchetDaemonServer).SetTrustMode(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RatchetDaemon_SetTrustMode_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RatchetDaemonServer).SetTrustMode(ctx, req.(*SetTrustModeReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RatchetDaemon_AddTrustRule_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AddTrustRuleReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RatchetDaemonServer).AddTrustRule(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RatchetDaemon_AddTrustRule_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RatchetDaemonServer).AddTrustRule(ctx, req.(*AddTrustRuleReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RatchetDaemon_ResetTrust_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RatchetDaemonServer).ResetTrust(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RatchetDaemon_ResetTrust_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RatchetDaemonServer).ResetTrust(ctx, req.(*Empty))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2440,6 +2578,22 @@ var RatchetDaemon_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RespondToPermission",
 			Handler:    _RatchetDaemon_RespondToPermission_Handler,
+		},
+		{
+			MethodName: "GetTrustState",
+			Handler:    _RatchetDaemon_GetTrustState_Handler,
+		},
+		{
+			MethodName: "SetTrustMode",
+			Handler:    _RatchetDaemon_SetTrustMode_Handler,
+		},
+		{
+			MethodName: "AddTrustRule",
+			Handler:    _RatchetDaemon_AddTrustRule_Handler,
+		},
+		{
+			MethodName: "ResetTrust",
+			Handler:    _RatchetDaemon_ResetTrust_Handler,
 		},
 		{
 			MethodName: "AddProvider",

@@ -165,6 +165,27 @@ message PermissionResponse {
   string scope = 3; // "once", "session", "always"
 }
 
+message TrustRule {
+  string pattern = 1;
+  string action = 2;
+  string scope = 3;
+}
+
+message TrustState {
+  string mode = 1;
+  repeated TrustRule rules = 2;
+}
+
+message SetTrustModeReq {
+  string mode = 1;
+}
+
+message AddTrustRuleReq {
+  string pattern = 1;
+  string action = 2;
+  string scope = 3;
+}
+
 message AgentSpawned {
   string agent_id = 1;
   string agent_name = 2;
@@ -666,6 +687,12 @@ service RatchetDaemon {
 
   // Permissions
   rpc RespondToPermission(PermissionResponse) returns (Empty);
+
+  // Trust policy
+  rpc GetTrustState(Empty) returns (TrustState);
+  rpc SetTrustMode(SetTrustModeReq) returns (TrustState);
+  rpc AddTrustRule(AddTrustRuleReq) returns (TrustState);
+  rpc ResetTrust(Empty) returns (TrustState);
 
   // Providers
   rpc AddProvider(AddProviderReq) returns (Provider);

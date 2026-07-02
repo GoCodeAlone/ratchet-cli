@@ -10,6 +10,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,27 +35,33 @@ const ProtoVersion = 1
 
 type Service struct {
 	pb.UnimplementedRatchetDaemonServer
-	startedAt     time.Time
-	engine        *EngineContext
-	sessions      *SessionManager
-	permGate      *permissionGate
-	approvalGate  *ApprovalGate
-	plans         *PlanManager
-	cron          *CronScheduler
-	fleet         *FleetManager
-	teams         *TeamManager
-	tokens        *TokenTracker
-	jobs          *JobRegistry
-	broadcaster   *SessionBroadcaster
-	shutdownFn    func()
-	meshBB        *mesh.Blackboard
-	meshRouter    *mesh.Router
-	humanGate     *HumanGate
-	autorespond   *Autoresponder
-	projects      *ProjectRegistry
-	tracker       *mesh.Tracker
-	trustEngine   *policy.TrustEngine
-	retroRecorder *retro.Recorder
+	startedAt        time.Time
+	engine           *EngineContext
+	sessions         *SessionManager
+	permGate         *permissionGate
+	approvalGate     *ApprovalGate
+	plans            *PlanManager
+	cron             *CronScheduler
+	fleet            *FleetManager
+	teams            *TeamManager
+	tokens           *TokenTracker
+	jobs             *JobRegistry
+	broadcaster      *SessionBroadcaster
+	shutdownFn       func()
+	meshBB           *mesh.Blackboard
+	meshRouter       *mesh.Router
+	humanGate        *HumanGate
+	autorespond      *Autoresponder
+	projects         *ProjectRegistry
+	tracker          *mesh.Tracker
+	trustEngine      *policy.TrustEngine
+	trustMu          sync.Mutex
+	trustDefaultMode string
+	trustDefaults    []policy.TrustRule
+	trustRuntime     []policy.TrustRule
+	trustMode        string
+	trustStore       *policy.PermissionStore
+	retroRecorder    *retro.Recorder
 }
 
 func NewService(ctx context.Context) (*Service, error) {
@@ -110,11 +117,15 @@ func NewService(ctx context.Context) (*Service, error) {
 		}
 		trustRules = cfg.Trust.ToTrustRules()
 	}
+	svc.trustMode = trustMode
+	svc.trustDefaultMode = trustMode
+	svc.trustDefaults = cloneTrustRules(trustRules)
 	svc.trustEngine = policy.NewTrustEngine(trustMode, trustRules, nil)
 
 	// Attach PermissionStore for persistent grants if DB is available.
 	if engine.DB != nil {
 		if ps, err := policy.NewPermissionStore(engine.DB); err == nil {
+			svc.trustStore = ps
 			svc.trustEngine.SetPermissionStore(ps)
 		}
 	}
