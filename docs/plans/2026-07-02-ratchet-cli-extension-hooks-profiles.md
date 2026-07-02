@@ -35,7 +35,7 @@
 | 3 | `docs: document hooks profiles release state` | Task 7 | `docs/ratchet-cli-hooks-profiles-release` |
 | 4 | `docs: close hook profile plan` | Task 8 | `docs/ratchet-cli-hooks-profiles-closeout` |
 
-**Status:** Draft
+**Status:** Locked 2026-07-02T19:03:31Z
 
 ## Requirements Trace
 
