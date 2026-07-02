@@ -101,6 +101,21 @@ func TestParseACPClientExecHelpPrintsFlagsAndSucceeds(t *testing.T) {
 	}
 }
 
+func TestACPClientUsageLabelsHistoryAsShowAlias(t *testing.T) {
+	var out bytes.Buffer
+	cmd, err := parseACPClientCommandWithOutput(nil, &out)
+	if err != nil {
+		t.Fatalf("parseACPClientCommandWithOutput: %v", err)
+	}
+	if cmd.kind != acpClientCommandHelp {
+		t.Fatalf("kind = %q, want help", cmd.kind)
+	}
+	printACPClientUsage(&out)
+	if !strings.Contains(out.String(), "history (alias for show)") {
+		t.Fatalf("usage output missing history alias label:\n%s", out.String())
+	}
+}
+
 func TestParseACPClientSessionCommands(t *testing.T) {
 	tests := []struct {
 		name string

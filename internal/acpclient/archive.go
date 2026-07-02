@@ -134,9 +134,17 @@ func ImportSession(store *Store, archivePath string, opts ImportOptions) (Sessio
 		return SessionRecord{}, err
 	}
 	if opts.Cwd != "" {
-		rec.Cwd = filepath.Clean(opts.Cwd)
+		cwd, err := normalizeImportCWD(opts.Cwd)
+		if err != nil {
+			return SessionRecord{}, err
+		}
+		rec.Cwd = cwd
 	} else {
-		rec.Cwd = resolveArchiveCWD(archive.Session.CWDRelative, archiveHomeDir(opts.HomeDir))
+		cwd, err := resolveArchiveCWD(archive.Session.CWDRelative, archiveHomeDir(opts.HomeDir))
+		if err != nil {
+			return SessionRecord{}, err
+		}
+		rec.Cwd = cwd
 	}
 	if opts.Agent != "" {
 		rec.Agent = opts.Agent
@@ -216,17 +224,29 @@ func cwdRelativeToHome(cwd, home string) string {
 	return cwd
 }
 
-func resolveArchiveCWD(cwdRelative, home string) string {
+func resolveArchiveCWD(cwdRelative, home string) (string, error) {
 	if cwdRelative == "" || cwdRelative == "." {
 		if home != "" {
-			return filepath.Clean(home)
+			return filepath.Clean(home), nil
 		}
-		return "."
+		return ".", nil
+	}
+	cwdRelative = filepath.Clean(cwdRelative)
+	if !filepath.IsAbs(cwdRelative) && startsWithParent(cwdRelative) {
+		return "", fmt.Errorf("%w: cwd_relative escapes home: %s", ErrInvalidSessionArchive, cwdRelative)
 	}
 	if filepath.IsAbs(cwdRelative) || home == "" {
-		return filepath.Clean(cwdRelative)
+		return cwdRelative, nil
 	}
-	return filepath.Join(filepath.Clean(home), filepath.Clean(cwdRelative))
+	return filepath.Join(filepath.Clean(home), cwdRelative), nil
+}
+
+func normalizeImportCWD(cwd string) (string, error) {
+	cwd = filepath.Clean(cwd)
+	if filepath.IsAbs(cwd) {
+		return cwd, nil
+	}
+	return filepath.Abs(cwd)
 }
 
 func startsWithParent(path string) bool {

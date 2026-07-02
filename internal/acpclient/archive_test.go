@@ -174,6 +174,75 @@ func TestImportSessionValidatesVersionAndCollisions(t *testing.T) {
 	}
 }
 
+func TestImportSessionRejectsParentTraversalCWDRelative(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 2, 8, 50, 0, 0, time.UTC)
+	archive := Archive{
+		FormatVersion: 1,
+		ExportedAt:    now.Format(time.RFC3339Nano),
+		ExportedBy:    "ratchet-cli",
+		Session: ArchiveSession{
+			RecordID:    "source",
+			Agent:       "fixture",
+			CWDRelative: filepath.Join("..", "escape"),
+			CWDOriginal: filepath.Join("..", "escape"),
+			CreatedAt:   now.Format(time.RFC3339Nano),
+			UpdatedAt:   now.Format(time.RFC3339Nano),
+			State: SessionRecord{
+				ID:        "source",
+				Agent:     "fixture",
+				Status:    SessionStatusCompleted,
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
+		},
+	}
+
+	_, err := ImportSession(store, writeArchiveFixture(t, archive), ImportOptions{HomeDir: t.TempDir()})
+	if !errors.Is(err, ErrInvalidSessionArchive) {
+		t.Fatalf("ImportSession error = %v, want ErrInvalidSessionArchive", err)
+	}
+	if _, err := store.Get("source"); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("store.Get source error = %v, want ErrSessionNotFound", err)
+	}
+}
+
+func TestImportSessionNormalizesRelativeOverrideCWD(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 2, 8, 55, 0, 0, time.UTC)
+	archive := Archive{
+		FormatVersion: 1,
+		ExportedAt:    now.Format(time.RFC3339Nano),
+		ExportedBy:    "ratchet-cli",
+		Session: ArchiveSession{
+			RecordID:    "source",
+			Agent:       "fixture",
+			CWDRelative: "repo",
+			CWDOriginal: "repo",
+			CreatedAt:   now.Format(time.RFC3339Nano),
+			UpdatedAt:   now.Format(time.RFC3339Nano),
+			State: SessionRecord{
+				ID:        "source",
+				Agent:     "fixture",
+				Status:    SessionStatusCompleted,
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
+		},
+	}
+
+	imported, err := ImportSession(store, writeArchiveFixture(t, archive), ImportOptions{Cwd: filepath.Join("relative", "repo")})
+	if err != nil {
+		t.Fatalf("ImportSession: %v", err)
+	}
+	if !filepath.IsAbs(imported.Cwd) {
+		t.Fatalf("imported.Cwd = %q, want absolute path", imported.Cwd)
+	}
+	if filepath.Base(imported.Cwd) != "repo" {
+		t.Fatalf("imported.Cwd = %q, want repo suffix", imported.Cwd)
+	}
+}
+
 func writeArchiveFixture(t *testing.T, archive Archive) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "archive.json")

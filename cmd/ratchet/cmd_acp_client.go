@@ -617,7 +617,7 @@ func printACPClientUsage(w io.Writer) {
 Commands:
   exec       Run one prompt against an external ACP agent
   sessions   List or inspect ACP client sessions
-             Subcommands: list, show, history, export, import
+             Subcommands: list, show, history (alias for show), export, import
   queue      List queued prompts for an ACP client session
   drain      Drain queued prompts through an external ACP agent
   status     Show ACP client session status
