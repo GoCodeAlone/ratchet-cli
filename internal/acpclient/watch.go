@@ -79,7 +79,7 @@ func WatchQueue(ctx context.Context, store *Store, spec AgentSpec, opts RunOptio
 
 		cycleNumber := result.Cycles + 1
 		startedAt := watchOpts.now()
-		pending, err := watchPendingQueue(store, sessionID)
+		queueWork, err := watchQueueWork(store, sessionID)
 		if err != nil {
 			result.Remaining = countPendingQueue(store, sessionID)
 			return result, err
@@ -88,10 +88,10 @@ func WatchQueue(ctx context.Context, store *Store, spec AgentSpec, opts RunOptio
 		cycle := WatchCycle{
 			SessionID:     sessionID,
 			Cycle:         cycleNumber,
-			PendingBefore: pending,
+			PendingBefore: queueWork,
 			StartedAt:     startedAt,
 		}
-		if pending == 0 {
+		if queueWork == 0 {
 			cycle.Idle = true
 			cycle.Remaining = 0
 			cycle.CompletedAt = watchOpts.now()
@@ -146,14 +146,14 @@ func WatchQueue(ctx context.Context, store *Store, spec AgentSpec, opts RunOptio
 	}
 }
 
-func watchPendingQueue(store *Store, sessionID string) (int, error) {
+func watchQueueWork(store *Store, sessionID string) (int, error) {
 	rec, err := store.Get(sessionID)
 	if err != nil {
 		return 0, err
 	}
 	count := 0
 	for _, prompt := range rec.PromptQueue {
-		if prompt.Status == QueuePromptStatusPending {
+		if prompt.Status == QueuePromptStatusPending || prompt.Status == QueuePromptStatusRunning {
 			count++
 		}
 	}

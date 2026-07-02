@@ -104,6 +104,52 @@ func TestWatchQueueStopWhenEmptyDoesNotStartAgent(t *testing.T) {
 	}
 }
 
+func TestWatchQueueRecoversStaleRunningPrompt(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 2, 12, 7, 0, 0, time.UTC)
+	started := now.Add(time.Second)
+	if err := store.Upsert(SessionRecord{
+		ID:        "watch-stale-running",
+		Status:    SessionStatusRunning,
+		CreatedAt: now,
+		UpdatedAt: started,
+		PromptQueue: []QueuedPrompt{{
+			ID:        "q-1",
+			Prompt:    "recover stale prompt",
+			Status:    QueuePromptStatusRunning,
+			CreatedAt: now,
+			StartedAt: &started,
+		}},
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	runner := &fakeDrainRunner{sessionID: "acp-watch-stale"}
+
+	result, err := WatchQueue(t.Context(), store, AgentSpec{Name: "fixture", Command: "fixture"}, RunOptions{}, "watch-stale-running", WatchOptions{
+		Interval:      time.Millisecond,
+		MaxPerCycle:   1,
+		StopWhenEmpty: true,
+		Now:           fixedClock(now.Add(time.Minute)),
+		Sleep:         instantWatchSleep,
+		StartRunner: func(context.Context, AgentSpec, RunOptions, string) (DrainPromptRunner, func() error, error) {
+			return runner, func() error { return nil }, nil
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("WatchQueue: %v", err)
+	}
+	if result.Completed != 1 || strings.Join(runner.prompts, ",") != "recover stale prompt" {
+		t.Fatalf("result/prompts = %#v/%#v, want recovered prompt processed", result, runner.prompts)
+	}
+	rec, err := store.Get("watch-stale-running")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if rec.PromptQueue[0].Status != QueuePromptStatusCompleted {
+		t.Fatalf("queue status = %q, want completed", rec.PromptQueue[0].Status)
+	}
+}
+
 func TestWatchQueueStopsAtMaxCycles(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
 	now := time.Date(2026, 7, 2, 12, 10, 0, 0, time.UTC)

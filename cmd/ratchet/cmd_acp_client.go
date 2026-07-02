@@ -167,7 +167,7 @@ func handleACPClient(args []string) error {
 	case acpClientCommandDrain:
 		return executeACPClientDrain(context.Background(), store, cmd.sessionID, cmd.drain, nil, os.Stdout)
 	case acpClientCommandWatch:
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		ctx, stop := signal.NotifyContext(context.Background(), acpClientWatchSignals()...)
 		defer stop()
 		return executeACPClientWatch(ctx, store, cmd.sessionID, cmd.watch, nil, os.Stdout)
 	default:
