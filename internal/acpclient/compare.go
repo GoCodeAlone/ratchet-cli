@@ -96,8 +96,8 @@ func compareStatus(stopReason acpsdk.StopReason) string {
 
 func comparePreview(text string) string {
 	text = strings.Join(strings.Fields(text), " ")
-	if len(text) <= comparePreviewChars {
+	if len([]rune(text)) <= comparePreviewChars {
 		return text
 	}
-	return text[:comparePreviewChars]
+	return string([]rune(text)[:comparePreviewChars])
 }

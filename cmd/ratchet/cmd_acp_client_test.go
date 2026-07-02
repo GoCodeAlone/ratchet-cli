@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -730,6 +731,26 @@ func TestExecuteACPClientCompareTextAndJSON(t *testing.T) {
 	}
 	if len(rows) != 2 || rows[0].Status != "ok" || rows[0].Final != "agent a final" {
 		t.Fatalf("rows = %#v", rows)
+	}
+}
+
+func TestExecuteACPClientCompareTextIncludesErrorDetails(t *testing.T) {
+	runner := &fakeCompareCommandRunner{
+		errs: map[string]error{
+			"/bin/agent-b": errors.New("agent b failed"),
+		},
+	}
+	var out bytes.Buffer
+	if err := executeACPClientCompare(t.Context(), acpClientCompareOptions{
+		Commands: []string{"/bin/agent-a", "/bin/agent-b"},
+		Prompt:   "compare me",
+		Cwd:      ".",
+	}, runner, &out); err != nil {
+		t.Fatalf("executeACPClientCompare: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "ERROR") || !strings.Contains(got, "agent b failed") {
+		t.Fatalf("compare output missing error detail:\n%s", got)
 	}
 }
 

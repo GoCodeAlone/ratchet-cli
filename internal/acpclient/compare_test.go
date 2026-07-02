@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	acpsdk "github.com/coder/acp-go-sdk"
 )
@@ -87,6 +88,16 @@ func TestCompareMapsCancelledStopReasonToCanceledStatus(t *testing.T) {
 	}
 	if len(rows) != 1 || rows[0].Status != "canceled" || rows[0].StopReason != "cancelled" {
 		t.Fatalf("rows = %#v, want canceled row", rows)
+	}
+}
+
+func TestComparePreviewTruncatesByRune(t *testing.T) {
+	preview := comparePreview(strings.Repeat("é", comparePreviewChars+1))
+	if !utf8.ValidString(preview) {
+		t.Fatalf("preview is not valid UTF-8: %q", preview)
+	}
+	if got := utf8.RuneCountInString(preview); got != comparePreviewChars {
+		t.Fatalf("preview rune count = %d, want %d", got, comparePreviewChars)
 	}
 }
 

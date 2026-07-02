@@ -821,9 +821,9 @@ func executeACPClientCompare(ctx context.Context, opts acpClientCompareOptions, 
 		return json.NewEncoder(w).Encode(rows)
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "AGENT\tSTATUS\tWALL_MS\tSTOP\tFINAL")
+	fmt.Fprintln(tw, "AGENT\tSTATUS\tWALL_MS\tSTOP\tFINAL\tERROR")
 	for _, row := range rows {
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n", row.Agent, row.Status, row.WallMS, row.StopReason, row.Final)
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\t%s\n", row.Agent, row.Status, row.WallMS, row.StopReason, row.Final, row.Error)
 	}
 	return tw.Flush()
 }
