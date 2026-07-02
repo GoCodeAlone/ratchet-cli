@@ -65,10 +65,11 @@ archive session links, Pi-style in-place branch navigation, and opt-in redacted
 retro evidence, ACP client session archive export/import, serial compare, and
 JSON v1 ACP/compute flows. The v0.20.0 release keeps Windows amd64/arm64 zip
 artifacts in the GoReleaser output while adding ACP client archive, compare,
-and flow commands. Deferred rows
-remain broader policy layering, extension hooks, persistent trust policy
-editing, ACPX TypeScript flow runtime compatibility, and local-first channel
-gateways.
+and flow commands. The policy boundaries are tracked in
+[docs/policy-matrix.md](policy-matrix.md): runtime trust rules, persistent
+trust grants, permission prompts, and explicit ACP client drain are supported,
+while background drain, broad extension hooks, ACPX TypeScript flow runtime
+compatibility, and local-first channel gateways remain deferred.
 
 ## ACP Matrix
 
@@ -156,3 +157,5 @@ ratchet acp client flow run flow.json \
 Scriptable equivalents are available through `ratchet trust list`,
 `ratchet trust grants`, `ratchet trust allow|deny`,
 `ratchet trust persist`, `ratchet trust revoke`, and `ratchet trust reset`.
+The broader Policy Matrix lives in [docs/policy-matrix.md](policy-matrix.md),
+including the deferred background drain and extension hooks boundaries.
