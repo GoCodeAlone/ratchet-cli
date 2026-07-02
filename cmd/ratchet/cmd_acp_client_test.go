@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -147,6 +148,8 @@ func TestParseACPClientFlowRunCommand(t *testing.T) {
 		"--command", "/bin/fixture-agent",
 		"--arg", "--echo-session",
 		"--cwd", "/tmp/project",
+		"--allow", "shell",
+		"--allow", "outside-cwd",
 		"--json",
 	})
 	if err != nil {
@@ -159,6 +162,9 @@ func TestParseACPClientFlowRunCommand(t *testing.T) {
 		cmd.flow.Command != "/bin/fixture-agent" || len(cmd.flow.Args) != 1 ||
 		cmd.flow.Args[0] != "--echo-session" || cmd.flow.Cwd != "/tmp/project" || !cmd.flow.JSON {
 		t.Fatalf("flow options = %#v", cmd.flow)
+	}
+	if got, want := strings.Join(cmd.flow.AllowedPermissions, ","), "shell,outside-cwd"; got != want {
+		t.Fatalf("AllowedPermissions = %q, want %q", got, want)
 	}
 
 	fileCmd, err := parseACPClientCommand([]string{"flow", "run", "flow.json", "--input-file", "input.json", "--default-agent", "custom"})
@@ -174,6 +180,7 @@ func TestParseACPClientFlowRunRejectsInvalidArgs(t *testing.T) {
 	tests := [][]string{
 		{"flow", "run"},
 		{"flow", "run", "flow.json", "--input-json", "{}", "--input-file", "input.json"},
+		{"flow", "run", "flow.json", "--allow", ""},
 		{"flow", "show", "flow.json"},
 	}
 	for _, args := range tests {
@@ -1005,6 +1012,98 @@ func TestExecuteACPClientFlowRunTextAndJSON(t *testing.T) {
 	if result.RunID != "run-json" || result.Status != acpclient.FlowRunStatusCompleted || len(result.Outputs) != 1 {
 		t.Fatalf("flow result = %#v", result)
 	}
+}
+
+func TestExecuteACPClientFlowRunRequiresAllowForAction(t *testing.T) {
+	flowPath := filepath.Join(t.TempDir(), "flow.json")
+	if err := os.WriteFile(flowPath, []byte(`{
+		"format_version": 1,
+		"start_at": "prepare",
+		"nodes": [{"id": "prepare", "type": "action", "command": "ratchet"}]
+	}`), 0o600); err != nil {
+		t.Fatalf("write flow: %v", err)
+	}
+
+	var out bytes.Buffer
+	err := executeACPClientFlowRun(t.Context(), acpClientFlowOptions{
+		Path: flowPath,
+		Cwd:  ".",
+	}, &out)
+	if err == nil || !strings.Contains(err.Error(), "flow requires permission shell") {
+		t.Fatalf("executeACPClientFlowRun error = %v, want missing shell permission", err)
+	}
+}
+
+func TestExecuteACPClientFlowRunActionJSONAndHumanSummary(t *testing.T) {
+	helper, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable: %v", err)
+	}
+	flowPath := filepath.Join(t.TempDir(), "flow.json")
+	flow := map[string]any{
+		"format_version": 1,
+		"start_at":       "prepare",
+		"nodes": []map[string]any{{
+			"id":      "prepare",
+			"type":    "action",
+			"command": helper,
+			"args":    []string{"-test.run=TestACPClientFlowActionHelperProcess", "--"},
+			"env":     map[string]string{"RATCHET_FLOW_ACTION_HELPER": "1"},
+		}},
+	}
+	b, err := json.Marshal(flow)
+	if err != nil {
+		t.Fatalf("marshal flow: %v", err)
+	}
+	if err := os.WriteFile(flowPath, b, 0o600); err != nil {
+		t.Fatalf("write flow: %v", err)
+	}
+
+	var jsonOut bytes.Buffer
+	if err := executeACPClientFlowRun(t.Context(), acpClientFlowOptions{
+		Path:               flowPath,
+		Cwd:                ".",
+		AllowedPermissions: []string{"shell"},
+		JSON:               true,
+	}, &jsonOut); err != nil {
+		t.Fatalf("executeACPClientFlowRun json: %v", err)
+	}
+	var result acpclient.FlowRunResult
+	if err := json.Unmarshal(jsonOut.Bytes(), &result); err != nil {
+		t.Fatalf("flow json: %v\n%s", err, jsonOut.String())
+	}
+	var actionOutput struct {
+		Stdout string `json:"stdout"`
+		Stderr string `json:"stderr"`
+	}
+	if err := json.Unmarshal(result.Outputs["prepare"], &actionOutput); err != nil {
+		t.Fatalf("action output json: %v\n%s", err, result.Outputs["prepare"])
+	}
+	if !strings.Contains(actionOutput.Stdout, "action stdout") || !strings.Contains(actionOutput.Stderr, "action stderr") {
+		t.Fatalf("action output = %#v", actionOutput)
+	}
+
+	var textOut bytes.Buffer
+	if err := executeACPClientFlowRun(t.Context(), acpClientFlowOptions{
+		Path:               flowPath,
+		Cwd:                ".",
+		AllowedPermissions: []string{"shell"},
+		RunID:              "run-human-action",
+	}, &textOut); err != nil {
+		t.Fatalf("executeACPClientFlowRun text: %v", err)
+	}
+	if got := textOut.String(); strings.Contains(got, "action stdout") || !strings.Contains(got, "flow run-human-action completed") {
+		t.Fatalf("human flow output = %q", got)
+	}
+}
+
+func TestACPClientFlowActionHelperProcess(t *testing.T) {
+	if os.Getenv("RATCHET_FLOW_ACTION_HELPER") != "1" {
+		return
+	}
+	fmt.Fprint(os.Stdout, "action stdout")
+	fmt.Fprint(os.Stderr, "action stderr")
+	os.Exit(0)
 }
 
 func TestACPClientSessionsStatusAndCancelCommands(t *testing.T) {
