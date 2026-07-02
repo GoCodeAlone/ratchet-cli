@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,6 +41,13 @@ type agentMsg struct {
 	content string
 	ts      time.Time
 }
+
+var (
+	errTeamMessageInvalid      = errors.New("invalid team message")
+	errTeamMessageTeamMissing  = errors.New("team not found")
+	errTeamMessageAgentMissing = errors.New("agent not found")
+	errTeamMessageNotRunning   = errors.New("team not running")
+)
 
 // teamObserver tracks an attached client observing a team.
 type teamObserver struct {
@@ -510,6 +519,80 @@ func (tm *TeamManager) routeMessage(ti *teamInstance, from, to, content string) 
 			},
 		},
 	})
+}
+
+// DirectMessage appends an operator-originated message to a running team's
+// recipient inbox and broadcasts the normal team message event.
+func (tm *TeamManager) DirectMessage(teamID, toAgent, content string) error {
+	teamID = strings.TrimSpace(teamID)
+	toAgent = strings.TrimSpace(toAgent)
+	content = strings.TrimSpace(content)
+	if teamID == "" {
+		return fmt.Errorf("%w: team_id is required", errTeamMessageInvalid)
+	}
+	if toAgent == "" {
+		return fmt.Errorf("%w: to_agent is required", errTeamMessageInvalid)
+	}
+	if content == "" {
+		return fmt.Errorf("%w: content is required", errTeamMessageInvalid)
+	}
+
+	tm.mu.RLock()
+	resolved := tm.resolveTeamID(teamID)
+	ti, ok := tm.teams[resolved]
+	tm.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("%w: team %q", errTeamMessageTeamMissing, teamID)
+	}
+
+	ti.mu.RLock()
+	if ti.status != "running" {
+		ti.mu.RUnlock()
+		return fmt.Errorf("%w: team %q status is %s", errTeamMessageNotRunning, teamID, ti.status)
+	}
+	var recipient *teamAgent
+	for _, ag := range ti.agents {
+		ag.mu.RLock()
+		matches := ag.id == toAgent || ag.name == toAgent
+		ag.mu.RUnlock()
+		if matches {
+			recipient = ag
+			break
+		}
+	}
+	ti.mu.RUnlock()
+	if recipient == nil {
+		return fmt.Errorf("%w: agent %q in team %q", errTeamMessageAgentMissing, toAgent, teamID)
+	}
+
+	recipient.mu.Lock()
+	recipient.messages = append(recipient.messages, agentMsg{from: "operator", content: content, ts: time.Now()})
+	toName := recipient.name
+	recipient.mu.Unlock()
+
+	pbEv := &pb.TeamEvent{
+		Event: &pb.TeamEvent_AgentMessage{
+			AgentMessage: &pb.AgentMessage{
+				FromAgent: "operator",
+				ToAgent:   toName,
+				Content:   content,
+			},
+		},
+	}
+	select {
+	case ti.eventCh <- pbEv:
+	default:
+	}
+	tm.broadcastToObservers(ti, &pb.TeamActivityEvent{
+		Event: &pb.TeamActivityEvent_AgentMessage{
+			AgentMessage: &pb.AgentMessage{
+				FromAgent: "operator",
+				ToAgent:   toName,
+				Content:   content,
+			},
+		},
+	})
+	return nil
 }
 
 func (tm *TeamManager) markDone(ti *teamInstance, s string) {
