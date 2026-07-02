@@ -239,6 +239,7 @@ func (a *Archive) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(b, &src); err != nil {
 		return err
 	}
+	acpxArchive := strings.EqualFold(strings.TrimSpace(src.ExportedBy), "acpx")
 	*a = Archive{
 		FormatVersion:  src.FormatVersion,
 		ExportedAt:     src.ExportedAt,
@@ -250,6 +251,9 @@ func (a *Archive) UnmarshalJSON(b []byte) error {
 		if err := ValidateJSONRPCMessage(raw); err == nil {
 			a.RawHistory = append(a.RawHistory, raw)
 			continue
+		}
+		if acpxArchive {
+			return fmt.Errorf("%w: invalid acpx raw history event", ErrInvalidSessionArchive)
 		}
 		var event ArchiveHistoryEvent
 		if err := json.Unmarshal(raw, &event); err != nil {

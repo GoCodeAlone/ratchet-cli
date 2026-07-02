@@ -253,6 +253,33 @@ func TestImportSessionRejectsInvalidRawHistory(t *testing.T) {
 	if !errors.Is(err, ErrInvalidSessionArchive) {
 		t.Fatalf("ImportSession error = %v, want ErrInvalidSessionArchive", err)
 	}
+
+	archivePath = writeRawArchiveFixture(t, map[string]any{
+		"format_version": 1,
+		"exported_at":    now.Format(time.RFC3339Nano),
+		"exported_by":    "acpx",
+		"session": map[string]any{
+			"record_id":    "bad-summary",
+			"agent":        "fixture",
+			"cwd_relative": ".",
+			"cwd_original": ".",
+			"created_at":   now.Format(time.RFC3339Nano),
+			"updated_at":   now.Format(time.RFC3339Nano),
+			"state": map[string]any{
+				"id":        "bad-summary",
+				"agent":     "fixture",
+				"cwd":       t.TempDir(),
+				"status":    "completed",
+				"createdAt": now.Format(time.RFC3339Nano),
+				"updatedAt": now.Format(time.RFC3339Nano),
+			},
+		},
+		"history": []map[string]any{{"kind": "turn", "prompt": "not raw json-rpc"}},
+	})
+	_, err = ImportSession(store, archivePath, ImportOptions{})
+	if !errors.Is(err, ErrInvalidSessionArchive) {
+		t.Fatalf("ImportSession summary-shaped acpx history error = %v, want ErrInvalidSessionArchive", err)
+	}
 }
 
 func TestImportSessionValidatesVersionAndCollisions(t *testing.T) {
