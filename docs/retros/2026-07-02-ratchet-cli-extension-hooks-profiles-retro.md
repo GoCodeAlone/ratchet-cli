@@ -41,7 +41,9 @@ Activation log was unavailable in the canonical repo root. Committed artifacts s
 | adversarial-design-review (plan) | yes | `docs/plans/2026-07-02-ratchet-cli-extension-hooks-profiles-plan-review.md`. |
 | alignment-check | yes | `docs/plans/2026-07-02-ratchet-cli-extension-hooks-profiles-alignment.md`. |
 | scope-lock | yes | Scope lock was present during execution and completed after `v0.24.0`. |
+| subagent-driven-development | no | Implementation ran inline against the locked manifest. |
 | pr-monitoring | yes | PRs #63, #64, and #65 were monitored to green and merged. |
+| post-merge-retrospective | yes | This retro. |
 | finishing Step 1e | unverified | Docs changed in PR1 and PR3; PR bodies had verification evidence but no dedicated `Doc-reconciliation:` marker. |
 
 ## What worked
