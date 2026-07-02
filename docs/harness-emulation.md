@@ -14,7 +14,7 @@ possible.
 | daemon | `ratchet daemon status` | pid/socket state under `~/.ratchet` | Supported | `TestHarnessSmokeVersionHelpAndDaemonStatus`. |
 | session lineage | `ratchet sessions history`, `ratchet sessions clone`, `ratchet sessions fork`, `ratchet sessions tree`, `ratchet sessions browse`, `ratchet sessions summary`, `ratchet sessions compactions` | daemon gRPC session history/clone/fork/tree/summary/compaction APIs plus Bubble Tea session tree browser | Supported for separate fork/clone sessions, branch summaries, persisted compaction records, archive session links, and Pi-style in-place branch navigation through `ctrl+b`, `/tree`, and `sessions browse` | `TestSessionLineageHistoryCloneForkTreeRPC`; `TestCompactionRecordRPC`; `TestHandleSessionsHistoryCloneForkTree`; `TestAppCtrlBOpensSessionTreeBrowser`; `TestParseTreeRequestsSessionTreeNavigation`; `TestHandleSessionsBrowseRunsInjectedBrowser`. |
 | ACP | `ratchet acp` | ACP stdio JSON-RPC agent wrapping daemon service | Supported for initialize/new/load/prompt/cancel/model/mode | `TestACPStdioPromptSmoke`; `TestHarnessSmokeInitializeNewAndLoadSession`; `TestParityNewSessionIDCanBeLoaded`. |
-| ACP client | `ratchet acp client exec --command <agent> "prompt"` | typed `acp-go-sdk` client over child-process stdio plus local JSON state under XDG state | Supported for one-shot exec, persisted session metadata, sessions list/show/status, one pending `--no-wait` prompt, and cooperative cancel requests | `TestACPClientExecBinarySmoke`; `TestClientRunPromptAgainstFixtureProcess`; `TestSessionStoreLoadsMissingFileAndPersistsRecords`. |
+| ACP client | `ratchet acp client exec --command <agent> "prompt"` | typed `acp-go-sdk` client over child-process stdio plus local JSON state under XDG state | Supported for one-shot exec, persisted session metadata, sessions list/show/status, multi-prompt FIFO `--no-wait` queue, explicit queue inspection/drain, and cooperative cancel requests | `TestACPClientExecBinarySmoke`; `TestDrainQueueAgainstFixtureProcessReusesSession`; `TestClientRunPromptAgainstFixtureProcess`; `TestSessionStoreLoadsMissingFileAndPersistsRecords`. |
 | MCP | `ratchet mcp blackboard` / `ratchet mcp daemon` | stdio JSON-RPC blackboard or daemon server | Supported for standalone blackboard plus daemon session/project/blackboard/team status tools | `TestHarnessSmokeJSONRPCInitializeToolsListAndCall`; `TestDaemonMCPToolCallsUseDaemonClient`. |
 | team | `ratchet team start "task"` | daemon team manager / mesh executor | Supported when provider configured | Existing team and mesh tests cover service behavior. |
 
@@ -56,13 +56,15 @@ The dated source-backed matrix lives in
 [competitor-parity.md](competitor-parity.md). The snapshot was refreshed on
 2026-07-01 from current Zed, ACP, Pi, Codex, Claude Code, Hermes, OpenClaw, and ACPX
 sources. ratchet-cli now supports Windows release artifacts, ACP prompt stdio
-smoke, headless ACP client exec/session/status/cancel primitives,
+smoke, headless ACP client exec/session/status/cancel primitives with
+multi-prompt FIFO queue/drain,
 daemon-backed MCP blackboard/session/project/team status tools, session lineage
 history/clone/fork/tree commands, branch summaries, compaction records with
 archive session links, Pi-style in-place branch navigation, and opt-in redacted
-retro evidence. The v0.18.0 release keeps Windows amd64/arm64 zip artifacts in
-the GoReleaser output. Deferred rows remain broader policy layering, extension
-hooks, full daemon direct team messaging, ACPX import/export and compare/flow
+retro evidence. The v0.19.0 release keeps Windows amd64/arm64 zip artifacts in
+the GoReleaser output while adding ACP client FIFO queue/drain. Deferred rows
+remain broader policy layering, extension hooks, full daemon direct team
+messaging, ACPX import/export and compare/flow
 features, and local-first channel gateways.
 
 ## ACP Matrix
@@ -82,14 +84,19 @@ features, and local-first channel gateways.
 
 ## ACP Client Matrix
 
+ACP client `--no-wait` queues persist prompt text under the user's XDG state
+directory. Use direct `exec` instead when prompts should not be written to local
+disk.
+
 | ACP client capability | Status | Evidence |
 |---|---|---|
 | external process stdio | Supported | `TestClientRunPromptAgainstFixtureProcess`; `TestACPClientExecBinarySmoke`. |
 | one-shot prompt | Supported | `ratchet acp client exec`; human and JSON output tests. |
 | session metadata | Supported | XDG state JSON store; `TestSessionStoreLoadsMissingFileAndPersistsRecords`. |
 | sessions list/show/status | Supported | `ratchet acp client sessions list`, `ratchet acp client sessions show <id>`, and `ratchet acp client status <id>`; command tests cover empty, one-session, and invalid-id cases. |
-| no-wait queue primitive | Supported for one pending prompt | `ratchet acp client exec --no-wait --session <id>` stores one pending prompt locally; multi-prompt FIFO is deferred. |
-| cancel | Supported as cooperative request | `ratchet acp client cancel <id>` marks pending prompts canceled or writes a cancel-request file for active owners; active clients poll and send ACP cancel. |
+| no-wait FIFO queue | Supported | `ratchet acp client exec --no-wait --session <id>` appends prompt text to a local FIFO queue under XDG state; use `ratchet acp client queue <id>` to inspect it. |
+| drain FIFO queue | Supported | `ratchet acp client drain <id> --command <agent> --max <n>` drains pending prompts through one ACP session; binary smoke verifies two queued prompts complete on the same fixture session. |
+| cancel | Supported as cooperative request | `ratchet acp client cancel <id>` marks pending queued prompts canceled or writes a cancel-request file for active owners; active clients poll and send ACP cancel. |
 | import/export archives | Deferred | ACPX-compatible portable session archives remain out of scope. |
 | compare/flow commands | Deferred | ACPX flow language remains out of scope. |
 
