@@ -153,6 +153,6 @@ ratchet acp client flow run flow.json \
 | `/trust revoke "pattern" [--scope scope]` | Supported | Revokes a durable grant. Missing grants are treated as already revoked. |
 | `/trust reset` | Supported | Clears runtime slash-command rules and rebuilds from config defaults. It does not edit config files or delete persisted permission grants. |
 
-Scriptable equivalents are available through `ratchet trust list`, `ratchet
-trust grants`, `ratchet trust allow|deny`, `ratchet trust persist`, `ratchet
-trust revoke`, and `ratchet trust reset`.
+Scriptable equivalents are available through `ratchet trust list`,
+`ratchet trust grants`, `ratchet trust allow|deny`,
+`ratchet trust persist`, `ratchet trust revoke`, and `ratchet trust reset`.

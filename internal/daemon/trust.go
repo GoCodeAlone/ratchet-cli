@@ -14,7 +14,7 @@ import (
 func (s *Service) GetTrustState(context.Context, *pb.Empty) (*pb.TrustState, error) {
 	s.trustMu.Lock()
 	defer s.trustMu.Unlock()
-	return s.trustStateLocked(), nil
+	return s.trustStateLocked()
 }
 
 func (s *Service) SetTrustMode(_ context.Context, req *pb.SetTrustModeReq) (*pb.TrustState, error) {
@@ -26,7 +26,7 @@ func (s *Service) SetTrustMode(_ context.Context, req *pb.SetTrustModeReq) (*pb.
 	s.trustMu.Lock()
 	defer s.trustMu.Unlock()
 	s.rebuildTrustEngineLocked(mode)
-	return s.trustStateLocked(), nil
+	return s.trustStateLocked()
 }
 
 func (s *Service) AddTrustRule(_ context.Context, req *pb.AddTrustRuleReq) (*pb.TrustState, error) {
@@ -56,7 +56,7 @@ func (s *Service) AddTrustRule(_ context.Context, req *pb.AddTrustRuleReq) (*pb.
 	} else {
 		s.trustEngine.AddRule(rule)
 	}
-	return s.trustStateLocked(), nil
+	return s.trustStateLocked()
 }
 
 func (s *Service) ResetTrust(context.Context, *pb.Empty) (*pb.TrustState, error) {
@@ -68,7 +68,7 @@ func (s *Service) ResetTrust(context.Context, *pb.Empty) (*pb.TrustState, error)
 		mode = "conservative"
 	}
 	s.rebuildTrustEngineLocked(mode)
-	return s.trustStateLocked(), nil
+	return s.trustStateLocked()
 }
 
 func (s *Service) AddTrustGrant(_ context.Context, req *pb.AddTrustRuleReq) (*pb.TrustState, error) {
@@ -85,7 +85,7 @@ func (s *Service) AddTrustGrant(_ context.Context, req *pb.AddTrustRuleReq) (*pb
 	if err := s.trustStore.Grant(pattern, action, scope, "operator"); err != nil {
 		return nil, status.Errorf(codes.Internal, "persist trust grant: %v", err)
 	}
-	return s.trustStateLocked(), nil
+	return s.trustStateLocked()
 }
 
 func (s *Service) RevokeTrustGrant(_ context.Context, req *pb.RevokeTrustGrantReq) (*pb.TrustState, error) {
@@ -103,7 +103,7 @@ func (s *Service) RevokeTrustGrant(_ context.Context, req *pb.RevokeTrustGrantRe
 	if err := s.trustStore.Revoke(pattern, scope); err != nil {
 		return nil, status.Errorf(codes.Internal, "revoke trust grant: %v", err)
 	}
-	return s.trustStateLocked(), nil
+	return s.trustStateLocked()
 }
 
 func (s *Service) rebuildTrustEngineLocked(mode string) {
@@ -115,7 +115,7 @@ func (s *Service) rebuildTrustEngineLocked(mode string) {
 	}
 }
 
-func (s *Service) trustStateLocked() *pb.TrustState {
+func (s *Service) trustStateLocked() (*pb.TrustState, error) {
 	if s.trustEngine == nil {
 		s.rebuildTrustEngineLocked(s.currentTrustModeLocked())
 	}
@@ -127,10 +127,14 @@ func (s *Service) trustStateLocked() *pb.TrustState {
 	for _, rule := range s.trustEngine.Rules() {
 		state.Rules = append(state.Rules, trustRuleToProto(rule))
 	}
-	for _, grant := range s.trustGrantsLocked() {
+	grants, err := s.trustGrantsLocked()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "list persistent trust grants: %v", err)
+	}
+	for _, grant := range grants {
 		state.Grants = append(state.Grants, trustGrantToProto(grant))
 	}
-	return state
+	return state, nil
 }
 
 func (s *Service) currentTrustModeLocked() string {
@@ -192,15 +196,15 @@ func trustRuleToProto(rule policy.TrustRule) *pb.TrustRule {
 	}
 }
 
-func (s *Service) trustGrantsLocked() []policy.PermissionGrant {
+func (s *Service) trustGrantsLocked() ([]policy.PermissionGrant, error) {
 	if s.trustStore == nil {
-		return nil
+		return nil, nil
 	}
 	grants, err := s.trustStore.List()
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return grants
+	return grants, nil
 }
 
 func trustGrantToProto(grant policy.PermissionGrant) *pb.TrustGrant {

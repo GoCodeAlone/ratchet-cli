@@ -226,6 +226,18 @@ func TestServicePersistentTrustGrantStoreRequired(t *testing.T) {
 	}
 }
 
+func TestServiceTrustStateReportsGrantListErrors(t *testing.T) {
+	svc := newTrustTestService(t, "")
+	if err := svc.engine.DB.Close(); err != nil {
+		t.Fatalf("close DB: %v", err)
+	}
+
+	_, err := svc.GetTrustState(context.Background(), &pb.Empty{})
+	if status.Code(err) != codes.Internal {
+		t.Fatalf("GetTrustState with closed DB code = %v, want Internal (err=%v)", status.Code(err), err)
+	}
+}
+
 func newTrustTestService(t *testing.T, configYAML string) *Service {
 	t.Helper()
 	home := t.TempDir()

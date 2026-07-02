@@ -31,7 +31,7 @@ Source: workspace guidance, `README.md`, `docs/harness-emulation.md`, and prior 
 
 Add a first-class persistent-grant surface to the existing trust RPC group:
 
-- Extend proto with `TrustGrant`, `TrustGrantList`, `AddTrustGrant`, `RevokeTrustGrant`, and include grants in `TrustState`.
+- Extend proto with `TrustGrant`, `AddTrustGrant`, `RevokeTrustGrant`, and include grants in `TrustState`.
 - Add client wrappers and daemon handlers that validate action, pattern, and scope, then call `PermissionStore`.
 - Add `ratchet trust grants|persist|revoke` CLI commands for scriptable policy editing.
 - Extend TUI slash commands with `/trust grants`, `/trust persist allow|deny "pattern" [--scope scope]`, and `/trust revoke "pattern" [--scope scope]`.
