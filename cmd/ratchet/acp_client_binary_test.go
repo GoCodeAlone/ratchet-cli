@@ -287,4 +287,50 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 			t.Fatalf("compare row %d = %#v", i, row)
 		}
 	}
+
+	flowPath := filepath.Join(t.TempDir(), "flow.json")
+	if err := os.WriteFile(flowPath, []byte(`{
+		"format_version": 1,
+		"start_at": "first",
+		"nodes": [
+			{"id": "first", "type": "acp", "session": "main", "prompt": "first {{.Input.task}}"},
+			{"id": "second", "type": "acp", "session": "main", "prompt": "second {{.Outputs.first.text}}"}
+		],
+		"edges": [{"from": "first", "to": "second"}]
+	}`), 0o600); err != nil {
+		t.Fatalf("write flow: %v", err)
+	}
+	flow := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "flow", "run", flowPath,
+		"--input-json", `{"task":"binary flow"}`,
+		"--command", fixtureBin,
+		"--arg", "--echo-session",
+		"--cwd", cwd,
+		"--json")
+	flow.Dir = repoRoot
+	flow.Env = env
+	flowOut, err := flow.Output()
+	if err != nil {
+		t.Fatalf("flow run: %v\n%s", err, flowOut)
+	}
+	var flowResult acpclient.FlowRunResult
+	if err := json.Unmarshal(flowOut, &flowResult); err != nil {
+		t.Fatalf("flow json output: %v\n%s", err, flowOut)
+	}
+	if flowResult.Status != acpclient.FlowRunStatusCompleted || flowResult.RunID == "" || flowResult.RunDir == "" {
+		t.Fatalf("flow result = %#v", flowResult)
+	}
+	var secondOutput struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(flowResult.Outputs["second"], &secondOutput); err != nil {
+		t.Fatalf("second output json: %v\n%s", err, flowResult.Outputs["second"])
+	}
+	if !strings.Contains(secondOutput.Text, "fixture-session: second fixture: fixture-session: first binary flow") {
+		t.Fatalf("second output = %#v", secondOutput)
+	}
+	for _, rel := range []string{"flow.json", "input.json", "state.json", filepath.Join("steps", "second.json")} {
+		if _, err := os.Stat(filepath.Join(flowResult.RunDir, rel)); err != nil {
+			t.Fatalf("flow bundle missing %s: %v", rel, err)
+		}
+	}
 }
