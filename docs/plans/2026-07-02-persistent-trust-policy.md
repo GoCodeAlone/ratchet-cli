@@ -30,7 +30,7 @@
 |------|-------|-------|--------|
 | 1 | Add persistent trust policy controls | Task 1, Task 2, Task 3, Task 4, Task 5 | feat/ratchet-cli-persistent-trust-policy |
 
-**Status:** Locked 2026-07-02T12:47:18Z
+**Status:** Complete 2026-07-02T13:47:45Z
 
 ## Integration Matrix
 
