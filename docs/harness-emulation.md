@@ -147,4 +147,12 @@ ratchet acp client flow run flow.json \
 | `/trust list` | Supported | Shows daemon trust mode and effective rules from `workflow-plugin-agent/policy.TrustEngine`. |
 | `/trust allow "pattern" [--scope scope]` | Supported | Adds a runtime allow rule. Scope defaults to `global`. |
 | `/trust deny "pattern" [--scope scope]` | Supported | Adds a runtime deny rule. Scope defaults to `global`. |
+| `/trust grants` | Supported | Shows persistent grants stored by `workflow-plugin-agent/policy.PermissionStore`. Treat output as sensitive local policy metadata. |
+| `/trust persist allow "pattern" [--scope scope]` | Supported | Adds a durable allow grant. Scope defaults to `global`. |
+| `/trust persist deny "pattern" [--scope scope]` | Supported | Adds a durable deny grant. Scope defaults to `global`; deny grants preserve deny-wins semantics. |
+| `/trust revoke "pattern" [--scope scope]` | Supported | Revokes a durable grant. Missing grants are treated as already revoked. |
 | `/trust reset` | Supported | Clears runtime slash-command rules and rebuilds from config defaults. It does not edit config files or delete persisted permission grants. |
+
+Scriptable equivalents are available through `ratchet trust list`,
+`ratchet trust grants`, `ratchet trust allow|deny`,
+`ratchet trust persist`, `ratchet trust revoke`, and `ratchet trust reset`.

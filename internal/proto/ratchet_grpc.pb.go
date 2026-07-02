@@ -36,6 +36,8 @@ const (
 	RatchetDaemon_SetTrustMode_FullMethodName           = "/ratchet.RatchetDaemon/SetTrustMode"
 	RatchetDaemon_AddTrustRule_FullMethodName           = "/ratchet.RatchetDaemon/AddTrustRule"
 	RatchetDaemon_ResetTrust_FullMethodName             = "/ratchet.RatchetDaemon/ResetTrust"
+	RatchetDaemon_AddTrustGrant_FullMethodName          = "/ratchet.RatchetDaemon/AddTrustGrant"
+	RatchetDaemon_RevokeTrustGrant_FullMethodName       = "/ratchet.RatchetDaemon/RevokeTrustGrant"
 	RatchetDaemon_AddProvider_FullMethodName            = "/ratchet.RatchetDaemon/AddProvider"
 	RatchetDaemon_ListProviders_FullMethodName          = "/ratchet.RatchetDaemon/ListProviders"
 	RatchetDaemon_TestProvider_FullMethodName           = "/ratchet.RatchetDaemon/TestProvider"
@@ -117,6 +119,8 @@ type RatchetDaemonClient interface {
 	SetTrustMode(ctx context.Context, in *SetTrustModeReq, opts ...grpc.CallOption) (*TrustState, error)
 	AddTrustRule(ctx context.Context, in *AddTrustRuleReq, opts ...grpc.CallOption) (*TrustState, error)
 	ResetTrust(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*TrustState, error)
+	AddTrustGrant(ctx context.Context, in *AddTrustRuleReq, opts ...grpc.CallOption) (*TrustState, error)
+	RevokeTrustGrant(ctx context.Context, in *RevokeTrustGrantReq, opts ...grpc.CallOption) (*TrustState, error)
 	// Providers
 	AddProvider(ctx context.Context, in *AddProviderReq, opts ...grpc.CallOption) (*Provider, error)
 	ListProviders(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ProviderList, error)
@@ -378,6 +382,26 @@ func (c *ratchetDaemonClient) ResetTrust(ctx context.Context, in *Empty, opts ..
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(TrustState)
 	err := c.cc.Invoke(ctx, RatchetDaemon_ResetTrust_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ratchetDaemonClient) AddTrustGrant(ctx context.Context, in *AddTrustRuleReq, opts ...grpc.CallOption) (*TrustState, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TrustState)
+	err := c.cc.Invoke(ctx, RatchetDaemon_AddTrustGrant_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ratchetDaemonClient) RevokeTrustGrant(ctx context.Context, in *RevokeTrustGrantReq, opts ...grpc.CallOption) (*TrustState, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TrustState)
+	err := c.cc.Invoke(ctx, RatchetDaemon_RevokeTrustGrant_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -997,6 +1021,8 @@ type RatchetDaemonServer interface {
 	SetTrustMode(context.Context, *SetTrustModeReq) (*TrustState, error)
 	AddTrustRule(context.Context, *AddTrustRuleReq) (*TrustState, error)
 	ResetTrust(context.Context, *Empty) (*TrustState, error)
+	AddTrustGrant(context.Context, *AddTrustRuleReq) (*TrustState, error)
+	RevokeTrustGrant(context.Context, *RevokeTrustGrantReq) (*TrustState, error)
 	// Providers
 	AddProvider(context.Context, *AddProviderReq) (*Provider, error)
 	ListProviders(context.Context, *Empty) (*ProviderList, error)
@@ -1126,6 +1152,12 @@ func (UnimplementedRatchetDaemonServer) AddTrustRule(context.Context, *AddTrustR
 }
 func (UnimplementedRatchetDaemonServer) ResetTrust(context.Context, *Empty) (*TrustState, error) {
 	return nil, status.Error(codes.Unimplemented, "method ResetTrust not implemented")
+}
+func (UnimplementedRatchetDaemonServer) AddTrustGrant(context.Context, *AddTrustRuleReq) (*TrustState, error) {
+	return nil, status.Error(codes.Unimplemented, "method AddTrustGrant not implemented")
+}
+func (UnimplementedRatchetDaemonServer) RevokeTrustGrant(context.Context, *RevokeTrustGrantReq) (*TrustState, error) {
+	return nil, status.Error(codes.Unimplemented, "method RevokeTrustGrant not implemented")
 }
 func (UnimplementedRatchetDaemonServer) AddProvider(context.Context, *AddProviderReq) (*Provider, error) {
 	return nil, status.Error(codes.Unimplemented, "method AddProvider not implemented")
@@ -1598,6 +1630,42 @@ func _RatchetDaemon_ResetTrust_Handler(srv interface{}, ctx context.Context, dec
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RatchetDaemonServer).ResetTrust(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RatchetDaemon_AddTrustGrant_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AddTrustRuleReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RatchetDaemonServer).AddTrustGrant(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RatchetDaemon_AddTrustGrant_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RatchetDaemonServer).AddTrustGrant(ctx, req.(*AddTrustRuleReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RatchetDaemon_RevokeTrustGrant_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RevokeTrustGrantReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RatchetDaemonServer).RevokeTrustGrant(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RatchetDaemon_RevokeTrustGrant_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RatchetDaemonServer).RevokeTrustGrant(ctx, req.(*RevokeTrustGrantReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2594,6 +2662,14 @@ var RatchetDaemon_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ResetTrust",
 			Handler:    _RatchetDaemon_ResetTrust_Handler,
+		},
+		{
+			MethodName: "AddTrustGrant",
+			Handler:    _RatchetDaemon_AddTrustGrant_Handler,
+		},
+		{
+			MethodName: "RevokeTrustGrant",
+			Handler:    _RatchetDaemon_RevokeTrustGrant_Handler,
 		},
 		{
 			MethodName: "AddProvider",

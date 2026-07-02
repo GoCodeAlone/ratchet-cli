@@ -174,6 +174,16 @@ message TrustRule {
 message TrustState {
   string mode = 1;
   repeated TrustRule rules = 2;
+  repeated TrustGrant grants = 3;
+}
+
+message TrustGrant {
+  int64 id = 1;
+  string pattern = 2;
+  string action = 3;
+  string scope = 4;
+  string granted_by = 5;
+  google.protobuf.Timestamp created_at = 6;
 }
 
 message SetTrustModeReq {
@@ -184,6 +194,11 @@ message AddTrustRuleReq {
   string pattern = 1;
   string action = 2;
   string scope = 3;
+}
+
+message RevokeTrustGrantReq {
+  string pattern = 1;
+  string scope = 2;
 }
 
 message AgentSpawned {
@@ -693,6 +708,8 @@ service RatchetDaemon {
   rpc SetTrustMode(SetTrustModeReq) returns (TrustState);
   rpc AddTrustRule(AddTrustRuleReq) returns (TrustState);
   rpc ResetTrust(Empty) returns (TrustState);
+  rpc AddTrustGrant(AddTrustRuleReq) returns (TrustState);
+  rpc RevokeTrustGrant(RevokeTrustGrantReq) returns (TrustState);
 
   // Providers
   rpc AddProvider(AddProviderReq) returns (Provider);

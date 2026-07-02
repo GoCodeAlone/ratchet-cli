@@ -63,6 +63,22 @@ func TestTrustCommandsAgainstDaemon(t *testing.T) {
 		t.Fatalf("/trust list result = %v", result.Lines)
 	}
 
+	result = Parse(`/trust persist allow "bash:go vet *" --scope repo`, c)
+	if !resultContains(result, "Persisted allow grant: bash:go vet *") {
+		t.Fatalf("/trust persist result = %v", result.Lines)
+	}
+
+	result = Parse("/trust grants", c)
+	joined = strings.Join(result.Lines, "\n")
+	if !strings.Contains(joined, "Persistent grants:") || !strings.Contains(joined, "bash:go vet *") || !strings.Contains(joined, "repo") {
+		t.Fatalf("/trust grants result = %v", result.Lines)
+	}
+
+	result = Parse(`/trust revoke "bash:go vet *" --scope repo`, c)
+	if !resultContains(result, "Revoked persistent trust grant: bash:go vet *") {
+		t.Fatalf("/trust revoke result = %v", result.Lines)
+	}
+
 	result = Parse("/trust reset", c)
 	if !resultContains(result, "Trust rules reset to config defaults") || !resultContains(result, "conservative") {
 		t.Fatalf("/trust reset result = %v", result.Lines)
