@@ -59,8 +59,12 @@ func TestHandleTrustRuntimeAndPersistentMutations(t *testing.T) {
 }
 
 func TestHandleTrustUsageValidation(t *testing.T) {
-	fake := &fakeTrustCLIClient{state: trustCLIState()}
-	withFakeTrustCLIClient(t, fake)
+	old := ensureTrustClient
+	ensureTrustClient = func() (trustCLIClient, error) {
+		t.Fatal("ensureTrustClient should not run for invalid trust usage")
+		return nil, nil
+	}
+	t.Cleanup(func() { ensureTrustClient = old })
 
 	cases := [][]string{
 		{},

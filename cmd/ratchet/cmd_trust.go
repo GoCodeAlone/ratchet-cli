@@ -60,6 +60,23 @@ func handleRuntimeTrustRule(args []string) {
 }
 
 func handlePersistentTrustCommand(args []string) {
+	switch args[0] {
+	case "persist":
+		if len(args) < 3 || (args[1] != "allow" && args[1] != "deny") {
+			fmt.Println("Usage: ratchet trust persist <allow|deny> \"pattern\" [--scope scope]")
+			return
+		}
+		if pattern, _, ok := parseTrustPatternScope(args[2:]); !ok || pattern == "" {
+			fmt.Println("Usage: ratchet trust persist <allow|deny> \"pattern\" [--scope scope]")
+			return
+		}
+	case "revoke":
+		if pattern, _, ok := parseTrustPatternScope(args[1:]); !ok || pattern == "" {
+			fmt.Println("Usage: ratchet trust revoke \"pattern\" [--scope scope]")
+			return
+		}
+	}
+
 	c, err := ensureTrustClient()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -90,26 +107,14 @@ func handlePersistentTrustCommand(args []string) {
 		}
 		fmt.Printf("Trust rules reset to config defaults. Mode: %s\n", state.GetMode())
 	case "persist":
-		if len(args) < 3 || (args[1] != "allow" && args[1] != "deny") {
-			fmt.Println("Usage: ratchet trust persist <allow|deny> \"pattern\" [--scope scope]")
-			return
-		}
-		pattern, scope, ok := parseTrustPatternScope(args[2:])
-		if !ok || pattern == "" {
-			fmt.Println("Usage: ratchet trust persist <allow|deny> \"pattern\" [--scope scope]")
-			return
-		}
+		pattern, scope, _ := parseTrustPatternScope(args[2:])
 		if _, err := c.AddTrustGrant(context.Background(), pattern, args[1], scope); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
 		fmt.Printf("Persisted %s grant: %s (scope: %s)\n", args[1], pattern, scope)
 	case "revoke":
-		pattern, scope, ok := parseTrustPatternScope(args[1:])
-		if !ok || pattern == "" {
-			fmt.Println("Usage: ratchet trust revoke \"pattern\" [--scope scope]")
-			return
-		}
+		pattern, scope, _ := parseTrustPatternScope(args[1:])
 		if _, err := c.RevokeTrustGrant(context.Background(), pattern, scope); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
