@@ -159,9 +159,7 @@ func (s *Store) AppendEventLog(id string, events []EventLogLine) error {
 		if err := ValidateJSONRPCMessage(event.Message); err != nil {
 			return err
 		}
-		if event.Seq == 0 {
-			event.Seq = nextSeq
-		}
+		event.Seq = nextSeq
 		nextSeq = event.Seq + 1
 		if event.At.IsZero() {
 			event.At = time.Now().UTC()

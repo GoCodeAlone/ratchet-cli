@@ -1236,7 +1236,7 @@ func TestExecuteACPClientExecPersistsResultEvents(t *testing.T) {
 		Prompt:  "secret prompt",
 		Timeout: time.Second,
 	}, runner, store, &out); err != nil {
-		t.Fatalf("executeACPClientExecWithStore: %v")
+		t.Fatalf("executeACPClientExecWithStore: %v", err)
 	}
 	events, err := store.ReadEventLog("exec-session")
 	if err != nil {

@@ -2,6 +2,7 @@ package acpclient
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -108,6 +109,51 @@ func TestDrainQueueReusesPersistedSessionAndHonorsMax(t *testing.T) {
 	}
 	if got.PromptQueue[0].Status != QueuePromptStatusCompleted || got.PromptQueue[1].Status != QueuePromptStatusPending {
 		t.Fatalf("queue statuses = %#v", got.PromptQueue)
+	}
+}
+
+func TestDrainQueuePersistsPromptEvents(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 1, 22, 7, 0, 0, time.UTC)
+	if err := store.Upsert(SessionRecord{
+		ID:        "drain-events",
+		Status:    SessionStatusQueued,
+		CreatedAt: now,
+		UpdatedAt: now,
+		PromptQueue: []QueuedPrompt{
+			{ID: "q-1", Prompt: "first", Status: QueuePromptStatusPending, CreatedAt: now},
+		},
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	runner := &fakeDrainRunner{
+		sessionID: "acp-events",
+		events: []EventLogLine{{
+			Seq:       1,
+			At:        now,
+			Direction: EventDirectionOutbound,
+			Message:   json.RawMessage(`{"jsonrpc":"2.0","id":"prompt-1","method":"session/prompt","params":{"sessionId":"acp-events"}}`),
+		}},
+	}
+
+	result, err := DrainQueue(t.Context(), store, AgentSpec{Name: "fixture", Command: "fixture"}, RunOptions{}, "drain-events", DrainOptions{
+		Now: fixedClock(now.Add(time.Minute)),
+		StartRunner: func(context.Context, AgentSpec, RunOptions, string) (DrainPromptRunner, func() error, error) {
+			return runner, func() error { return nil }, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("DrainQueue: %v", err)
+	}
+	if result.Completed != 1 {
+		t.Fatalf("result = %#v, want one completed prompt", result)
+	}
+	events, err := store.ReadEventLog("drain-events")
+	if err != nil {
+		t.Fatalf("ReadEventLog: %v", err)
+	}
+	if len(events) != 1 || events[0].Direction != EventDirectionOutbound {
+		t.Fatalf("events = %#v, want one outbound event", events)
 	}
 }
 
@@ -272,6 +318,7 @@ type fakeDrainRunner struct {
 	sessionID  acpsdk.SessionId
 	failPrompt string
 	prompts    []string
+	events     []EventLogLine
 	closed     bool
 }
 
@@ -288,6 +335,7 @@ func (r *fakeDrainRunner) Prompt(_ context.Context, prompt string) (Result, erro
 		SessionID:  r.sessionID,
 		StopReason: acpsdk.StopReasonEndTurn,
 		Text:       "response: " + prompt,
+		Events:     cloneEvents(r.events),
 	}, nil
 }
 

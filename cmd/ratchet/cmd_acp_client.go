@@ -30,6 +30,7 @@ const (
 	acpClientCommandSessionsShow   acpClientCommandKind = "sessions-show"
 	acpClientCommandSessionsExport acpClientCommandKind = "sessions-export"
 	acpClientCommandSessionsImport acpClientCommandKind = "sessions-import"
+	acpClientCommandSessionsEvents acpClientCommandKind = "sessions-events"
 	acpClientCommandStatus         acpClientCommandKind = "status"
 	acpClientCommandCancel         acpClientCommandKind = "cancel"
 	acpClientCommandQueue          acpClientCommandKind = "queue"
@@ -112,13 +113,14 @@ type acpClientFlowOptions struct {
 }
 
 type acpClientArchiveOptions struct {
-	Path      string
-	Output    string
-	SessionID string
-	Cwd       string
-	Agent     string
-	Command   string
-	Args      []string
+	Path        string
+	Output      string
+	HistoryMode string
+	SessionID   string
+	Cwd         string
+	Agent       string
+	Command     string
+	Args        []string
 }
 
 type acpClientProfilesKind string
@@ -185,6 +187,8 @@ func handleACPClient(args []string) error {
 		return executeACPClientSessionExport(store, cmd.sessionID, cmd.archive, cmd.json, os.Stdout)
 	case acpClientCommandSessionsImport:
 		return executeACPClientSessionImport(store, cmd.archive, cmd.json, os.Stdout)
+	case acpClientCommandSessionsEvents:
+		return executeACPClientSessionEvents(store, cmd.sessionID, cmd.archive, cmd.json, os.Stdout)
 	case acpClientCommandStatus:
 		return executeACPClientStatus(store, cmd.sessionID, cmd.json, os.Stdout)
 	case acpClientCommandCancel:
@@ -370,6 +374,11 @@ func executeACPClientExecWithStore(ctx context.Context, opts acpClientExecOption
 		}
 		if err := store.Upsert(rec); err != nil {
 			return err
+		}
+		if len(result.Events) > 0 {
+			if err := store.AppendEventLog(rec.ID, result.Events); err != nil {
+				return err
+			}
 		}
 	}
 	if opts.JSON {
@@ -840,6 +849,12 @@ func parseACPClientSessions(args []string) (acpClientCommand, error) {
 			return acpClientCommand{}, err
 		}
 		return acpClientCommand{kind: acpClientCommandSessionsImport, archive: archiveOpts, json: jsonOut}, nil
+	case "events":
+		id, archiveOpts, jsonOut, err := parseACPClientSessionsEvents(args[1:])
+		if err != nil {
+			return acpClientCommand{}, err
+		}
+		return acpClientCommand{kind: acpClientCommandSessionsEvents, sessionID: id, archive: archiveOpts, json: jsonOut}, nil
 	default:
 		return acpClientCommand{}, fmt.Errorf("unknown acp client sessions command: %s", args[0])
 	}
@@ -855,12 +870,36 @@ func parseACPClientSessionsExport(args []string) (string, acpClientArchiveOption
 	fs := flag.NewFlagSet("ratchet acp client sessions export", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.StringVar(&opts.Output, "output", "", "archive output path")
+	fs.StringVar(&opts.HistoryMode, "history", "summary", "history mode: summary, raw, or both")
 	fs.BoolVar(&jsonOut, "json", false, "emit JSON")
 	if err := fs.Parse(args[1:]); err != nil {
 		return "", acpClientArchiveOptions{}, false, err
 	}
 	if len(fs.Args()) > 0 || opts.Output == "" {
 		return "", acpClientArchiveOptions{}, false, errors.New("usage: ratchet acp client sessions export <session-id> --output <path> [--json]")
+	}
+	if _, err := parseArchiveHistoryMode(opts.HistoryMode); err != nil {
+		return "", acpClientArchiveOptions{}, false, err
+	}
+	return id, opts, jsonOut, nil
+}
+
+func parseACPClientSessionsEvents(args []string) (string, acpClientArchiveOptions, bool, error) {
+	if len(args) == 0 || strings.TrimSpace(args[0]) == "" {
+		return "", acpClientArchiveOptions{}, false, errors.New("usage: ratchet acp client sessions events <session-id> [--output <path>] [--json]")
+	}
+	id := args[0]
+	var opts acpClientArchiveOptions
+	var jsonOut bool
+	fs := flag.NewFlagSet("ratchet acp client sessions events", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.StringVar(&opts.Output, "output", "", "event log output path")
+	fs.BoolVar(&jsonOut, "json", false, "emit JSON")
+	if err := fs.Parse(args[1:]); err != nil {
+		return "", acpClientArchiveOptions{}, false, err
+	}
+	if len(fs.Args()) > 0 {
+		return "", acpClientArchiveOptions{}, false, errors.New("usage: ratchet acp client sessions events <session-id> [--output <path>] [--json]")
 	}
 	return id, opts, jsonOut, nil
 }
@@ -949,7 +988,7 @@ Commands:
   flow       Run JSON ACP client flows
   profiles   Manage local ACP launch profiles
   sessions   List or inspect ACP client sessions
-             Subcommands: list, show, history (alias for show), export, import
+             Subcommands: list, show, history (alias for show), export, import, events
   queue      List queued prompts for an ACP client session
   drain      Drain queued prompts through an external ACP agent
   watch      Explicitly watch and drain queued prompts through an external ACP agent
@@ -1159,18 +1198,69 @@ func executeACPClientSessionShow(store *acpclient.Store, id string, jsonOut bool
 }
 
 func executeACPClientSessionExport(store *acpclient.Store, id string, opts acpClientArchiveOptions, jsonOut bool, w io.Writer) error {
-	if err := acpclient.ExportSession(store, id, opts.Output, acpclient.ExportOptions{}); err != nil {
+	historyMode, err := parseArchiveHistoryMode(opts.HistoryMode)
+	if err != nil {
+		return err
+	}
+	if err := acpclient.ExportSession(store, id, opts.Output, acpclient.ExportOptions{HistoryMode: historyMode}); err != nil {
 		return err
 	}
 	if jsonOut {
 		return json.NewEncoder(w).Encode(struct {
-			SessionID string `json:"session_id"`
-			Path      string `json:"path"`
-			Status    string `json:"status"`
-		}{SessionID: id, Path: opts.Output, Status: "exported"})
+			SessionID   string `json:"session_id"`
+			Path        string `json:"path"`
+			Status      string `json:"status"`
+			HistoryMode string `json:"history_mode"`
+		}{SessionID: id, Path: opts.Output, Status: "exported", HistoryMode: string(historyMode)})
 	}
-	fmt.Fprintf(w, "exported %s to %s\n", id, opts.Output)
+	fmt.Fprintf(w, "exported %s to %s (%s history)\n", id, opts.Output, historyMode)
 	return nil
+}
+
+func executeACPClientSessionEvents(store *acpclient.Store, id string, opts acpClientArchiveOptions, jsonOut bool, w io.Writer) error {
+	events, err := store.ReadEventLog(id)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("%w: %s", acpclient.ErrRawHistoryUnavailable, id)
+		}
+		return err
+	}
+	meta, err := store.EventLogMetadata(id)
+	if err != nil {
+		return err
+	}
+	if opts.Output != "" {
+		if err := store.CopyEventLog(id, opts.Output); err != nil {
+			return err
+		}
+	}
+	if jsonOut {
+		return json.NewEncoder(w).Encode(struct {
+			SessionID string                   `json:"session_id"`
+			Path      string                   `json:"path"`
+			Output    string                   `json:"output,omitempty"`
+			Status    string                   `json:"status"`
+			Events    []acpclient.EventLogLine `json:"events"`
+		}{SessionID: id, Path: meta.Path, Output: opts.Output, Status: "ok", Events: events})
+	}
+	fmt.Fprintf(w, "events for %s: %d (%s)\n", id, len(events), meta.Path)
+	if opts.Output != "" {
+		fmt.Fprintf(w, "copied events to %s\n", opts.Output)
+	}
+	return nil
+}
+
+func parseArchiveHistoryMode(raw string) (acpclient.ArchiveHistoryMode, error) {
+	switch acpclient.ArchiveHistoryMode(strings.TrimSpace(raw)) {
+	case "", acpclient.ArchiveHistoryModeSummary:
+		return acpclient.ArchiveHistoryModeSummary, nil
+	case acpclient.ArchiveHistoryModeRaw:
+		return acpclient.ArchiveHistoryModeRaw, nil
+	case acpclient.ArchiveHistoryModeBoth:
+		return acpclient.ArchiveHistoryModeBoth, nil
+	default:
+		return "", fmt.Errorf("unsupported archive history mode %q; want summary, raw, or both", raw)
+	}
 }
 
 func executeACPClientSessionImport(store *acpclient.Store, opts acpClientArchiveOptions, jsonOut bool, w io.Writer) error {

@@ -142,6 +142,11 @@ func DrainQueue(ctx context.Context, store *Store, spec AgentSpec, opts RunOptio
 		if err := store.MarkQueueCompleted(sessionID, next.ID, promptResult.Text, string(promptResult.StopReason), drainOpts.now()); err != nil {
 			return result, err
 		}
+		if len(promptResult.Events) > 0 {
+			if err := store.AppendEventLog(sessionID, promptResult.Events); err != nil {
+				return result, err
+			}
+		}
 		result.Completed++
 	}
 	result.Remaining = countPendingQueue(store, sessionID)
