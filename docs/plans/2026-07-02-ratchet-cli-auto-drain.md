@@ -39,9 +39,9 @@
 
 | Integration | Classification | Proof |
 |---|---|---|
-| Existing ACP child-process client | runtime-integrated | Task 3 builds `ratchet` and the fixture ACP agent, queues prompts through the CLI, runs `ratchet acp client watch`, and verifies status through the built CLI. |
-| Local ACP client state store | runtime-integrated | Task 1 and Task 2 unit tests exercise `internal/acpclient.Store` with temp state files; Task 3 repeats through CLI commands. |
-| Policy/harness docs | config-only | Task 4 updates public docs and `cmd/ratchet/harness_docs_test.go` guards required text. |
+| Existing ACP child-process client | runtime-integrated | Task 3 adds the binary smoke expectation, and Task 4 makes it pass by building `ratchet` and the fixture ACP agent, queueing prompts through the CLI, running `ratchet acp client watch`, and verifying status through the built CLI. |
+| Local ACP client state store | runtime-integrated | Task 1 and Task 2 unit tests exercise `internal/acpclient.Store` with temp state files; Task 3 and Task 4 repeat through CLI commands. |
+| Policy/harness docs | config-only | Task 5 updates public docs and `cmd/ratchet/harness_docs_test.go` guards required text. |
 | Windows artifacts | config-only | Task 6 runs `GOOS=windows GOARCH=amd64 go build` and `GOOS=windows GOARCH=arm64 go build` to prove compile portability. |
 
 ### Task 1: Add Internal Watch Loop Tests
