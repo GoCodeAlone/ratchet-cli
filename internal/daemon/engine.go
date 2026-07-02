@@ -139,8 +139,9 @@ func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error
 		ec.Actors = actors
 	}
 
-	// Hooks config (non-fatal; hooks are optional)
-	ec.Hooks, _ = hooks.Load("")
+	// Hooks config (non-fatal; hooks are optional). Project hooks are loaded
+	// per event from the event/session working directory.
+	ec.Hooks, _ = hooks.LoadWithOptions(hooks.LoadOptions{SkipProject: true})
 	if ec.Hooks == nil {
 		ec.Hooks = &hooks.HookConfig{Hooks: make(map[hooks.Event][]hooks.Hook)}
 	}

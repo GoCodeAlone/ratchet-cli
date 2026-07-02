@@ -327,12 +327,11 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 		}
 	}
 	if s.tokens.ShouldCompress(sessionID, contextCfg.CompressionThreshold, modelLimit) {
-		if s.engine.Hooks != nil {
-			_ = s.engine.Hooks.Run(hooks.OnTokenLimit, map[string]string{
-				"tokens_used":  fmt.Sprintf("%d", s.tokens.Total(sessionID)),
-				"tokens_limit": fmt.Sprintf("%d", modelLimit),
-			})
-		}
+		runHooksAndLog(ctx, s.engine, hooks.OnTokenLimit, map[string]string{
+			"session_id":   sessionID,
+			"tokens_used":  fmt.Sprintf("%d", s.tokens.Total(sessionID)),
+			"tokens_limit": fmt.Sprintf("%d", modelLimit),
+		}, "token limit")
 		history, loadErr := s.loadHistory(ctx, sessionID)
 		if loadErr == nil && len(history) > contextCfg.PreserveMessages {
 			historyRecords, recordsErr := s.sessions.ListMessages(ctx, sessionID)

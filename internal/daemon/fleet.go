@@ -36,6 +36,9 @@ type FleetManager struct {
 
 // NewFleetManager returns an initialized FleetManager with optional model routing config.
 func NewFleetManager(routing config.ModelRouting, engine *EngineContext, hks *hooks.HookConfig) *FleetManager {
+	if engine != nil && engine.Hooks == nil && hks != nil {
+		engine.Hooks = hks
+	}
 	fm := &FleetManager{
 		fleets:  make(map[string]*fleetInstance),
 		routing: routing,
@@ -127,11 +130,15 @@ func (fm *FleetManager) StartFleet(ctx context.Context, req *pb.StartFleetReq, s
 				log.Printf("fleet %s: panic: %v", fleetID, r)
 			}
 		}()
-		if fm.hooks != nil {
+		if fm.engine != nil {
+			runHooksAndLog(ctx, fm.engine, hooks.PreFleet, map[string]string{"fleet_id": fleetID, "session_id": req.SessionId}, "fleet pre")
+		} else if fm.hooks != nil {
 			_ = fm.hooks.Run(hooks.PreFleet, map[string]string{"fleet_id": fleetID})
 		}
 		fm.runFleet(ctx, fi, maxWorkers, eventCh)
-		if fm.hooks != nil {
+		if fm.engine != nil {
+			runHooksAndLog(ctx, fm.engine, hooks.PostFleet, map[string]string{"fleet_id": fleetID, "session_id": req.SessionId}, "fleet post")
+		} else if fm.hooks != nil {
 			_ = fm.hooks.Run(hooks.PostFleet, map[string]string{"fleet_id": fleetID})
 		}
 	}()

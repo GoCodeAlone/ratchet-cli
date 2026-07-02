@@ -68,6 +68,7 @@ ratchet acp client cancel ID
 ratchet daemon status       # Check daemon
 ratchet provider list       # List providers
 ratchet team start "task"   # Start agent team
+ratchet hooks list --cwd .  # Review lifecycle hooks before trusting them
 ```
 
 In the TUI, press `ctrl+b` or submit `/tree` to open the in-place session
@@ -93,6 +94,15 @@ in the daemon's local state database through
 `/trust revoke "pattern" [--scope scope]` to remove one. Treat grant listings
 as sensitive local policy metadata because patterns can reveal local paths,
 commands, or workflow conventions.
+
+Lifecycle hooks are reviewable local command hooks. User hooks in
+`~/.ratchet/hooks.yaml` remain trusted by default for compatibility; project
+hooks in `.ratchet/hooks.yaml` and plugin-contributed hooks are listed but
+skipped until their descriptor hash is trusted. Use
+`ratchet hooks list --cwd .` to review event, source, status, hash, and a
+truncated command preview, then `ratchet hooks trust <hash>` to enable that
+exact descriptor. `ratchet hooks disable <hash>` overrides trust, and changed
+project or plugin hook commands produce a new hash that must be reviewed again.
 
 See [docs/policy-matrix.md](docs/policy-matrix.md) for the Policy Matrix
 covering static config trust rules, runtime trust rules, persistent trust
