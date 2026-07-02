@@ -49,16 +49,18 @@ or deferred rows below must not be treated as fully enforced runtime behavior.
 | ACP client queue/drain | `internal/acpclient` | Explicit watch/drain only | `--no-wait` writes prompt text to a local FIFO queue; only operator-started `ratchet acp client drain` and foreground `ratchet acp client watch` commands execute queued prompts. `watch` requires an explicit `--command` or `--agent` launch target for each run and stops when the foreground command exits. No daemon background drain is supported. | ACP client binary smoke covers queue inspection, explicit drain, and explicit foreground watch. |
 | Sandbox/path/network controls | Agent plugin trust logic, mesh path guard, and future sandbox work | Partial | Existing trust decisions and mesh path guard cover only their implemented surfaces. ratchet-cli does not claim Codex/Claude-style full sandbox, network, or per-tool escalation parity. | Existing tests for implemented guards; future sandbox work needs a separate design. |
 | Hooks/extensions | `internal/hooks`, plugin manifests, and future extension work | Partial / Deferred | Existing named hooks and plugin extensibility are supported. Broad mutation-capable extension hooks, lifecycle interception SDKs, and unreviewed local mutation are deferred. | Existing hook tests; future extension hooks need opt-in policy and redaction design. |
+| Flow action nodes | `internal/acpclient` | Supported with explicit grants | JSON v1 `action` nodes run runtime-owned local commands only after `ratchet acp client flow run` receives `--allow shell`. Node working directories outside the flow base require `--allow outside-cwd`. Action stdout/stderr persisted in run bundles is sensitive local command output. This is flow-local preflight, not a new trust engine or full sandbox. | ACP client flow tests and binary smoke cover action nodes, missing grants, cwd escapes, and persisted outputs. |
 | Retro/self-improvement | `internal/retro` and local project evidence routing | Partial | Retro evidence is opt-in. Automatic local mutation and upstream PR creation are disabled unless a future configurable policy enables them. | Retro tests and config checks. |
 | Per-agent/team scopes | Daemon team manager and mesh configs | Partial / Deferred | Team orchestration and MCP team messaging exist. Per-agent permission scopes, worktree isolation policy, and channel routing are future work. | Team and MCP tests for current behavior; future per-agent scopes need a separate design. |
 
 ## Sensitive Metadata
 
 Trust rules, grant patterns, queue contents, archive exports, retro evidence,
-and policy decisions are sensitive local policy metadata. They can reveal local
-paths, command names, provider usage, project conventions, prompts, responses,
-or operational habits. Do not expand logging, exports, or public docs with raw
-policy values unless a future design includes redaction and user consent.
+flow action output, and policy decisions are sensitive local policy metadata.
+They can reveal local paths, command names, provider usage, project conventions,
+prompts, responses, stdout/stderr, or operational habits. Do not expand logging,
+exports, or public docs with raw policy values unless a future design includes
+redaction and user consent.
 
 Grant listings and archive files should be handled like local credentials or
 conversation data:

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	acpsdk "github.com/coder/acp-go-sdk"
 )
@@ -231,6 +232,316 @@ func TestRunFlowPersistsFailedState(t *testing.T) {
 	}
 }
 
+func TestLoadFlowDefinitionAcceptsActionNodes(t *testing.T) {
+	path := writeFlowDefinitionFixture(t, `{
+		"format_version": 1,
+		"start_at": "prepare",
+		"nodes": [
+			{
+				"id": "prepare",
+				"type": "action",
+				"command": "ratchet",
+				"args": ["version"],
+				"cwd": "tools",
+				"env": {"RATCHET_FLOW_TEST": "1"},
+				"input": {"task": "inspect"}
+			}
+		]
+	}`)
+
+	def, err := LoadFlowDefinition(path)
+	if err != nil {
+		t.Fatalf("LoadFlowDefinition: %v", err)
+	}
+	node := def.Nodes[0]
+	var input map[string]string
+	if err := json.Unmarshal(node.Input, &input); err != nil {
+		t.Fatalf("node input json: %v", err)
+	}
+	if node.Type != FlowNodeTypeAction || node.Command != "ratchet" || node.Cwd != "tools" ||
+		node.Env["RATCHET_FLOW_TEST"] != "1" || input["task"] != "inspect" {
+		t.Fatalf("action node = %#v", node)
+	}
+}
+
+func TestLoadFlowDefinitionRejectsActionWithoutCommand(t *testing.T) {
+	_, err := LoadFlowDefinition(writeFlowDefinitionFixture(t, `{
+		"format_version": 1,
+		"start_at": "prepare",
+		"nodes": [{"id": "prepare", "type": "action"}]
+	}`))
+	if !errors.Is(err, ErrInvalidFlowDefinition) || !strings.Contains(err.Error(), "action node prepare command is required") {
+		t.Fatalf("LoadFlowDefinition error = %v, want action command validation", err)
+	}
+}
+
+func TestRunFlowActionRequiresShellPermissionBeforeAnyNodeRuns(t *testing.T) {
+	runner := &fakeActionRunner{}
+	starts := 0
+	def := FlowDefinition{
+		FormatVersion: 1,
+		StartAt:       "prepare",
+		Nodes: []FlowNode{
+			{ID: "prepare", Type: FlowNodeTypeAction, Command: "ratchet", Args: []string{"version"}},
+			{ID: "ask", Type: FlowNodeTypeACP, Prompt: "use {{.Outputs.prepare.stdout}}", Command: "fixture"},
+		},
+		Edges: []FlowEdge{{From: "prepare", To: "ask"}},
+	}
+
+	_, err := RunFlow(t.Context(), def, map[string]any{}, FlowRunOptions{
+		ActionRunner: runner,
+		StartRunner: func(context.Context, AgentSpec, RunOptions, string) (FlowPromptRunner, func() error, error) {
+			starts++
+			return &fakeFlowPromptRunner{}, nil, nil
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "flow requires permission shell") {
+		t.Fatalf("RunFlow error = %v, want missing shell permission", err)
+	}
+	if runner.calls != 0 || starts != 0 {
+		t.Fatalf("preflight ran nodes: action calls=%d acp starts=%d", runner.calls, starts)
+	}
+}
+
+func TestRunFlowOutsideCWDRequiresPermissionBeforeAnyNodeRuns(t *testing.T) {
+	runner := &fakeActionRunner{}
+	base := filepath.Join(t.TempDir(), "base")
+	if err := os.MkdirAll(base, 0o700); err != nil {
+		t.Fatalf("mkdir base: %v", err)
+	}
+	def := FlowDefinition{
+		FormatVersion: 1,
+		StartAt:       "escape",
+		Nodes: []FlowNode{{
+			ID:      "escape",
+			Type:    FlowNodeTypeAction,
+			Command: "ratchet",
+			Cwd:     "../outside",
+		}},
+	}
+
+	_, err := RunFlow(t.Context(), def, map[string]any{}, FlowRunOptions{
+		Cwd:                base,
+		AllowedPermissions: []string{"shell"},
+		ActionRunner:       runner,
+	})
+	if err == nil || !strings.Contains(err.Error(), "flow requires permission outside-cwd") {
+		t.Fatalf("RunFlow error = %v, want missing outside-cwd permission", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("preflight ran action %d times", runner.calls)
+	}
+}
+
+func TestRunFlowSymlinkedCWDOutsideBaseRequiresPermission(t *testing.T) {
+	runner := &fakeActionRunner{}
+	root := t.TempDir()
+	base := filepath.Join(root, "base")
+	outside := filepath.Join(root, "outside")
+	if err := os.MkdirAll(base, 0o700); err != nil {
+		t.Fatalf("mkdir base: %v", err)
+	}
+	if err := os.MkdirAll(outside, 0o700); err != nil {
+		t.Fatalf("mkdir outside: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(base, "tools")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	def := FlowDefinition{
+		FormatVersion: 1,
+		StartAt:       "escape",
+		Nodes: []FlowNode{{
+			ID:      "escape",
+			Type:    FlowNodeTypeAction,
+			Command: "ratchet",
+			Cwd:     "tools",
+		}},
+	}
+
+	_, err := RunFlow(t.Context(), def, map[string]any{}, FlowRunOptions{
+		Cwd:                base,
+		AllowedPermissions: []string{"shell"},
+		ActionRunner:       runner,
+	})
+	if err == nil || !strings.Contains(err.Error(), "flow requires permission outside-cwd") {
+		t.Fatalf("RunFlow error = %v, want missing outside-cwd permission", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("preflight ran action %d times", runner.calls)
+	}
+}
+
+func TestRunFlowActionNodeStoresOutput(t *testing.T) {
+	root := t.TempDir()
+	base := filepath.Join(root, "base")
+	if err := os.MkdirAll(filepath.Join(base, "tools"), 0o700); err != nil {
+		t.Fatalf("mkdir base: %v", err)
+	}
+	runner := &fakeActionRunner{
+		result: ActionResult{
+			ExitCode: 0,
+			Stdout:   "prepared",
+			Stderr:   "warning",
+			Duration: 12 * time.Millisecond,
+		},
+	}
+	def := FlowDefinition{
+		FormatVersion: 1,
+		StartAt:       "prepare",
+		Nodes: []FlowNode{{
+			ID:      "prepare",
+			Type:    FlowNodeTypeAction,
+			Command: "ratchet",
+			Args:    []string{"version"},
+			Cwd:     "tools",
+			Env:     map[string]string{"RATCHET_FLOW_TEST": "1"},
+			Input:   json.RawMessage(`{"task":"inspect"}`),
+		}},
+	}
+
+	result, err := RunFlow(t.Context(), def, map[string]any{}, FlowRunOptions{
+		RunID:              "run-action",
+		RunRoot:            root,
+		Cwd:                base,
+		AllowedPermissions: []string{"shell"},
+		ActionRunner:       runner,
+	})
+	if err != nil {
+		t.Fatalf("RunFlow: %v", err)
+	}
+	if result.Status != FlowRunStatusCompleted || runner.calls != 1 {
+		t.Fatalf("result=%#v action calls=%d", result, runner.calls)
+	}
+	if runner.last.Command != "ratchet" || strings.Join(runner.last.Args, ",") != "version" ||
+		runner.last.Cwd != filepath.Join(base, "tools") || runner.last.Env["RATCHET_FLOW_TEST"] != "1" ||
+		string(runner.last.Input) != `{"task":"inspect"}` {
+		t.Fatalf("action opts = %#v", runner.last)
+	}
+	var output struct {
+		ExitCode        int    `json:"exit_code"`
+		Stdout          string `json:"stdout"`
+		Stderr          string `json:"stderr"`
+		StdoutTruncated bool   `json:"stdout_truncated"`
+		StderrTruncated bool   `json:"stderr_truncated"`
+		DurationMS      int64  `json:"duration_ms"`
+		Cwd             string `json:"cwd"`
+	}
+	if err := json.Unmarshal(result.Outputs["prepare"], &output); err != nil {
+		t.Fatalf("action output json: %v\n%s", err, result.Outputs["prepare"])
+	}
+	if output.ExitCode != 0 || output.Stdout != "prepared" || output.Stderr != "warning" ||
+		output.StdoutTruncated || output.StderrTruncated || output.DurationMS != 12 || output.Cwd != filepath.Join(base, "tools") {
+		t.Fatalf("action output = %#v", output)
+	}
+	if _, err := os.Stat(filepath.Join(root, "run-action", "steps", "prepare.json")); err != nil {
+		t.Fatalf("step output missing: %v", err)
+	}
+}
+
+func TestRunFlowActionNonZeroExitPersistsFailedState(t *testing.T) {
+	root := t.TempDir()
+	runner := &fakeActionRunner{result: ActionResult{ExitCode: 2, Stdout: "bad"}}
+	def := FlowDefinition{
+		FormatVersion: 1,
+		StartAt:       "fail",
+		Nodes:         []FlowNode{{ID: "fail", Type: FlowNodeTypeAction, Command: "ratchet"}},
+	}
+
+	_, err := RunFlow(t.Context(), def, map[string]any{}, FlowRunOptions{
+		RunID:              "run-action-failed",
+		RunRoot:            root,
+		AllowedPermissions: []string{"shell"},
+		ActionRunner:       runner,
+	})
+	if err == nil || !strings.Contains(err.Error(), "action fail exited with 2") {
+		t.Fatalf("RunFlow error = %v, want non-zero action exit", err)
+	}
+	var state FlowRunState
+	b, readErr := os.ReadFile(filepath.Join(root, "run-action-failed", "state.json"))
+	if readErr != nil {
+		t.Fatalf("read state: %v", readErr)
+	}
+	if err := json.Unmarshal(b, &state); err != nil {
+		t.Fatalf("state json: %v\n%s", err, b)
+	}
+	if state.Status != FlowRunStatusFailed || len(state.Steps) != 1 ||
+		state.Steps[0].Status != FlowStepStatusFailed || !strings.Contains(state.Steps[0].Error, "exited with 2") {
+		t.Fatalf("state = %#v", state)
+	}
+}
+
+func TestRunFlowActionStartFailurePersistsNonZeroExitCode(t *testing.T) {
+	root := t.TempDir()
+	def := FlowDefinition{
+		FormatVersion: 1,
+		StartAt:       "missing",
+		Nodes:         []FlowNode{{ID: "missing", Type: FlowNodeTypeAction, Command: filepath.Join(t.TempDir(), "missing-command")}},
+	}
+
+	_, err := RunFlow(t.Context(), def, map[string]any{}, FlowRunOptions{
+		RunID:              "run-action-start-failed",
+		RunRoot:            root,
+		AllowedPermissions: []string{"shell"},
+	})
+	if err == nil {
+		t.Fatal("RunFlow succeeded, want start failure")
+	}
+	var state FlowRunState
+	b, readErr := os.ReadFile(filepath.Join(root, "run-action-start-failed", "state.json"))
+	if readErr != nil {
+		t.Fatalf("read state: %v", readErr)
+	}
+	if err := json.Unmarshal(b, &state); err != nil {
+		t.Fatalf("state json: %v\n%s", err, b)
+	}
+	var output struct {
+		ExitCode int `json:"exit_code"`
+	}
+	if err := json.Unmarshal(state.Steps[0].Output, &output); err != nil {
+		t.Fatalf("action output json: %v\n%s", err, state.Steps[0].Output)
+	}
+	if output.ExitCode != -1 {
+		t.Fatalf("exit_code = %d, want -1", output.ExitCode)
+	}
+}
+
+func TestRunFlowActionOutputIsTruncated(t *testing.T) {
+	runner := &fakeActionRunner{
+		result: ActionResult{
+			ExitCode: 0,
+			Stdout:   strings.Repeat("é", 8),
+			Stderr:   strings.Repeat("w", 8),
+		},
+	}
+	def := FlowDefinition{
+		FormatVersion: 1,
+		StartAt:       "truncate",
+		Nodes:         []FlowNode{{ID: "truncate", Type: FlowNodeTypeAction, Command: "ratchet"}},
+	}
+
+	result, err := RunFlow(t.Context(), def, map[string]any{}, FlowRunOptions{
+		AllowedPermissions: []string{"shell"},
+		ActionRunner:       runner,
+		ActionOutputLimit:  5,
+	})
+	if err != nil {
+		t.Fatalf("RunFlow: %v", err)
+	}
+	var output struct {
+		Stdout          string `json:"stdout"`
+		Stderr          string `json:"stderr"`
+		StdoutTruncated bool   `json:"stdout_truncated"`
+		StderrTruncated bool   `json:"stderr_truncated"`
+	}
+	if err := json.Unmarshal(result.Outputs["truncate"], &output); err != nil {
+		t.Fatalf("action output json: %v\n%s", err, result.Outputs["truncate"])
+	}
+	if output.Stdout != strings.Repeat("é", 5) || output.Stderr != "wwwww" ||
+		!output.StdoutTruncated || !output.StderrTruncated {
+		t.Fatalf("truncated output = %#v", output)
+	}
+}
+
 type fakeFlowPromptRunner struct {
 	sessionID acpsdk.SessionId
 	prompts   []string
@@ -252,6 +563,22 @@ func (r *fakeFlowPromptRunner) Prompt(_ context.Context, prompt string) (Result,
 		StopReason: acpsdk.StopReasonEndTurn,
 		Text:       "flow: " + prompt,
 	}, nil
+}
+
+type fakeActionRunner struct {
+	calls  int
+	last   ActionRunOptions
+	result ActionResult
+	err    error
+}
+
+func (r *fakeActionRunner) RunAction(_ context.Context, opts ActionRunOptions) (ActionResult, error) {
+	r.calls++
+	r.last = opts
+	if r.err != nil {
+		return ActionResult{}, r.err
+	}
+	return r.result, nil
 }
 
 func writeFlowDefinitionFixture(t *testing.T, raw string) string {
