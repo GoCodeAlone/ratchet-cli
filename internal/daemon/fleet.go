@@ -131,13 +131,13 @@ func (fm *FleetManager) StartFleet(ctx context.Context, req *pb.StartFleetReq, s
 			}
 		}()
 		if fm.engine != nil {
-			_ = fm.engine.RunHooks(ctx, hooks.PreFleet, map[string]string{"fleet_id": fleetID, "session_id": req.SessionId})
+			runHooksAndLog(ctx, fm.engine, hooks.PreFleet, map[string]string{"fleet_id": fleetID, "session_id": req.SessionId}, "fleet pre")
 		} else if fm.hooks != nil {
 			_ = fm.hooks.Run(hooks.PreFleet, map[string]string{"fleet_id": fleetID})
 		}
 		fm.runFleet(ctx, fi, maxWorkers, eventCh)
 		if fm.engine != nil {
-			_ = fm.engine.RunHooks(ctx, hooks.PostFleet, map[string]string{"fleet_id": fleetID, "session_id": req.SessionId})
+			runHooksAndLog(ctx, fm.engine, hooks.PostFleet, map[string]string{"fleet_id": fleetID, "session_id": req.SessionId}, "fleet post")
 		} else if fm.hooks != nil {
 			_ = fm.hooks.Run(hooks.PostFleet, map[string]string{"fleet_id": fleetID})
 		}

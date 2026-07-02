@@ -131,10 +131,10 @@ func (pm *PlanManager) Approve(planID string, skipSteps []string) error {
 	plan.Status = "approved"
 	pm.completedAt[planID] = time.Now()
 	if pm.engine != nil {
-		_ = pm.engine.RunHooks(context.Background(), hooks.PrePlan, map[string]string{
+		runHooksAndLog(context.Background(), pm.engine, hooks.PrePlan, map[string]string{
 			"plan_id":    planID,
 			"session_id": plan.SessionId,
-		})
+		}, "plan pre")
 	} else if pm.hooks != nil {
 		_ = pm.hooks.Run(hooks.PrePlan, map[string]string{"plan_id": planID})
 	}
@@ -196,10 +196,10 @@ func (pm *PlanManager) UpdateStep(planID, stepID, stepStatus, errMsg string) err
 	if allDone && plan.Status == "executing" {
 		plan.Status = "completed"
 		if pm.engine != nil {
-			_ = pm.engine.RunHooks(context.Background(), hooks.PostPlan, map[string]string{
+			runHooksAndLog(context.Background(), pm.engine, hooks.PostPlan, map[string]string{
 				"plan_id":    planID,
 				"session_id": plan.SessionId,
-			})
+			}, "plan post")
 		} else if pm.hooks != nil {
 			_ = pm.hooks.Run(hooks.PostPlan, map[string]string{"plan_id": planID})
 		}

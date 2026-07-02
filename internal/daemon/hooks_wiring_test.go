@@ -1,9 +1,12 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -271,6 +274,7 @@ func TestHooks_ChangedPluginHookRequiresRetrust(t *testing.T) {
 	engine := newTestEngine(t)
 	pluginHook := hooks.Hook{
 		Command:       "touch " + firstSentinel,
+		Event:         hooks.PostCommand,
 		SourceKind:    hooks.SourcePlugin,
 		SourceID:      "plugin:test@1.0.0:hooks.yaml",
 		SourcePath:    filepath.Join(dir, "hooks.yaml"),
@@ -303,5 +307,22 @@ func TestHooks_ChangedPluginHookRequiresRetrust(t *testing.T) {
 	}
 	if _, err := os.Stat(secondSentinel); err == nil {
 		t.Fatal("changed plugin hook fired under stale trust")
+	}
+}
+
+func TestHooks_RunHooksAndLogReportsTrustedHookFailure(t *testing.T) {
+	engine := newTestEngine(t)
+	engine.Hooks = &hooks.HookConfig{Hooks: map[hooks.Event][]hooks.Hook{
+		hooks.PostCommand: {{Command: "exit 7"}},
+	}}
+
+	var buf bytes.Buffer
+	oldOutput := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(oldOutput) })
+
+	runHooksAndLog(context.Background(), engine, hooks.PostCommand, map[string]string{}, "test hook")
+	if !strings.Contains(buf.String(), "test hook") || !strings.Contains(buf.String(), "exit status 7") {
+		t.Fatalf("log output missing hook failure details:\n%s", buf.String())
 	}
 }

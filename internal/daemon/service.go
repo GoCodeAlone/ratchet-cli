@@ -141,7 +141,7 @@ func NewService(ctx context.Context) (*Service, error) {
 		go func() {
 			tickCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
-			_ = engine.RunHooks(tickCtx, hooks.OnCronTick, map[string]string{"session_id": sessionID, "command": command})
+			runHooksAndLog(tickCtx, engine, hooks.OnCronTick, map[string]string{"session_id": sessionID, "command": command}, "cron tick")
 			ns := &noopSendServer{ctx: tickCtx}
 			if err := svc.handleChat(tickCtx, sessionID, command, ns); err != nil {
 				log.Printf("cron tick session=%s command=%q: %v", sessionID, command, err)

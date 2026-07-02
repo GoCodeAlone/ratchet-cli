@@ -41,6 +41,15 @@ func (ec *EngineContext) RunHooks(ctx context.Context, event hooks.Event, data m
 	return cfg.Run(event, data)
 }
 
+func runHooksAndLog(ctx context.Context, engine *EngineContext, event hooks.Event, data map[string]string, label string) {
+	if engine == nil {
+		return
+	}
+	if err := engine.RunHooks(ctx, event, data); err != nil {
+		log.Printf("hooks: %s %s failed: %v", label, event, err)
+	}
+}
+
 func (ec *EngineContext) hookWorkingDir(ctx context.Context, data map[string]string) string {
 	if data != nil {
 		if workDir := data["working_dir"]; workDir != "" {

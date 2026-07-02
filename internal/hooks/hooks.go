@@ -77,6 +77,7 @@ type Hook struct {
 	CommandWindows string `yaml:"command_windows,omitempty"`
 	Glob           string `yaml:"glob,omitempty"`
 
+	Event               Event      `yaml:"-"`
 	SourceKind          SourceKind `yaml:"-"`
 	SourceID            string     `yaml:"-"`
 	SourcePath          string     `yaml:"-"`
@@ -195,6 +196,7 @@ func (hc *HookConfig) AnnotateSource(meta SourceMetadata) {
 	for event, hookList := range hc.Hooks {
 		for i := range hookList {
 			h := &hookList[i]
+			h.Event = event
 			h.SourceKind = meta.Kind
 			h.SourceID = meta.ID
 			h.SourcePath = meta.Path
@@ -226,6 +228,9 @@ func (hc *HookConfig) ApplyTrust(store *TrustStore) {
 	for event, hookList := range hc.Hooks {
 		for i := range hookList {
 			h := &hookList[i]
+			if h.Event == "" {
+				h.Event = event
+			}
 			h.Hash = h.DescriptorHash()
 			h.Trusted = h.SourceKind == "" || h.SourceKind == SourceUser
 			h.Disabled = false
@@ -250,12 +255,14 @@ func (hc *HookConfig) ApplyTrust(store *TrustStore) {
 // excludes SourcePath so trust can move across checkouts and machines.
 func (h Hook) DescriptorHash() string {
 	descriptor := struct {
+		Event         Event      `json:"event"`
 		SourceKind    SourceKind `json:"source_kind"`
 		SourceID      string     `json:"source_id"`
 		Command       string     `json:"command"`
 		CommandWindow string     `json:"command_windows,omitempty"`
 		Glob          string     `json:"glob,omitempty"`
 	}{
+		Event:         h.Event,
 		SourceKind:    h.SourceKind,
 		SourceID:      h.SourceID,
 		Command:       h.Command,
@@ -317,7 +324,7 @@ func (hc *HookConfig) Run(event Event, data map[string]string) error {
 		}
 
 		// Expand command template with shell-escaped values to prevent injection.
-		cmd, err := expandTemplate(command, shellEscapeData(data))
+		cmd, err := expandTemplate(command, escapeDataForGOOS(data, runtime.GOOS))
 		if err != nil {
 			return fmt.Errorf("expand hook command: %w", err)
 		}
@@ -337,6 +344,13 @@ func execHookCommand(command string) *exec.Cmd {
 	return exec.Command("sh", "-c", command)
 }
 
+func escapeDataForGOOS(data map[string]string, goos string) map[string]string {
+	if goos == "windows" {
+		return powershellEscapeData(data)
+	}
+	return shellEscapeData(data)
+}
+
 // shellEscapeData returns a copy of data with each value single-quoted for
 // safe interpolation into sh -c commands, preventing shell injection.
 func shellEscapeData(data map[string]string) map[string]string {
@@ -344,6 +358,14 @@ func shellEscapeData(data map[string]string) map[string]string {
 	for k, v := range data {
 		// Wrap in single quotes; escape embedded single quotes as '\''
 		escaped[k] = "'" + strings.ReplaceAll(v, "'", "'\\''") + "'"
+	}
+	return escaped
+}
+
+func powershellEscapeData(data map[string]string) map[string]string {
+	escaped := make(map[string]string, len(data))
+	for k, v := range data {
+		escaped[k] = "'" + strings.ReplaceAll(v, "'", "''") + "'"
 	}
 	return escaped
 }

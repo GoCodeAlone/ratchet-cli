@@ -390,11 +390,11 @@ func (tm *TeamManager) run(ctx context.Context, ti *teamInstance, req *pb.StartT
 			},
 		}
 		if tm.engine != nil {
-			_ = tm.engine.RunHooks(ctx, hooks.OnAgentSpawn, map[string]string{
+			runHooksAndLog(ctx, tm.engine, hooks.OnAgentSpawn, map[string]string{
 				"session_id": req.SessionId,
 				"agent_name": ag.name,
 				"agent_role": ag.role,
-			})
+			}, "agent spawn")
 		} else if tm.hooks != nil {
 			_ = tm.hooks.Run(hooks.OnAgentSpawn, map[string]string{"agent_name": ag.name, "agent_role": ag.role})
 		}
@@ -425,10 +425,10 @@ func (tm *TeamManager) run(ctx context.Context, ti *teamInstance, req *pb.StartT
 			orch.status = "completed"
 			orch.mu.Unlock()
 			if tm.engine != nil {
-				_ = tm.engine.RunHooks(ctx, hooks.OnAgentComplete, map[string]string{
+				runHooksAndLog(ctx, tm.engine, hooks.OnAgentComplete, map[string]string{
 					"session_id": req.SessionId,
 					"agent_name": orch.name,
-				})
+				}, "agent complete")
 			} else if tm.hooks != nil {
 				_ = tm.hooks.Run(hooks.OnAgentComplete, map[string]string{"agent_name": orch.name})
 			}
@@ -453,10 +453,10 @@ func (tm *TeamManager) run(ctx context.Context, ti *teamInstance, req *pb.StartT
 			worker.status = "completed"
 			worker.mu.Unlock()
 			if tm.engine != nil {
-				_ = tm.engine.RunHooks(ctx, hooks.OnAgentComplete, map[string]string{
+				runHooksAndLog(ctx, tm.engine, hooks.OnAgentComplete, map[string]string{
 					"session_id": req.SessionId,
 					"agent_name": worker.name,
-				})
+				}, "agent complete")
 			} else if tm.hooks != nil {
 				_ = tm.hooks.Run(hooks.OnAgentComplete, map[string]string{"agent_name": worker.name})
 			}

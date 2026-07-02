@@ -177,7 +177,8 @@ func resolveCapabilityPath(pluginDir, rel string) (string, error) {
 	if rel == "" {
 		return "", fmt.Errorf("empty capability path")
 	}
-	if filepath.IsAbs(rel) {
+	firstSegment := strings.Split(filepath.ToSlash(rel), "/")[0]
+	if filepath.IsAbs(rel) || filepath.VolumeName(rel) != "" || strings.Contains(firstSegment, ":") {
 		return "", fmt.Errorf("capability path %q must be relative", rel)
 	}
 	root, err := filepath.Abs(pluginDir)

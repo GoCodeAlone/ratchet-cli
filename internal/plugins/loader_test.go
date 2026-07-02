@@ -138,3 +138,10 @@ func TestLoadAllRejectsEscapedHookPath(t *testing.T) {
 		t.Fatal("expected escaped hook path to fail")
 	}
 }
+
+func TestResolveCapabilityPathRejectsWindowsDriveRelativePath(t *testing.T) {
+	_, err := resolveCapabilityPath(t.TempDir(), `C:..\outside-hooks.yaml`)
+	if err == nil {
+		t.Fatal("expected Windows drive-relative path to fail")
+	}
+}

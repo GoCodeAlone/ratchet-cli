@@ -136,6 +136,7 @@ func TestHookDescriptorHashStableWithoutAbsoluteHomePath(t *testing.T) {
 	a := Hook{
 		Command:    "echo {{.file}}",
 		Glob:       "*.go",
+		Event:      PostCommand,
 		SourceKind: SourceProject,
 		SourceID:   "project:.ratchet/hooks.yaml",
 		SourcePath: filepath.Join(t.TempDir(), "work-a", ".ratchet", "hooks.yaml"),
@@ -148,6 +149,21 @@ func TestHookDescriptorHashStableWithoutAbsoluteHomePath(t *testing.T) {
 	}
 	if a.DescriptorHash() != b.DescriptorHash() {
 		t.Fatalf("hash includes machine-specific path: %q != %q", a.DescriptorHash(), b.DescriptorHash())
+	}
+}
+
+func TestHookDescriptorHashIncludesEvent(t *testing.T) {
+	a := Hook{
+		Event:      PreCommand,
+		Command:    "echo shared",
+		SourceKind: SourceProject,
+		SourceID:   "project:.ratchet/hooks.yaml",
+	}
+	b := a
+	b.Event = PostCommand
+
+	if a.DescriptorHash() == b.DescriptorHash() {
+		t.Fatal("hash should differ when event differs")
 	}
 }
 
@@ -244,5 +260,15 @@ func TestHookCommandForGOOS(t *testing.T) {
 	windowsOnlyMissing := Hook{Command: "echo posix", SourceKind: SourceProject}
 	if got, ok := windowsOnlyMissing.commandForGOOS("windows"); ok || got != "" {
 		t.Fatalf("windows missing command = %q/%v, want empty/false", got, ok)
+	}
+}
+
+func TestEscapeDataForGOOS(t *testing.T) {
+	data := map[string]string{"value": "it's ok"}
+	if got := escapeDataForGOOS(data, "linux")["value"]; got != "'it'\\''s ok'" {
+		t.Fatalf("sh escaped value = %q", got)
+	}
+	if got := escapeDataForGOOS(data, "windows")["value"]; got != "'it''s ok'" {
+		t.Fatalf("powershell escaped value = %q", got)
 	}
 }
