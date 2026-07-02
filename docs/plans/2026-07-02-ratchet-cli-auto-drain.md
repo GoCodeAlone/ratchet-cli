@@ -117,11 +117,11 @@ git commit -m "feat: add acp client watch loop"
 
 **Rollback:** revert commit; no state migration is involved.
 
-### Task 3: Add CLI Watch Command Tests and Implementation
+### Task 3: Add CLI and Binary Watch Tests
 
 **Files:**
-- Modify: `cmd/ratchet/cmd_acp_client.go`
 - Modify: `cmd/ratchet/cmd_acp_client_test.go`
+- Modify: `cmd/ratchet/acp_client_binary_test.go`
 
 **Step 1: Write failing tests**
 
@@ -131,13 +131,37 @@ Add parser/executor tests for:
 - `executeACPClientWatch` resolves explicit agent command and produces aggregate human output without prompt bodies.
 - JSON output is newline-delimited or per-cycle JSON and includes aggregate fields only.
 
-**Step 2: Run test to verify it fails**
+Add a binary smoke test that:
+1. builds the ratchet test binary and fixture ACP agent through existing helpers;
+2. queues two prompts with `ratchet acp client exec --no-wait --session <id>`;
+3. runs `ratchet acp client watch <id> --command <fixture> --stop-when-empty --max-per-cycle 2 --max-cycles 2`;
+4. runs `ratchet acp client status <id>`;
+5. asserts the built CLI reports completed queue counts and no prompt bodies in watch output.
+
+**Step 2: Run tests to verify they fail**
 
 Run: `go test ./cmd/ratchet -run 'ACPClient.*Watch|ParseACPClient.*Watch' -count=1`
 
 Expected: FAIL with unknown `watch` command or undefined executor.
 
-**Step 3: Implement CLI command**
+**Step 3: Commit failing tests**
+
+```bash
+gofmt -w cmd/ratchet/cmd_acp_client_test.go cmd/ratchet/acp_client_binary_test.go
+git add cmd/ratchet/cmd_acp_client_test.go cmd/ratchet/acp_client_binary_test.go
+git commit -m "test: cover acp client watch command"
+```
+
+**Rollback:** revert this test-only commit.
+
+### Task 4: Implement CLI Watch Command
+
+**Files:**
+- Modify: `cmd/ratchet/cmd_acp_client.go`
+- Modify: `cmd/ratchet/cmd_acp_client_test.go` only if test fixtures need small compile adjustments
+- Modify: `cmd/ratchet/acp_client_binary_test.go` only if test helpers need small compile adjustments
+
+**Step 1: Implement CLI command**
 
 Add:
 - `acpClientCommandWatch` and `acpClientWatchOptions`.
@@ -147,13 +171,13 @@ Add:
 
 Use `signal.NotifyContext` only in the top-level command path if needed; tests should call the executor with explicit contexts.
 
-**Step 4: Run tests to verify they pass**
+**Step 2: Run tests to verify they pass**
 
-Run: `go test ./cmd/ratchet -run 'ACPClient.*Watch|ParseACPClient.*Watch|HarnessEmulationDocs' -count=1`
+Run: `go test ./cmd/ratchet -run 'ACPClient.*Watch|ParseACPClient.*Watch|ACPClientExecBinarySmoke|HarnessEmulationDocs' -count=1`
 
 Expected: PASS.
 
-**Step 5: Regression invariant proof**
+**Step 3: Regression invariant proof**
 
 Temporarily remove the `watch` case from the parser, then run:
 
@@ -161,55 +185,15 @@ Temporarily remove the `watch` case from the parser, then run:
 
 Expected: FAIL with unknown command. Restore the parser and rerun; expected PASS.
 
-**Step 6: Commit CLI work**
+**Step 4: Commit CLI work**
 
 ```bash
-gofmt -w cmd/ratchet/cmd_acp_client.go cmd/ratchet/cmd_acp_client_test.go
-git add cmd/ratchet/cmd_acp_client.go cmd/ratchet/cmd_acp_client_test.go
+gofmt -w cmd/ratchet/cmd_acp_client.go cmd/ratchet/cmd_acp_client_test.go cmd/ratchet/acp_client_binary_test.go
+git add cmd/ratchet/cmd_acp_client.go cmd/ratchet/cmd_acp_client_test.go cmd/ratchet/acp_client_binary_test.go
 git commit -m "feat: add acp client watch command"
 ```
 
 **Rollback:** revert commit; existing `exec`, `queue`, `drain`, `status`, and `cancel` commands remain unchanged.
-
-### Task 4: Add Binary Smoke Coverage
-
-**Files:**
-- Modify: `cmd/ratchet/acp_client_binary_test.go`
-
-**Step 1: Write failing binary smoke test**
-
-Extend the ACP client binary smoke or add a focused test that:
-1. builds the ratchet test binary and fixture ACP agent through existing helpers;
-2. queues two prompts with `ratchet acp client exec --no-wait --session <id>`;
-3. runs `ratchet acp client watch <id> --command <fixture> --stop-when-empty --max-per-cycle 2 --max-cycles 2`;
-4. runs `ratchet acp client status <id>`;
-5. asserts the built CLI reports completed queue counts and no prompt bodies in watch output.
-
-**Step 2: Run test to verify it fails**
-
-Run: `go test ./cmd/ratchet -run 'ACPClient.*Watch.*Binary|ACPClientExecBinarySmoke' -count=1`
-
-Expected before Task 3 implementation: FAIL with unknown watch command; if Task 3 already exists, first add the assertion against a deliberately missing watch smoke and verify the new test exercises the binary path.
-
-**Step 3: Implement smoke support**
-
-Wire the test through existing binary helper functions without adding a fake CLI path.
-
-**Step 4: Run test to verify it passes**
-
-Run: `go test ./cmd/ratchet -run 'ACPClient.*Watch.*Binary|ACPClientExecBinarySmoke' -count=1`
-
-Expected: PASS.
-
-**Step 5: Commit binary smoke**
-
-```bash
-gofmt -w cmd/ratchet/acp_client_binary_test.go
-git add cmd/ratchet/acp_client_binary_test.go
-git commit -m "test: smoke acp client watch"
-```
-
-**Rollback:** revert smoke commit.
 
 ### Task 5: Update Public Docs and Policy Matrix
 
