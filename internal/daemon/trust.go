@@ -8,6 +8,7 @@ import (
 	"github.com/GoCodeAlone/workflow-plugin-agent/policy"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func (s *Service) GetTrustState(context.Context, *pb.Empty) (*pb.TrustState, error) {
@@ -70,6 +71,41 @@ func (s *Service) ResetTrust(context.Context, *pb.Empty) (*pb.TrustState, error)
 	return s.trustStateLocked(), nil
 }
 
+func (s *Service) AddTrustGrant(_ context.Context, req *pb.AddTrustRuleReq) (*pb.TrustState, error) {
+	pattern, action, scope, err := validatePersistentTrustGrant(req.GetPattern(), req.GetAction(), req.GetScope())
+	if err != nil {
+		return nil, err
+	}
+
+	s.trustMu.Lock()
+	defer s.trustMu.Unlock()
+	if s.trustStore == nil {
+		return nil, status.Error(codes.FailedPrecondition, "persistent trust store is unavailable")
+	}
+	if err := s.trustStore.Grant(pattern, action, scope, "operator"); err != nil {
+		return nil, status.Errorf(codes.Internal, "persist trust grant: %v", err)
+	}
+	return s.trustStateLocked(), nil
+}
+
+func (s *Service) RevokeTrustGrant(_ context.Context, req *pb.RevokeTrustGrantReq) (*pb.TrustState, error) {
+	pattern := strings.TrimSpace(req.GetPattern())
+	if pattern == "" {
+		return nil, status.Error(codes.InvalidArgument, "trust grant pattern is required")
+	}
+	scope := normalTrustScope(req.GetScope())
+
+	s.trustMu.Lock()
+	defer s.trustMu.Unlock()
+	if s.trustStore == nil {
+		return nil, status.Error(codes.FailedPrecondition, "persistent trust store is unavailable")
+	}
+	if err := s.trustStore.Revoke(pattern, scope); err != nil {
+		return nil, status.Errorf(codes.Internal, "revoke trust grant: %v", err)
+	}
+	return s.trustStateLocked(), nil
+}
+
 func (s *Service) rebuildTrustEngineLocked(mode string) {
 	rules := append(cloneTrustRules(s.trustDefaults), s.trustRuntime...)
 	s.trustMode = mode
@@ -90,6 +126,9 @@ func (s *Service) trustStateLocked() *pb.TrustState {
 	state := &pb.TrustState{Mode: mode}
 	for _, rule := range s.trustEngine.Rules() {
 		state.Rules = append(state.Rules, trustRuleToProto(rule))
+	}
+	for _, grant := range s.trustGrantsLocked() {
+		state.Grants = append(state.Grants, trustGrantToProto(grant))
 	}
 	return state
 }
@@ -125,16 +164,57 @@ func trustAction(action string) (policy.Action, bool) {
 	}
 }
 
-func trustRuleToProto(rule policy.TrustRule) *pb.TrustRule {
-	scope := rule.Scope
-	if scope == "" {
-		scope = "global"
+func validatePersistentTrustGrant(pattern, actionText, scopeText string) (string, policy.Action, string, error) {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return "", "", "", status.Error(codes.InvalidArgument, "trust grant pattern is required")
 	}
+	action, ok := trustAction(actionText)
+	if !ok || action == policy.Ask {
+		return "", "", "", status.Errorf(codes.InvalidArgument, "invalid trust grant action %q", actionText)
+	}
+	return pattern, action, normalTrustScope(scopeText), nil
+}
+
+func normalTrustScope(scope string) string {
+	scope = strings.TrimSpace(scope)
+	if scope == "" {
+		return "global"
+	}
+	return scope
+}
+
+func trustRuleToProto(rule policy.TrustRule) *pb.TrustRule {
 	return &pb.TrustRule{
 		Pattern: rule.Pattern,
 		Action:  string(rule.Action),
-		Scope:   scope,
+		Scope:   normalTrustScope(rule.Scope),
 	}
+}
+
+func (s *Service) trustGrantsLocked() []policy.PermissionGrant {
+	if s.trustStore == nil {
+		return nil
+	}
+	grants, err := s.trustStore.List()
+	if err != nil {
+		return nil
+	}
+	return grants
+}
+
+func trustGrantToProto(grant policy.PermissionGrant) *pb.TrustGrant {
+	out := &pb.TrustGrant{
+		Id:        grant.ID,
+		Pattern:   grant.Pattern,
+		Action:    string(grant.Action),
+		Scope:     normalTrustScope(grant.Scope),
+		GrantedBy: grant.GrantedBy,
+	}
+	if !grant.CreatedAt.IsZero() {
+		out.CreatedAt = timestamppb.New(grant.CreatedAt)
+	}
+	return out
 }
 
 func cloneTrustRules(in []policy.TrustRule) []policy.TrustRule {
