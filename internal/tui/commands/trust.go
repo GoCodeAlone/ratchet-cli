@@ -71,8 +71,8 @@ func trustCmd(args []string, c trustClient) *Result {
 		if len(args) < 2 {
 			return &Result{Lines: []string{"Usage: /trust allow \"pattern\" [--scope scope]"}}
 		}
-		pattern, scope := parseTrustRuleArgs(args[1:])
-		if pattern == "" {
+		pattern, scope, ok := parseTrustRuleArgs(args[1:])
+		if !ok || pattern == "" {
 			return &Result{Lines: []string{"Usage: /trust allow \"pattern\" [--scope scope]"}}
 		}
 		if _, err := c.AddTrustRule(context.Background(), pattern, "allow", scope); err != nil {
@@ -83,8 +83,8 @@ func trustCmd(args []string, c trustClient) *Result {
 		if len(args) < 2 {
 			return &Result{Lines: []string{"Usage: /trust deny \"pattern\" [--scope scope]"}}
 		}
-		pattern, scope := parseTrustRuleArgs(args[1:])
-		if pattern == "" {
+		pattern, scope, ok := parseTrustRuleArgs(args[1:])
+		if !ok || pattern == "" {
 			return &Result{Lines: []string{"Usage: /trust deny \"pattern\" [--scope scope]"}}
 		}
 		if _, err := c.AddTrustRule(context.Background(), pattern, "deny", scope); err != nil {
@@ -120,7 +120,7 @@ func formatTrustState(state *pb.TrustState) *Result {
 	return &Result{Lines: lines}
 }
 
-func parseTrustRuleArgs(args []string) (pattern, scope string) {
+func parseTrustRuleArgs(args []string) (pattern, scope string, ok bool) {
 	scope = "global"
 	parts := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
@@ -129,10 +129,13 @@ func parseTrustRuleArgs(args []string) (pattern, scope string) {
 			i++
 			continue
 		}
+		if args[i] == "--scope" {
+			return "", "", false
+		}
 		parts = append(parts, args[i])
 	}
 	pattern = strings.Trim(strings.Join(parts, " "), "\"")
-	return pattern, scope
+	return pattern, scope, true
 }
 
 func isNilTrustClient(c trustClient) bool {
@@ -141,7 +144,7 @@ func isNilTrustClient(c trustClient) bool {
 	}
 	v := reflect.ValueOf(c)
 	switch v.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
 		return v.IsNil()
 	default:
 		return false

@@ -66,6 +66,21 @@ func TestTrustAllowDenyAndResetUseDaemon(t *testing.T) {
 	}
 }
 
+func TestTrustRuleScopeRequiresValue(t *testing.T) {
+	fake := &fakeTrustClient{}
+	for _, result := range []*Result{
+		trustCmd([]string{"allow", "--scope"}, fake),
+		trustCmd([]string{"deny", "bash:*", "--scope"}, fake),
+	} {
+		if !resultContains(result, "Usage: /trust") {
+			t.Fatalf("result lines = %v", result.Lines)
+		}
+	}
+	if fake.rulePattern != "" || fake.ruleAction != "" || fake.ruleScope != "" {
+		t.Fatalf("daemon should not be called, got pattern=%q action=%q scope=%q", fake.rulePattern, fake.ruleAction, fake.ruleScope)
+	}
+}
+
 func TestTrustCommandsRequireDaemon(t *testing.T) {
 	for _, result := range []*Result{
 		modeCmd([]string{"locked"}, nil),
