@@ -20,6 +20,7 @@ runtime trust decisions, and persistent trust grants continue to use
 - Config-file mutation from trust commands.
 - New sandbox/path/network enforcement.
 - Broad runtime extension SDK.
+- Managed hook distribution or managed-only hook policy.
 - Credentialed third-party agent CI.
 - Raw ACPX JSON-RPC event-log archive compatibility.
 - ACPX TypeScript flow runtime compatibility.
@@ -47,16 +48,18 @@ or deferred rows below must not be treated as fully enforced runtime behavior.
 | Persistent trust grants | `workflow-plugin-agent/policy.PermissionStore` through daemon RPC | Supported | `ratchet trust persist allow|deny`, `/trust persist allow|deny`, `ratchet trust grants`, `/trust grants`, `ratchet trust revoke`, and `/trust revoke` manage durable grants; deny grants preserve deny-wins semantics. | Daemon and command tests for grant persistence; docs guard checks this layer name. |
 | Permission prompts | Daemon permission gate and TUI prompt flow | Supported | Human approval remains explicit for unresolved decisions. Missing or unknown policy must not silently auto-approve. | Permission prompt tests and daemon/TUI behavior. |
 | ACP client queue/drain | `internal/acpclient` | Explicit watch/drain only | `--no-wait` writes prompt text to a local FIFO queue; only operator-started `ratchet acp client drain` and foreground `ratchet acp client watch` commands execute queued prompts. `watch` requires an explicit `--command` or `--agent` launch target for each run and stops when the foreground command exits. No daemon background drain is supported. | ACP client binary smoke covers queue inspection, explicit drain, and explicit foreground watch. |
+| ACP launch profiles | `internal/acpclient` profile store plus plugin templates | Supported with local trust | `ratchet acp client profiles list`, `add`, `install`, `trust`, and `remove` manage local reviewed launch specs. Profiles store commands, args, cwd, and env key names only, not secret values. Built-in ACP agents win over profile names, profile names cannot shadow built-ins, and untrusted profiles do not resolve through `--agent`. Profile execution remains limited to explicit foreground `exec`, `drain`, `watch`, `compare`, and `flow run` commands. | ACP profile store, plugin template, command, watch/drain/compare, and flow tests cover trusted and untrusted resolution. |
 | Sandbox/path/network controls | Agent plugin trust logic, mesh path guard, and future sandbox work | Partial | Existing trust decisions and mesh path guard cover only their implemented surfaces. ratchet-cli does not claim Codex/Claude-style full sandbox, network, or per-tool escalation parity. | Existing tests for implemented guards; future sandbox work needs a separate design. |
-| Hooks/extensions | `internal/hooks`, plugin manifests, and future extension work | Partial / Deferred | Existing named hooks and plugin extensibility are supported. Broad mutation-capable extension hooks, lifecycle interception SDKs, and unreviewed local mutation are deferred. | Existing hook tests; future extension hooks need opt-in policy and redaction design. |
+| Hooks/extensions | `internal/hooks`, plugin manifests, and future extension work | Supported with review/trust / Deferred | User hooks in `~/.ratchet/hooks.yaml` remain trusted by default for compatibility. Project hooks in `.ratchet/hooks.yaml` and plugin hooks are listed but skipped until exact descriptor hook trust is recorded with `ratchet hooks trust <hash>`. `ratchet hooks disable <hash>` overrides trust, changed hook descriptors require re-review, and plugin hook/profile paths must stay inside plugin roots. Managed hooks remain deferred. TypeScript extension SDK remains deferred, including tool registration, hot reload, lifecycle interception SDKs, and unreviewed local mutation. | Hook trust store, CLI, daemon wiring, plugin containment, and Windows command-selection tests. Future managed hooks and extension SDK work need a separate locked design. |
 | Flow action nodes | `internal/acpclient` | Supported with explicit grants | JSON v1 `action` nodes run runtime-owned local commands only after `ratchet acp client flow run` receives `--allow shell`. Node working directories outside the flow base require `--allow outside-cwd`. Action stdout/stderr persisted in run bundles is sensitive local command output. This is flow-local preflight, not a new trust engine or full sandbox. | ACP client flow tests and binary smoke cover action nodes, missing grants, cwd escapes, and persisted outputs. |
 | Retro/self-improvement | `internal/retro` and local project evidence routing | Partial | Retro evidence is opt-in. Automatic local mutation and upstream PR creation are disabled unless a future configurable policy enables them. | Retro tests and config checks. |
 | Per-agent/team scopes | Daemon team manager and mesh configs | Partial / Deferred | Team orchestration and MCP team messaging exist. Per-agent permission scopes, worktree isolation policy, and channel routing are future work. | Team and MCP tests for current behavior; future per-agent scopes need a separate design. |
 
 ## Sensitive Metadata
 
-Trust rules, grant patterns, queue contents, archive exports, retro evidence,
-flow action output, and policy decisions are sensitive local policy metadata.
+Trust rules, grant patterns, hook descriptors, launch profile names and
+commands, queue contents, archive exports, retro evidence, flow action output,
+and policy decisions are sensitive local policy metadata.
 They can reveal local paths, command names, provider usage, project conventions,
 prompts, responses, stdout/stderr, or operational habits. Do not expand logging,
 exports, or public docs with raw policy values unless a future design includes
@@ -78,7 +81,8 @@ authorization, cancellation, audit evidence, and redaction boundaries:
 | Work | Status | Required policy decision |
 |---|---|---|
 | Background drain | Deferred | Define owner/session scope, cancellation semantics, prompt persistence warnings, and whether queued prompts can execute without a foreground operator. |
-| Extension hooks | Deferred | Define hook trust, mutation opt-in, environment redaction, command/path access, and reviewable local changes. |
+| Managed hooks | Deferred | Define administrative distribution, managed-only mode, local override behavior, and audit evidence before claiming managed hook parity. |
+| Extension SDK | Deferred | Define TypeScript extension SDK boundaries, tool registration, hot reload, lifecycle interception, mutation opt-in, environment redaction, command/path access, and reviewable local changes. |
 | Sandbox/path/network expansion | Deferred | Define enforced filesystem and network boundaries before claiming parity with Codex or Claude sandbox controls. |
 | Per-agent policy scopes | Deferred | Define how agent roles, teams, worktrees, channels, and scopes compose with persistent grants and runtime rules. |
 | Credentialed third-party agent CI | Deferred | Define secret handling, provider credentials, failure isolation, and artifact redaction. |

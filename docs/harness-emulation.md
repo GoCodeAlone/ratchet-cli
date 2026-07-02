@@ -14,7 +14,7 @@ possible.
 | daemon | `ratchet daemon status` | pid/socket state under `~/.ratchet` | Supported | `TestHarnessSmokeVersionHelpAndDaemonStatus`. |
 | session lineage | `ratchet sessions history`, `ratchet sessions clone`, `ratchet sessions fork`, `ratchet sessions tree`, `ratchet sessions browse`, `ratchet sessions summary`, `ratchet sessions compactions` | daemon gRPC session history/clone/fork/tree/summary/compaction APIs plus Bubble Tea session tree browser | Supported for separate fork/clone sessions, branch summaries, persisted compaction records, archive session links, and Pi-style in-place branch navigation through `ctrl+b`, `/tree`, and `sessions browse` | `TestSessionLineageHistoryCloneForkTreeRPC`; `TestCompactionRecordRPC`; `TestHandleSessionsHistoryCloneForkTree`; `TestAppCtrlBOpensSessionTreeBrowser`; `TestParseTreeRequestsSessionTreeNavigation`; `TestHandleSessionsBrowseRunsInjectedBrowser`. |
 | ACP | `ratchet acp` | ACP stdio JSON-RPC agent wrapping daemon service | Supported for initialize/new/load/prompt/cancel/model/mode | `TestACPStdioPromptSmoke`; `TestHarnessSmokeInitializeNewAndLoadSession`; `TestParityNewSessionIDCanBeLoaded`. |
-| ACP client | `ratchet acp client exec --command <agent> "prompt"` | typed `acp-go-sdk` client over child-process stdio plus local JSON state under XDG state | Supported for one-shot exec, persisted session metadata, sessions list/show/status, multi-prompt FIFO `--no-wait` queue, explicit queue inspection/drain, cooperative cancel requests, ratchet-cli archive v1 export/import, serial compare, and JSON v1 ACP/compute flows | `TestACPClientExecBinarySmoke`; `TestDrainQueueAgainstFixtureProcessReusesSession`; `TestClientRunPromptAgainstFixtureProcess`; `TestSessionStoreLoadsMissingFileAndPersistsRecords`. |
+| ACP client | `ratchet acp client exec --command <agent> "prompt"` | typed `acp-go-sdk` client over child-process stdio plus local JSON state under XDG state | Supported for one-shot exec, persisted session metadata, sessions list/show/status, multi-prompt FIFO `--no-wait` queue, explicit queue inspection/drain, cooperative cancel requests, ratchet-cli archive v1 export/import, serial compare, JSON v1 ACP/compute flows, and trusted ACP launch profiles | `TestACPClientExecBinarySmoke`; `TestDrainQueueAgainstFixtureProcessReusesSession`; `TestClientRunPromptAgainstFixtureProcess`; `TestSessionStoreLoadsMissingFileAndPersistsRecords`; profile command and flow resolution tests. |
 | MCP | `ratchet mcp blackboard` / `ratchet mcp daemon` | stdio JSON-RPC blackboard or daemon server | Supported for standalone blackboard plus daemon session/project/blackboard/team status tools | `TestHarnessSmokeJSONRPCInitializeToolsListAndCall`; `TestDaemonMCPToolCallsUseDaemonClient`. |
 | team | `ratchet team start "task"` | daemon team manager / mesh executor | Supported when provider configured | Existing team and mesh tests cover service behavior. |
 
@@ -56,22 +56,28 @@ The dated source-backed matrix lives in
 [competitor-parity.md](competitor-parity.md). The snapshot was refreshed on
 2026-07-02 from current Zed, ACP, Pi, Codex, Claude Code, Hermes, OpenClaw, and
 ACPX sources. ratchet-cli now supports Windows release artifacts, ACP prompt stdio
-smoke, headless ACP client exec/session/status/cancel primitives with
+smoke, reviewable hook trust controls, headless ACP client
+exec/session/status/cancel primitives with
 multi-prompt FIFO queue/watch/drain,
 daemon-backed MCP blackboard/session/project/team status/message tools, runtime
 trust slash commands, session lineage
 history/clone/fork/tree commands, branch summaries, compaction records with
 archive session links, Pi-style in-place branch navigation, and opt-in redacted
 retro evidence, ACP client session archive export/import, serial compare, and
-JSON v1 ACP/compute/action flows. JSON v1 action nodes run local commands only
-with `--allow shell`; node cwd escapes require `--allow outside-cwd`, and run
-bundles may contain sensitive local command output. The v0.20.0 release keeps
-Windows amd64/arm64 zip artifacts in the GoReleaser output while adding ACP
-client archive, compare, and flow commands. The policy boundaries are tracked in
+JSON v1 ACP/compute/action flows. ACP launch profiles let reviewed local or
+plugin-distributed launch specs feed `--agent` for explicit foreground ACP
+client commands; built-ins win over profile names and untrusted profiles are
+refused at execution time. JSON v1 action nodes run local commands only with
+`--allow shell`; node cwd escapes require `--allow outside-cwd`, and run bundles
+may contain sensitive local command output. The v0.24.0 release line keeps
+Windows amd64/arm64 zip artifacts in the GoReleaser output while adding hook
+trust and profile distribution controls. The policy boundaries are tracked in
 [docs/policy-matrix.md](policy-matrix.md): runtime trust rules, persistent
-trust grants, permission prompts, and explicit ACP client watch/drain are
-supported, while daemon background drain, broad extension hooks, ACPX TypeScript
-flow runtime compatibility, and local-first channel gateways remain deferred.
+trust grants, permission prompts, hook trust, ACP launch profiles, and explicit
+ACP client watch/drain are supported, while daemon background drain, managed
+hooks remain deferred, TypeScript extension SDK remains deferred, ACPX
+TypeScript flow runtime compatibility, and local-first channel gateways remain
+deferred.
 
 ## ACP Matrix
 
@@ -107,10 +113,15 @@ disk.
 | import/export archives | Supported | `ratchet acp client sessions export <id> --output <archive.json>` writes ratchet-cli archive v1 JSON with ACPX-shaped metadata; `sessions import <archive.json> --session <id>` imports a copy. Binary smoke proves export/import through the built CLI and fixture ACP agent. Archives may contain prompt/response content and are not raw ACPX JSON-RPC event logs. |
 | compare commands | Supported | `ratchet acp client compare --command <agent-a> --command <agent-b> "prompt"` runs agents serially and emits table or JSON rows. Binary smoke proves compare through the built CLI and fixture ACP agent. |
 | flow commands | Supported | `ratchet acp client flow run flow.json --input-json '{"task":"x"}' --command <agent> --allow shell` runs JSON v1 flows with `acp`, `compute`, and `action` nodes, template prompts, shared ACP session handles, JSON output, and persisted run bundles. Action nodes require `--allow shell`; cwd escapes require `--allow outside-cwd`; action stdout/stderr is sensitive local command output. ACPX TypeScript flow runtime compatibility remains deferred. |
+| ACP launch profiles | Supported with local trust | `ratchet acp client profiles list`, `add`, `install`, `trust`, and `remove` manage reviewed launch specs under ratchet state. Profiles store command metadata and env key names only. Built-in ACP agents win over profile names, profile names cannot shadow built-ins, and only trusted profiles resolve through `--agent` for `exec`, `drain`, `watch`, `compare`, and `flow run`. Plugin `acpProfiles` templates are copied locally before use. |
 
 ### ACP client examples
 
 ```sh
+ratchet acp client profiles list
+ratchet acp client profiles add local-agent --command ./agent --arg --stdio --trust
+ratchet acp client exec --agent local-agent "Review this patch"
+
 ratchet acp client sessions export work --output work.archive.json
 ratchet acp client sessions import work.archive.json --session work-copy
 
@@ -163,9 +174,23 @@ ratchet acp client watch work \
 | `/trust revoke "pattern" [--scope scope]` | Supported | Revokes a durable grant. Missing grants are treated as already revoked. |
 | `/trust reset` | Supported | Clears runtime slash-command rules and rebuilds from config defaults. It does not edit config files or delete persisted permission grants. |
 
+## Hook Trust
+
+Lifecycle hooks use local hash review for project and plugin command hooks.
+User hooks in `~/.ratchet/hooks.yaml` remain trusted by default for
+compatibility, while `.ratchet/hooks.yaml` project hooks and plugin hooks are
+skipped until `ratchet hooks trust <hash>` records the descriptor shown by
+`ratchet hooks list --cwd .`. `ratchet hooks disable <hash>` overrides trust,
+and changed hook commands, events, glob filters, or source metadata produce a
+new hash that must be reviewed again. Plugin hook/profile paths are contained to
+the plugin root. Managed hooks remain deferred, and the TypeScript extension SDK
+remains deferred. Broad extension hooks beyond reviewed command hooks remain
+deferred.
+
 Scriptable equivalents are available through `ratchet trust list`,
 `ratchet trust grants`, `ratchet trust allow|deny`,
 `ratchet trust persist`, `ratchet trust revoke`, and `ratchet trust reset`.
 The broader Policy Matrix lives in [docs/policy-matrix.md](policy-matrix.md),
 including the explicit watch/drain boundary, sensitive local policy metadata
-warning, and deferred background drain and extension hooks boundaries.
+warning, hook trust, ACP launch profiles, and deferred background drain and
+extension SDK boundaries.

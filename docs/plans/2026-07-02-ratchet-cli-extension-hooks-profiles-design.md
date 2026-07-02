@@ -1,6 +1,6 @@
 # ratchet-cli Extension Hooks And ACP Launch Profiles Design
 
-**Status:** Draft
+**Status:** Implemented through PR2; PR3 documents release state
 **Date:** 2026-07-02
 
 ## Goal
@@ -24,19 +24,20 @@ Checked 2026-07-02 from primary sources:
 
 | system | source signal | design consequence |
 |---|---|---|
-| Codex | Official hooks docs: non-managed hooks require review/trust; plugin-bundled hooks load from plugin roots; managed-only mode exists; Windows managed dir is distinct. | ratchet-cli hooks need hash-based review, plugin path containment, and Windows command fields. |
+| Codex | `openai/codex@b35d4b6...` docs plus current config/sandbox docs: non-managed hooks require review/trust; plugin-bundled hooks load from plugin roots; managed-only mode exists; Windows managed dir is distinct. | ratchet-cli hooks need hash-based review, plugin path containment, and Windows command fields. |
+| ACP | `agentclientprotocol/agent-client-protocol@a90d7e3...` README/schema: ACP remains process-oriented with negotiated client/agent protocol versions. | Profiles should launch existing ACP agents rather than invent a second runtime contract. |
 | Pi | `earendil-works/pi@21cb380...` docs: extensions can register tools/commands and intercept events; project-local extensions load only after trust; extensions run with full system permissions. | ratchet-cli should not jump to a TS SDK; command hooks must be trusted before project/plugin execution. |
 | ACPX | `openclaw/acpx@1d88257...` README: persistent sessions, compare, flows, runtime-owned actions, workspace isolation, and persisted artifacts. | Profiles should be explicit ACP launch specs and feed existing ACP client commands; TypeScript runtime/replay remain deferred. |
-| Zed | `zed-industries/zed@4aa8ad9...` docs: external agents own native auth/config; registry/custom agents have boundaries. | Plugin/profile distribution must not silently import provider credentials or Zed-like host config. |
-| Hermes | `NousResearch/hermes-agent@a2d49de...` README: flexible tools, learning loop, gateway/backends, native Windows. | Keep Windows builds and avoid hardcoding one provider/backend. |
-| OpenClaw | `openclaw/openclaw@a51b06f...` README: local-first gateway/channel routing and non-main sandboxing. | Gateway/channel routing is separate product scope; profile work is local CLI harness scope only. |
+| Zed | `zed-industries/zed@bb48a42...` docs: external agents own native auth/config; registry/custom agents have boundaries. | Plugin/profile distribution must not silently import provider credentials or Zed-like host config. |
+| Hermes | `NousResearch/hermes-agent@ab94233...` README and `howdymary/hermes-agent-metaharness@a0179af...`: flexible tools, learning loop, gateway/backends, and harness composition. | Keep Windows builds and avoid hardcoding one provider/backend. |
+| OpenClaw | `openclaw/openclaw@c20171d...` README: local-first gateway/channel routing and non-main sandboxing. | Gateway/channel routing is separate product scope; profile work is local CLI harness scope only. |
 
 ## Current Repo Baseline
 
 - Hooks already exist: `internal/hooks` supports named events, YAML config, glob filters, command templates, and daemon wiring.
 - Plugin loader already supports `capabilities.hooks` plus skills/agents/commands/tools/MCP.
 - ACP client already has `AgentSpec{Name, Command, Args, EnvKeys}`, fingerprinting, built-in registry, queue/drain/watch/flow.
-- Policy matrix marks broad extension hooks and daemon background drain as deferred pending trust/redaction boundaries.
+- Policy matrix marks reviewable command hooks and ACP launch profiles as supported, while managed hooks, the TypeScript extension SDK, and daemon background drain remain deferred pending trust/redaction boundaries.
 
 ## Approaches Considered
 
@@ -98,7 +99,8 @@ Add a local ACP launch profile store under ratchet state:
 Update README, harness docs, competitor parity, and policy matrix:
 
 - hooks/extensions become "Supported with review/trust" for command hooks;
-- broad SDK, tool registration, hot reload, and TypeScript extensions remain deferred;
+- managed hooks remain deferred;
+- broad SDK, tool registration, hot reload, and TypeScript extension SDK remain deferred;
 - ACP launch profiles are supported for explicit foreground ACP client commands;
 - daemon-hidden background drain remains deferred.
 
