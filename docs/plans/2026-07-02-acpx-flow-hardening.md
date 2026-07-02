@@ -33,7 +33,7 @@
 |------|-------|-------|--------|
 | 1 | `feat: harden acp client flows` | Task 1, Task 2, Task 3, Task 4, Task 5, Task 6 | `feat/acpx-flow-hardening` |
 
-**Status:** Draft
+**Status:** Locked 2026-07-02T17:08:24Z
 
 ## Integration Matrix
 
