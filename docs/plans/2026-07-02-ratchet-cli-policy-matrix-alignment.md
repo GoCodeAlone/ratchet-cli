@@ -33,7 +33,7 @@
 Command:
 
 ```bash
-bash /Users/jon/.codex/plugins/cache/autodev-marketplace/autodev/6.5.11/tests/plan-scope-check.sh --plan docs/plans/2026-07-02-ratchet-cli-policy-matrix.md
+bash <autodev-plugin>/tests/plan-scope-check.sh --plan docs/plans/2026-07-02-ratchet-cli-policy-matrix.md
 ```
 
 Result: PASS. The repository does not vendor `tests/plan-scope-check.sh`, so the autodev plugin helper was used.
