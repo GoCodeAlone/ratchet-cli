@@ -47,6 +47,7 @@ var (
 	errTeamMessageTeamMissing  = errors.New("team not found")
 	errTeamMessageAgentMissing = errors.New("agent not found")
 	errTeamMessageNotRunning   = errors.New("team not running")
+	errTeamMessageDelivery     = errors.New("team message delivery failed")
 )
 
 // teamObserver tracks an attached client observing a team.
@@ -491,14 +492,23 @@ func (tm *TeamManager) agentByRole(ti *teamInstance, role string) *teamAgent {
 }
 
 func (tm *TeamManager) routeMessage(ti *teamInstance, from, to, content string) {
-	ti.mu.Lock()
+	var sender *teamAgent
+	ti.mu.RLock()
 	for _, ag := range ti.agents {
-		if ag.name == from {
-			ag.messages = append(ag.messages, agentMsg{from: from, content: content, ts: time.Now()})
+		ag.mu.RLock()
+		matches := ag.name == from
+		ag.mu.RUnlock()
+		if matches {
+			sender = ag
 			break
 		}
 	}
-	ti.mu.Unlock()
+	ti.mu.RUnlock()
+	if sender != nil {
+		sender.mu.Lock()
+		sender.messages = append(sender.messages, agentMsg{from: from, content: content, ts: time.Now()})
+		sender.mu.Unlock()
+	}
 
 	pbEv := &pb.TeamEvent{
 		Event: &pb.TeamEvent_AgentMessage{
@@ -526,14 +536,13 @@ func (tm *TeamManager) routeMessage(ti *teamInstance, from, to, content string) 
 func (tm *TeamManager) DirectMessage(teamID, toAgent, content string) error {
 	teamID = strings.TrimSpace(teamID)
 	toAgent = strings.TrimSpace(toAgent)
-	content = strings.TrimSpace(content)
 	if teamID == "" {
 		return fmt.Errorf("%w: team_id is required", errTeamMessageInvalid)
 	}
 	if toAgent == "" {
 		return fmt.Errorf("%w: to_agent is required", errTeamMessageInvalid)
 	}
-	if content == "" {
+	if strings.TrimSpace(content) == "" {
 		return fmt.Errorf("%w: content is required", errTeamMessageInvalid)
 	}
 
@@ -565,10 +574,9 @@ func (tm *TeamManager) DirectMessage(teamID, toAgent, content string) error {
 		return fmt.Errorf("%w: agent %q in team %q", errTeamMessageAgentMissing, toAgent, teamID)
 	}
 
-	recipient.mu.Lock()
-	recipient.messages = append(recipient.messages, agentMsg{from: "operator", content: content, ts: time.Now()})
+	recipient.mu.RLock()
 	toName := recipient.name
-	recipient.mu.Unlock()
+	recipient.mu.RUnlock()
 
 	pbEv := &pb.TeamEvent{
 		Event: &pb.TeamEvent_AgentMessage{
@@ -582,7 +590,12 @@ func (tm *TeamManager) DirectMessage(teamID, toAgent, content string) error {
 	select {
 	case ti.eventCh <- pbEv:
 	default:
+		return fmt.Errorf("%w: event channel for team %q is full", errTeamMessageDelivery, teamID)
 	}
+
+	recipient.mu.Lock()
+	recipient.messages = append(recipient.messages, agentMsg{from: "operator", content: content, ts: time.Now()})
+	recipient.mu.Unlock()
 	tm.broadcastToObservers(ti, &pb.TeamActivityEvent{
 		Event: &pb.TeamActivityEvent_AgentMessage{
 			AgentMessage: &pb.AgentMessage{

@@ -1150,6 +1150,8 @@ func (s *Service) DirectMessage(ctx context.Context, req *pb.DirectMessageReq) (
 			return nil, status.Error(codes.NotFound, err.Error())
 		case errors.Is(err, errTeamMessageNotRunning):
 			return nil, status.Error(codes.FailedPrecondition, err.Error())
+		case errors.Is(err, errTeamMessageDelivery):
+			return nil, status.Error(codes.ResourceExhausted, err.Error())
 		default:
 			return nil, status.Error(codes.Internal, err.Error())
 		}

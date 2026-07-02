@@ -149,6 +149,45 @@ func TestTeamManager_DirectMessageResolvesRecipientID(t *testing.T) {
 	}
 }
 
+func TestTeamManager_DirectMessagePreservesContentWhitespace(t *testing.T) {
+	tm := NewTeamManager(nil, nil)
+	ti := newRunningTeamForDirectMessage()
+	tm.mu.Lock()
+	tm.teams[ti.id] = ti
+	tm.mu.Unlock()
+
+	content := "  hello worker\n"
+	if err := tm.DirectMessage(ti.id, "worker", content); err != nil {
+		t.Fatalf("DirectMessage: %v", err)
+	}
+	worker := ti.agents["worker-id"]
+	worker.mu.RLock()
+	defer worker.mu.RUnlock()
+	if len(worker.messages) != 1 || worker.messages[0].content != content {
+		t.Fatalf("worker messages = %+v, want content %q", worker.messages, content)
+	}
+}
+
+func TestTeamManager_DirectMessageReportsFullEventChannel(t *testing.T) {
+	tm := NewTeamManager(nil, nil)
+	ti := newRunningTeamForDirectMessage()
+	ti.eventCh = make(chan *pb.TeamEvent, 1)
+	ti.eventCh <- &pb.TeamEvent{Event: &pb.TeamEvent_Token{Token: &pb.TokenDelta{Content: "full"}}}
+	tm.mu.Lock()
+	tm.teams[ti.id] = ti
+	tm.mu.Unlock()
+
+	if err := tm.DirectMessage(ti.id, "worker", "hello"); err == nil || !strings.Contains(err.Error(), "event channel") {
+		t.Fatalf("full event channel error = %v", err)
+	}
+	worker := ti.agents["worker-id"]
+	worker.mu.RLock()
+	defer worker.mu.RUnlock()
+	if len(worker.messages) != 0 {
+		t.Fatalf("message appended despite full event channel: %+v", worker.messages)
+	}
+}
+
 func TestTeamManager_DirectMessageErrors(t *testing.T) {
 	tm := NewTeamManager(nil, nil)
 	ti := newRunningTeamForDirectMessage()
@@ -211,6 +250,16 @@ func TestServiceDirectMessageMapsErrors(t *testing.T) {
 	_, err := svc.DirectMessage(context.Background(), &pb.DirectMessageReq{TeamId: ti.id, ToAgent: "worker", Content: "hello"})
 	if status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("completed team code = %v, want FailedPrecondition (err=%v)", status.Code(err), err)
+	}
+
+	ti.mu.Lock()
+	ti.status = "running"
+	ti.eventCh = make(chan *pb.TeamEvent, 1)
+	ti.eventCh <- &pb.TeamEvent{Event: &pb.TeamEvent_Token{Token: &pb.TokenDelta{Content: "full"}}}
+	ti.mu.Unlock()
+	_, err = svc.DirectMessage(context.Background(), &pb.DirectMessageReq{TeamId: ti.id, ToAgent: "worker", Content: "hello"})
+	if status.Code(err) != codes.ResourceExhausted {
+		t.Fatalf("full event channel code = %v, want ResourceExhausted (err=%v)", status.Code(err), err)
 	}
 }
 
