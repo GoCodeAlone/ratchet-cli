@@ -30,7 +30,7 @@
 |------|-------|-------|--------|
 | 1 | Add persistent trust policy controls | Task 1, Task 2, Task 3, Task 4, Task 5 | feat/ratchet-cli-persistent-trust-policy |
 
-**Status:** Draft
+**Status:** Locked 2026-07-02T12:47:18Z
 
 ## Integration Matrix
 
@@ -42,7 +42,7 @@
 | CLI `ratchet trust` | runtime-integrated | CLI tests use fake client factory and command output assertions. |
 | Windows builds | runtime-integrated | `GOOS=windows GOARCH=amd64 go build ./cmd/ratchet` and `GOOS=windows GOARCH=arm64 go build ./cmd/ratchet`. |
 
-## Task 1: Extend Trust Proto and Client
+### Task 1: Extend Trust Proto and Client
 
 **Files:**
 - Modify: `internal/proto/ratchet.proto`
@@ -90,7 +90,7 @@ git commit -m "feat: add persistent trust grant RPCs"
 
 Rollback: revert this commit and rerun `make proto && go test ./internal/client -run Trust -count=1`.
 
-## Task 2: Implement Daemon Persistent Grant Handlers
+### Task 2: Implement Daemon Persistent Grant Handlers
 
 **Files:**
 - Modify: `internal/daemon/trust.go`
@@ -140,7 +140,7 @@ git commit -m "feat: persist trust grants in daemon"
 
 Rollback: revert this commit; existing runtime-only trust RPCs still work.
 
-## Task 3: Add Scriptable CLI Trust Commands
+### Task 3: Add Scriptable CLI Trust Commands
 
 **Files:**
 - Create: `cmd/ratchet/cmd_trust.go`
@@ -183,7 +183,7 @@ git commit -m "feat: add trust policy CLI commands"
 
 Rollback: revert this commit; daemon RPCs remain available to newer clients.
 
-## Task 4: Extend TUI Trust Slash Commands
+### Task 4: Extend TUI Trust Slash Commands
 
 **Files:**
 - Modify: `internal/tui/commands/trust.go`
@@ -221,7 +221,7 @@ git commit -m "feat: add persistent trust slash commands"
 
 Rollback: revert this commit; scriptable CLI grant management still works.
 
-## Task 5: Docs, Verification, and Release Prep
+### Task 5: Docs, Verification, and Release Prep
 
 **Files:**
 - Modify: `README.md`
