@@ -35,7 +35,7 @@
 |------|-------|-------|--------|
 | 1 | Add ratchet-cli policy matrix docs and guards | Task 1, Task 2, Task 3, Task 4 | `feat/ratchet-cli-policy-matrix` |
 
-**Status:** Locked 2026-07-02T14:23:35Z
+**Status:** Complete 2026-07-02T15:00:50Z
 
 ## Integration Matrix
 
