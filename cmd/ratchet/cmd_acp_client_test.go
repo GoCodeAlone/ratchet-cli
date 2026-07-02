@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -81,6 +82,61 @@ func TestParseACPClientExecRejectsPromptAndFile(t *testing.T) {
 	_, err := parseACPClientCommand([]string{"exec", "--command", "agent", "--file", "prompt.txt", "inline"})
 	if err == nil || !strings.Contains(err.Error(), "cannot combine") {
 		t.Fatalf("error = %v, want prompt/file exclusivity", err)
+	}
+}
+
+func TestParseACPClientCompareCommand(t *testing.T) {
+	cmd, err := parseACPClientCommand([]string{
+		"compare",
+		"--command", "/bin/agent-a",
+		"--command", "/bin/agent-b",
+		"--cwd", "/tmp/project",
+		"--timeout", "3s",
+		"compare", "prompt",
+	})
+	if err != nil {
+		t.Fatalf("parseACPClientCommand: %v", err)
+	}
+	if cmd.kind != acpClientCommandCompare {
+		t.Fatalf("kind = %q, want compare", cmd.kind)
+	}
+	if got, want := strings.Join(cmd.compare.Commands, ","), "/bin/agent-a,/bin/agent-b"; got != want {
+		t.Fatalf("Commands = %q, want %q", got, want)
+	}
+	if cmd.compare.Cwd != "/tmp/project" || cmd.compare.Timeout != 3*time.Second || cmd.compare.Prompt != "compare prompt" {
+		t.Fatalf("compare options = %#v", cmd.compare)
+	}
+
+	fileCmd, err := parseACPClientCommand([]string{
+		"compare",
+		"--agent", "codex",
+		"--agent", "claude",
+		"--file", "prompt.txt",
+		"--json",
+	})
+	if err != nil {
+		t.Fatalf("parse file compare: %v", err)
+	}
+	if got, want := strings.Join(fileCmd.compare.Agents, ","), "codex,claude"; got != want {
+		t.Fatalf("Agents = %q, want %q", got, want)
+	}
+	if fileCmd.compare.File != "prompt.txt" || !fileCmd.compare.JSON {
+		t.Fatalf("file compare options = %#v", fileCmd.compare)
+	}
+}
+
+func TestParseACPClientCompareRejectsInvalidArgs(t *testing.T) {
+	tests := [][]string{
+		{"compare", "--command", "/bin/agent", "prompt"},
+		{"compare", "--agent", "codex", "--file", "prompt.txt", "inline"},
+		{"compare", "--command", "/bin/a", "--command", "/bin/b"},
+	}
+	for _, args := range tests {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			if _, err := parseACPClientCommand(args); err == nil {
+				t.Fatalf("parseACPClientCommand(%#v) succeeded, want error", args)
+			}
+		})
 	}
 }
 
@@ -632,6 +688,72 @@ func TestExecuteACPClientArchiveExportAndImport(t *testing.T) {
 	}
 }
 
+func TestExecuteACPClientCompareTextAndJSON(t *testing.T) {
+	runner := &fakeCompareCommandRunner{
+		results: map[string]acpclient.Result{
+			"/bin/agent-a": {StopReason: acpsdk.StopReasonEndTurn, Text: "agent a final", Duration: 11 * time.Millisecond},
+			"/bin/agent-b": {StopReason: acpsdk.StopReasonEndTurn, Text: "agent b final", Duration: 12 * time.Millisecond},
+		},
+	}
+	var textOut bytes.Buffer
+	if err := executeACPClientCompare(t.Context(), acpClientCompareOptions{
+		Commands: []string{"/bin/agent-a", "/bin/agent-b"},
+		Prompt:   "compare me",
+		Cwd:      ".",
+		Timeout:  time.Second,
+	}, runner, &textOut); err != nil {
+		t.Fatalf("executeACPClientCompare text: %v", err)
+	}
+	if got := textOut.String(); !strings.Contains(got, "AGENT") || !strings.Contains(got, "STATUS") ||
+		!strings.Contains(got, "/bin/agent-a") || !strings.Contains(got, "agent a final") {
+		t.Fatalf("text compare output = %q", got)
+	}
+	if got, want := strings.Join(runner.prompts, ","), "/bin/agent-a:compare me,/bin/agent-b:compare me"; got != want {
+		t.Fatalf("runner prompts = %q, want %q", got, want)
+	}
+
+	promptFile := filepath.Join(t.TempDir(), "prompt.txt")
+	if err := os.WriteFile(promptFile, []byte("from file"), 0o644); err != nil {
+		t.Fatalf("write prompt file: %v", err)
+	}
+	var jsonOut bytes.Buffer
+	if err := executeACPClientCompare(t.Context(), acpClientCompareOptions{
+		Commands: []string{"/bin/agent-a", "/bin/agent-b"},
+		File:     promptFile,
+		Cwd:      ".",
+		JSON:     true,
+	}, runner, &jsonOut); err != nil {
+		t.Fatalf("executeACPClientCompare json: %v", err)
+	}
+	var rows []acpclient.CompareRow
+	if err := json.Unmarshal(jsonOut.Bytes(), &rows); err != nil {
+		t.Fatalf("compare json: %v\n%s", err, jsonOut.String())
+	}
+	if len(rows) != 2 || rows[0].Status != "ok" || rows[0].Final != "agent a final" {
+		t.Fatalf("rows = %#v", rows)
+	}
+}
+
+func TestExecuteACPClientCompareTextIncludesErrorDetails(t *testing.T) {
+	runner := &fakeCompareCommandRunner{
+		errs: map[string]error{
+			"/bin/agent-b": errors.New("agent b failed"),
+		},
+	}
+	var out bytes.Buffer
+	if err := executeACPClientCompare(t.Context(), acpClientCompareOptions{
+		Commands: []string{"/bin/agent-a", "/bin/agent-b"},
+		Prompt:   "compare me",
+		Cwd:      ".",
+	}, runner, &out); err != nil {
+		t.Fatalf("executeACPClientCompare: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "ERROR") || !strings.Contains(got, "agent b failed") {
+		t.Fatalf("compare output missing error detail:\n%s", got)
+	}
+}
+
 func TestACPClientSessionsStatusAndCancelCommands(t *testing.T) {
 	store := acpclient.NewStore(filepath.Join(t.TempDir(), "sessions.json"))
 	now := time.Date(2026, 7, 1, 19, 30, 0, 0, time.UTC)
@@ -854,6 +976,27 @@ func (r *fakeACPClientExecRunner) RunPrompt(_ context.Context, spec acpclient.Ag
 	r.opts = opts
 	r.prompt = prompt
 	return r.result, r.err
+}
+
+type fakeCompareCommandRunner struct {
+	results map[string]acpclient.Result
+	errs    map[string]error
+	prompts []string
+}
+
+func (r *fakeCompareCommandRunner) RunPrompt(_ context.Context, spec acpclient.AgentSpec, _ acpclient.RunOptions, prompt string) (acpclient.Result, error) {
+	r.prompts = append(r.prompts, spec.Command+":"+prompt)
+	if r.errs != nil {
+		if err := r.errs[spec.Command]; err != nil {
+			return acpclient.Result{}, err
+		}
+	}
+	if r.results != nil {
+		if result, ok := r.results[spec.Command]; ok {
+			return result, nil
+		}
+	}
+	return acpclient.Result{}, nil
 }
 
 type fakeDrainPromptRunner struct {

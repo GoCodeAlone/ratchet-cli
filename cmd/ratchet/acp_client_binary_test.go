@@ -261,4 +261,30 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 		importShowPayload.PromptQueue[0].Status != "completed" {
 		t.Fatalf("imported show payload = %#v", importShowPayload)
 	}
+
+	compare := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "compare",
+		"--command", fixtureBin,
+		"--command", fixtureBin,
+		"--arg", "--echo-session",
+		"--cwd", cwd,
+		"--json",
+		"binary compare")
+	compare.Dir = repoRoot
+	compare.Env = env
+	compareOut, err := compare.Output()
+	if err != nil {
+		t.Fatalf("compare: %v\n%s", err, compareOut)
+	}
+	var compareRows []acpclient.CompareRow
+	if err := json.Unmarshal(compareOut, &compareRows); err != nil {
+		t.Fatalf("compare json output: %v\n%s", err, compareOut)
+	}
+	if len(compareRows) != 2 {
+		t.Fatalf("compare rows = %#v, want 2 rows", compareRows)
+	}
+	for i, row := range compareRows {
+		if row.Status != "ok" || row.StopReason != "end_turn" || !strings.Contains(row.Final, "fixture-session: binary compare") {
+			t.Fatalf("compare row %d = %#v", i, row)
+		}
+	}
 }
