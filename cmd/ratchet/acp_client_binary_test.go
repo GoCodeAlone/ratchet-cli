@@ -334,3 +334,75 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 		}
 	}
 }
+
+func TestACPClientWatchBinarySmoke(t *testing.T) {
+	repoRoot := filepath.Clean(filepath.Join("..", ".."))
+	binDir := t.TempDir()
+	ratchetBin := filepath.Join(binDir, "ratchet")
+	fixtureBin := filepath.Join(binDir, "fixture-agent")
+	if runtime.GOOS == "windows" {
+		ratchetBin += ".exe"
+		fixtureBin += ".exe"
+	}
+
+	buildRatchet := exec.CommandContext(t.Context(), "go", "build", "-o", ratchetBin, "./cmd/ratchet")
+	buildRatchet.Dir = repoRoot
+	if out, err := buildRatchet.CombinedOutput(); err != nil {
+		t.Fatalf("build ratchet: %v\n%s", err, out)
+	}
+
+	buildFixture := exec.CommandContext(t.Context(), "go", "build", "-o", fixtureBin, "./internal/acpclient/testdata/fixture-agent")
+	buildFixture.Dir = repoRoot
+	if out, err := buildFixture.CombinedOutput(); err != nil {
+		t.Fatalf("build fixture: %v\n%s", err, out)
+	}
+
+	home := t.TempDir()
+	cwd := filepath.Join(home, "project")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatalf("mkdir cwd: %v", err)
+	}
+	env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, ".state"))
+	for _, prompt := range []string{"watch binary one", "watch binary two"} {
+		queue := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "exec", "--command", fixtureBin, "--cwd", cwd, "--session", "watch-binary", "--no-wait", prompt)
+		queue.Dir = repoRoot
+		queue.Env = env
+		queueOut, err := queue.CombinedOutput()
+		if err != nil {
+			t.Fatalf("queue exec %q: %v\n%s", prompt, err, queueOut)
+		}
+	}
+
+	watch := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "watch", "watch-binary",
+		"--command", fixtureBin,
+		"--arg", "--echo-session",
+		"--arg", "--load-session",
+		"--cwd", cwd,
+		"--stop-when-empty",
+		"--max-per-cycle", "2",
+		"--max-cycles", "2")
+	watch.Dir = repoRoot
+	watch.Env = env
+	watchOut, err := watch.CombinedOutput()
+	if err != nil {
+		t.Fatalf("watch: %v\n%s", err, watchOut)
+	}
+	gotWatch := string(watchOut)
+	if !strings.Contains(gotWatch, "watch cycle 1") || !strings.Contains(gotWatch, "completed: 2") || !strings.Contains(gotWatch, "remaining: 0") {
+		t.Fatalf("watch output = %q", gotWatch)
+	}
+	if strings.Contains(gotWatch, "watch binary one") || strings.Contains(gotWatch, "watch binary two") {
+		t.Fatalf("watch output leaked prompt bodies: %q", gotWatch)
+	}
+
+	statusDone := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "status", "watch-binary")
+	statusDone.Dir = repoRoot
+	statusDone.Env = env
+	statusDoneOut, err := statusDone.CombinedOutput()
+	if err != nil {
+		t.Fatalf("status done: %v\n%s", err, statusDoneOut)
+	}
+	if got := string(statusDoneOut); !strings.Contains(got, "queue: 0 pending, 0 running, 2 completed") {
+		t.Fatalf("status done output = %q", got)
+	}
+}

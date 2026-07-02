@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
@@ -32,6 +33,7 @@ const (
 	acpClientCommandCancel         acpClientCommandKind = "cancel"
 	acpClientCommandQueue          acpClientCommandKind = "queue"
 	acpClientCommandDrain          acpClientCommandKind = "drain"
+	acpClientCommandWatch          acpClientCommandKind = "watch"
 )
 
 type acpClientCommand struct {
@@ -40,6 +42,7 @@ type acpClientCommand struct {
 	compare   acpClientCompareOptions
 	flow      acpClientFlowOptions
 	drain     acpClientDrainOptions
+	watch     acpClientWatchOptions
 	archive   acpClientArchiveOptions
 	sessionID string
 	json      bool
@@ -65,6 +68,19 @@ type acpClientDrainOptions struct {
 	Cwd     string
 	Timeout time.Duration
 	Max     int
+}
+
+type acpClientWatchOptions struct {
+	Agent         string
+	Command       string
+	Args          []string
+	Cwd           string
+	Timeout       time.Duration
+	Interval      time.Duration
+	MaxPerCycle   int
+	MaxCycles     int
+	StopWhenEmpty bool
+	JSON          bool
 }
 
 type acpClientCompareOptions struct {
@@ -150,6 +166,10 @@ func handleACPClient(args []string) error {
 		return executeACPClientQueue(store, cmd.sessionID, cmd.json, os.Stdout)
 	case acpClientCommandDrain:
 		return executeACPClientDrain(context.Background(), store, cmd.sessionID, cmd.drain, nil, os.Stdout)
+	case acpClientCommandWatch:
+		ctx, stop := signal.NotifyContext(context.Background(), acpClientWatchSignals()...)
+		defer stop()
+		return executeACPClientWatch(ctx, store, cmd.sessionID, cmd.watch, nil, os.Stdout)
 	default:
 		return fmt.Errorf("unknown acp client command: %s", cmd.kind)
 	}
@@ -410,6 +430,12 @@ func parseACPClientCommandWithOutput(args []string, output io.Writer) (acpClient
 			return acpClientCommand{}, err
 		}
 		return acpClientCommand{kind: acpClientCommandDrain, sessionID: id, drain: drainOpts}, nil
+	case "watch":
+		id, watchOpts, err := parseACPClientWatch(args[1:], output)
+		if err != nil {
+			return acpClientCommand{}, err
+		}
+		return acpClientCommand{kind: acpClientCommandWatch, sessionID: id, watch: watchOpts}, nil
 	case "help", "--help", "-h":
 		return acpClientCommand{kind: acpClientCommandHelp}, nil
 	default:
@@ -619,6 +645,53 @@ func parseACPClientDrain(args []string, output io.Writer) (string, acpClientDrai
 	return id, opts, nil
 }
 
+func parseACPClientWatch(args []string, output io.Writer) (string, acpClientWatchOptions, error) {
+	if len(args) == 0 || strings.TrimSpace(args[0]) == "" {
+		return "", acpClientWatchOptions{}, errors.New("usage: ratchet acp client watch <session-id> [flags]")
+	}
+	id := args[0]
+	opts := acpClientWatchOptions{
+		Cwd:         ".",
+		Timeout:     30 * time.Second,
+		Interval:    5 * time.Second,
+		MaxPerCycle: 1,
+	}
+	fs := flag.NewFlagSet("ratchet acp client watch", flag.ContinueOnError)
+	fs.SetOutput(output)
+	fs.StringVar(&opts.Agent, "agent", "", "agent template")
+	fs.StringVar(&opts.Command, "command", "", "agent command")
+	fs.Var((*repeatedStringFlag)(&opts.Args), "arg", "agent command argument")
+	fs.StringVar(&opts.Cwd, "cwd", opts.Cwd, "working directory")
+	fs.DurationVar(&opts.Timeout, "timeout", opts.Timeout, "prompt timeout")
+	fs.DurationVar(&opts.Interval, "interval", opts.Interval, "watch polling interval")
+	fs.IntVar(&opts.MaxPerCycle, "max-per-cycle", opts.MaxPerCycle, "maximum queued prompts to drain per cycle")
+	fs.IntVar(&opts.MaxCycles, "max-cycles", 0, "maximum watch cycles before exit")
+	fs.BoolVar(&opts.StopWhenEmpty, "stop-when-empty", false, "exit after observing an empty queue")
+	fs.BoolVar(&opts.JSON, "json", false, "emit newline-delimited JSON cycle summaries")
+	if err := fs.Parse(args[1:]); err != nil {
+		return "", acpClientWatchOptions{}, err
+	}
+	if len(fs.Args()) > 0 {
+		return "", acpClientWatchOptions{}, errors.New("usage: ratchet acp client watch <session-id> [flags]")
+	}
+	if opts.Interval <= 0 {
+		return "", acpClientWatchOptions{}, errors.New("--interval must be greater than 0")
+	}
+	if opts.MaxPerCycle <= 0 {
+		return "", acpClientWatchOptions{}, errors.New("--max-per-cycle must be greater than 0")
+	}
+	maxCyclesSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "max-cycles" {
+			maxCyclesSet = true
+		}
+	})
+	if maxCyclesSet && opts.MaxCycles <= 0 {
+		return "", acpClientWatchOptions{}, errors.New("--max-cycles must be greater than 0")
+	}
+	return id, opts, nil
+}
+
 func parseACPClientSessions(args []string) (acpClientCommand, error) {
 	if len(args) == 0 || args[0] == "list" || strings.HasPrefix(args[0], "-") {
 		jsonOut, err := parseJSONOnlyFlags("sessions list", trimCommand(args, "list"))
@@ -761,6 +834,7 @@ Commands:
              Subcommands: list, show, history (alias for show), export, import
   queue      List queued prompts for an ACP client session
   drain      Drain queued prompts through an external ACP agent
+  watch      Explicitly watch and drain queued prompts through an external ACP agent
   status     Show ACP client session status
   cancel     Cancel an ACP client session
 
@@ -1027,6 +1101,71 @@ func executeACPClientDrain(ctx context.Context, store *acpclient.Store, id strin
 	}
 	fmt.Fprintf(w, "drained %d %s for %s (failed: %d, canceled: %d, remaining: %d)\n", result.Completed, noun, id, result.Failed, result.Canceled, result.Remaining)
 	return nil
+}
+
+func executeACPClientWatch(ctx context.Context, store *acpclient.Store, id string, opts acpClientWatchOptions, startRunner func(context.Context, acpclient.AgentSpec, acpclient.RunOptions, string) (acpclient.DrainPromptRunner, func() error, error), w io.Writer) error {
+	cwd := opts.Cwd
+	if cwd == "" {
+		cwd = "."
+	}
+	if abs, err := filepath.Abs(cwd); err == nil {
+		cwd = abs
+	}
+	runOpts := acpclient.RunOptions{
+		Agent:   opts.Agent,
+		Command: opts.Command,
+		Args:    opts.Args,
+		Cwd:     cwd,
+		Timeout: opts.Timeout,
+	}
+	spec, err := acpclient.DefaultRegistry().Resolve(runOpts)
+	if err != nil {
+		return err
+	}
+	encoder := json.NewEncoder(w)
+	_, err = acpclient.WatchQueue(ctx, store, spec, runOpts, id, acpclient.WatchOptions{
+		Interval:      opts.Interval,
+		MaxPerCycle:   opts.MaxPerCycle,
+		MaxCycles:     opts.MaxCycles,
+		StopWhenEmpty: opts.StopWhenEmpty,
+		StartRunner:   startRunner,
+	}, func(cycle acpclient.WatchCycle) {
+		if opts.JSON {
+			_ = encoder.Encode(acpClientWatchCyclePayload{
+				SessionID:     cycle.SessionID,
+				ACPSessionID:  cycle.ACPSessionID,
+				Cycle:         cycle.Cycle,
+				PendingBefore: cycle.PendingBefore,
+				Processed:     cycle.Processed,
+				Completed:     cycle.Completed,
+				Failed:        cycle.Failed,
+				Canceled:      cycle.Canceled,
+				Remaining:     cycle.Remaining,
+				Idle:          cycle.Idle,
+			})
+			return
+		}
+		if cycle.Idle {
+			fmt.Fprintf(w, "watch idle for %s (cycle %d, remaining: %d)\n", cycle.SessionID, cycle.Cycle, cycle.Remaining)
+			return
+		}
+		fmt.Fprintf(w, "watch cycle %d for %s (processed: %d, completed: %d, failed: %d, canceled: %d, remaining: %d)\n",
+			cycle.Cycle, cycle.SessionID, cycle.Processed, cycle.Completed, cycle.Failed, cycle.Canceled, cycle.Remaining)
+	})
+	return err
+}
+
+type acpClientWatchCyclePayload struct {
+	SessionID     string `json:"session_id"`
+	ACPSessionID  string `json:"acp_session_id,omitempty"`
+	Cycle         int    `json:"cycle"`
+	PendingBefore int    `json:"pending_before"`
+	Processed     int    `json:"processed"`
+	Completed     int    `json:"completed"`
+	Failed        int    `json:"failed"`
+	Canceled      int    `json:"canceled"`
+	Remaining     int    `json:"remaining"`
+	Idle          bool   `json:"idle"`
 }
 
 func executeACPClientStatus(store *acpclient.Store, id string, jsonOut bool, w io.Writer) error {

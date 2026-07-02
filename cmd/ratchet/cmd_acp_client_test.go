@@ -355,6 +355,61 @@ func TestParseACPClientDrainRejectsInvalidArgs(t *testing.T) {
 	}
 }
 
+func TestParseACPClientWatchCommand(t *testing.T) {
+	cmd, err := parseACPClientCommand([]string{
+		"watch",
+		"fifo-session",
+		"--command", "/bin/acp-agent",
+		"--arg", "--stdio",
+		"--arg", "--profile=work",
+		"--agent", "custom",
+		"--cwd", "/tmp/project",
+		"--timeout", "5s",
+		"--interval", "100ms",
+		"--max-per-cycle", "2",
+		"--max-cycles", "1",
+		"--stop-when-empty",
+		"--json",
+	})
+	if err != nil {
+		t.Fatalf("parseACPClientCommand: %v", err)
+	}
+	if cmd.kind != acpClientCommandWatch {
+		t.Fatalf("kind = %q, want watch", cmd.kind)
+	}
+	if cmd.sessionID != "fifo-session" {
+		t.Fatalf("sessionID = %q, want fifo-session", cmd.sessionID)
+	}
+	if cmd.watch.Command != "/bin/acp-agent" || cmd.watch.Agent != "custom" || cmd.watch.Cwd != "/tmp/project" {
+		t.Fatalf("watch options = %#v", cmd.watch)
+	}
+	if got, want := strings.Join(cmd.watch.Args, ","), "--stdio,--profile=work"; got != want {
+		t.Fatalf("watch args = %q, want %q", got, want)
+	}
+	if cmd.watch.Timeout != 5*time.Second || cmd.watch.Interval != 100*time.Millisecond ||
+		cmd.watch.MaxPerCycle != 2 || cmd.watch.MaxCycles != 1 ||
+		!cmd.watch.StopWhenEmpty || !cmd.watch.JSON {
+		t.Fatalf("watch options = %#v", cmd.watch)
+	}
+}
+
+func TestParseACPClientWatchRejectsInvalidArgs(t *testing.T) {
+	tests := [][]string{
+		{"watch"},
+		{"watch", "fifo-session", "--interval", "0s"},
+		{"watch", "fifo-session", "--max-per-cycle", "0"},
+		{"watch", "fifo-session", "--max-cycles", "0"},
+		{"watch", "fifo-session", "--command", "agent", "extra"},
+	}
+	for _, args := range tests {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			if _, err := parseACPClientCommand(args); err == nil {
+				t.Fatalf("parseACPClientCommand(%#v) succeeded, want error", args)
+			}
+		})
+	}
+}
+
 func TestExecuteACPClientExecHumanOutput(t *testing.T) {
 	runner := &fakeACPClientExecRunner{
 		result: acpclient.Result{
@@ -670,6 +725,112 @@ func TestExecuteACPClientDrainUsesInjectedRunner(t *testing.T) {
 	}
 	if rec.ACPSessionID != "acp-drain" || rec.PromptQueue[0].Status != acpclient.QueuePromptStatusCompleted {
 		t.Fatalf("record after drain = %#v", rec)
+	}
+}
+
+func TestExecuteACPClientWatchUsesInjectedRunnerWithoutPromptLeak(t *testing.T) {
+	store := acpclient.NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 2, 13, 0, 0, 0, time.UTC)
+	const secretPrompt = "watch secret prompt"
+	if err := store.Upsert(acpclient.SessionRecord{
+		ID:        "s-watch",
+		Status:    acpclient.SessionStatusQueued,
+		CreatedAt: now,
+		UpdatedAt: now,
+		PromptQueue: []acpclient.QueuedPrompt{{
+			ID: "q-1", Prompt: secretPrompt, Status: acpclient.QueuePromptStatusPending, CreatedAt: now,
+		}},
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	runner := &fakeDrainPromptRunner{sessionID: "acp-watch"}
+	var out bytes.Buffer
+
+	if err := executeACPClientWatch(t.Context(), store, "s-watch", acpClientWatchOptions{
+		Command:       "/bin/fixture-agent",
+		Cwd:           ".",
+		Timeout:       time.Second,
+		Interval:      time.Millisecond,
+		MaxPerCycle:   1,
+		MaxCycles:     2,
+		StopWhenEmpty: true,
+	}, func(context.Context, acpclient.AgentSpec, acpclient.RunOptions, string) (acpclient.DrainPromptRunner, func() error, error) {
+		return runner, func() error { return nil }, nil
+	}, &out); err != nil {
+		t.Fatalf("executeACPClientWatch: %v", err)
+	}
+	if got := strings.Join(runner.prompts, ","); got != secretPrompt {
+		t.Fatalf("runner prompts = %q, want secret prompt executed", got)
+	}
+	got := out.String()
+	if !strings.Contains(got, "watch cycle 1") || !strings.Contains(got, "completed: 1") || !strings.Contains(got, "remaining: 0") {
+		t.Fatalf("watch output = %q", got)
+	}
+	if strings.Contains(got, secretPrompt) {
+		t.Fatalf("watch output leaked prompt body: %q", got)
+	}
+}
+
+func TestExecuteACPClientWatchJSONOutputIsAggregateOnly(t *testing.T) {
+	store := acpclient.NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 2, 13, 5, 0, 0, time.UTC)
+	const secretPrompt = "json watch secret"
+	if err := store.Upsert(acpclient.SessionRecord{
+		ID:        "s-watch-json",
+		Status:    acpclient.SessionStatusQueued,
+		CreatedAt: now,
+		UpdatedAt: now,
+		PromptQueue: []acpclient.QueuedPrompt{{
+			ID: "q-1", Prompt: secretPrompt, Status: acpclient.QueuePromptStatusPending, CreatedAt: now,
+		}},
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	runner := &fakeDrainPromptRunner{sessionID: "acp-watch-json"}
+	var out bytes.Buffer
+
+	if err := executeACPClientWatch(t.Context(), store, "s-watch-json", acpClientWatchOptions{
+		Command:       "/bin/fixture-agent",
+		Cwd:           ".",
+		Timeout:       time.Second,
+		Interval:      time.Millisecond,
+		MaxPerCycle:   1,
+		MaxCycles:     2,
+		StopWhenEmpty: true,
+		JSON:          true,
+	}, func(context.Context, acpclient.AgentSpec, acpclient.RunOptions, string) (acpclient.DrainPromptRunner, func() error, error) {
+		return runner, func() error { return nil }, nil
+	}, &out); err != nil {
+		t.Fatalf("executeACPClientWatch: %v", err)
+	}
+	if got := out.String(); strings.Contains(got, secretPrompt) {
+		t.Fatalf("json output leaked prompt body: %q", got)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("json output lines = %#v, want drain and idle cycle", lines)
+	}
+	var first struct {
+		SessionID string `json:"session_id"`
+		Cycle     int    `json:"cycle"`
+		Completed int    `json:"completed"`
+		Remaining int    `json:"remaining"`
+		Idle      bool   `json:"idle"`
+	}
+	if err := json.Unmarshal([]byte(lines[0]), &first); err != nil {
+		t.Fatalf("first cycle json: %v\n%s", err, lines[0])
+	}
+	if first.SessionID != "s-watch-json" || first.Cycle != 1 || first.Completed != 1 || first.Remaining != 0 || first.Idle {
+		t.Fatalf("first cycle = %#v", first)
+	}
+	var second struct {
+		Idle bool `json:"idle"`
+	}
+	if err := json.Unmarshal([]byte(lines[1]), &second); err != nil {
+		t.Fatalf("second cycle json: %v\n%s", err, lines[1])
+	}
+	if !second.Idle {
+		t.Fatalf("second cycle = %#v, want idle", second)
 	}
 }
 
