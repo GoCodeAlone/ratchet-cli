@@ -214,6 +214,26 @@ func (c *Client) RespondToPermission(ctx context.Context, requestID string, allo
 	return err
 }
 
+func (c *Client) GetTrustState(ctx context.Context) (*pb.TrustState, error) {
+	return c.daemon.GetTrustState(ctx, &pb.Empty{})
+}
+
+func (c *Client) SetTrustMode(ctx context.Context, mode string) (*pb.TrustState, error) {
+	return c.daemon.SetTrustMode(ctx, &pb.SetTrustModeReq{Mode: mode})
+}
+
+func (c *Client) AddTrustRule(ctx context.Context, pattern, action, scope string) (*pb.TrustState, error) {
+	return c.daemon.AddTrustRule(ctx, &pb.AddTrustRuleReq{
+		Pattern: pattern,
+		Action:  action,
+		Scope:   scope,
+	})
+}
+
+func (c *Client) ResetTrust(ctx context.Context) (*pb.TrustState, error) {
+	return c.daemon.ResetTrust(ctx, &pb.Empty{})
+}
+
 func (c *Client) AddProvider(ctx context.Context, req *pb.AddProviderReq) (*pb.Provider, error) {
 	return c.daemon.AddProvider(ctx, req)
 }
