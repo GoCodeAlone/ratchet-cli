@@ -22,6 +22,7 @@ const (
 	acpClientCommandHandled        acpClientCommandKind = "handled"
 	acpClientCommandHelp           acpClientCommandKind = "help"
 	acpClientCommandExec           acpClientCommandKind = "exec"
+	acpClientCommandCompare        acpClientCommandKind = "compare"
 	acpClientCommandSessionsList   acpClientCommandKind = "sessions-list"
 	acpClientCommandSessionsShow   acpClientCommandKind = "sessions-show"
 	acpClientCommandSessionsExport acpClientCommandKind = "sessions-export"
@@ -35,6 +36,7 @@ const (
 type acpClientCommand struct {
 	kind      acpClientCommandKind
 	exec      acpClientExecOptions
+	compare   acpClientCompareOptions
 	drain     acpClientDrainOptions
 	archive   acpClientArchiveOptions
 	sessionID string
@@ -61,6 +63,17 @@ type acpClientDrainOptions struct {
 	Cwd     string
 	Timeout time.Duration
 	Max     int
+}
+
+type acpClientCompareOptions struct {
+	Agents   []string
+	Commands []string
+	Args     []string
+	Cwd      string
+	Timeout  time.Duration
+	JSON     bool
+	File     string
+	Prompt   string
 }
 
 type acpClientArchiveOptions struct {
@@ -101,6 +114,8 @@ func handleACPClient(args []string) error {
 		return nil
 	case acpClientCommandExec:
 		return executeACPClientExecWithStore(context.Background(), cmd.exec, defaultACPClientExecRunner{}, store, os.Stdout)
+	case acpClientCommandCompare:
+		return executeACPClientCompare(context.Background(), cmd.compare, nil, os.Stdout)
 	case acpClientCommandSessionsList:
 		return executeACPClientSessionsList(store, cmd.json, os.Stdout)
 	case acpClientCommandSessionsShow:
@@ -340,6 +355,15 @@ func parseACPClientCommandWithOutput(args []string, output io.Writer) (acpClient
 			return acpClientCommand{}, err
 		}
 		return acpClientCommand{kind: acpClientCommandExec, exec: execOpts}, nil
+	case "compare":
+		compareOpts, err := parseACPClientCompare(args[1:], output)
+		if errors.Is(err, flag.ErrHelp) {
+			return acpClientCommand{kind: acpClientCommandHandled}, nil
+		}
+		if err != nil {
+			return acpClientCommand{}, err
+		}
+		return acpClientCommand{kind: acpClientCommandCompare, compare: compareOpts}, nil
 	case "sessions":
 		return parseACPClientSessions(args[1:])
 	case "status":
@@ -421,6 +445,55 @@ func parseACPClientExec(args []string, output io.Writer) (acpClientExecOptions, 
 		return acpClientExecOptions{}, errors.New("cannot combine --file with inline prompt text")
 	case opts.File == "" && len(promptArgs) == 0:
 		return acpClientExecOptions{}, errors.New("prompt text or --file is required")
+	case len(promptArgs) > 0:
+		opts.Prompt = strings.Join(promptArgs, " ")
+	}
+	return opts, nil
+}
+
+func parseACPClientCompare(args []string, output io.Writer) (acpClientCompareOptions, error) {
+	opts := acpClientCompareOptions{Cwd: ".", Timeout: 30 * time.Second}
+	fs := flag.NewFlagSet("ratchet acp client compare", flag.ContinueOnError)
+	fs.SetOutput(output)
+	fs.Usage = func() {
+		fmt.Fprintln(output, "Usage: ratchet acp client compare [flags] <prompt>")
+		fmt.Fprintln(output)
+		fmt.Fprintln(output, "Flags:")
+		fmt.Fprintln(output, "  --agent value")
+		fmt.Fprintln(output, "    agent template; repeat for multiple agents")
+		fmt.Fprintln(output, "  --command value")
+		fmt.Fprintln(output, "    agent command; repeat for multiple commands")
+		fmt.Fprintln(output, "  --arg value")
+		fmt.Fprintln(output, "    shared agent command argument; repeat for multiple args")
+		fmt.Fprintln(output, "  --cwd string")
+		fmt.Fprintf(output, "    working directory (default %q)\n", opts.Cwd)
+		fmt.Fprintln(output, "  --timeout duration")
+		fmt.Fprintf(output, "    per-agent timeout (default %s)\n", opts.Timeout)
+		fmt.Fprintln(output, "  --json")
+		fmt.Fprintln(output, "    emit JSON")
+		fmt.Fprintln(output, "  --file string")
+		fmt.Fprintln(output, "    prompt file")
+	}
+	fs.Var((*repeatedStringFlag)(&opts.Agents), "agent", "agent template")
+	fs.Var((*repeatedStringFlag)(&opts.Commands), "command", "agent command")
+	fs.Var((*repeatedStringFlag)(&opts.Args), "arg", "shared agent command argument")
+	fs.StringVar(&opts.Cwd, "cwd", opts.Cwd, "working directory")
+	fs.DurationVar(&opts.Timeout, "timeout", opts.Timeout, "per-agent timeout")
+	fs.BoolVar(&opts.JSON, "json", false, "emit JSON")
+	fs.StringVar(&opts.File, "file", "", "prompt file")
+	if err := fs.Parse(args); err != nil {
+		return acpClientCompareOptions{}, err
+	}
+	targets := len(opts.Agents) + len(opts.Commands)
+	if targets < 2 {
+		return acpClientCompareOptions{}, errors.New("compare requires at least two --agent or --command values")
+	}
+	promptArgs := fs.Args()
+	switch {
+	case opts.File != "" && len(promptArgs) > 0:
+		return acpClientCompareOptions{}, errors.New("cannot combine --file with inline prompt text")
+	case opts.File == "" && len(promptArgs) == 0:
+		return acpClientCompareOptions{}, errors.New("prompt text or --file is required")
 	case len(promptArgs) > 0:
 		opts.Prompt = strings.Join(promptArgs, " ")
 	}
@@ -616,6 +689,7 @@ func printACPClientUsage(w io.Writer) {
 
 Commands:
   exec       Run one prompt against an external ACP agent
+  compare    Run one prompt serially across multiple ACP agents
   sessions   List or inspect ACP client sessions
              Subcommands: list, show, history (alias for show), export, import
   queue      List queued prompts for an ACP client session
@@ -713,6 +787,65 @@ func executeACPClientSessionImport(store *acpclient.Store, opts acpClientArchive
 	}
 	fmt.Fprintf(w, "imported %s from %s\n", rec.ID, opts.Path)
 	return nil
+}
+
+func executeACPClientCompare(ctx context.Context, opts acpClientCompareOptions, runner acpclient.CompareRunner, w io.Writer) error {
+	prompt := opts.Prompt
+	if opts.File != "" {
+		b, err := os.ReadFile(opts.File)
+		if err != nil {
+			return fmt.Errorf("read prompt file: %w", err)
+		}
+		prompt = string(b)
+	}
+	cwd := opts.Cwd
+	if cwd == "" {
+		cwd = "."
+	}
+	if abs, err := filepath.Abs(cwd); err == nil {
+		cwd = abs
+	}
+	agents, err := resolveACPClientCompareAgents(opts)
+	if err != nil {
+		return err
+	}
+	rows, err := acpclient.Compare(ctx, agents, prompt, acpclient.CompareOptions{
+		Cwd:     cwd,
+		Timeout: opts.Timeout,
+		Runner:  runner,
+	})
+	if err != nil {
+		return err
+	}
+	if opts.JSON {
+		return json.NewEncoder(w).Encode(rows)
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "AGENT\tSTATUS\tWALL_MS\tSTOP\tFINAL")
+	for _, row := range rows {
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n", row.Agent, row.Status, row.WallMS, row.StopReason, row.Final)
+	}
+	return tw.Flush()
+}
+
+func resolveACPClientCompareAgents(opts acpClientCompareOptions) ([]acpclient.CompareAgent, error) {
+	targets := make([]acpclient.CompareAgent, 0, len(opts.Agents)+len(opts.Commands))
+	reg := acpclient.DefaultRegistry()
+	for _, name := range opts.Agents {
+		spec, err := reg.Resolve(acpclient.RunOptions{Agent: name, Args: opts.Args})
+		if err != nil {
+			return nil, err
+		}
+		targets = append(targets, acpclient.CompareAgent{Name: name, Spec: spec})
+	}
+	for _, command := range opts.Commands {
+		spec, err := reg.Resolve(acpclient.RunOptions{Command: command, Args: opts.Args})
+		if err != nil {
+			return nil, err
+		}
+		targets = append(targets, acpclient.CompareAgent{Name: command, Spec: spec})
+	}
+	return targets, nil
 }
 
 func executeACPClientQueue(store *acpclient.Store, id string, jsonOut bool, w io.Writer) error {
