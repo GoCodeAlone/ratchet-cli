@@ -54,8 +54,8 @@ go test ./internal/acp -run TestACPStdioPromptSmoke -count=1
 
 The dated source-backed matrix lives in
 [competitor-parity.md](competitor-parity.md). The snapshot was refreshed on
-2026-07-01 from current Zed, ACP, Pi, Codex, Claude Code, Hermes, OpenClaw, and ACPX
-sources. ratchet-cli now supports Windows release artifacts, ACP prompt stdio
+2026-07-02 from current Zed, ACP, Pi, Codex, Claude Code, Hermes, OpenClaw, and
+ACPX sources. ratchet-cli now supports Windows release artifacts, ACP prompt stdio
 smoke, headless ACP client exec/session/status/cancel primitives with
 multi-prompt FIFO queue/drain,
 daemon-backed MCP blackboard/session/project/team status tools, session lineage
