@@ -57,7 +57,7 @@ The dated source-backed matrix lives in
 2026-07-02 from current Zed, ACP, Pi, Codex, Claude Code, Hermes, OpenClaw, and
 ACPX sources. ratchet-cli now supports Windows release artifacts, ACP prompt stdio
 smoke, headless ACP client exec/session/status/cancel primitives with
-multi-prompt FIFO queue/drain,
+multi-prompt FIFO queue/watch/drain,
 daemon-backed MCP blackboard/session/project/team status/message tools, runtime
 trust slash commands, session lineage
 history/clone/fork/tree commands, branch summaries, compaction records with
@@ -67,9 +67,9 @@ JSON v1 ACP/compute flows. The v0.20.0 release keeps Windows amd64/arm64 zip
 artifacts in the GoReleaser output while adding ACP client archive, compare,
 and flow commands. The policy boundaries are tracked in
 [docs/policy-matrix.md](policy-matrix.md): runtime trust rules, persistent
-trust grants, permission prompts, and explicit ACP client drain are supported,
-while background drain, broad extension hooks, ACPX TypeScript flow runtime
-compatibility, and local-first channel gateways remain deferred.
+trust grants, permission prompts, and explicit ACP client watch/drain are
+supported, while daemon background drain, broad extension hooks, ACPX TypeScript
+flow runtime compatibility, and local-first channel gateways remain deferred.
 
 ## ACP Matrix
 
@@ -100,6 +100,7 @@ disk.
 | sessions list/show/status | Supported | `ratchet acp client sessions list`, `ratchet acp client sessions show <id>`, and `ratchet acp client status <id>`; command tests cover empty, one-session, and invalid-id cases. |
 | no-wait FIFO queue | Supported | `ratchet acp client exec --no-wait --session <id>` appends prompt text to a local FIFO queue under XDG state; use `ratchet acp client queue <id>` to inspect it. |
 | drain FIFO queue | Supported | `ratchet acp client drain <id> --command <agent> --max <n>` drains pending prompts through one ACP session; binary smoke verifies two queued prompts complete on the same fixture session. |
+| watch FIFO queue | Supported as explicit foreground worker | `ratchet acp client watch <id> --command <agent> --stop-when-empty` polls the local FIFO queue and delegates each cycle to the same drain path. It runs only while the operator-started foreground command is active; daemon background drain remains deferred. Binary smoke verifies queued prompts complete without printing prompt bodies in watch output. |
 | cancel | Supported as cooperative request | `ratchet acp client cancel <id>` marks pending queued prompts canceled or writes a cancel-request file for active owners; active clients poll and send ACP cancel. |
 | import/export archives | Supported | `ratchet acp client sessions export <id> --output <archive.json>` writes ratchet-cli archive v1 JSON with ACPX-shaped metadata; `sessions import <archive.json> --session <id>` imports a copy. Binary smoke proves export/import through the built CLI and fixture ACP agent. Archives may contain prompt/response content and are not raw ACPX JSON-RPC event logs. |
 | compare commands | Supported | `ratchet acp client compare --command <agent-a> --command <agent-b> "prompt"` runs agents serially and emits table or JSON rows. Binary smoke proves compare through the built CLI and fixture ACP agent. |
@@ -117,6 +118,11 @@ ratchet acp client flow run flow.json \
   --input-json '{"task":"review release notes"}' \
   --command ./agent \
   --json
+
+ratchet acp client watch work \
+  --command ./agent \
+  --stop-when-empty \
+  --max-per-cycle 2
 ```
 
 ## MCP Matrix
@@ -158,4 +164,5 @@ Scriptable equivalents are available through `ratchet trust list`,
 `ratchet trust grants`, `ratchet trust allow|deny`,
 `ratchet trust persist`, `ratchet trust revoke`, and `ratchet trust reset`.
 The broader Policy Matrix lives in [docs/policy-matrix.md](policy-matrix.md),
-including the deferred background drain and extension hooks boundaries.
+including the explicit watch/drain boundary, sensitive local policy metadata
+warning, and deferred background drain and extension hooks boundaries.

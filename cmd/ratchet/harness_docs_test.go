@@ -52,7 +52,7 @@ func TestHarnessEmulationDocsCoverPolicyMatrixLayers(t *testing.T) {
 		"Supported",
 		"Partial",
 		"Deferred",
-		"Explicit drain only",
+		"Explicit watch/drain only",
 		"sensitive local policy metadata",
 	} {
 		if !strings.Contains(matrix, required) {
@@ -63,6 +63,7 @@ func TestHarnessEmulationDocsCoverPolicyMatrixLayers(t *testing.T) {
 	publicDocs := strings.Join([]string{readme, harness, parity}, "\n")
 	for _, required := range []string{
 		"docs/policy-matrix.md",
+		"ratchet acp client watch",
 		"background drain",
 		"extension hooks",
 	} {

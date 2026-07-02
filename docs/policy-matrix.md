@@ -3,8 +3,8 @@
 This document is the source-of-truth matrix for ratchet-cli policy surfaces:
 permissions, sandboxing, trust, queue execution, extension points, and
 per-agent scope. It documents existing behavior and the boundaries required
-before later automation such as background drain or mutation-capable extension
-hooks.
+before later automation such as daemon background drain or mutation-capable
+extension hooks.
 
 ## Scope
 
@@ -16,7 +16,7 @@ runtime trust decisions, and persistent trust grants continue to use
 
 ## Non-Goals
 
-- Background or scheduled ACP client drain.
+- Daemon background or scheduled ACP client drain.
 - Config-file mutation from trust commands.
 - New sandbox/path/network enforcement.
 - Broad runtime extension SDK.
@@ -46,7 +46,7 @@ or deferred rows below must not be treated as fully enforced runtime behavior.
 | Runtime trust rules | Daemon RPC, CLI, and TUI trust commands | Supported | `/mode`, `/trust allow`, `/trust deny`, `/trust list`, `ratchet trust allow`, `ratchet trust deny`, and `ratchet trust list` mutate or inspect daemon-local runtime state. | Daemon trust tests and `cmd/ratchet` docs guard. |
 | Persistent trust grants | `workflow-plugin-agent/policy.PermissionStore` through daemon RPC | Supported | `ratchet trust persist allow|deny`, `/trust persist allow|deny`, `ratchet trust grants`, `/trust grants`, `ratchet trust revoke`, and `/trust revoke` manage durable grants; deny grants preserve deny-wins semantics. | Daemon and command tests for grant persistence; docs guard checks this layer name. |
 | Permission prompts | Daemon permission gate and TUI prompt flow | Supported | Human approval remains explicit for unresolved decisions. Missing or unknown policy must not silently auto-approve. | Permission prompt tests and daemon/TUI behavior. |
-| ACP client queue/drain | `internal/acpclient` | Explicit drain only | `--no-wait` writes prompt text to a local FIFO queue; only `ratchet acp client drain` executes queued prompts. No background drain is supported. | ACP client binary smoke covers queue inspection and explicit drain. |
+| ACP client queue/drain | `internal/acpclient` | Explicit watch/drain only | `--no-wait` writes prompt text to a local FIFO queue; only operator-started `ratchet acp client drain` and foreground `ratchet acp client watch` commands execute queued prompts. `watch` requires an explicit `--command` or `--agent` launch target for each run and stops when the foreground command exits. No daemon background drain is supported. | ACP client binary smoke covers queue inspection, explicit drain, and explicit foreground watch. |
 | Sandbox/path/network controls | Agent plugin trust logic, mesh path guard, and future sandbox work | Partial | Existing trust decisions and mesh path guard cover only their implemented surfaces. ratchet-cli does not claim Codex/Claude-style full sandbox, network, or per-tool escalation parity. | Existing tests for implemented guards; future sandbox work needs a separate design. |
 | Hooks/extensions | `internal/hooks`, plugin manifests, and future extension work | Partial / Deferred | Existing named hooks and plugin extensibility are supported. Broad mutation-capable extension hooks, lifecycle interception SDKs, and unreviewed local mutation are deferred. | Existing hook tests; future extension hooks need opt-in policy and redaction design. |
 | Retro/self-improvement | `internal/retro` and local project evidence routing | Partial | Retro evidence is opt-in. Automatic local mutation and upstream PR creation are disabled unless a future configurable policy enables them. | Retro tests and config checks. |
