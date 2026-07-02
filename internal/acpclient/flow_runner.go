@@ -260,7 +260,7 @@ func selectFlowOutput(path string, outputs map[string]any) (any, error) {
 	if len(parts) == 0 || parts[0] == "" {
 		return nil, fmt.Errorf("flow select path is required")
 	}
-	var current any = outputs[parts[0]]
+	current := outputs[parts[0]]
 	if current == nil {
 		return nil, fmt.Errorf("flow select node %s has no output", parts[0])
 	}
