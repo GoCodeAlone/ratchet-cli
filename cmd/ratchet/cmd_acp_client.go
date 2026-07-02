@@ -970,6 +970,8 @@ type acpClientProfileListItem struct {
 	PluginVersion string `json:"pluginVersion,omitempty"`
 }
 
+var userHomeDir = os.UserHomeDir
+
 func executeACPClientProfiles(store *acpclient.ProfileStore, cmd acpClientProfilesCommand, w io.Writer) error {
 	switch cmd.kind {
 	case acpClientProfilesList:
@@ -1089,7 +1091,13 @@ func findACPProfileTemplate(source string) (acpclient.Profile, error) {
 }
 
 func loadACPProfileTemplates() ([]acpclient.Profile, error) {
-	home, _ := os.UserHomeDir()
+	home, err := userHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve home directory for ACP profile templates: %w", err)
+	}
+	if strings.TrimSpace(home) == "" {
+		return nil, errors.New("resolve home directory for ACP profile templates: home directory is empty")
+	}
 	result, err := plugins.NewLoader(filepath.Join(home, ".ratchet", "plugins")).LoadAll(context.Background())
 	if err != nil {
 		return nil, err

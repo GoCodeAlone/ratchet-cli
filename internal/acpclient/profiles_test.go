@@ -55,6 +55,38 @@ func TestProfileStoreAddListRemovePersistsJSON(t *testing.T) {
 	}
 }
 
+func TestProfileStoreTrustAndRemoveTrimProfileName(t *testing.T) {
+	store := NewProfileStore(filepath.Join(t.TempDir(), "profiles.json"))
+	if err := store.Add(Profile{
+		Name: "fixture",
+		Spec: AgentSpec{Name: "fixture", Command: "/tmp/acp-agent"},
+	}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	if err := store.Trust(" fixture "); err != nil {
+		t.Fatalf("Trust with whitespace: %v", err)
+	}
+	profile, err := store.Get("fixture")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !profile.Trusted {
+		t.Fatalf("profile trusted = false, want true")
+	}
+
+	if err := store.Remove("\tfixture\n"); err != nil {
+		t.Fatalf("Remove with whitespace: %v", err)
+	}
+	profiles, err := store.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(profiles) != 0 {
+		t.Fatalf("profiles after remove = %#v", profiles)
+	}
+}
+
 func TestProfileStoreAddValidatesAgentSpec(t *testing.T) {
 	store := NewProfileStore(filepath.Join(t.TempDir(), "profiles.json"))
 	err := store.Add(Profile{Name: "bad", Spec: AgentSpec{Command: "codex acp"}})

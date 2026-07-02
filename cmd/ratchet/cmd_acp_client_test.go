@@ -338,6 +338,24 @@ profiles:
 	}
 }
 
+func TestLoadACPProfileTemplatesRequiresHomeDir(t *testing.T) {
+	oldUserHomeDir := userHomeDir
+	userHomeDir = func() (string, error) {
+		return "", errors.New("home unavailable")
+	}
+	t.Cleanup(func() {
+		userHomeDir = oldUserHomeDir
+	})
+
+	_, err := loadACPProfileTemplates()
+	if err == nil {
+		t.Fatal("loadACPProfileTemplates error = nil, want home directory error")
+	}
+	if !strings.Contains(err.Error(), "home directory") {
+		t.Fatalf("loadACPProfileTemplates error = %v, want home directory context", err)
+	}
+}
+
 func TestACPClientProfilesRejectBuiltinShadowing(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

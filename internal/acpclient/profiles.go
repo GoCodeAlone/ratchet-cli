@@ -124,6 +124,10 @@ func (s *ProfileStore) Add(profile Profile) error {
 }
 
 func (s *ProfileStore) Trust(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return errors.New("acp client profile name is required")
+	}
 	data, err := s.load()
 	if err != nil {
 		return err
@@ -140,6 +144,10 @@ func (s *ProfileStore) Trust(name string) error {
 }
 
 func (s *ProfileStore) Remove(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return errors.New("acp client profile name is required")
+	}
 	data, err := s.load()
 	if err != nil {
 		return err
