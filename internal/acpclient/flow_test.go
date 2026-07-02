@@ -1,11 +1,15 @@
 package acpclient
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	acpsdk "github.com/coder/acp-go-sdk"
 )
 
 func TestLoadFlowDefinitionValidatesSchemaAndEdges(t *testing.T) {
@@ -82,6 +86,135 @@ func TestFlowRunStoreWritesBundleFiles(t *testing.T) {
 			t.Fatalf("stat %s: %v", rel, err)
 		}
 	}
+}
+
+func TestRunFlowRendersACPNodeAndStoresComputeOutput(t *testing.T) {
+	root := t.TempDir()
+	runner := &fakeFlowPromptRunner{sessionID: "acp-main"}
+	def := FlowDefinition{
+		FormatVersion: 1,
+		StartAt:       "ask",
+		Nodes: []FlowNode{
+			{ID: "ask", Type: FlowNodeTypeACP, Prompt: "Summarize {{.Input.title}}", Session: "main", Command: "fixture"},
+			{ID: "package", Type: FlowNodeTypeCompute, Value: json.RawMessage(`{"kind":"done"}`)},
+		},
+		Edges: []FlowEdge{{From: "ask", To: "package"}},
+	}
+
+	result, err := RunFlow(t.Context(), def, map[string]any{"title": "Video"}, FlowRunOptions{
+		RunID:   "run-flow",
+		RunRoot: root,
+		StartRunner: func(_ context.Context, _ AgentSpec, _ RunOptions, existingID string) (FlowPromptRunner, func() error, error) {
+			if existingID != "" {
+				t.Fatalf("existingID = %q, want empty", existingID)
+			}
+			return runner, func() error { runner.closed = true; return nil }, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunFlow: %v", err)
+	}
+	if result.Status != FlowRunStatusCompleted || result.RunID != "run-flow" {
+		t.Fatalf("result = %#v", result)
+	}
+	if got, want := strings.Join(runner.prompts, ","), "Summarize Video"; got != want {
+		t.Fatalf("prompts = %q, want %q", got, want)
+	}
+	if !runner.closed {
+		t.Fatal("runner close was not called")
+	}
+	if string(result.Outputs["package"]) != `{"kind":"done"}` {
+		t.Fatalf("package output = %s", result.Outputs["package"])
+	}
+	if _, err := os.Stat(filepath.Join(root, "run-flow", "state.json")); err != nil {
+		t.Fatalf("state file missing: %v", err)
+	}
+}
+
+func TestRunFlowReusesACPRunnerForSharedSessionHandle(t *testing.T) {
+	runner := &fakeFlowPromptRunner{sessionID: "acp-shared"}
+	starts := 0
+	def := FlowDefinition{
+		FormatVersion: 1,
+		StartAt:       "first",
+		Nodes: []FlowNode{
+			{ID: "first", Type: FlowNodeTypeACP, Prompt: "first", Session: "shared", Command: "fixture"},
+			{ID: "second", Type: FlowNodeTypeACP, Prompt: "second {{.Outputs.first.text}}", Session: "shared", Command: "fixture"},
+		},
+		Edges: []FlowEdge{{From: "first", To: "second"}},
+	}
+
+	result, err := RunFlow(t.Context(), def, map[string]any{}, FlowRunOptions{
+		StartRunner: func(context.Context, AgentSpec, RunOptions, string) (FlowPromptRunner, func() error, error) {
+			starts++
+			return runner, func() error { return nil }, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunFlow: %v", err)
+	}
+	if starts != 1 {
+		t.Fatalf("starts = %d, want 1", starts)
+	}
+	if got, want := strings.Join(runner.prompts, ","), "first,second flow: first"; got != want {
+		t.Fatalf("prompts = %q, want %q", got, want)
+	}
+	if result.Status != FlowRunStatusCompleted {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestRunFlowPersistsFailedState(t *testing.T) {
+	root := t.TempDir()
+	def := FlowDefinition{
+		FormatVersion: 1,
+		StartAt:       "fail",
+		Nodes:         []FlowNode{{ID: "fail", Type: FlowNodeTypeACP, Prompt: "fail", Command: "fixture"}},
+	}
+	_, err := RunFlow(t.Context(), def, map[string]any{}, FlowRunOptions{
+		RunID:   "run-failed",
+		RunRoot: root,
+		StartRunner: func(context.Context, AgentSpec, RunOptions, string) (FlowPromptRunner, func() error, error) {
+			return &fakeFlowPromptRunner{err: errors.New("agent failed")}, func() error { return nil }, nil
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "agent failed") {
+		t.Fatalf("RunFlow error = %v, want agent failed", err)
+	}
+	var state FlowRunState
+	b, readErr := os.ReadFile(filepath.Join(root, "run-failed", "state.json"))
+	if readErr != nil {
+		t.Fatalf("read state: %v", readErr)
+	}
+	if err := json.Unmarshal(b, &state); err != nil {
+		t.Fatalf("state json: %v\n%s", err, b)
+	}
+	if state.Status != FlowRunStatusFailed || len(state.Steps) != 1 || state.Steps[0].Status != FlowStepStatusFailed {
+		t.Fatalf("state = %#v", state)
+	}
+}
+
+type fakeFlowPromptRunner struct {
+	sessionID acpsdk.SessionId
+	prompts   []string
+	closed    bool
+	err       error
+}
+
+func (r *fakeFlowPromptRunner) SessionID() acpsdk.SessionId {
+	return r.sessionID
+}
+
+func (r *fakeFlowPromptRunner) Prompt(_ context.Context, prompt string) (Result, error) {
+	r.prompts = append(r.prompts, prompt)
+	if r.err != nil {
+		return Result{}, r.err
+	}
+	return Result{
+		SessionID:  r.sessionID,
+		StopReason: acpsdk.StopReasonEndTurn,
+		Text:       "flow: " + prompt,
+	}, nil
 }
 
 func writeFlowDefinitionFixture(t *testing.T, raw string) string {
