@@ -2,6 +2,7 @@ package acpclient
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	acpsdk "github.com/coder/acp-go-sdk"
 )
@@ -26,6 +28,7 @@ type Callbacks struct {
 	mu      sync.Mutex
 	updates []acpsdk.SessionNotification
 	text    strings.Builder
+	events  []EventLogLine
 	notify  chan struct{}
 }
 
@@ -63,6 +66,7 @@ func (c *Callbacks) SessionUpdate(ctx context.Context, n acpsdk.SessionNotificat
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.updates = append(c.updates, n)
+	c.appendEventLocked(EventDirectionInbound, sessionUpdateEventMessage(n))
 	if n.Update.AgentMessageChunk != nil && n.Update.AgentMessageChunk.Content.Text != nil {
 		c.text.WriteString(n.Update.AgentMessageChunk.Content.Text.Text)
 	}
@@ -79,10 +83,27 @@ func (c *Callbacks) Snapshot() ([]acpsdk.SessionNotification, string) {
 	return slices.Clone(c.updates), c.text.String()
 }
 
+func (c *Callbacks) EventSnapshot() []EventLogLine {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return cloneEvents(c.events)
+}
+
+func (c *Callbacks) RecordEvent(direction EventDirection, message json.RawMessage) error {
+	if err := ValidateJSONRPCMessage(message); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.appendEventLocked(direction, message)
+	return nil
+}
+
 func (c *Callbacks) Reset() {
 	c.mu.Lock()
 	c.updates = nil
 	c.text.Reset()
+	c.events = nil
 	c.mu.Unlock()
 	for {
 		select {
@@ -91,6 +112,15 @@ func (c *Callbacks) Reset() {
 			return
 		}
 	}
+}
+
+func (c *Callbacks) appendEventLocked(direction EventDirection, message json.RawMessage) {
+	c.events = append(c.events, EventLogLine{
+		Seq:       len(c.events) + 1,
+		At:        time.Now().UTC(),
+		Direction: direction,
+		Message:   slices.Clone(message),
+	})
 }
 
 func (c *Callbacks) UpdateCount() int {

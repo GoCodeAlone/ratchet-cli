@@ -3,6 +3,7 @@ package acpclient
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -31,6 +32,7 @@ type Result struct {
 	SessionID  acpsdk.SessionId
 	StopReason acpsdk.StopReason
 	Updates    []acpsdk.SessionNotification
+	Events     []EventLogLine
 	Text       string
 	Stderr     string
 	Duration   time.Duration
@@ -151,6 +153,13 @@ func (r *SessionRunner) SessionID() acpsdk.SessionId {
 	return r.sessionID
 }
 
+func (r *SessionRunner) LastEvents() []EventLogLine {
+	if r == nil || r.client == nil || r.client.callbacks == nil {
+		return nil
+	}
+	return r.client.callbacks.EventSnapshot()
+}
+
 func (r *SessionRunner) Prompt(ctx context.Context, prompt string) (Result, error) {
 	if r == nil || r.client == nil {
 		return Result{}, errors.New("acp session runner is not initialized")
@@ -160,6 +169,10 @@ func (r *SessionRunner) Prompt(ctx context.Context, prompt string) (Result, erro
 	callCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	c.callbacks.Reset()
+	requestID := fmt.Sprintf("ratchet-prompt-%d", started.UnixNano())
+	if err := c.callbacks.RecordEvent(EventDirectionOutbound, promptRequestEventMessage(requestID, r.sessionID, prompt)); err != nil {
+		return Result{}, err
+	}
 	stopCancelWatcher := c.startCancelWatcher(callCtx, r.sessionID)
 	defer stopCancelWatcher()
 	updateCount := c.callbacks.UpdateCount()
@@ -168,20 +181,81 @@ func (r *SessionRunner) Prompt(ctx context.Context, prompt string) (Result, erro
 		Prompt:    []acpsdk.ContentBlock{acpsdk.TextBlock(prompt)},
 	})
 	if err != nil {
+		_ = c.callbacks.RecordEvent(EventDirectionInbound, promptErrorEventMessage(requestID, err))
 		return Result{}, fmt.Errorf("send acp prompt: %w", err)
+	}
+	if err := c.callbacks.RecordEvent(EventDirectionInbound, promptResponseEventMessage(requestID, resp)); err != nil {
+		return Result{}, err
 	}
 	waitCtx, waitCancel := context.WithTimeout(ctx, min(c.timeout, 500*time.Millisecond))
 	defer waitCancel()
 	c.callbacks.WaitForUpdate(waitCtx, updateCount)
 	updates, text := c.callbacks.Snapshot()
+	events := c.callbacks.EventSnapshot()
 	return Result{
 		SessionID:  r.sessionID,
 		StopReason: resp.StopReason,
 		Updates:    updates,
+		Events:     events,
 		Text:       text,
 		Stderr:     c.stderrString(),
 		Duration:   time.Since(started),
 	}, nil
+}
+
+func promptRequestEventMessage(id string, sessionID acpsdk.SessionId, prompt string) json.RawMessage {
+	return mustJSONRaw(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"method":  "session/prompt",
+		"params": map[string]any{
+			"sessionId": string(sessionID),
+			"prompt": []map[string]any{{
+				"type": "text",
+				"text": prompt,
+			}},
+		},
+	})
+}
+
+func sessionUpdateEventMessage(n acpsdk.SessionNotification) json.RawMessage {
+	return mustJSONRaw(map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "session/update",
+		"params": map[string]any{
+			"sessionId": string(n.SessionId),
+			"update":    n.Update,
+		},
+	})
+}
+
+func promptResponseEventMessage(id string, resp acpsdk.PromptResponse) json.RawMessage {
+	return mustJSONRaw(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"result": map[string]any{
+			"stopReason": resp.StopReason,
+		},
+	})
+}
+
+func promptErrorEventMessage(id string, err error) json.RawMessage {
+	return mustJSONRaw(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"error": map[string]any{
+			"code":    -32000,
+			"message": err.Error(),
+		},
+	})
+}
+
+func mustJSONRaw(value any) json.RawMessage {
+	b, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return b
 }
 
 func (c *Client) Close() error {

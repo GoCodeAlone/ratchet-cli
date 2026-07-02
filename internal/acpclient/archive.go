@@ -1,6 +1,7 @@
 package acpclient
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -19,11 +20,13 @@ var (
 )
 
 type Archive struct {
-	FormatVersion int                   `json:"format_version"`
-	ExportedAt    string                `json:"exported_at"`
-	ExportedBy    string                `json:"exported_by"`
-	Session       ArchiveSession        `json:"session"`
-	History       []ArchiveHistoryEvent `json:"history"`
+	FormatVersion  int                   `json:"format_version"`
+	ExportedAt     string                `json:"exported_at"`
+	ExportedBy     string                `json:"exported_by"`
+	Session        ArchiveSession        `json:"session"`
+	History        []ArchiveHistoryEvent `json:"history,omitempty"`
+	SummaryHistory []ArchiveHistoryEvent `json:"summary_history,omitempty"`
+	RawHistory     []json.RawMessage     `json:"-"`
 }
 
 type ArchiveSession struct {
@@ -50,9 +53,18 @@ type ArchiveHistoryEvent struct {
 }
 
 type ExportOptions struct {
-	HomeDir string
-	Now     func() time.Time
+	HomeDir     string
+	Now         func() time.Time
+	HistoryMode ArchiveHistoryMode
 }
+
+type ArchiveHistoryMode string
+
+const (
+	ArchiveHistoryModeSummary ArchiveHistoryMode = "summary"
+	ArchiveHistoryModeRaw     ArchiveHistoryMode = "raw"
+	ArchiveHistoryModeBoth    ArchiveHistoryMode = "both"
+)
 
 type ImportOptions struct {
 	SessionID          string
@@ -83,7 +95,14 @@ func ExportSession(store *Store, id, outputPath string, opts ExportOptions) erro
 	}
 	now := archiveNow(opts.Now)
 	cwdRelative := cwdRelativeToHome(rec.Cwd, archiveHomeDir(opts.HomeDir))
-	archive := Archive{
+	archive := struct {
+		FormatVersion  int                   `json:"format_version"`
+		ExportedAt     string                `json:"exported_at"`
+		ExportedBy     string                `json:"exported_by"`
+		Session        ArchiveSession        `json:"session"`
+		History        any                   `json:"history"`
+		SummaryHistory []ArchiveHistoryEvent `json:"summary_history,omitempty"`
+	}{
 		FormatVersion: archiveFormatVersion,
 		ExportedAt:    now.Format(time.RFC3339Nano),
 		ExportedBy:    "ratchet-cli",
@@ -96,7 +115,26 @@ func ExportSession(store *Store, id, outputPath string, opts ExportOptions) erro
 			UpdatedAt:   rec.UpdatedAt.Format(time.RFC3339Nano),
 			State:       rec,
 		},
-		History: archiveHistory(rec),
+	}
+	summaryHistory := archiveHistory(rec)
+	switch archiveHistoryMode(opts.HistoryMode) {
+	case ArchiveHistoryModeSummary:
+		archive.History = summaryHistory
+	case ArchiveHistoryModeRaw:
+		rawHistory, err := rawArchiveHistory(store, id)
+		if err != nil {
+			return err
+		}
+		archive.History = rawHistory
+	case ArchiveHistoryModeBoth:
+		rawHistory, err := rawArchiveHistory(store, id)
+		if err != nil {
+			return err
+		}
+		archive.History = rawHistory
+		archive.SummaryHistory = summaryHistory
+	default:
+		return fmt.Errorf("unsupported archive history mode: %s", opts.HistoryMode)
 	}
 	return writeJSONFileAtomic(outputPath, archive, 0o600)
 }
@@ -164,7 +202,102 @@ func ImportSession(store *Store, archivePath string, opts ImportOptions) (Sessio
 	if err := store.Upsert(rec); err != nil {
 		return SessionRecord{}, err
 	}
+	if len(archive.RawHistory) > 0 {
+		events := make([]EventLogLine, 0, len(archive.RawHistory))
+		at := parseArchiveTime(archive.ExportedAt)
+		if at.IsZero() {
+			at = rec.UpdatedAt
+		}
+		for i, message := range archive.RawHistory {
+			if err := ValidateJSONRPCMessage(message); err != nil {
+				return SessionRecord{}, fmt.Errorf("%w: %v", ErrInvalidSessionArchive, err)
+			}
+			events = append(events, EventLogLine{
+				Seq:       i + 1,
+				At:        at,
+				Direction: EventDirectionInbound,
+				Message:   message,
+			})
+		}
+		if err := store.WriteEventLog(rec.ID, events); err != nil {
+			return SessionRecord{}, err
+		}
+	}
 	return store.Get(rec.ID)
+}
+
+func (a *Archive) UnmarshalJSON(b []byte) error {
+	type archiveJSON struct {
+		FormatVersion  int                   `json:"format_version"`
+		ExportedAt     string                `json:"exported_at"`
+		ExportedBy     string                `json:"exported_by"`
+		Session        ArchiveSession        `json:"session"`
+		History        []json.RawMessage     `json:"history"`
+		SummaryHistory []ArchiveHistoryEvent `json:"summary_history"`
+	}
+	var src archiveJSON
+	if err := json.Unmarshal(b, &src); err != nil {
+		return err
+	}
+	*a = Archive{
+		FormatVersion:  src.FormatVersion,
+		ExportedAt:     src.ExportedAt,
+		ExportedBy:     src.ExportedBy,
+		Session:        src.Session,
+		SummaryHistory: src.SummaryHistory,
+	}
+	for _, raw := range src.History {
+		if err := ValidateJSONRPCMessage(raw); err == nil {
+			a.RawHistory = append(a.RawHistory, raw)
+			continue
+		}
+		var event ArchiveHistoryEvent
+		if err := json.Unmarshal(raw, &event); err != nil {
+			return fmt.Errorf("%w: invalid history event: %v", ErrInvalidSessionArchive, err)
+		}
+		if strings.TrimSpace(event.Kind) == "" {
+			return fmt.Errorf("%w: invalid history event", ErrInvalidSessionArchive)
+		}
+		a.History = append(a.History, event)
+	}
+	if len(a.History) == 0 && len(a.SummaryHistory) > 0 {
+		a.History = append(a.History, a.SummaryHistory...)
+	}
+	return nil
+}
+
+func archiveHistoryMode(mode ArchiveHistoryMode) ArchiveHistoryMode {
+	switch mode {
+	case "", ArchiveHistoryModeSummary:
+		return ArchiveHistoryModeSummary
+	case ArchiveHistoryModeRaw:
+		return ArchiveHistoryModeRaw
+	case ArchiveHistoryModeBoth:
+		return ArchiveHistoryModeBoth
+	default:
+		return mode
+	}
+}
+
+func rawArchiveHistory(store *Store, id string) ([]json.RawMessage, error) {
+	events, err := store.ReadEventLog(id)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("%w: %s", ErrRawHistoryUnavailable, id)
+		}
+		return nil, err
+	}
+	if len(events) == 0 {
+		return nil, fmt.Errorf("%w: %s", ErrRawHistoryUnavailable, id)
+	}
+	history := make([]json.RawMessage, 0, len(events))
+	for _, event := range events {
+		if err := ValidateJSONRPCMessage(event.Message); err != nil {
+			return nil, err
+		}
+		history = append(history, event.Message)
+	}
+	return history, nil
 }
 
 func archiveHistory(rec SessionRecord) []ArchiveHistoryEvent {
