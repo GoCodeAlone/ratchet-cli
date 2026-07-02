@@ -67,11 +67,18 @@ func TestHarnessEmulationDocsCoverPolicyMatrixLayers(t *testing.T) {
 	publicDocs := strings.Join([]string{readme, harness, parity}, "\n")
 	for _, required := range []string{
 		"docs/policy-matrix.md",
+		"ratchet hooks list",
+		"ratchet hooks trust",
+		"ratchet acp client profiles",
+		"hook trust",
+		"ACP launch profiles",
 		"ratchet acp client watch",
 		"background drain",
 		"extension hooks",
 		"action nodes",
 		"--allow shell",
+		"managed hooks remain deferred",
+		"TypeScript extension SDK remains deferred",
 		"ACPX TypeScript flow runtime compatibility remains deferred",
 	} {
 		if !strings.Contains(publicDocs, required) {

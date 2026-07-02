@@ -61,6 +61,10 @@ ratchet acp client compare --command ./agent --command ./other-agent "prompt"
                             # Run one prompt serially across multiple ACP agents
 ratchet acp client flow run flow.json --input-json '{"task":"x"}' --command ./agent
                             # Run a JSON v1 ACP/compute flow
+ratchet acp client profiles list
+                            # List local ACP launch profiles and plugin templates
+ratchet acp client profiles add local --command ./agent --trust
+                            # Save a reviewed reusable ACP launch profile
 ratchet acp client status ID
                             # Show ACP client session status
 ratchet acp client cancel ID
@@ -103,12 +107,24 @@ skipped until their descriptor hash is trusted. Use
 truncated command preview, then `ratchet hooks trust <hash>` to enable that
 exact descriptor. `ratchet hooks disable <hash>` overrides trust, and changed
 project or plugin hook commands produce a new hash that must be reviewed again.
+This hook trust model is local and hash-based; managed hooks remain deferred.
+
+ACP launch profiles are reviewed launch specs for explicit foreground ACP
+client commands. Use `ratchet acp client profiles list`, `add`, `install`,
+`trust`, and `remove` to manage local profile copies. Profiles store command,
+args, cwd, and env key names only, never secret values. Built-in ACP agents win
+over profile names, and profile names cannot shadow built-ins. Trusted profiles
+can be used with `--agent <name>` for `exec`, `drain`, `watch`, `compare`, and
+`flow run`; untrusted profiles are listed but refused at execution time.
+Plugin-distributed profile templates can be installed into the local profile
+store, then reviewed or trusted like local profiles. The TypeScript extension
+SDK remains deferred.
 
 See [docs/policy-matrix.md](docs/policy-matrix.md) for the Policy Matrix
 covering static config trust rules, runtime trust rules, persistent trust
 grants, permission prompts, explicit ACP client watch/drain, partial
-sandbox/path/network controls, retro evidence, and deferred daemon background
-drain and extension hooks.
+sandbox/path/network controls, hook trust, ACP launch profiles, retro evidence,
+and deferred daemon background drain and extension SDK work.
 
 The ACP client queue persists prompt text under the user's XDG state directory.
 Do not use `--no-wait` for prompts that should not be written to local disk.
@@ -120,9 +136,10 @@ ACP client archives are explicit JSON exports and can contain prompt text,
 responses, summaries, and queue history. Treat exported archives as sensitive
 conversation data.
 
-The v0.20.0 release adds ACP client archive import/export, serial compare, and
-JSON v1 flow commands, and continues publishing Windows amd64/arm64 zip
-artifacts alongside Linux and macOS archives.
+The v0.24.0 release line adds reviewable hook trust controls and ACP launch
+profiles on top of ACP client archive import/export, serial compare, and JSON
+v1 flow commands, while continuing to publish Windows amd64/arm64 zip artifacts
+alongside Linux and macOS archives.
 
 ACP client archive v1 JSON is a ratchet-cli portable format with ACPX-shaped
 metadata, not a raw ACPX JSON-RPC event log. JSON v1 flows support `acp` and
@@ -194,7 +211,7 @@ ratchet acp client watch work \
 | One-shot | `ratchet -p "prompt"` | Uses the configured default provider. |
 | Daemon | `HOME="$(mktemp -d)" ratchet daemon status` | Runs credential-free when pointed at a temp home. |
 | ACP | `ratchet acp` | Exposes the agent over ACP stdio JSON-RPC; prompt smoke is covered by `TestACPStdioPromptSmoke`. |
-| ACP client | `ratchet acp client exec --command ./agent "prompt"` | Drives an external ACP agent over stdio; binary smoke covers exec, persisted sessions, FIFO `--no-wait` queue, queue inspection, explicit watch/drain, status, cancel, archive export/import, serial compare, and JSON v1 flows. |
+| ACP client | `ratchet acp client exec --command ./agent "prompt"` | Drives an external ACP agent over stdio; binary smoke covers exec, persisted sessions, FIFO `--no-wait` queue, queue inspection, explicit watch/drain, status, cancel, archive export/import, serial compare, JSON v1 flows, and trusted ACP launch profiles. |
 | MCP | `ratchet mcp blackboard` / `ratchet mcp daemon` | Exposes standalone blackboard or daemon-backed session/project/blackboard/team MCP tools over stdio, including active-team `team_message`. |
 | Team | `ratchet team start "task"` | Uses daemon team orchestration with configured providers. |
 
