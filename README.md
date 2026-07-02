@@ -51,6 +51,10 @@ ratchet acp client sessions list
                             # List persisted ACP client sessions
 ratchet acp client sessions show ID
                             # Show persisted ACP client session metadata
+ratchet acp client sessions export ID --output session.archive.json
+                            # Export a portable ratchet-cli archive v1 JSON file
+ratchet acp client sessions import session.archive.json --session imported
+                            # Import an archive as a new local ACP client session
 ratchet acp client status ID
                             # Show ACP client session status
 ratchet acp client cancel ID
@@ -68,6 +72,9 @@ selected branch before new sends are accepted.
 
 The ACP client queue persists prompt text under the user's XDG state directory.
 Do not use `--no-wait` for prompts that should not be written to local disk.
+ACP client archives are explicit JSON exports and can contain prompt text,
+responses, summaries, and queue history. Treat exported archives as sensitive
+conversation data.
 
 The v0.19.0 release adds multi-prompt ACP client FIFO queue/drain support,
 refreshes the source-backed harness parity snapshot, and continues publishing
@@ -81,7 +88,7 @@ Windows amd64/arm64 zip artifacts alongside Linux and macOS archives.
 | One-shot | `ratchet -p "prompt"` | Uses the configured default provider. |
 | Daemon | `HOME="$(mktemp -d)" ratchet daemon status` | Runs credential-free when pointed at a temp home. |
 | ACP | `ratchet acp` | Exposes the agent over ACP stdio JSON-RPC; prompt smoke is covered by `TestACPStdioPromptSmoke`. |
-| ACP client | `ratchet acp client exec --command ./agent "prompt"` | Drives an external ACP agent over stdio; binary smoke covers exec, persisted sessions, FIFO `--no-wait` queue, queue inspection, drain, status, and cancel. |
+| ACP client | `ratchet acp client exec --command ./agent "prompt"` | Drives an external ACP agent over stdio; binary smoke covers exec, persisted sessions, FIFO `--no-wait` queue, queue inspection, drain, status, cancel, and archive export/import. |
 | MCP | `ratchet mcp blackboard` / `ratchet mcp daemon` | Exposes standalone blackboard or daemon-backed session/project/blackboard/team MCP tools over stdio. |
 | Team | `ratchet team start "task"` | Uses daemon team orchestration with configured providers. |
 

@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/GoCodeAlone/ratchet-cli/internal/acpclient"
 )
 
 func TestACPClientExecBinarySmoke(t *testing.T) {
@@ -33,8 +35,12 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 		t.Fatalf("build fixture: %v\n%s", err, out)
 	}
 
-	cwd := t.TempDir()
-	env := append(os.Environ(), "XDG_STATE_HOME="+t.TempDir())
+	home := t.TempDir()
+	cwd := filepath.Join(home, "project")
+	if err := os.MkdirAll(cwd, 0o755); err != nil {
+		t.Fatalf("mkdir cwd: %v", err)
+	}
+	env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, ".state"))
 	human := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "exec", "--command", fixtureBin, "--cwd", cwd, "binary hello")
 	human.Dir = repoRoot
 	human.Env = env
@@ -171,5 +177,88 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 		!strings.Contains(showPayload.PromptQueue[0].Response, "fixture-session: queued binary one") ||
 		!strings.Contains(showPayload.PromptQueue[1].Response, "fixture-session: queued binary two") {
 		t.Fatalf("sessions show payload = %#v", showPayload)
+	}
+
+	archivePath := filepath.Join(t.TempDir(), "queued-binary.archive.json")
+	exportCmd := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "sessions", "export", "queued-binary", "--output", archivePath, "--json")
+	exportCmd.Dir = repoRoot
+	exportCmd.Env = env
+	exportOut, err := exportCmd.Output()
+	if err != nil {
+		t.Fatalf("sessions export: %v\n%s", err, exportOut)
+	}
+	var exportPayload struct {
+		SessionID string `json:"session_id"`
+		Path      string `json:"path"`
+		Status    string `json:"status"`
+	}
+	if err := json.Unmarshal(exportOut, &exportPayload); err != nil {
+		t.Fatalf("export json output: %v\n%s", err, exportOut)
+	}
+	if exportPayload.SessionID != "queued-binary" || exportPayload.Path != archivePath || exportPayload.Status != "exported" {
+		t.Fatalf("export payload = %#v", exportPayload)
+	}
+	var archive acpclient.Archive
+	archiveBytes, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatalf("read archive: %v", err)
+	}
+	if err := json.Unmarshal(archiveBytes, &archive); err != nil {
+		t.Fatalf("archive json: %v\n%s", err, archiveBytes)
+	}
+	if archive.FormatVersion != 1 || archive.ExportedBy != "ratchet-cli" || archive.Session.RecordID != "queued-binary" {
+		t.Fatalf("archive = %#v", archive)
+	}
+	if filepath.IsAbs(archive.Session.CWDRelative) || archive.Session.CWDRelative != "project" {
+		t.Fatalf("archive CWDRelative = %q, want project", archive.Session.CWDRelative)
+	}
+	if len(archive.History) == 0 {
+		t.Fatalf("archive history empty: %#v", archive)
+	}
+
+	importedCWD := filepath.Join(home, "imported-project")
+	importCmd := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "sessions", "import", archivePath, "--session", "imported-binary", "--cwd", importedCWD, "--json")
+	importCmd.Dir = repoRoot
+	importCmd.Env = env
+	importOut, err := importCmd.Output()
+	if err != nil {
+		t.Fatalf("sessions import: %v\n%s", err, importOut)
+	}
+	var importPayload struct {
+		SessionID string `json:"session_id"`
+		Path      string `json:"path"`
+		Status    string `json:"status"`
+	}
+	if err := json.Unmarshal(importOut, &importPayload); err != nil {
+		t.Fatalf("import json output: %v\n%s", err, importOut)
+	}
+	if importPayload.SessionID != "imported-binary" || importPayload.Path != archivePath {
+		t.Fatalf("import payload = %#v", importPayload)
+	}
+
+	importShow := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "sessions", "show", "--json", "imported-binary")
+	importShow.Dir = repoRoot
+	importShow.Env = env
+	importShowOut, err := importShow.Output()
+	if err != nil {
+		t.Fatalf("imported sessions show json: %v\n%s", err, importShowOut)
+	}
+	var importShowPayload struct {
+		ID           string `json:"id"`
+		ACPSessionID string `json:"acpSessionId"`
+		Cwd          string `json:"cwd"`
+		PromptQueue  []struct {
+			Prompt   string `json:"prompt"`
+			Status   string `json:"status"`
+			Response string `json:"response"`
+		} `json:"promptQueue"`
+	}
+	if err := json.Unmarshal(importShowOut, &importShowPayload); err != nil {
+		t.Fatalf("imported show json output: %v\n%s", err, importShowOut)
+	}
+	if importShowPayload.ID != "imported-binary" || importShowPayload.ACPSessionID != "fixture-session" ||
+		importShowPayload.Cwd != importedCWD || len(importShowPayload.PromptQueue) != 2 ||
+		importShowPayload.PromptQueue[0].Status != "completed" {
+		t.Fatalf("imported show payload = %#v", importShowPayload)
 	}
 }
