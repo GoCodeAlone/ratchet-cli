@@ -156,7 +156,7 @@ func TestDaemonMCPToolCallsUseDaemonClient(t *testing.T) {
 }
 
 func TestDaemonMCPTeamMessageSurfacesDaemonError(t *testing.T) {
-	srv := NewDaemonMCPServer(&fakeDaemon{msgErr: errors.New("DirectMessage not yet implemented")})
+	srv := NewDaemonMCPServer(&fakeDaemon{msgErr: errors.New("daemon unavailable")})
 	resp := runMCPSequence(t, srv,
 		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"team_message","arguments":{"team_id":"t1","to_agent":"worker","content":"hello"}}}`,
 	)
@@ -165,7 +165,7 @@ func TestDaemonMCPTeamMessageSurfacesDaemonError(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected error response, got %#v", resp[0])
 	}
-	if got := errObj["message"].(string); !strings.Contains(got, "DirectMessage not yet implemented") {
+	if got := errObj["message"].(string); !strings.Contains(got, "daemon unavailable") {
 		t.Fatalf("error message = %q", got)
 	}
 }
