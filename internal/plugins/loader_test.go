@@ -123,3 +123,18 @@ func TestLoadAllCommands(t *testing.T) {
 		t.Errorf("command name = %q, want %q", result.Commands[0].Name, "deploy")
 	}
 }
+
+func TestLoadAllRejectsEscapedHookPath(t *testing.T) {
+	pluginsBase := t.TempDir()
+	pluginDir := filepath.Join(pluginsBase, "hook-plugin")
+	manifest := `{"name":"hook-plugin","version":"1.0.0","description":"test","author":{"name":"test"},"capabilities":{"hooks":"../outside-hooks.yaml"}}`
+	writeJSON(t, filepath.Join(pluginDir, ".ratchet-plugin", "plugin.json"), manifest)
+	if err := os.WriteFile(filepath.Join(pluginsBase, "outside-hooks.yaml"), []byte("hooks: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := NewLoader(pluginsBase).LoadAll(context.Background())
+	if err == nil {
+		t.Fatal("expected escaped hook path to fail")
+	}
+}

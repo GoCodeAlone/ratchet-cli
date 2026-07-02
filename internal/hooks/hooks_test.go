@@ -131,3 +131,118 @@ func TestRunGlobFilter(t *testing.T) {
 		t.Errorf("expected no error for non-matching glob: %v", err)
 	}
 }
+
+func TestHookDescriptorHashStableWithoutAbsoluteHomePath(t *testing.T) {
+	a := Hook{
+		Command:    "echo {{.file}}",
+		Glob:       "*.go",
+		SourceKind: SourceProject,
+		SourceID:   "project:.ratchet/hooks.yaml",
+		SourcePath: filepath.Join(t.TempDir(), "work-a", ".ratchet", "hooks.yaml"),
+	}
+	b := a
+	b.SourcePath = filepath.Join(t.TempDir(), "work-b", ".ratchet", "hooks.yaml")
+
+	if a.DescriptorHash() == "" {
+		t.Fatal("DescriptorHash is empty")
+	}
+	if a.DescriptorHash() != b.DescriptorHash() {
+		t.Fatalf("hash includes machine-specific path: %q != %q", a.DescriptorHash(), b.DescriptorHash())
+	}
+}
+
+func TestHookTrustStoreTrustDisableUntrust(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "trust.json")
+	store, err := LoadTrustStore(path)
+	if err != nil {
+		t.Fatalf("LoadTrustStore: %v", err)
+	}
+
+	const hash = "abc123"
+	if store.IsTrusted(hash) {
+		t.Fatal("new store should not trust hash")
+	}
+	if err := store.Trust(hash); err != nil {
+		t.Fatalf("Trust: %v", err)
+	}
+	if !store.IsTrusted(hash) {
+		t.Fatal("trusted hash not recorded")
+	}
+	if err := store.Disable(hash); err != nil {
+		t.Fatalf("Disable: %v", err)
+	}
+	if !store.IsDisabled(hash) {
+		t.Fatal("disabled hash not recorded")
+	}
+	if store.IsTrusted(hash) {
+		t.Fatal("disabled hash must not remain trusted")
+	}
+	if err := store.Untrust(hash); err != nil {
+		t.Fatalf("Untrust: %v", err)
+	}
+
+	reloaded, err := LoadTrustStore(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if !reloaded.IsDisabled(hash) {
+		t.Fatal("disabled hash not persisted")
+	}
+	if reloaded.IsTrusted(hash) {
+		t.Fatal("untrusted hash was persisted as trusted")
+	}
+}
+
+func TestLoadProjectHookStartsUntrusted(t *testing.T) {
+	tmp := t.TempDir()
+	homeDir := filepath.Join(tmp, "home")
+	workDir := filepath.Join(tmp, "work")
+	if err := os.MkdirAll(filepath.Join(workDir, ".ratchet"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", homeDir)
+	if err := os.WriteFile(filepath.Join(workDir, ".ratchet", "hooks.yaml"), []byte(`
+hooks:
+  post-command:
+    - command: "echo project"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := LoadTrustStore(filepath.Join(tmp, "trust.json"))
+	if err != nil {
+		t.Fatalf("LoadTrustStore: %v", err)
+	}
+	cfg, err := LoadWithOptions(LoadOptions{WorkingDir: workDir, TrustStore: store})
+	if err != nil {
+		t.Fatalf("LoadWithOptions: %v", err)
+	}
+	got := cfg.Hooks[PostCommand]
+	if len(got) != 1 {
+		t.Fatalf("project hooks = %d, want 1", len(got))
+	}
+	if got[0].SourceKind != SourceProject {
+		t.Fatalf("SourceKind = %q, want project", got[0].SourceKind)
+	}
+	if got[0].Trusted {
+		t.Fatal("project hook should start untrusted")
+	}
+	if got[0].Hash == "" {
+		t.Fatal("project hook hash is empty")
+	}
+}
+
+func TestHookCommandForGOOS(t *testing.T) {
+	h := Hook{Command: "echo posix", CommandWindows: "Write-Output windows"}
+	if got, ok := h.commandForGOOS("windows"); !ok || got != "Write-Output windows" {
+		t.Fatalf("windows command = %q/%v, want command/true", got, ok)
+	}
+	if got, ok := h.commandForGOOS("linux"); !ok || got != "echo posix" {
+		t.Fatalf("linux command = %q/%v, want command/true", got, ok)
+	}
+
+	windowsOnlyMissing := Hook{Command: "echo posix", SourceKind: SourceProject}
+	if got, ok := windowsOnlyMissing.commandForGOOS("windows"); ok || got != "" {
+		t.Fatalf("windows missing command = %q/%v, want empty/false", got, ok)
+	}
+}

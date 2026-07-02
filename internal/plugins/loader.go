@@ -132,10 +132,21 @@ func (l *Loader) loadPlugin(ctx context.Context, pluginDir string, m *Manifest, 
 	}
 
 	if m.Capabilities.Hooks != "" {
-		hc, err := loadHooks(filepath.Join(pluginDir, m.Capabilities.Hooks))
+		hooksPath, err := resolveCapabilityPath(pluginDir, m.Capabilities.Hooks)
 		if err != nil {
 			return fmt.Errorf("hooks: %w", err)
 		}
+		hc, err := loadHooks(hooksPath)
+		if err != nil {
+			return fmt.Errorf("hooks: %w", err)
+		}
+		hc.AnnotateSource(hooks.SourceMetadata{
+			Kind:          hooks.SourcePlugin,
+			ID:            fmt.Sprintf("plugin:%s@%s:%s", m.Name, m.Version, filepath.ToSlash(filepath.Clean(m.Capabilities.Hooks))),
+			Path:          hooksPath,
+			PluginName:    m.Name,
+			PluginVersion: m.Version,
+		})
 		// Merge plugin hooks into result hooks.
 		for event, hookList := range hc.Hooks {
 			result.Hooks.Hooks[event] = append(result.Hooks.Hooks[event], hookList...)
@@ -160,6 +171,32 @@ func (l *Loader) loadPlugin(ctx context.Context, pluginDir string, m *Manifest, 
 	}
 
 	return nil
+}
+
+func resolveCapabilityPath(pluginDir, rel string) (string, error) {
+	if rel == "" {
+		return "", fmt.Errorf("empty capability path")
+	}
+	if filepath.IsAbs(rel) {
+		return "", fmt.Errorf("capability path %q must be relative", rel)
+	}
+	root, err := filepath.Abs(pluginDir)
+	if err != nil {
+		return "", err
+	}
+	path, err := filepath.Abs(filepath.Join(root, rel))
+	if err != nil {
+		return "", err
+	}
+	cleanRoot := filepath.Clean(root)
+	cleanPath := filepath.Clean(path)
+	if cleanPath != cleanRoot {
+		prefix := cleanRoot + string(os.PathSeparator)
+		if !strings.HasPrefix(cleanPath, prefix) {
+			return "", fmt.Errorf("capability path %q escapes plugin directory", rel)
+		}
+	}
+	return cleanPath, nil
 }
 
 // loadSkills reads SKILL.md files from skill subdirectories.
