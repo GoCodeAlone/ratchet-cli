@@ -421,7 +421,6 @@ git commit -m "docs: document hook profile policy"
 **Files:**
 - Modify: `docs/plans/2026-07-02-ratchet-cli-extension-hooks-profiles.md`
 - Create: `docs/retros/2026-07-02-ratchet-cli-extension-hooks-profiles-retro.md`
-- Modify in workspace repo after ratchet-cli release: `docs/FOLLOWUPS.md`, `docs/PROJECTS.md`, `.autodev/state/phase-progress.jsonl`
 
 **Step 1: Release gate on merged master**
 
@@ -470,17 +469,17 @@ bash <autodev-plugin>/hooks/scope-lock-complete docs/plans/2026-07-02-ratchet-cl
 
 Write retro with design/plan findings, CI/review misses, and project-guidance result.
 
-**Step 5: Workspace state**
-
-Update workspace `docs/FOLLOWUPS.md`, `docs/PROJECTS.md`, and `.autodev/state/phase-progress.jsonl` after ratchet-cli release. Open and merge a workspace PR with local verification:
-
-- `jq -c . .autodev/state/phase-progress.jsonl >/dev/null`
-- `git diff --check`
-- `rg -n "v0.24.0|extension hooks|ACP launch profiles" docs/FOLLOWUPS.md docs/PROJECTS.md .autodev/state/phase-progress.jsonl`
-
-**Step 6: Commit closeout artifacts**
+**Step 5: Commit closeout artifacts**
 
 ```sh
 git add docs/plans/2026-07-02-ratchet-cli-extension-hooks-profiles.md docs/retros/2026-07-02-ratchet-cli-extension-hooks-profiles-retro.md
 git commit -m "docs: close hook profile plan"
 ```
+
+## Post-Plan Workspace State
+
+After ratchet-cli PR4 merges and v0.24.0 is verified, update workspace `docs/FOLLOWUPS.md`, `docs/PROJECTS.md`, and `.autodev/state/phase-progress.jsonl`. Open and merge a separate workspace PR with local verification:
+
+- `jq -c . .autodev/state/phase-progress.jsonl >/dev/null`
+- `git diff --check`
+- `rg -n "v0.24.0|extension hooks|ACP launch profiles" docs/FOLLOWUPS.md docs/PROJECTS.md .autodev/state/phase-progress.jsonl`
