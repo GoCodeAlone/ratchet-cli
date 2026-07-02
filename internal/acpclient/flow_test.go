@@ -169,6 +169,43 @@ func TestRunFlowRendersACPNodeAndStoresComputeOutput(t *testing.T) {
 	}
 }
 
+func TestRunFlowResolvesTrustedProfileAgent(t *testing.T) {
+	root := t.TempDir()
+	runner := &fakeFlowPromptRunner{sessionID: "acp-profile"}
+	reg, err := DefaultRegistry().WithProfiles([]Profile{{
+		Name:    "fixture-profile",
+		Spec:    AgentSpec{Name: "fixture-profile", Command: "/tmp/fixture-acp", Args: []string{"--stdio"}},
+		Trusted: true,
+	}})
+	if err != nil {
+		t.Fatalf("WithProfiles: %v", err)
+	}
+	def := FlowDefinition{
+		FormatVersion: 1,
+		StartAt:       "ask",
+		Nodes: []FlowNode{
+			{ID: "ask", Type: FlowNodeTypeACP, Agent: "fixture-profile", Prompt: "Hello"},
+		},
+	}
+
+	var gotSpec AgentSpec
+	_, err = RunFlow(t.Context(), def, map[string]any{}, FlowRunOptions{
+		RunID:    "run-profile",
+		RunRoot:  root,
+		Registry: reg,
+		StartRunner: func(_ context.Context, spec AgentSpec, _ RunOptions, _ string) (FlowPromptRunner, func() error, error) {
+			gotSpec = spec
+			return runner, func() error { return nil }, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunFlow: %v", err)
+	}
+	if gotSpec.Command != "/tmp/fixture-acp" {
+		t.Fatalf("flow spec = %#v", gotSpec)
+	}
+}
+
 func TestRunFlowReusesACPRunnerForSharedSessionHandle(t *testing.T) {
 	runner := &fakeFlowPromptRunner{sessionID: "acp-shared"}
 	starts := 0

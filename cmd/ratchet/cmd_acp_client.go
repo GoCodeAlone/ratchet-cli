@@ -252,7 +252,11 @@ func executeACPClientExecWithStore(ctx context.Context, opts acpClientExecOption
 		Cwd:     cwd,
 		Timeout: opts.Timeout,
 	}
-	spec, err := acpclient.DefaultRegistry().Resolve(runOpts)
+	reg, err := defaultACPClientRegistry()
+	if err != nil {
+		return err
+	}
+	spec, err := reg.Resolve(runOpts)
 	if err != nil {
 		return err
 	}
@@ -1093,6 +1097,18 @@ func loadACPProfileTemplates() ([]acpclient.Profile, error) {
 	return result.ACPProfiles, nil
 }
 
+func defaultACPClientRegistry() (acpclient.Registry, error) {
+	store, err := acpclient.NewDefaultProfileStore()
+	if err != nil {
+		return acpclient.Registry{}, err
+	}
+	profiles, err := store.List()
+	if err != nil {
+		return acpclient.Registry{}, err
+	}
+	return acpclient.DefaultRegistry().WithProfiles(profiles)
+}
+
 func executeACPClientSessionsList(store *acpclient.Store, jsonOut bool, w io.Writer) error {
 	records, err := store.List()
 	if err != nil {
@@ -1222,7 +1238,10 @@ func executeACPClientCompare(ctx context.Context, opts acpClientCompareOptions, 
 
 func resolveACPClientCompareAgents(opts acpClientCompareOptions) ([]acpclient.CompareAgent, error) {
 	targets := make([]acpclient.CompareAgent, 0, len(opts.Agents)+len(opts.Commands))
-	reg := acpclient.DefaultRegistry()
+	reg, err := defaultACPClientRegistry()
+	if err != nil {
+		return nil, err
+	}
 	for _, name := range opts.Agents {
 		spec, err := reg.Resolve(acpclient.RunOptions{Agent: name, Args: opts.Args})
 		if err != nil {
@@ -1256,6 +1275,10 @@ func executeACPClientFlowRun(ctx context.Context, opts acpClientFlowOptions, w i
 	if abs, err := filepath.Abs(cwd); err == nil {
 		cwd = abs
 	}
+	reg, err := defaultACPClientRegistry()
+	if err != nil {
+		return err
+	}
 	result, err := acpclient.RunFlow(ctx, def, input, acpclient.FlowRunOptions{
 		RunID:              opts.RunID,
 		RunRoot:            opts.RunRoot,
@@ -1263,6 +1286,7 @@ func executeACPClientFlowRun(ctx context.Context, opts acpClientFlowOptions, w i
 		DefaultAgent:       opts.DefaultAgent,
 		DefaultCommand:     opts.Command,
 		DefaultArgs:        opts.Args,
+		Registry:           reg,
 		AllowedPermissions: opts.AllowedPermissions,
 	})
 	if err != nil {
@@ -1336,7 +1360,11 @@ func executeACPClientDrain(ctx context.Context, store *acpclient.Store, id strin
 		Cwd:     cwd,
 		Timeout: opts.Timeout,
 	}
-	spec, err := acpclient.DefaultRegistry().Resolve(runOpts)
+	reg, err := defaultACPClientRegistry()
+	if err != nil {
+		return err
+	}
+	spec, err := reg.Resolve(runOpts)
 	if err != nil {
 		return err
 	}
@@ -1370,7 +1398,11 @@ func executeACPClientWatch(ctx context.Context, store *acpclient.Store, id strin
 		Cwd:     cwd,
 		Timeout: opts.Timeout,
 	}
-	spec, err := acpclient.DefaultRegistry().Resolve(runOpts)
+	reg, err := defaultACPClientRegistry()
+	if err != nil {
+		return err
+	}
+	spec, err := reg.Resolve(runOpts)
 	if err != nil {
 		return err
 	}

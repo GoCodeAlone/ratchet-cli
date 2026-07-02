@@ -46,6 +46,7 @@ type FlowRunOptions struct {
 	DefaultAgent       string
 	DefaultCommand     string
 	DefaultArgs        []string
+	Registry           Registry
 	AllowedPermissions []string
 	ActionOutputLimit  int
 	ActionRunner       ActionRunner
@@ -262,7 +263,11 @@ func flowAgentSpec(node FlowNode, opts FlowRunOptions) (AgentSpec, RunOptions, e
 		return AgentSpec{}, RunOptions{}, err
 	}
 	runOpts.Cwd = cwd
-	spec, err := DefaultRegistry().Resolve(runOpts)
+	reg := opts.Registry
+	if reg.specs == nil {
+		reg = DefaultRegistry()
+	}
+	spec, err := reg.Resolve(runOpts)
 	return spec, runOpts, err
 }
 

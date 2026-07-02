@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -540,6 +541,32 @@ func TestExecuteACPClientExecHumanOutput(t *testing.T) {
 	}
 }
 
+func TestExecuteACPClientExecUsesTrustedProfile(t *testing.T) {
+	setupDefaultACPProfile(t, "fixture", true)
+	runner := &fakeACPClientExecRunner{
+		result: acpclient.Result{SessionID: "s1", StopReason: acpsdk.StopReasonEndTurn, Text: "profile ok"},
+	}
+	var out bytes.Buffer
+	err := executeACPClientExec(t.Context(), acpClientExecOptions{
+		Agent:  "fixture",
+		Prompt: "hello",
+	}, runner, &out)
+	if err != nil {
+		t.Fatalf("executeACPClientExec: %v", err)
+	}
+	if runner.spec.Command != "/tmp/fixture-acp" || strings.Join(runner.spec.Args, ",") != "--stdio" {
+		t.Fatalf("runner spec = %#v", runner.spec)
+	}
+}
+
+func TestExecuteACPClientExecRejectsUntrustedProfile(t *testing.T) {
+	setupDefaultACPProfile(t, "fixture", false)
+	err := executeACPClientExec(t.Context(), acpClientExecOptions{Agent: "fixture", Prompt: "hello"}, &fakeACPClientExecRunner{}, io.Discard)
+	if !errors.Is(err, acpclient.ErrUnknownAgent) {
+		t.Fatalf("executeACPClientExec error = %v, want ErrUnknownAgent", err)
+	}
+}
+
 func TestExecuteACPClientExecJSONOutput(t *testing.T) {
 	runner := &fakeACPClientExecRunner{
 		result: acpclient.Result{
@@ -829,6 +856,36 @@ func TestExecuteACPClientDrainUsesInjectedRunner(t *testing.T) {
 	}
 }
 
+func TestExecuteACPClientDrainUsesTrustedProfile(t *testing.T) {
+	setupDefaultACPProfile(t, "fixture", true)
+	store := acpclient.NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 1, 23, 10, 0, 0, time.UTC)
+	if err := store.Upsert(acpclient.SessionRecord{
+		ID:        "s-drain-profile",
+		Status:    acpclient.SessionStatusQueued,
+		CreatedAt: now,
+		UpdatedAt: now,
+		PromptQueue: []acpclient.QueuedPrompt{{
+			ID: "q-1", Prompt: "drain profile", Status: acpclient.QueuePromptStatusPending, CreatedAt: now,
+		}},
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	var gotSpec acpclient.AgentSpec
+	runner := &fakeDrainPromptRunner{sessionID: "acp-drain-profile"}
+	if err := executeACPClientDrain(t.Context(), store, "s-drain-profile", acpClientDrainOptions{
+		Agent: "fixture",
+	}, func(_ context.Context, spec acpclient.AgentSpec, _ acpclient.RunOptions, _ string) (acpclient.DrainPromptRunner, func() error, error) {
+		gotSpec = spec
+		return runner, func() error { return nil }, nil
+	}, io.Discard); err != nil {
+		t.Fatalf("executeACPClientDrain: %v", err)
+	}
+	if gotSpec.Command != "/tmp/fixture-acp" {
+		t.Fatalf("drain spec = %#v", gotSpec)
+	}
+}
+
 func TestExecuteACPClientWatchUsesInjectedRunnerWithoutPromptLeak(t *testing.T) {
 	store := acpclient.NewStore(filepath.Join(t.TempDir(), "sessions.json"))
 	now := time.Date(2026, 7, 2, 13, 0, 0, 0, time.UTC)
@@ -869,6 +926,40 @@ func TestExecuteACPClientWatchUsesInjectedRunnerWithoutPromptLeak(t *testing.T) 
 	}
 	if strings.Contains(got, secretPrompt) {
 		t.Fatalf("watch output leaked prompt body: %q", got)
+	}
+}
+
+func TestExecuteACPClientWatchUsesTrustedProfile(t *testing.T) {
+	setupDefaultACPProfile(t, "fixture", true)
+	store := acpclient.NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 2, 13, 0, 0, 0, time.UTC)
+	if err := store.Upsert(acpclient.SessionRecord{
+		ID:        "s-watch-profile",
+		Status:    acpclient.SessionStatusQueued,
+		CreatedAt: now,
+		UpdatedAt: now,
+		PromptQueue: []acpclient.QueuedPrompt{{
+			ID: "q-1", Prompt: "watch profile", Status: acpclient.QueuePromptStatusPending, CreatedAt: now,
+		}},
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	var gotSpec acpclient.AgentSpec
+	runner := &fakeDrainPromptRunner{sessionID: "acp-watch-profile"}
+	if err := executeACPClientWatch(t.Context(), store, "s-watch-profile", acpClientWatchOptions{
+		Agent:         "fixture",
+		Interval:      time.Millisecond,
+		MaxPerCycle:   1,
+		MaxCycles:     1,
+		StopWhenEmpty: true,
+	}, func(_ context.Context, spec acpclient.AgentSpec, _ acpclient.RunOptions, _ string) (acpclient.DrainPromptRunner, func() error, error) {
+		gotSpec = spec
+		return runner, func() error { return nil }, nil
+	}, io.Discard); err != nil {
+		t.Fatalf("executeACPClientWatch: %v", err)
+	}
+	if gotSpec.Command != "/tmp/fixture-acp" {
+		t.Fatalf("watch spec = %#v", gotSpec)
 	}
 }
 
@@ -1038,6 +1129,26 @@ func TestExecuteACPClientCompareTextAndJSON(t *testing.T) {
 	}
 	if len(rows) != 2 || rows[0].Status != "ok" || rows[0].Final != "agent a final" {
 		t.Fatalf("rows = %#v", rows)
+	}
+}
+
+func TestExecuteACPClientCompareUsesTrustedProfile(t *testing.T) {
+	setupDefaultACPProfile(t, "fixture", true)
+	runner := &fakeCompareCommandRunner{
+		results: map[string]acpclient.Result{
+			"/tmp/fixture-acp": {StopReason: acpsdk.StopReasonEndTurn, Text: "profile final"},
+			"/bin/agent-b":     {StopReason: acpsdk.StopReasonEndTurn, Text: "b final"},
+		},
+	}
+	if err := executeACPClientCompare(t.Context(), acpClientCompareOptions{
+		Agents:   []string{"fixture"},
+		Commands: []string{"/bin/agent-b"},
+		Prompt:   "compare profile",
+	}, runner, io.Discard); err != nil {
+		t.Fatalf("executeACPClientCompare: %v", err)
+	}
+	if len(runner.prompts) == 0 || !strings.HasPrefix(runner.prompts[0], "/tmp/fixture-acp:") {
+		t.Fatalf("runner prompts = %#v", runner.prompts)
 	}
 }
 
@@ -1428,6 +1539,24 @@ type fakeCompareCommandRunner struct {
 	results map[string]acpclient.Result
 	errs    map[string]error
 	prompts []string
+}
+
+func setupDefaultACPProfile(t *testing.T, name string, trusted bool) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	store, err := acpclient.NewDefaultProfileStore()
+	if err != nil {
+		t.Fatalf("NewDefaultProfileStore: %v", err)
+	}
+	if err := store.Add(acpclient.Profile{
+		Name:    name,
+		Spec:    acpclient.AgentSpec{Name: name, Command: "/tmp/" + name + "-acp", Args: []string{"--stdio"}},
+		Trusted: trusted,
+	}); err != nil {
+		t.Fatalf("Add profile: %v", err)
+	}
 }
 
 func (r *fakeCompareCommandRunner) RunPrompt(_ context.Context, spec acpclient.AgentSpec, _ acpclient.RunOptions, prompt string) (acpclient.Result, error) {
