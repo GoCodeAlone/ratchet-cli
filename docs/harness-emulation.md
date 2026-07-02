@@ -58,15 +58,16 @@ The dated source-backed matrix lives in
 ACPX sources. ratchet-cli now supports Windows release artifacts, ACP prompt stdio
 smoke, headless ACP client exec/session/status/cancel primitives with
 multi-prompt FIFO queue/drain,
-daemon-backed MCP blackboard/session/project/team status tools, session lineage
+daemon-backed MCP blackboard/session/project/team status/message tools, runtime
+trust slash commands, session lineage
 history/clone/fork/tree commands, branch summaries, compaction records with
 archive session links, Pi-style in-place branch navigation, and opt-in redacted
 retro evidence, ACP client session archive export/import, serial compare, and
 JSON v1 ACP/compute flows. The v0.20.0 release keeps Windows amd64/arm64 zip
 artifacts in the GoReleaser output while adding ACP client archive, compare,
 and flow commands. Deferred rows
-remain broader policy layering, extension hooks, full daemon direct team
-messaging, ACPX TypeScript flow runtime compatibility, and local-first channel
+remain broader policy layering, extension hooks, persistent trust policy
+editing, ACPX TypeScript flow runtime compatibility, and local-first channel
 gateways.
 
 ## ACP Matrix
@@ -131,9 +132,19 @@ ratchet acp client flow run flow.json \
 | `project_list` | Supported | `ratchet mcp daemon`; calls daemon project list through the client adapter. |
 | `team_list` | Supported | `ratchet mcp daemon`; calls daemon team list through the client adapter. |
 | `team_status` | Supported | `ratchet mcp daemon`; calls daemon team status through the client adapter. |
-| `team_message` | Deferred by daemon | MCP exposes the tool and surfaces daemon errors; daemon `DirectMessage` still returns unimplemented. |
+| `team_message` | Supported for active teams | `ratchet mcp daemon`; calls daemon `DirectMessage`, resolves team/agent by id or name, and appends an operator-originated message to the recipient. |
 | Claude Code config | Supported | `WriteMCPConfig` tests. |
 | Copilot config | Supported | `WriteCopilotMCPConfig` API and `ratchet mcp config copilot`. |
 | generic MCP config | Supported | `WriteGenericMCPConfig` and `ratchet mcp config generic`. |
 | daemon-backed blackboard | Supported | Unary daemon API added for MCP reads, writes, and lists; `TestBlackboardRPCReadWriteList`. |
-| daemon-backed team tools | Partial | Team list/status are daemon-backed; direct message remains daemon-deferred. |
+| daemon-backed team tools | Supported | Team list/status/message are daemon-backed. Direct messages require an active running team; completed teams reject new messages. |
+
+## Trust Controls
+
+| TUI command | Status | Notes |
+|---|---|---|
+| `/mode <mode>` | Supported | Switches daemon trust mode at runtime for `conservative`, `permissive`, `locked`, `sandbox`, or `custom`. |
+| `/trust list` | Supported | Shows daemon trust mode and effective rules from `workflow-plugin-agent/policy.TrustEngine`. |
+| `/trust allow "pattern" [--scope scope]` | Supported | Adds a runtime allow rule. Scope defaults to `global`. |
+| `/trust deny "pattern" [--scope scope]` | Supported | Adds a runtime deny rule. Scope defaults to `global`. |
+| `/trust reset` | Supported | Clears runtime slash-command rules and rebuilds from config defaults. It does not edit config files or delete persisted permission grants. |

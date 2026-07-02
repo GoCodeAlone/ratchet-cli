@@ -1136,8 +1136,27 @@ func (s *Service) SteerTeam(ctx context.Context, req *pb.SteerTeamReq) (*pb.Empt
 }
 
 func (s *Service) DirectMessage(ctx context.Context, req *pb.DirectMessageReq) (*pb.Empty, error) {
-	// TODO: Wire to team's router.
-	return nil, status.Errorf(codes.Unimplemented, "DirectMessage not yet implemented")
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request is required")
+	}
+	if s.teams == nil {
+		return nil, status.Error(codes.FailedPrecondition, "team manager is not available")
+	}
+	if err := s.teams.DirectMessage(req.TeamId, req.ToAgent, req.Content); err != nil {
+		switch {
+		case errors.Is(err, errTeamMessageInvalid):
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		case errors.Is(err, errTeamMessageTeamMissing), errors.Is(err, errTeamMessageAgentMissing):
+			return nil, status.Error(codes.NotFound, err.Error())
+		case errors.Is(err, errTeamMessageNotRunning):
+			return nil, status.Error(codes.FailedPrecondition, err.Error())
+		case errors.Is(err, errTeamMessageDelivery):
+			return nil, status.Error(codes.ResourceExhausted, err.Error())
+		default:
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+	}
+	return &pb.Empty{}, nil
 }
 
 // === Human-in-the-loop handlers (Task 3.4) ===

@@ -2,10 +2,13 @@ package daemon
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestTeamManager_Create(t *testing.T) {
@@ -91,6 +94,183 @@ func TestTeamManager_DirectMessage(t *testing.T) {
 		if m.ToAgent == "" {
 			t.Error("message ToAgent should not be empty")
 		}
+	}
+}
+
+func TestTeamManager_DirectMessageFromOperator(t *testing.T) {
+	tm := NewTeamManager(nil, nil)
+	ti := newRunningTeamForDirectMessage()
+	tm.mu.Lock()
+	tm.teams[ti.id] = ti
+	tm.names["friendly"] = ti.id
+	tm.mu.Unlock()
+
+	if err := tm.DirectMessage("friendly", "worker", "hello worker"); err != nil {
+		t.Fatalf("DirectMessage: %v", err)
+	}
+
+	worker := ti.agents["worker-id"]
+	worker.mu.RLock()
+	if len(worker.messages) != 1 {
+		t.Fatalf("worker messages = %d, want 1", len(worker.messages))
+	}
+	msg := worker.messages[0]
+	worker.mu.RUnlock()
+	if msg.from != "operator" || msg.content != "hello worker" {
+		t.Fatalf("worker message = %+v", msg)
+	}
+
+	select {
+	case ev := <-ti.eventCh:
+		got := ev.GetAgentMessage()
+		if got == nil || got.FromAgent != "operator" || got.ToAgent != "worker" || got.Content != "hello worker" {
+			t.Fatalf("event = %+v", ev)
+		}
+	default:
+		t.Fatal("expected team event")
+	}
+}
+
+func TestTeamManager_DirectMessageResolvesRecipientID(t *testing.T) {
+	tm := NewTeamManager(nil, nil)
+	ti := newRunningTeamForDirectMessage()
+	tm.mu.Lock()
+	tm.teams[ti.id] = ti
+	tm.mu.Unlock()
+
+	if err := tm.DirectMessage(ti.id, "worker-id", "by id"); err != nil {
+		t.Fatalf("DirectMessage by id: %v", err)
+	}
+	worker := ti.agents["worker-id"]
+	worker.mu.RLock()
+	defer worker.mu.RUnlock()
+	if len(worker.messages) != 1 || worker.messages[0].content != "by id" {
+		t.Fatalf("worker messages = %+v", worker.messages)
+	}
+}
+
+func TestTeamManager_DirectMessagePreservesContentWhitespace(t *testing.T) {
+	tm := NewTeamManager(nil, nil)
+	ti := newRunningTeamForDirectMessage()
+	tm.mu.Lock()
+	tm.teams[ti.id] = ti
+	tm.mu.Unlock()
+
+	content := "  hello worker\n"
+	if err := tm.DirectMessage(ti.id, "worker", content); err != nil {
+		t.Fatalf("DirectMessage: %v", err)
+	}
+	worker := ti.agents["worker-id"]
+	worker.mu.RLock()
+	defer worker.mu.RUnlock()
+	if len(worker.messages) != 1 || worker.messages[0].content != content {
+		t.Fatalf("worker messages = %+v, want content %q", worker.messages, content)
+	}
+}
+
+func TestTeamManager_DirectMessageReportsFullEventChannel(t *testing.T) {
+	tm := NewTeamManager(nil, nil)
+	ti := newRunningTeamForDirectMessage()
+	ti.eventCh = make(chan *pb.TeamEvent, 1)
+	ti.eventCh <- &pb.TeamEvent{Event: &pb.TeamEvent_Token{Token: &pb.TokenDelta{Content: "full"}}}
+	tm.mu.Lock()
+	tm.teams[ti.id] = ti
+	tm.mu.Unlock()
+
+	if err := tm.DirectMessage(ti.id, "worker", "hello"); err == nil || !strings.Contains(err.Error(), "event channel") {
+		t.Fatalf("full event channel error = %v", err)
+	}
+	worker := ti.agents["worker-id"]
+	worker.mu.RLock()
+	defer worker.mu.RUnlock()
+	if len(worker.messages) != 0 {
+		t.Fatalf("message appended despite full event channel: %+v", worker.messages)
+	}
+}
+
+func TestTeamManager_DirectMessageErrors(t *testing.T) {
+	tm := NewTeamManager(nil, nil)
+	ti := newRunningTeamForDirectMessage()
+	tm.mu.Lock()
+	tm.teams[ti.id] = ti
+	tm.mu.Unlock()
+
+	if err := tm.DirectMessage("missing", "worker", "hello"); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("missing team error = %v", err)
+	}
+	if err := tm.DirectMessage(ti.id, "missing", "hello"); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("missing agent error = %v", err)
+	}
+	if err := tm.DirectMessage(ti.id, "worker", ""); err == nil || !strings.Contains(err.Error(), "content") {
+		t.Fatalf("empty content error = %v", err)
+	}
+
+	ti.mu.Lock()
+	ti.status = "completed"
+	ti.mu.Unlock()
+	if err := tm.DirectMessage(ti.id, "worker", "hello"); err == nil || !strings.Contains(err.Error(), "not running") {
+		t.Fatalf("completed team error = %v", err)
+	}
+}
+
+func TestServiceDirectMessageMapsErrors(t *testing.T) {
+	svc := &Service{teams: NewTeamManager(nil, nil)}
+	ti := newRunningTeamForDirectMessage()
+	svc.teams.mu.Lock()
+	svc.teams.teams[ti.id] = ti
+	svc.teams.mu.Unlock()
+
+	if _, err := svc.DirectMessage(context.Background(), &pb.DirectMessageReq{
+		TeamId:  ti.id,
+		ToAgent: "worker",
+		Content: "hello",
+	}); err != nil {
+		t.Fatalf("DirectMessage: %v", err)
+	}
+
+	cases := []struct {
+		name string
+		req  *pb.DirectMessageReq
+		code codes.Code
+	}{
+		{name: "missing team", req: &pb.DirectMessageReq{TeamId: "missing", ToAgent: "worker", Content: "hello"}, code: codes.NotFound},
+		{name: "missing agent", req: &pb.DirectMessageReq{TeamId: ti.id, ToAgent: "missing", Content: "hello"}, code: codes.NotFound},
+		{name: "empty content", req: &pb.DirectMessageReq{TeamId: ti.id, ToAgent: "worker"}, code: codes.InvalidArgument},
+	}
+	for _, tc := range cases {
+		_, err := svc.DirectMessage(context.Background(), tc.req)
+		if status.Code(err) != tc.code {
+			t.Fatalf("%s code = %v, want %v (err=%v)", tc.name, status.Code(err), tc.code, err)
+		}
+	}
+
+	ti.mu.Lock()
+	ti.status = "completed"
+	ti.mu.Unlock()
+	_, err := svc.DirectMessage(context.Background(), &pb.DirectMessageReq{TeamId: ti.id, ToAgent: "worker", Content: "hello"})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("completed team code = %v, want FailedPrecondition (err=%v)", status.Code(err), err)
+	}
+
+	ti.mu.Lock()
+	ti.status = "running"
+	ti.eventCh = make(chan *pb.TeamEvent, 1)
+	ti.eventCh <- &pb.TeamEvent{Event: &pb.TeamEvent_Token{Token: &pb.TokenDelta{Content: "full"}}}
+	ti.mu.Unlock()
+	_, err = svc.DirectMessage(context.Background(), &pb.DirectMessageReq{TeamId: ti.id, ToAgent: "worker", Content: "hello"})
+	if status.Code(err) != codes.ResourceExhausted {
+		t.Fatalf("full event channel code = %v, want ResourceExhausted (err=%v)", status.Code(err), err)
+	}
+}
+
+func newRunningTeamForDirectMessage() *teamInstance {
+	return &teamInstance{
+		id:        "t-direct",
+		task:      "direct message",
+		status:    "running",
+		agents:    map[string]*teamAgent{"worker-id": {id: "worker-id", name: "worker", role: "worker", status: "running"}},
+		observers: make(map[string]*teamObserver),
+		eventCh:   make(chan *pb.TeamEvent, 8),
 	}
 }
 

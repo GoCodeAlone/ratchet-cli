@@ -74,6 +74,13 @@ collapse and expand, `Enter` to switch to a branch, `r` to refresh, and `Esc`
 to return to chat. Switching through the tree or sidebar rebuilds chat for the
 selected branch before new sends are accepted.
 
+The TUI trust commands are daemon-backed at runtime: `/mode <mode>` switches
+between `conservative`, `permissive`, `locked`, `sandbox`, and `custom`;
+`/trust list` shows effective daemon rules; `/trust allow "pattern" [--scope scope]`
+and `/trust deny "pattern" [--scope scope]` add runtime rules; `/trust reset`
+clears runtime slash-command rules and rebuilds from config defaults. These
+commands do not edit config files or delete persisted permission grants.
+
 The ACP client queue persists prompt text under the user's XDG state directory.
 Do not use `--no-wait` for prompts that should not be written to local disk.
 ACP client archives are explicit JSON exports and can contain prompt text,
@@ -138,7 +145,7 @@ ratchet acp client flow run flow.json \
 | Daemon | `HOME="$(mktemp -d)" ratchet daemon status` | Runs credential-free when pointed at a temp home. |
 | ACP | `ratchet acp` | Exposes the agent over ACP stdio JSON-RPC; prompt smoke is covered by `TestACPStdioPromptSmoke`. |
 | ACP client | `ratchet acp client exec --command ./agent "prompt"` | Drives an external ACP agent over stdio; binary smoke covers exec, persisted sessions, FIFO `--no-wait` queue, queue inspection, drain, status, cancel, archive export/import, serial compare, and JSON v1 flows. |
-| MCP | `ratchet mcp blackboard` / `ratchet mcp daemon` | Exposes standalone blackboard or daemon-backed session/project/blackboard/team MCP tools over stdio. |
+| MCP | `ratchet mcp blackboard` / `ratchet mcp daemon` | Exposes standalone blackboard or daemon-backed session/project/blackboard/team MCP tools over stdio, including active-team `team_message`. |
 | Team | `ratchet team start "task"` | Uses daemon team orchestration with configured providers. |
 
 See [docs/harness-emulation.md](docs/harness-emulation.md) for credential-free

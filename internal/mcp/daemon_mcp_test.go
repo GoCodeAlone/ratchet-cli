@@ -18,6 +18,9 @@ type fakeDaemon struct {
 	killed   string
 	bb       map[string]map[string]*pb.BlackboardEntry
 	msgErr   error
+	msgTeam  string
+	msgAgent string
+	msgText  string
 }
 
 func (f *fakeDaemon) ListSessions() ([]*pb.Session, error) {
@@ -81,6 +84,9 @@ func (f *fakeDaemon) GetTeamStatus(teamID string) (*pb.TeamStatus, error) {
 }
 
 func (f *fakeDaemon) DirectMessage(teamID, toAgent, content string) error {
+	f.msgTeam = teamID
+	f.msgAgent = toAgent
+	f.msgText = content
 	return f.msgErr
 }
 
@@ -150,7 +156,7 @@ func TestDaemonMCPToolCallsUseDaemonClient(t *testing.T) {
 }
 
 func TestDaemonMCPTeamMessageSurfacesDaemonError(t *testing.T) {
-	srv := NewDaemonMCPServer(&fakeDaemon{msgErr: errors.New("DirectMessage not yet implemented")})
+	srv := NewDaemonMCPServer(&fakeDaemon{msgErr: errors.New("daemon unavailable")})
 	resp := runMCPSequence(t, srv,
 		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"team_message","arguments":{"team_id":"t1","to_agent":"worker","content":"hello"}}}`,
 	)
@@ -159,8 +165,44 @@ func TestDaemonMCPTeamMessageSurfacesDaemonError(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected error response, got %#v", resp[0])
 	}
-	if got := errObj["message"].(string); !strings.Contains(got, "DirectMessage not yet implemented") {
+	if got := errObj["message"].(string); !strings.Contains(got, "daemon unavailable") {
 		t.Fatalf("error message = %q", got)
+	}
+}
+
+func TestDaemonMCPTeamMessageSendsViaDaemon(t *testing.T) {
+	fake := &fakeDaemon{}
+	srv := NewDaemonMCPServer(fake)
+	resp := runMCPSequence(t, srv,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"team_message","arguments":{"team_id":"t1","to_agent":"worker","content":"hello"}}}`,
+	)
+
+	if got := resultText(t, resp[0]); got != "sent" {
+		t.Fatalf("team_message text = %q, want sent", got)
+	}
+	if fake.msgTeam != "t1" || fake.msgAgent != "worker" || fake.msgText != "hello" {
+		t.Fatalf("DirectMessage call = team=%q agent=%q text=%q", fake.msgTeam, fake.msgAgent, fake.msgText)
+	}
+}
+
+func TestDaemonMCPTeamMessageValidatesRequiredArgs(t *testing.T) {
+	cases := []string{
+		`{"to_agent":"worker","content":"hello"}`,
+		`{"team_id":"t1","content":"hello"}`,
+		`{"team_id":"t1","to_agent":"worker"}`,
+	}
+	for _, args := range cases {
+		srv := NewDaemonMCPServer(&fakeDaemon{})
+		resp := runMCPSequence(t, srv,
+			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"team_message","arguments":`+args+`}}`,
+		)
+		errObj, ok := resp[0]["error"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected error response for args %s, got %#v", args, resp[0])
+		}
+		if got := errObj["message"].(string); !strings.Contains(got, "team_id, to_agent, and content are required") {
+			t.Fatalf("error message = %q", got)
+		}
 	}
 }
 
