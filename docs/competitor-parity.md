@@ -1,6 +1,6 @@
 # Competitor Parity
 
-This snapshot was refreshed on 2026-07-02 for the v0.19.0 release. Repository
+This snapshot was refreshed on 2026-07-02 for the v0.20.0 release. Repository
 sources are pinned to the reviewed commit where available; hosted documentation
 sources are recorded as official docs checked on the review date. Because some
 upstream repositories changed after the 2026-06-30 planning window, this
@@ -41,7 +41,7 @@ document records the exact revisions used for reproducibility.
 | Priority | Follow-up | Rationale |
 |---|---|---|
 | P1 | Complete daemon direct team messaging or remove the MCP tool until backed by daemon behavior. | The current MCP schema surfaces the command but correctly returns daemon errors; full parity requires real daemon support. |
-| P1 | Add JSONL-compatible import/export for branch trees if Pi interoperability becomes a product requirement. | In-place navigation is supported through daemon sessions; JSONL storage compatibility remains explicitly out of scope for v0.19.0. |
+| P1 | Add JSONL-compatible import/export for branch trees if Pi interoperability becomes a product requirement. | In-place navigation is supported through daemon sessions; JSONL storage compatibility remains explicitly out of scope for v0.20.0. |
 | P2 | Define a policy-layer matrix for permissions, sandboxing, and trust. | Codex, Claude Code, and Zed have clearer policy surfaces than ratchet-cli currently documents. |
 | P2 | Design optional extension hooks around session/tool/retro lifecycle. | Pi and Claude Code show high leverage from hooks, but ratchet-cli must keep mutation opt-in and redacted. |
 | P3 | Extend ACP client/orchestrator mode only where product demand appears. | The ACP client foundation covers typed exec, status, history metadata, cooperative cancel, multi-prompt FIFO queue/drain, ratchet-cli archive v1 export/import, serial compare, and JSON v1 ACP/compute flows. ACPX TypeScript flow runtime and raw JSON-RPC event-log archive compatibility remain intentionally deferred. |

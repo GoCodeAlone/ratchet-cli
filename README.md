@@ -80,9 +80,54 @@ ACP client archives are explicit JSON exports and can contain prompt text,
 responses, summaries, and queue history. Treat exported archives as sensitive
 conversation data.
 
-The v0.19.0 release adds multi-prompt ACP client FIFO queue/drain support,
-refreshes the source-backed harness parity snapshot, and continues publishing
-Windows amd64/arm64 zip artifacts alongside Linux and macOS archives.
+The v0.20.0 release adds ACP client archive import/export, serial compare, and
+JSON v1 flow commands, and continues publishing Windows amd64/arm64 zip
+artifacts alongside Linux and macOS archives.
+
+ACP client archive v1 JSON is a ratchet-cli portable format with ACPX-shaped
+metadata, not a raw ACPX JSON-RPC event log. JSON v1 flows support `acp` and
+`compute` nodes, template prompts, shared session handles, and persisted run
+bundles; ACPX TypeScript flow runtime compatibility remains deferred.
+
+## ACP Client Examples
+
+```sh
+# Export and import an ACP client session archive.
+ratchet acp client sessions export work --output work.archive.json
+ratchet acp client sessions import work.archive.json --session work-copy
+
+# Compare two external ACP agents with one prompt.
+ratchet acp client compare \
+  --command ./agent-a \
+  --command ./agent-b \
+  "Summarize the current project risks"
+
+# Run a JSON v1 ACP/compute flow.
+cat > flow.json <<'JSON'
+{
+  "format_version": 1,
+  "start_at": "draft",
+  "nodes": [
+    {
+      "id": "draft",
+      "type": "acp",
+      "prompt": "Draft a brief answer for {{ .Input.topic }}",
+      "session": "shared"
+    },
+    {
+      "id": "result",
+      "type": "compute",
+      "select": "draft"
+    }
+  ],
+  "edges": [{"from": "draft", "to": "result"}]
+}
+JSON
+ratchet acp client flow run flow.json \
+  --input-json '{"topic":"release readiness"}' \
+  --command ./agent \
+  --json
+```
 
 ## Harness Modes
 

@@ -61,9 +61,10 @@ multi-prompt FIFO queue/drain,
 daemon-backed MCP blackboard/session/project/team status tools, session lineage
 history/clone/fork/tree commands, branch summaries, compaction records with
 archive session links, Pi-style in-place branch navigation, and opt-in redacted
-retro evidence, and ACP client session archive export/import. The v0.19.0
-release keeps Windows amd64/arm64 zip artifacts in the GoReleaser output while
-adding ACP client FIFO queue/drain. Deferred rows
+retro evidence, ACP client session archive export/import, serial compare, and
+JSON v1 ACP/compute flows. The v0.20.0 release keeps Windows amd64/arm64 zip
+artifacts in the GoReleaser output while adding ACP client archive, compare,
+and flow commands. Deferred rows
 remain broader policy layering, extension hooks, full daemon direct team
 messaging, ACPX TypeScript flow runtime compatibility, and local-first channel
 gateways.
@@ -100,7 +101,21 @@ disk.
 | cancel | Supported as cooperative request | `ratchet acp client cancel <id>` marks pending queued prompts canceled or writes a cancel-request file for active owners; active clients poll and send ACP cancel. |
 | import/export archives | Supported | `ratchet acp client sessions export <id> --output <archive.json>` writes ratchet-cli archive v1 JSON with ACPX-shaped metadata; `sessions import <archive.json> --session <id>` imports a copy. Binary smoke proves export/import through the built CLI and fixture ACP agent. Archives may contain prompt/response content and are not raw ACPX JSON-RPC event logs. |
 | compare commands | Supported | `ratchet acp client compare --command <agent-a> --command <agent-b> "prompt"` runs agents serially and emits table or JSON rows. Binary smoke proves compare through the built CLI and fixture ACP agent. |
-| flow commands | Supported | `ratchet acp client flow run flow.json --input-json '{"task":"x"}' --command <agent>` runs JSON v1 flows with `acp` and `compute` nodes, template prompts, shared ACP session handles, JSON output, and persisted run bundles. ACPX TypeScript flow runtime compatibility remains out of scope. |
+| flow commands | Supported | `ratchet acp client flow run flow.json --input-json '{"task":"x"}' --command <agent>` runs JSON v1 flows with `acp` and `compute` nodes, template prompts, shared ACP session handles, JSON output, and persisted run bundles. ACPX TypeScript flow runtime compatibility is deferred. |
+
+### ACP client examples
+
+```sh
+ratchet acp client sessions export work --output work.archive.json
+ratchet acp client sessions import work.archive.json --session work-copy
+
+ratchet acp client compare --command ./agent-a --command ./agent-b "Review this patch"
+
+ratchet acp client flow run flow.json \
+  --input-json '{"task":"review release notes"}' \
+  --command ./agent \
+  --json
+```
 
 ## MCP Matrix
 
