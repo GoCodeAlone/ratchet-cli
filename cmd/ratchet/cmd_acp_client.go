@@ -23,6 +23,7 @@ const (
 	acpClientCommandHelp           acpClientCommandKind = "help"
 	acpClientCommandExec           acpClientCommandKind = "exec"
 	acpClientCommandCompare        acpClientCommandKind = "compare"
+	acpClientCommandFlowRun        acpClientCommandKind = "flow-run"
 	acpClientCommandSessionsList   acpClientCommandKind = "sessions-list"
 	acpClientCommandSessionsShow   acpClientCommandKind = "sessions-show"
 	acpClientCommandSessionsExport acpClientCommandKind = "sessions-export"
@@ -37,6 +38,7 @@ type acpClientCommand struct {
 	kind      acpClientCommandKind
 	exec      acpClientExecOptions
 	compare   acpClientCompareOptions
+	flow      acpClientFlowOptions
 	drain     acpClientDrainOptions
 	archive   acpClientArchiveOptions
 	sessionID string
@@ -74,6 +76,19 @@ type acpClientCompareOptions struct {
 	JSON     bool
 	File     string
 	Prompt   string
+}
+
+type acpClientFlowOptions struct {
+	Path         string
+	InputJSON    string
+	InputFile    string
+	DefaultAgent string
+	Command      string
+	Args         []string
+	Cwd          string
+	RunID        string
+	RunRoot      string
+	JSON         bool
 }
 
 type acpClientArchiveOptions struct {
@@ -116,6 +131,9 @@ func handleACPClient(args []string) error {
 		return executeACPClientExecWithStore(context.Background(), cmd.exec, defaultACPClientExecRunner{}, store, os.Stdout)
 	case acpClientCommandCompare:
 		return executeACPClientCompare(context.Background(), cmd.compare, nil, os.Stdout)
+	case acpClientCommandFlowRun:
+		cmd.flow.RunRoot = filepath.Join(filepath.Dir(store.Path()), "flows")
+		return executeACPClientFlowRun(context.Background(), cmd.flow, os.Stdout)
 	case acpClientCommandSessionsList:
 		return executeACPClientSessionsList(store, cmd.json, os.Stdout)
 	case acpClientCommandSessionsShow:
@@ -364,6 +382,8 @@ func parseACPClientCommandWithOutput(args []string, output io.Writer) (acpClient
 			return acpClientCommand{}, err
 		}
 		return acpClientCommand{kind: acpClientCommandCompare, compare: compareOpts}, nil
+	case "flow":
+		return parseACPClientFlow(args[1:], output)
 	case "sessions":
 		return parseACPClientSessions(args[1:])
 	case "status":
@@ -496,6 +516,52 @@ func parseACPClientCompare(args []string, output io.Writer) (acpClientCompareOpt
 		return acpClientCompareOptions{}, errors.New("prompt text or --file is required")
 	case len(promptArgs) > 0:
 		opts.Prompt = strings.Join(promptArgs, " ")
+	}
+	return opts, nil
+}
+
+func parseACPClientFlow(args []string, output io.Writer) (acpClientCommand, error) {
+	if len(args) == 0 {
+		return acpClientCommand{}, errors.New("usage: ratchet acp client flow run <flow.json> [flags]")
+	}
+	switch args[0] {
+	case "run":
+		opts, err := parseACPClientFlowRun(args[1:], output)
+		if errors.Is(err, flag.ErrHelp) {
+			return acpClientCommand{kind: acpClientCommandHandled}, nil
+		}
+		if err != nil {
+			return acpClientCommand{}, err
+		}
+		return acpClientCommand{kind: acpClientCommandFlowRun, flow: opts}, nil
+	default:
+		return acpClientCommand{}, fmt.Errorf("unknown acp client flow command: %s", args[0])
+	}
+}
+
+func parseACPClientFlowRun(args []string, output io.Writer) (acpClientFlowOptions, error) {
+	if len(args) == 0 || strings.TrimSpace(args[0]) == "" {
+		return acpClientFlowOptions{}, errors.New("usage: ratchet acp client flow run <flow.json> [flags]")
+	}
+	opts := acpClientFlowOptions{Path: args[0], Cwd: "."}
+	fs := flag.NewFlagSet("ratchet acp client flow run", flag.ContinueOnError)
+	fs.SetOutput(output)
+	fs.StringVar(&opts.InputJSON, "input-json", "", "flow input JSON object")
+	fs.StringVar(&opts.InputFile, "input-file", "", "flow input JSON file")
+	fs.StringVar(&opts.DefaultAgent, "default-agent", "", "default agent template")
+	fs.StringVar(&opts.Command, "command", "", "default agent command")
+	fs.Var((*repeatedStringFlag)(&opts.Args), "arg", "default agent command argument")
+	fs.StringVar(&opts.Cwd, "cwd", opts.Cwd, "working directory")
+	fs.StringVar(&opts.RunID, "run-id", "", "flow run id")
+	fs.BoolVar(&opts.JSON, "json", false, "emit JSON")
+	if err := fs.Parse(args[1:]); err != nil {
+		return acpClientFlowOptions{}, err
+	}
+	if len(fs.Args()) > 0 {
+		return acpClientFlowOptions{}, errors.New("usage: ratchet acp client flow run <flow.json> [flags]")
+	}
+	if opts.InputJSON != "" && opts.InputFile != "" {
+		return acpClientFlowOptions{}, errors.New("use only one of --input-json or --input-file")
 	}
 	return opts, nil
 }
@@ -690,6 +756,7 @@ func printACPClientUsage(w io.Writer) {
 Commands:
   exec       Run one prompt against an external ACP agent
   compare    Run one prompt serially across multiple ACP agents
+  flow       Run JSON ACP client flows
   sessions   List or inspect ACP client sessions
              Subcommands: list, show, history (alias for show), export, import
   queue      List queued prompts for an ACP client session
@@ -846,6 +913,62 @@ func resolveACPClientCompareAgents(opts acpClientCompareOptions) ([]acpclient.Co
 		targets = append(targets, acpclient.CompareAgent{Name: command, Spec: spec})
 	}
 	return targets, nil
+}
+
+func executeACPClientFlowRun(ctx context.Context, opts acpClientFlowOptions, w io.Writer) error {
+	def, err := acpclient.LoadFlowDefinition(opts.Path)
+	if err != nil {
+		return err
+	}
+	input, err := readACPClientFlowInput(opts)
+	if err != nil {
+		return err
+	}
+	cwd := opts.Cwd
+	if cwd == "" {
+		cwd = "."
+	}
+	if abs, err := filepath.Abs(cwd); err == nil {
+		cwd = abs
+	}
+	result, err := acpclient.RunFlow(ctx, def, input, acpclient.FlowRunOptions{
+		RunID:          opts.RunID,
+		RunRoot:        opts.RunRoot,
+		Cwd:            cwd,
+		DefaultAgent:   opts.DefaultAgent,
+		DefaultCommand: opts.Command,
+		DefaultArgs:    opts.Args,
+	})
+	if err != nil {
+		return err
+	}
+	if opts.JSON {
+		return json.NewEncoder(w).Encode(result)
+	}
+	fmt.Fprintf(w, "flow %s %s\n", result.RunID, result.Status)
+	if result.RunDir != "" {
+		fmt.Fprintf(w, "run dir: %s\n", result.RunDir)
+	}
+	return nil
+}
+
+func readACPClientFlowInput(opts acpClientFlowOptions) (map[string]any, error) {
+	raw := strings.TrimSpace(opts.InputJSON)
+	if opts.InputFile != "" {
+		b, err := os.ReadFile(opts.InputFile)
+		if err != nil {
+			return nil, fmt.Errorf("read flow input file: %w", err)
+		}
+		raw = strings.TrimSpace(string(b))
+	}
+	if raw == "" {
+		return map[string]any{}, nil
+	}
+	var input map[string]any
+	if err := json.Unmarshal([]byte(raw), &input); err != nil {
+		return nil, fmt.Errorf("parse flow input JSON: %w", err)
+	}
+	return input, nil
 }
 
 func executeACPClientQueue(store *acpclient.Store, id string, jsonOut bool, w io.Writer) error {

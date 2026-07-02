@@ -57,6 +57,8 @@ ratchet acp client sessions import session.archive.json --session imported
                             # Import an archive as a new local ACP client session
 ratchet acp client compare --command ./agent --command ./other-agent "prompt"
                             # Run one prompt serially across multiple ACP agents
+ratchet acp client flow run flow.json --input-json '{"task":"x"}' --command ./agent
+                            # Run a JSON v1 ACP/compute flow
 ratchet acp client status ID
                             # Show ACP client session status
 ratchet acp client cancel ID
@@ -90,7 +92,7 @@ Windows amd64/arm64 zip artifacts alongside Linux and macOS archives.
 | One-shot | `ratchet -p "prompt"` | Uses the configured default provider. |
 | Daemon | `HOME="$(mktemp -d)" ratchet daemon status` | Runs credential-free when pointed at a temp home. |
 | ACP | `ratchet acp` | Exposes the agent over ACP stdio JSON-RPC; prompt smoke is covered by `TestACPStdioPromptSmoke`. |
-| ACP client | `ratchet acp client exec --command ./agent "prompt"` | Drives an external ACP agent over stdio; binary smoke covers exec, persisted sessions, FIFO `--no-wait` queue, queue inspection, drain, status, cancel, archive export/import, and serial compare. |
+| ACP client | `ratchet acp client exec --command ./agent "prompt"` | Drives an external ACP agent over stdio; binary smoke covers exec, persisted sessions, FIFO `--no-wait` queue, queue inspection, drain, status, cancel, archive export/import, serial compare, and JSON v1 flows. |
 | MCP | `ratchet mcp blackboard` / `ratchet mcp daemon` | Exposes standalone blackboard or daemon-backed session/project/blackboard/team MCP tools over stdio. |
 | Team | `ratchet team start "task"` | Uses daemon team orchestration with configured providers. |
 

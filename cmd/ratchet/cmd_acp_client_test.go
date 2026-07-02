@@ -140,6 +140,51 @@ func TestParseACPClientCompareRejectsInvalidArgs(t *testing.T) {
 	}
 }
 
+func TestParseACPClientFlowRunCommand(t *testing.T) {
+	cmd, err := parseACPClientCommand([]string{
+		"flow", "run", "flow.json",
+		"--input-json", `{"task":"x"}`,
+		"--command", "/bin/fixture-agent",
+		"--arg", "--echo-session",
+		"--cwd", "/tmp/project",
+		"--json",
+	})
+	if err != nil {
+		t.Fatalf("parseACPClientCommand: %v", err)
+	}
+	if cmd.kind != acpClientCommandFlowRun {
+		t.Fatalf("kind = %q, want flow run", cmd.kind)
+	}
+	if cmd.flow.Path != "flow.json" || cmd.flow.InputJSON != `{"task":"x"}` ||
+		cmd.flow.Command != "/bin/fixture-agent" || len(cmd.flow.Args) != 1 ||
+		cmd.flow.Args[0] != "--echo-session" || cmd.flow.Cwd != "/tmp/project" || !cmd.flow.JSON {
+		t.Fatalf("flow options = %#v", cmd.flow)
+	}
+
+	fileCmd, err := parseACPClientCommand([]string{"flow", "run", "flow.json", "--input-file", "input.json", "--default-agent", "custom"})
+	if err != nil {
+		t.Fatalf("parse file flow: %v", err)
+	}
+	if fileCmd.flow.InputFile != "input.json" || fileCmd.flow.DefaultAgent != "custom" {
+		t.Fatalf("file flow options = %#v", fileCmd.flow)
+	}
+}
+
+func TestParseACPClientFlowRunRejectsInvalidArgs(t *testing.T) {
+	tests := [][]string{
+		{"flow", "run"},
+		{"flow", "run", "flow.json", "--input-json", "{}", "--input-file", "input.json"},
+		{"flow", "show", "flow.json"},
+	}
+	for _, args := range tests {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			if _, err := parseACPClientCommand(args); err == nil {
+				t.Fatalf("parseACPClientCommand(%#v) succeeded, want error", args)
+			}
+		})
+	}
+}
+
 func TestParseACPClientExecHelpPrintsFlagsAndSucceeds(t *testing.T) {
 	var out bytes.Buffer
 	cmd, err := parseACPClientCommandWithOutput([]string{"exec", "--help"}, &out)
@@ -751,6 +796,53 @@ func TestExecuteACPClientCompareTextIncludesErrorDetails(t *testing.T) {
 	got := out.String()
 	if !strings.Contains(got, "ERROR") || !strings.Contains(got, "agent b failed") {
 		t.Fatalf("compare output missing error detail:\n%s", got)
+	}
+}
+
+func TestExecuteACPClientFlowRunTextAndJSON(t *testing.T) {
+	flowPath := filepath.Join(t.TempDir(), "flow.json")
+	if err := os.WriteFile(flowPath, []byte(`{
+		"format_version": 1,
+		"start_at": "package",
+		"nodes": [{"id": "package", "type": "compute", "value": {"ok": true}}]
+	}`), 0o600); err != nil {
+		t.Fatalf("write flow: %v", err)
+	}
+	runRoot := t.TempDir()
+	var textOut bytes.Buffer
+	if err := executeACPClientFlowRun(t.Context(), acpClientFlowOptions{
+		Path:      flowPath,
+		InputJSON: `{"task":"x"}`,
+		RunID:     "run-text",
+		RunRoot:   runRoot,
+		Cwd:       ".",
+	}, &textOut); err != nil {
+		t.Fatalf("executeACPClientFlowRun text: %v", err)
+	}
+	if got := textOut.String(); !strings.Contains(got, "flow run-text completed") {
+		t.Fatalf("flow text output = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(runRoot, "run-text", "state.json")); err != nil {
+		t.Fatalf("state file missing: %v", err)
+	}
+
+	var jsonOut bytes.Buffer
+	if err := executeACPClientFlowRun(t.Context(), acpClientFlowOptions{
+		Path:      flowPath,
+		InputJSON: `{"task":"x"}`,
+		RunID:     "run-json",
+		RunRoot:   runRoot,
+		Cwd:       ".",
+		JSON:      true,
+	}, &jsonOut); err != nil {
+		t.Fatalf("executeACPClientFlowRun json: %v", err)
+	}
+	var result acpclient.FlowRunResult
+	if err := json.Unmarshal(jsonOut.Bytes(), &result); err != nil {
+		t.Fatalf("flow json: %v\n%s", err, jsonOut.String())
+	}
+	if result.RunID != "run-json" || result.Status != acpclient.FlowRunStatusCompleted || len(result.Outputs) != 1 {
+		t.Fatalf("flow result = %#v", result)
 	}
 }
 
