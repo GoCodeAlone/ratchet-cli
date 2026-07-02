@@ -95,16 +95,17 @@ type acpClientCompareOptions struct {
 }
 
 type acpClientFlowOptions struct {
-	Path         string
-	InputJSON    string
-	InputFile    string
-	DefaultAgent string
-	Command      string
-	Args         []string
-	Cwd          string
-	RunID        string
-	RunRoot      string
-	JSON         bool
+	Path               string
+	InputJSON          string
+	InputFile          string
+	DefaultAgent       string
+	Command            string
+	Args               []string
+	AllowedPermissions []string
+	Cwd                string
+	RunID              string
+	RunRoot            string
+	JSON               bool
 }
 
 type acpClientArchiveOptions struct {
@@ -577,6 +578,7 @@ func parseACPClientFlowRun(args []string, output io.Writer) (acpClientFlowOption
 	fs.StringVar(&opts.DefaultAgent, "default-agent", "", "default agent template")
 	fs.StringVar(&opts.Command, "command", "", "default agent command")
 	fs.Var((*repeatedStringFlag)(&opts.Args), "arg", "default agent command argument")
+	fs.Var((*repeatedStringFlag)(&opts.AllowedPermissions), "allow", "allow flow permission")
 	fs.StringVar(&opts.Cwd, "cwd", opts.Cwd, "working directory")
 	fs.StringVar(&opts.RunID, "run-id", "", "flow run id")
 	fs.BoolVar(&opts.JSON, "json", false, "emit JSON")
@@ -588,6 +590,13 @@ func parseACPClientFlowRun(args []string, output io.Writer) (acpClientFlowOption
 	}
 	if opts.InputJSON != "" && opts.InputFile != "" {
 		return acpClientFlowOptions{}, errors.New("use only one of --input-json or --input-file")
+	}
+	for i, permission := range opts.AllowedPermissions {
+		permission = strings.TrimSpace(permission)
+		if permission == "" {
+			return acpClientFlowOptions{}, errors.New("--allow value must not be empty")
+		}
+		opts.AllowedPermissions[i] = permission
 	}
 	return opts, nil
 }
@@ -1006,12 +1015,13 @@ func executeACPClientFlowRun(ctx context.Context, opts acpClientFlowOptions, w i
 		cwd = abs
 	}
 	result, err := acpclient.RunFlow(ctx, def, input, acpclient.FlowRunOptions{
-		RunID:          opts.RunID,
-		RunRoot:        opts.RunRoot,
-		Cwd:            cwd,
-		DefaultAgent:   opts.DefaultAgent,
-		DefaultCommand: opts.Command,
-		DefaultArgs:    opts.Args,
+		RunID:              opts.RunID,
+		RunRoot:            opts.RunRoot,
+		Cwd:                cwd,
+		DefaultAgent:       opts.DefaultAgent,
+		DefaultCommand:     opts.Command,
+		DefaultArgs:        opts.Args,
+		AllowedPermissions: opts.AllowedPermissions,
 	})
 	if err != nil {
 		return err

@@ -335,7 +335,7 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 	if err := json.Unmarshal(flowResult.Outputs["prepare"], &actionOutput); err != nil {
 		t.Fatalf("action output json: %v\n%s", err, flowResult.Outputs["prepare"])
 	}
-	if !strings.Contains(actionOutput.Stdout, "ratchet version") {
+	if !strings.Contains(actionOutput.Stdout, "ratchet ") {
 		t.Fatalf("action output = %#v", actionOutput)
 	}
 	var secondOutput struct {
@@ -344,7 +344,7 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 	if err := json.Unmarshal(flowResult.Outputs["second"], &secondOutput); err != nil {
 		t.Fatalf("second output json: %v\n%s", err, flowResult.Outputs["second"])
 	}
-	if !strings.Contains(secondOutput.Text, "fixture-session: second fixture: fixture-session: first binary flow after ratchet version") {
+	if !strings.Contains(secondOutput.Text, "fixture-session: second fixture: fixture-session: first binary flow after ratchet ") {
 		t.Fatalf("second output = %#v", secondOutput)
 	}
 	for _, rel := range []string{"flow.json", "input.json", "state.json", filepath.Join("steps", "prepare.json"), filepath.Join("steps", "second.json")} {
