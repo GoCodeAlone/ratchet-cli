@@ -145,3 +145,47 @@ func TestResolveCapabilityPathRejectsWindowsDriveRelativePath(t *testing.T) {
 		t.Fatal("expected Windows drive-relative path to fail")
 	}
 }
+
+func TestLoadAllACPProfiles(t *testing.T) {
+	pluginsBase := t.TempDir()
+	pluginDir := filepath.Join(pluginsBase, "profile-plugin")
+	manifest := `{"name":"profile-plugin","version":"1.0.0","description":"test","author":{"name":"test"},"capabilities":{"acpProfiles":"profiles.yaml"}}`
+	writeJSON(t, filepath.Join(pluginDir, ".ratchet-plugin", "plugin.json"), manifest)
+	if err := os.WriteFile(filepath.Join(pluginDir, "profiles.yaml"), []byte(`
+profiles:
+  - name: fixture
+    spec:
+      command: /bin/acp-agent
+      args: ["--stdio"]
+      envKeys: ["API_KEY"]
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := NewLoader(pluginsBase).LoadAll(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.ACPProfiles) != 1 {
+		t.Fatalf("ACPProfiles = %d, want 1", len(result.ACPProfiles))
+	}
+	got := result.ACPProfiles[0]
+	if got.Name != "fixture" || got.Spec.Command != "/bin/acp-agent" || got.PluginName != "profile-plugin" ||
+		got.PluginVersion != "1.0.0" || got.SourceKind != "plugin" || got.Hash == "" {
+		t.Fatalf("profile = %#v", got)
+	}
+}
+
+func TestLoadAllRejectsEscapedACPProfilesPath(t *testing.T) {
+	pluginsBase := t.TempDir()
+	pluginDir := filepath.Join(pluginsBase, "profile-plugin")
+	manifest := `{"name":"profile-plugin","version":"1.0.0","description":"test","author":{"name":"test"},"capabilities":{"acpProfiles":"../profiles.yaml"}}`
+	writeJSON(t, filepath.Join(pluginDir, ".ratchet-plugin", "plugin.json"), manifest)
+	if err := os.WriteFile(filepath.Join(pluginsBase, "profiles.yaml"), []byte("profiles: []\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := NewLoader(pluginsBase).LoadAll(context.Background())
+	if err == nil {
+		t.Fatal("expected escaped acpProfiles path to fail")
+	}
+}

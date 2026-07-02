@@ -253,6 +253,100 @@ func TestParseACPClientSessionCommands(t *testing.T) {
 	}
 }
 
+func TestACPClientProfilesAddListTrustRemove(t *testing.T) {
+	home := t.TempDir()
+	stateHome := filepath.Join(home, "state")
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", stateHome)
+
+	if err := handleACPClient([]string{"profiles", "add", "fixture", "--command", "/tmp/acp-agent", "--arg", "--stdio", "--env-key", "API_KEY", "--cwd", "/tmp/project"}); err != nil {
+		t.Fatalf("profiles add: %v", err)
+	}
+	listOut := captureStdout(t, func() {
+		if err := handleACPClient([]string{"profiles", "list", "--json"}); err != nil {
+			t.Fatalf("profiles list: %v", err)
+		}
+	})
+	if !strings.Contains(listOut, `"name":"fixture"`) || !strings.Contains(listOut, `"trusted":false`) {
+		t.Fatalf("profiles list output = %s", listOut)
+	}
+	if err := handleACPClient([]string{"profiles", "trust", "fixture"}); err != nil {
+		t.Fatalf("profiles trust: %v", err)
+	}
+	listOut = captureStdout(t, func() {
+		if err := handleACPClient([]string{"profiles", "list", "--json"}); err != nil {
+			t.Fatalf("profiles list trusted: %v", err)
+		}
+	})
+	if !strings.Contains(listOut, `"trusted":true`) {
+		t.Fatalf("trusted profile missing from list: %s", listOut)
+	}
+	if err := handleACPClient([]string{"profiles", "remove", "fixture"}); err != nil {
+		t.Fatalf("profiles remove: %v", err)
+	}
+	listOut = captureStdout(t, func() {
+		if err := handleACPClient([]string{"profiles", "list", "--json"}); err != nil {
+			t.Fatalf("profiles list removed: %v", err)
+		}
+	})
+	if strings.Contains(listOut, `"name":"fixture"`) {
+		t.Fatalf("removed profile still listed: %s", listOut)
+	}
+}
+
+func TestACPClientProfilesInstallPluginTemplate(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	pluginDir := filepath.Join(home, ".ratchet", "plugins", "profile-plugin")
+	if err := os.MkdirAll(filepath.Join(pluginDir, ".ratchet-plugin"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"name":"profile-plugin","version":"1.0.0","description":"test","author":{"name":"test"},"capabilities":{"acpProfiles":"profiles.yaml"}}`
+	if err := os.WriteFile(filepath.Join(pluginDir, ".ratchet-plugin", "plugin.json"), []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "profiles.yaml"), []byte(`
+profiles:
+  - name: fixture
+    spec:
+      command: /tmp/plugin-agent
+      args: ["--stdio"]
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	listOut := captureStdout(t, func() {
+		if err := handleACPClient([]string{"profiles", "list", "--json"}); err != nil {
+			t.Fatalf("profiles list templates: %v", err)
+		}
+	})
+	if !strings.Contains(listOut, `"template":true`) || !strings.Contains(listOut, `"pluginName":"profile-plugin"`) {
+		t.Fatalf("plugin template missing from list: %s", listOut)
+	}
+	if err := handleACPClient([]string{"profiles", "install", "profile-plugin/fixture", "--as", "installed", "--trust"}); err != nil {
+		t.Fatalf("profiles install: %v", err)
+	}
+	listOut = captureStdout(t, func() {
+		if err := handleACPClient([]string{"profiles", "list", "--json"}); err != nil {
+			t.Fatalf("profiles list installed: %v", err)
+		}
+	})
+	if !strings.Contains(listOut, `"name":"installed"`) || !strings.Contains(listOut, `"trusted":true`) {
+		t.Fatalf("installed profile missing/trust state wrong: %s", listOut)
+	}
+}
+
+func TestACPClientProfilesRejectBuiltinShadowing(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	err := handleACPClient([]string{"profiles", "add", "codex", "--command", "/tmp/acp-agent"})
+	if !errors.Is(err, acpclient.ErrProfileShadowsBuiltin) {
+		t.Fatalf("profiles add codex error = %v, want ErrProfileShadowsBuiltin", err)
+	}
+}
+
 func TestParseACPClientArchiveSessionCommands(t *testing.T) {
 	exportCmd, err := parseACPClientCommand([]string{"sessions", "export", "s-export", "--output", "archive.json", "--json"})
 	if err != nil {
