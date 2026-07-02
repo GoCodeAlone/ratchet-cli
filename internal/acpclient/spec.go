@@ -144,6 +144,34 @@ func (r Registry) Lookup(name string) (AgentSpec, bool) {
 	return cloneSpec(spec), true
 }
 
+func (r Registry) WithProfiles(profiles []Profile) (Registry, error) {
+	next := Registry{specs: make(map[string]AgentSpec, len(r.specs)+len(profiles))}
+	for name, spec := range r.specs {
+		next.specs[name] = cloneSpec(spec)
+	}
+	for _, profile := range profiles {
+		if !profile.Trusted {
+			continue
+		}
+		name := strings.TrimSpace(profile.Name)
+		if name == "" {
+			continue
+		}
+		if _, exists := r.specs[name]; exists {
+			return Registry{}, fmt.Errorf("%w: %s", ErrProfileShadowsBuiltin, name)
+		}
+		spec := cloneSpec(profile.Spec)
+		if spec.Name == "" {
+			spec.Name = name
+		}
+		if err := spec.Validate(); err != nil {
+			return Registry{}, err
+		}
+		next.specs[name] = spec
+	}
+	return next, nil
+}
+
 func (r Registry) Resolve(opts RunOptions) (AgentSpec, error) {
 	var spec AgentSpec
 	if opts.Agent != "" {
