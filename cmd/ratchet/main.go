@@ -60,6 +60,8 @@ func main() {
 		handleAgent(filteredArgs[1:])
 	case "team":
 		handleTeam(filteredArgs[1:])
+	case "trust":
+		handleTrust(filteredArgs[1:])
 	case "project":
 		handleProject(filteredArgs[1:])
 	case "plugin":
@@ -153,6 +155,7 @@ Commands:
   provider         Manage AI providers
   agent            Manage agent definitions
   team             Multi-agent orchestration
+  trust            Manage runtime trust rules and persistent grants
   plugin           Manage plugins
   skill            Manage skills
   config           Configuration
