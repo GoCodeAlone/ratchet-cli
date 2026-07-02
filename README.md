@@ -81,6 +81,15 @@ and `/trust deny "pattern" [--scope scope]` add runtime rules; `/trust reset`
 clears runtime slash-command rules and rebuilds from config defaults. These
 commands do not edit config files or delete persisted permission grants.
 
+Persistent trust grants are explicit. Use `ratchet trust persist allow|deny
+"pattern" [--scope scope]` or `/trust persist allow|deny "pattern" [--scope
+scope]` to store durable grants in the daemon's local state database through
+`workflow-plugin-agent/policy.PermissionStore`. Use `ratchet trust grants` or
+`/trust grants` to list them, and `ratchet trust revoke "pattern" [--scope
+scope]` or `/trust revoke "pattern" [--scope scope]` to remove one. Treat grant
+listings as sensitive local policy metadata because patterns can reveal local
+paths, commands, or workflow conventions.
+
 The ACP client queue persists prompt text under the user's XDG state directory.
 Do not use `--no-wait` for prompts that should not be written to local disk.
 ACP client archives are explicit JSON exports and can contain prompt text,
