@@ -234,6 +234,21 @@ func (c *Client) ResetTrust(ctx context.Context) (*pb.TrustState, error) {
 	return c.daemon.ResetTrust(ctx, &pb.Empty{})
 }
 
+func (c *Client) AddTrustGrant(ctx context.Context, pattern, action, scope string) (*pb.TrustState, error) {
+	return c.daemon.AddTrustGrant(ctx, &pb.AddTrustRuleReq{
+		Pattern: pattern,
+		Action:  action,
+		Scope:   scope,
+	})
+}
+
+func (c *Client) RevokeTrustGrant(ctx context.Context, pattern, scope string) (*pb.TrustState, error) {
+	return c.daemon.RevokeTrustGrant(ctx, &pb.RevokeTrustGrantReq{
+		Pattern: pattern,
+		Scope:   scope,
+	})
+}
+
 func (c *Client) AddProvider(ctx context.Context, req *pb.AddProviderReq) (*pb.Provider, error) {
 	return c.daemon.AddProvider(ctx, req)
 }

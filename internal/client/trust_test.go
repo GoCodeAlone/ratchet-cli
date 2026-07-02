@@ -45,6 +45,9 @@ func TestTrustClientWrappers(t *testing.T) {
 	if state.Mode != "conservative" || len(state.Rules) != 1 || state.Rules[0].Pattern != "git *" {
 		t.Fatalf("initial trust state = %+v", state)
 	}
+	if len(state.Grants) != 1 || state.Grants[0].Pattern != "go test *" {
+		t.Fatalf("initial trust grants = %+v", state.Grants)
+	}
 
 	state, err = c.SetTrustMode(ctx, "locked")
 	if err != nil {
@@ -70,6 +73,28 @@ func TestTrustClientWrappers(t *testing.T) {
 	if state.Mode != "conservative" || len(state.Rules) != 1 {
 		t.Fatalf("reset trust state = %+v", state)
 	}
+
+	state, err = c.AddTrustGrant(ctx, "bash:go test *", "allow", "repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Grants) != 2 {
+		t.Fatalf("grant count = %d, want 2: %+v", len(state.Grants), state.Grants)
+	}
+	grant := state.Grants[len(state.Grants)-1]
+	if grant.Pattern != "bash:go test *" || grant.Action != "allow" || grant.Scope != "repo" || grant.GrantedBy != "operator" {
+		t.Fatalf("added trust grant = %+v", grant)
+	}
+
+	state, err = c.RevokeTrustGrant(ctx, "bash:go test *", "repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, grant := range state.Grants {
+		if grant.Pattern == "bash:go test *" && grant.Scope == "repo" {
+			t.Fatalf("revoked grant still present: %+v", state.Grants)
+		}
+	}
 }
 
 type trustServer struct {
@@ -80,6 +105,13 @@ func (trustServer) GetTrustState(context.Context, *pb.Empty) (*pb.TrustState, er
 	return &pb.TrustState{
 		Mode:  "conservative",
 		Rules: []*pb.TrustRule{{Pattern: "git *", Action: "allow", Scope: "repo"}},
+		Grants: []*pb.TrustGrant{{
+			Id:        1,
+			Pattern:   "go test *",
+			Action:    "allow",
+			Scope:     "repo",
+			GrantedBy: "operator",
+		}},
 	}, nil
 }
 
@@ -104,5 +136,22 @@ func (trustServer) ResetTrust(context.Context, *pb.Empty) (*pb.TrustState, error
 	return &pb.TrustState{
 		Mode:  "conservative",
 		Rules: []*pb.TrustRule{{Pattern: "git *", Action: "allow", Scope: "repo"}},
+	}, nil
+}
+
+func (trustServer) AddTrustGrant(_ context.Context, req *pb.AddTrustRuleReq) (*pb.TrustState, error) {
+	return &pb.TrustState{
+		Mode: "conservative",
+		Grants: []*pb.TrustGrant{
+			{Id: 1, Pattern: "go test *", Action: "allow", Scope: "repo", GrantedBy: "operator"},
+			{Id: 2, Pattern: req.Pattern, Action: req.Action, Scope: req.Scope, GrantedBy: "operator"},
+		},
+	}, nil
+}
+
+func (trustServer) RevokeTrustGrant(_ context.Context, req *pb.RevokeTrustGrantReq) (*pb.TrustState, error) {
+	return &pb.TrustState{
+		Mode:   "conservative",
+		Grants: []*pb.TrustGrant{{Id: 1, Pattern: "go test *", Action: "allow", Scope: "repo", GrantedBy: "operator"}},
 	}, nil
 }
