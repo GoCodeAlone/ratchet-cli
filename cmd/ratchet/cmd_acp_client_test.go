@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -253,6 +254,118 @@ func TestParseACPClientSessionCommands(t *testing.T) {
 	}
 }
 
+func TestACPClientProfilesAddListTrustRemove(t *testing.T) {
+	home := t.TempDir()
+	stateHome := filepath.Join(home, "state")
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", stateHome)
+
+	if err := handleACPClient([]string{"profiles", "add", "fixture", "--command", "/tmp/acp-agent", "--arg", "--stdio", "--env-key", "API_KEY", "--cwd", "/tmp/project"}); err != nil {
+		t.Fatalf("profiles add: %v", err)
+	}
+	listOut := captureStdout(t, func() {
+		if err := handleACPClient([]string{"profiles", "list", "--json"}); err != nil {
+			t.Fatalf("profiles list: %v", err)
+		}
+	})
+	if !strings.Contains(listOut, `"name":"fixture"`) || !strings.Contains(listOut, `"trusted":false`) {
+		t.Fatalf("profiles list output = %s", listOut)
+	}
+	if err := handleACPClient([]string{"profiles", "trust", "fixture"}); err != nil {
+		t.Fatalf("profiles trust: %v", err)
+	}
+	listOut = captureStdout(t, func() {
+		if err := handleACPClient([]string{"profiles", "list", "--json"}); err != nil {
+			t.Fatalf("profiles list trusted: %v", err)
+		}
+	})
+	if !strings.Contains(listOut, `"trusted":true`) {
+		t.Fatalf("trusted profile missing from list: %s", listOut)
+	}
+	if err := handleACPClient([]string{"profiles", "remove", "fixture"}); err != nil {
+		t.Fatalf("profiles remove: %v", err)
+	}
+	listOut = captureStdout(t, func() {
+		if err := handleACPClient([]string{"profiles", "list", "--json"}); err != nil {
+			t.Fatalf("profiles list removed: %v", err)
+		}
+	})
+	if strings.Contains(listOut, `"name":"fixture"`) {
+		t.Fatalf("removed profile still listed: %s", listOut)
+	}
+}
+
+func TestACPClientProfilesInstallPluginTemplate(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	pluginDir := filepath.Join(home, ".ratchet", "plugins", "profile-plugin")
+	if err := os.MkdirAll(filepath.Join(pluginDir, ".ratchet-plugin"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"name":"profile-plugin","version":"1.0.0","description":"test","author":{"name":"test"},"capabilities":{"acpProfiles":"profiles.yaml"}}`
+	if err := os.WriteFile(filepath.Join(pluginDir, ".ratchet-plugin", "plugin.json"), []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "profiles.yaml"), []byte(`
+profiles:
+  - name: fixture
+    spec:
+      command: /tmp/plugin-agent
+      args: ["--stdio"]
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	listOut := captureStdout(t, func() {
+		if err := handleACPClient([]string{"profiles", "list", "--json"}); err != nil {
+			t.Fatalf("profiles list templates: %v", err)
+		}
+	})
+	if !strings.Contains(listOut, `"template":true`) || !strings.Contains(listOut, `"pluginName":"profile-plugin"`) {
+		t.Fatalf("plugin template missing from list: %s", listOut)
+	}
+	if err := handleACPClient([]string{"profiles", "install", "profile-plugin/fixture", "--as", "installed", "--trust"}); err != nil {
+		t.Fatalf("profiles install: %v", err)
+	}
+	listOut = captureStdout(t, func() {
+		if err := handleACPClient([]string{"profiles", "list", "--json"}); err != nil {
+			t.Fatalf("profiles list installed: %v", err)
+		}
+	})
+	if !strings.Contains(listOut, `"name":"installed"`) || !strings.Contains(listOut, `"trusted":true`) {
+		t.Fatalf("installed profile missing/trust state wrong: %s", listOut)
+	}
+}
+
+func TestLoadACPProfileTemplatesRequiresHomeDir(t *testing.T) {
+	oldUserHomeDir := userHomeDir
+	userHomeDir = func() (string, error) {
+		return "", errors.New("home unavailable")
+	}
+	t.Cleanup(func() {
+		userHomeDir = oldUserHomeDir
+	})
+
+	_, err := loadACPProfileTemplates()
+	if err == nil {
+		t.Fatal("loadACPProfileTemplates error = nil, want home directory error")
+	}
+	if !strings.Contains(err.Error(), "home directory") {
+		t.Fatalf("loadACPProfileTemplates error = %v, want home directory context", err)
+	}
+}
+
+func TestACPClientProfilesRejectBuiltinShadowing(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	err := handleACPClient([]string{"profiles", "add", "codex", "--command", "/tmp/acp-agent"})
+	if !errors.Is(err, acpclient.ErrProfileShadowsBuiltin) {
+		t.Fatalf("profiles add codex error = %v, want ErrProfileShadowsBuiltin", err)
+	}
+}
+
 func TestParseACPClientArchiveSessionCommands(t *testing.T) {
 	exportCmd, err := parseACPClientCommand([]string{"sessions", "export", "s-export", "--output", "archive.json", "--json"})
 	if err != nil {
@@ -443,6 +556,32 @@ func TestExecuteACPClientExecHumanOutput(t *testing.T) {
 	}
 	if runner.spec.Command != "/bin/fixture-agent" {
 		t.Fatalf("command = %q", runner.spec.Command)
+	}
+}
+
+func TestExecuteACPClientExecUsesTrustedProfile(t *testing.T) {
+	setupDefaultACPProfile(t, "fixture", true)
+	runner := &fakeACPClientExecRunner{
+		result: acpclient.Result{SessionID: "s1", StopReason: acpsdk.StopReasonEndTurn, Text: "profile ok"},
+	}
+	var out bytes.Buffer
+	err := executeACPClientExec(t.Context(), acpClientExecOptions{
+		Agent:  "fixture",
+		Prompt: "hello",
+	}, runner, &out)
+	if err != nil {
+		t.Fatalf("executeACPClientExec: %v", err)
+	}
+	if runner.spec.Command != "/tmp/fixture-acp" || strings.Join(runner.spec.Args, ",") != "--stdio" {
+		t.Fatalf("runner spec = %#v", runner.spec)
+	}
+}
+
+func TestExecuteACPClientExecRejectsUntrustedProfile(t *testing.T) {
+	setupDefaultACPProfile(t, "fixture", false)
+	err := executeACPClientExec(t.Context(), acpClientExecOptions{Agent: "fixture", Prompt: "hello"}, &fakeACPClientExecRunner{}, io.Discard)
+	if !errors.Is(err, acpclient.ErrUnknownAgent) {
+		t.Fatalf("executeACPClientExec error = %v, want ErrUnknownAgent", err)
 	}
 }
 
@@ -735,6 +874,36 @@ func TestExecuteACPClientDrainUsesInjectedRunner(t *testing.T) {
 	}
 }
 
+func TestExecuteACPClientDrainUsesTrustedProfile(t *testing.T) {
+	setupDefaultACPProfile(t, "fixture", true)
+	store := acpclient.NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 1, 23, 10, 0, 0, time.UTC)
+	if err := store.Upsert(acpclient.SessionRecord{
+		ID:        "s-drain-profile",
+		Status:    acpclient.SessionStatusQueued,
+		CreatedAt: now,
+		UpdatedAt: now,
+		PromptQueue: []acpclient.QueuedPrompt{{
+			ID: "q-1", Prompt: "drain profile", Status: acpclient.QueuePromptStatusPending, CreatedAt: now,
+		}},
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	var gotSpec acpclient.AgentSpec
+	runner := &fakeDrainPromptRunner{sessionID: "acp-drain-profile"}
+	if err := executeACPClientDrain(t.Context(), store, "s-drain-profile", acpClientDrainOptions{
+		Agent: "fixture",
+	}, func(_ context.Context, spec acpclient.AgentSpec, _ acpclient.RunOptions, _ string) (acpclient.DrainPromptRunner, func() error, error) {
+		gotSpec = spec
+		return runner, func() error { return nil }, nil
+	}, io.Discard); err != nil {
+		t.Fatalf("executeACPClientDrain: %v", err)
+	}
+	if gotSpec.Command != "/tmp/fixture-acp" {
+		t.Fatalf("drain spec = %#v", gotSpec)
+	}
+}
+
 func TestExecuteACPClientWatchUsesInjectedRunnerWithoutPromptLeak(t *testing.T) {
 	store := acpclient.NewStore(filepath.Join(t.TempDir(), "sessions.json"))
 	now := time.Date(2026, 7, 2, 13, 0, 0, 0, time.UTC)
@@ -775,6 +944,40 @@ func TestExecuteACPClientWatchUsesInjectedRunnerWithoutPromptLeak(t *testing.T) 
 	}
 	if strings.Contains(got, secretPrompt) {
 		t.Fatalf("watch output leaked prompt body: %q", got)
+	}
+}
+
+func TestExecuteACPClientWatchUsesTrustedProfile(t *testing.T) {
+	setupDefaultACPProfile(t, "fixture", true)
+	store := acpclient.NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 2, 13, 0, 0, 0, time.UTC)
+	if err := store.Upsert(acpclient.SessionRecord{
+		ID:        "s-watch-profile",
+		Status:    acpclient.SessionStatusQueued,
+		CreatedAt: now,
+		UpdatedAt: now,
+		PromptQueue: []acpclient.QueuedPrompt{{
+			ID: "q-1", Prompt: "watch profile", Status: acpclient.QueuePromptStatusPending, CreatedAt: now,
+		}},
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	var gotSpec acpclient.AgentSpec
+	runner := &fakeDrainPromptRunner{sessionID: "acp-watch-profile"}
+	if err := executeACPClientWatch(t.Context(), store, "s-watch-profile", acpClientWatchOptions{
+		Agent:         "fixture",
+		Interval:      time.Millisecond,
+		MaxPerCycle:   1,
+		MaxCycles:     1,
+		StopWhenEmpty: true,
+	}, func(_ context.Context, spec acpclient.AgentSpec, _ acpclient.RunOptions, _ string) (acpclient.DrainPromptRunner, func() error, error) {
+		gotSpec = spec
+		return runner, func() error { return nil }, nil
+	}, io.Discard); err != nil {
+		t.Fatalf("executeACPClientWatch: %v", err)
+	}
+	if gotSpec.Command != "/tmp/fixture-acp" {
+		t.Fatalf("watch spec = %#v", gotSpec)
 	}
 }
 
@@ -944,6 +1147,26 @@ func TestExecuteACPClientCompareTextAndJSON(t *testing.T) {
 	}
 	if len(rows) != 2 || rows[0].Status != "ok" || rows[0].Final != "agent a final" {
 		t.Fatalf("rows = %#v", rows)
+	}
+}
+
+func TestExecuteACPClientCompareUsesTrustedProfile(t *testing.T) {
+	setupDefaultACPProfile(t, "fixture", true)
+	runner := &fakeCompareCommandRunner{
+		results: map[string]acpclient.Result{
+			"/tmp/fixture-acp": {StopReason: acpsdk.StopReasonEndTurn, Text: "profile final"},
+			"/bin/agent-b":     {StopReason: acpsdk.StopReasonEndTurn, Text: "b final"},
+		},
+	}
+	if err := executeACPClientCompare(t.Context(), acpClientCompareOptions{
+		Agents:   []string{"fixture"},
+		Commands: []string{"/bin/agent-b"},
+		Prompt:   "compare profile",
+	}, runner, io.Discard); err != nil {
+		t.Fatalf("executeACPClientCompare: %v", err)
+	}
+	if len(runner.prompts) == 0 || !strings.HasPrefix(runner.prompts[0], "/tmp/fixture-acp:") {
+		t.Fatalf("runner prompts = %#v", runner.prompts)
 	}
 }
 
@@ -1334,6 +1557,24 @@ type fakeCompareCommandRunner struct {
 	results map[string]acpclient.Result
 	errs    map[string]error
 	prompts []string
+}
+
+func setupDefaultACPProfile(t *testing.T, name string, trusted bool) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	store, err := acpclient.NewDefaultProfileStore()
+	if err != nil {
+		t.Fatalf("NewDefaultProfileStore: %v", err)
+	}
+	if err := store.Add(acpclient.Profile{
+		Name:    name,
+		Spec:    acpclient.AgentSpec{Name: name, Command: "/tmp/" + name + "-acp", Args: []string{"--stdio"}},
+		Trusted: trusted,
+	}); err != nil {
+		t.Fatalf("Add profile: %v", err)
+	}
 }
 
 func (r *fakeCompareCommandRunner) RunPrompt(_ context.Context, spec acpclient.AgentSpec, _ acpclient.RunOptions, prompt string) (acpclient.Result, error) {

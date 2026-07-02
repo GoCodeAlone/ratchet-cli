@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/acpclient"
+	"github.com/GoCodeAlone/ratchet-cli/internal/plugins"
 )
 
 type acpClientCommandKind string
@@ -34,6 +35,7 @@ const (
 	acpClientCommandQueue          acpClientCommandKind = "queue"
 	acpClientCommandDrain          acpClientCommandKind = "drain"
 	acpClientCommandWatch          acpClientCommandKind = "watch"
+	acpClientCommandProfiles       acpClientCommandKind = "profiles"
 )
 
 type acpClientCommand struct {
@@ -44,6 +46,7 @@ type acpClientCommand struct {
 	drain     acpClientDrainOptions
 	watch     acpClientWatchOptions
 	archive   acpClientArchiveOptions
+	profiles  acpClientProfilesCommand
 	sessionID string
 	json      bool
 }
@@ -118,6 +121,29 @@ type acpClientArchiveOptions struct {
 	Args      []string
 }
 
+type acpClientProfilesKind string
+
+const (
+	acpClientProfilesList    acpClientProfilesKind = "list"
+	acpClientProfilesAdd     acpClientProfilesKind = "add"
+	acpClientProfilesInstall acpClientProfilesKind = "install"
+	acpClientProfilesTrust   acpClientProfilesKind = "trust"
+	acpClientProfilesRemove  acpClientProfilesKind = "remove"
+)
+
+type acpClientProfilesCommand struct {
+	kind    acpClientProfilesKind
+	name    string
+	source  string
+	as      string
+	command string
+	args    []string
+	envKeys []string
+	cwd     string
+	trust   bool
+	json    bool
+}
+
 type repeatedStringFlag []string
 
 func (f *repeatedStringFlag) String() string {
@@ -171,6 +197,12 @@ func handleACPClient(args []string) error {
 		ctx, stop := signal.NotifyContext(context.Background(), acpClientWatchSignals()...)
 		defer stop()
 		return executeACPClientWatch(ctx, store, cmd.sessionID, cmd.watch, nil, os.Stdout)
+	case acpClientCommandProfiles:
+		profileStore, err := acpclient.NewDefaultProfileStore()
+		if err != nil {
+			return err
+		}
+		return executeACPClientProfiles(profileStore, cmd.profiles, os.Stdout)
 	default:
 		return fmt.Errorf("unknown acp client command: %s", cmd.kind)
 	}
@@ -220,7 +252,11 @@ func executeACPClientExecWithStore(ctx context.Context, opts acpClientExecOption
 		Cwd:     cwd,
 		Timeout: opts.Timeout,
 	}
-	spec, err := acpclient.DefaultRegistry().Resolve(runOpts)
+	reg, err := defaultACPClientRegistry()
+	if err != nil {
+		return err
+	}
+	spec, err := reg.Resolve(runOpts)
 	if err != nil {
 		return err
 	}
@@ -437,11 +473,83 @@ func parseACPClientCommandWithOutput(args []string, output io.Writer) (acpClient
 			return acpClientCommand{}, err
 		}
 		return acpClientCommand{kind: acpClientCommandWatch, sessionID: id, watch: watchOpts}, nil
+	case "profiles":
+		profileCmd, err := parseACPClientProfiles(args[1:], output)
+		if err != nil {
+			return acpClientCommand{}, err
+		}
+		return acpClientCommand{kind: acpClientCommandProfiles, profiles: profileCmd}, nil
 	case "help", "--help", "-h":
 		return acpClientCommand{kind: acpClientCommandHelp}, nil
 	default:
 		return acpClientCommand{}, fmt.Errorf("unknown acp client command: %s", args[0])
 	}
+}
+
+func parseACPClientProfiles(args []string, output io.Writer) (acpClientProfilesCommand, error) {
+	if len(args) == 0 {
+		return acpClientProfilesCommand{}, errors.New("usage: ratchet acp client profiles <list|add|install|trust|remove>")
+	}
+	switch args[0] {
+	case "list":
+		jsonOut, err := parseJSONOnlyFlags("profiles list", args[1:])
+		return acpClientProfilesCommand{kind: acpClientProfilesList, json: jsonOut}, err
+	case "add":
+		return parseACPClientProfilesAdd(args[1:], output)
+	case "install":
+		return parseACPClientProfilesInstall(args[1:], output)
+	case "trust":
+		if len(args) != 2 || strings.TrimSpace(args[1]) == "" {
+			return acpClientProfilesCommand{}, errors.New("usage: ratchet acp client profiles trust <name>")
+		}
+		return acpClientProfilesCommand{kind: acpClientProfilesTrust, name: args[1]}, nil
+	case "remove":
+		if len(args) != 2 || strings.TrimSpace(args[1]) == "" {
+			return acpClientProfilesCommand{}, errors.New("usage: ratchet acp client profiles remove <name>")
+		}
+		return acpClientProfilesCommand{kind: acpClientProfilesRemove, name: args[1]}, nil
+	default:
+		return acpClientProfilesCommand{}, fmt.Errorf("unknown acp client profiles command: %s", args[0])
+	}
+}
+
+func parseACPClientProfilesAdd(args []string, output io.Writer) (acpClientProfilesCommand, error) {
+	if len(args) == 0 || strings.TrimSpace(args[0]) == "" {
+		return acpClientProfilesCommand{}, errors.New("usage: ratchet acp client profiles add <name> --command <command> [flags]")
+	}
+	cmd := acpClientProfilesCommand{kind: acpClientProfilesAdd, name: args[0]}
+	fs := flag.NewFlagSet("ratchet acp client profiles add", flag.ContinueOnError)
+	fs.SetOutput(output)
+	fs.StringVar(&cmd.command, "command", "", "agent command")
+	fs.Var((*repeatedStringFlag)(&cmd.args), "arg", "agent command argument")
+	fs.Var((*repeatedStringFlag)(&cmd.envKeys), "env-key", "environment variable name required at launch")
+	fs.StringVar(&cmd.cwd, "cwd", "", "working directory")
+	fs.BoolVar(&cmd.trust, "trust", false, "trust profile after adding")
+	if err := fs.Parse(args[1:]); err != nil {
+		return acpClientProfilesCommand{}, err
+	}
+	if len(fs.Args()) > 0 || strings.TrimSpace(cmd.command) == "" {
+		return acpClientProfilesCommand{}, errors.New("usage: ratchet acp client profiles add <name> --command <command> [flags]")
+	}
+	return cmd, nil
+}
+
+func parseACPClientProfilesInstall(args []string, output io.Writer) (acpClientProfilesCommand, error) {
+	if len(args) == 0 || strings.TrimSpace(args[0]) == "" {
+		return acpClientProfilesCommand{}, errors.New("usage: ratchet acp client profiles install <plugin>/<profile> --as <name> [--trust]")
+	}
+	cmd := acpClientProfilesCommand{kind: acpClientProfilesInstall, source: args[0]}
+	fs := flag.NewFlagSet("ratchet acp client profiles install", flag.ContinueOnError)
+	fs.SetOutput(output)
+	fs.StringVar(&cmd.as, "as", "", "local profile name")
+	fs.BoolVar(&cmd.trust, "trust", false, "trust profile after installing")
+	if err := fs.Parse(args[1:]); err != nil {
+		return acpClientProfilesCommand{}, err
+	}
+	if len(fs.Args()) > 0 || strings.TrimSpace(cmd.as) == "" {
+		return acpClientProfilesCommand{}, errors.New("usage: ratchet acp client profiles install <plugin>/<profile> --as <name> [--trust]")
+	}
+	return cmd, nil
 }
 
 func parseACPClientExec(args []string, output io.Writer) (acpClientExecOptions, error) {
@@ -839,6 +947,7 @@ Commands:
   exec       Run one prompt against an external ACP agent
   compare    Run one prompt serially across multiple ACP agents
   flow       Run JSON ACP client flows
+  profiles   Manage local ACP launch profiles
   sessions   List or inspect ACP client sessions
              Subcommands: list, show, history (alias for show), export, import
   queue      List queued prompts for an ACP client session
@@ -849,6 +958,163 @@ Commands:
 
 Run 'ratchet acp client exec --help' for exec flags.
 `)
+}
+
+type acpClientProfileListItem struct {
+	Name          string `json:"name"`
+	Trusted       bool   `json:"trusted"`
+	Hash          string `json:"hash"`
+	Command       string `json:"command"`
+	Template      bool   `json:"template,omitempty"`
+	PluginName    string `json:"pluginName,omitempty"`
+	PluginVersion string `json:"pluginVersion,omitempty"`
+}
+
+var userHomeDir = os.UserHomeDir
+
+func executeACPClientProfiles(store *acpclient.ProfileStore, cmd acpClientProfilesCommand, w io.Writer) error {
+	switch cmd.kind {
+	case acpClientProfilesList:
+		return executeACPClientProfilesList(store, cmd.json, w)
+	case acpClientProfilesAdd:
+		if _, ok := acpclient.DefaultRegistry().Lookup(cmd.name); ok {
+			return fmt.Errorf("%w: %s", acpclient.ErrProfileShadowsBuiltin, cmd.name)
+		}
+		profile := acpclient.Profile{
+			Name:       cmd.name,
+			Spec:       acpclient.AgentSpec{Name: cmd.name, Command: cmd.command, Args: cmd.args, EnvKeys: cmd.envKeys},
+			Cwd:        cmd.cwd,
+			SourceKind: "local",
+			SourceID:   "local:" + cmd.name,
+			Trusted:    cmd.trust,
+		}
+		if err := store.Add(profile); err != nil {
+			return err
+		}
+		fmt.Fprintf(w, "Added ACP profile %s\n", cmd.name)
+		return nil
+	case acpClientProfilesInstall:
+		if _, ok := acpclient.DefaultRegistry().Lookup(cmd.as); ok {
+			return fmt.Errorf("%w: %s", acpclient.ErrProfileShadowsBuiltin, cmd.as)
+		}
+		profile, err := findACPProfileTemplate(cmd.source)
+		if err != nil {
+			return err
+		}
+		profile.Name = cmd.as
+		profile.Spec.Name = cmd.as
+		profile.Trusted = cmd.trust
+		if err := store.Add(profile); err != nil {
+			return err
+		}
+		fmt.Fprintf(w, "Installed ACP profile %s from %s\n", cmd.as, cmd.source)
+		return nil
+	case acpClientProfilesTrust:
+		if err := store.Trust(cmd.name); err != nil {
+			return err
+		}
+		fmt.Fprintf(w, "Trusted ACP profile %s\n", cmd.name)
+		return nil
+	case acpClientProfilesRemove:
+		if err := store.Remove(cmd.name); err != nil {
+			return err
+		}
+		fmt.Fprintf(w, "Removed ACP profile %s\n", cmd.name)
+		return nil
+	default:
+		return fmt.Errorf("unknown acp client profiles command: %s", cmd.kind)
+	}
+}
+
+func executeACPClientProfilesList(store *acpclient.ProfileStore, jsonOut bool, w io.Writer) error {
+	local, err := store.List()
+	if err != nil {
+		return err
+	}
+	templates, err := loadACPProfileTemplates()
+	if err != nil {
+		return err
+	}
+	items := make([]acpClientProfileListItem, 0, len(local)+len(templates))
+	for _, profile := range local {
+		items = append(items, acpClientProfileListItem{
+			Name:    profile.Name,
+			Trusted: profile.Trusted,
+			Hash:    profile.Hash,
+			Command: profile.Spec.Command,
+		})
+	}
+	for _, profile := range templates {
+		items = append(items, acpClientProfileListItem{
+			Name:          profile.Name,
+			Hash:          profile.Hash,
+			Command:       profile.Spec.Command,
+			Template:      true,
+			PluginName:    profile.PluginName,
+			PluginVersion: profile.PluginVersion,
+		})
+	}
+	if jsonOut {
+		return json.NewEncoder(w).Encode(items)
+	}
+	if len(items) == 0 {
+		fmt.Fprintln(w, "No ACP profiles.")
+		return nil
+	}
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "NAME\tTRUSTED\tSOURCE\tCOMMAND")
+	for _, item := range items {
+		source := "local"
+		if item.Template {
+			source = "plugin:" + item.PluginName
+		}
+		fmt.Fprintf(tw, "%s\t%v\t%s\t%s\n", item.Name, item.Trusted, source, item.Command)
+	}
+	return tw.Flush()
+}
+
+func findACPProfileTemplate(source string) (acpclient.Profile, error) {
+	parts := strings.SplitN(source, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return acpclient.Profile{}, errors.New("profile template must be <plugin>/<profile>")
+	}
+	templates, err := loadACPProfileTemplates()
+	if err != nil {
+		return acpclient.Profile{}, err
+	}
+	for _, profile := range templates {
+		if profile.PluginName == parts[0] && profile.Name == parts[1] {
+			return profile, nil
+		}
+	}
+	return acpclient.Profile{}, fmt.Errorf("%w: %s", acpclient.ErrProfileNotFound, source)
+}
+
+func loadACPProfileTemplates() ([]acpclient.Profile, error) {
+	home, err := userHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve home directory for ACP profile templates: %w", err)
+	}
+	if strings.TrimSpace(home) == "" {
+		return nil, errors.New("resolve home directory for ACP profile templates: home directory is empty")
+	}
+	result, err := plugins.NewLoader(filepath.Join(home, ".ratchet", "plugins")).LoadAll(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	return result.ACPProfiles, nil
+}
+
+func defaultACPClientRegistry() (acpclient.Registry, error) {
+	store, err := acpclient.NewDefaultProfileStore()
+	if err != nil {
+		return acpclient.Registry{}, err
+	}
+	profiles, err := store.List()
+	if err != nil {
+		return acpclient.Registry{}, err
+	}
+	return acpclient.DefaultRegistry().WithProfiles(profiles)
 }
 
 func executeACPClientSessionsList(store *acpclient.Store, jsonOut bool, w io.Writer) error {
@@ -980,7 +1246,10 @@ func executeACPClientCompare(ctx context.Context, opts acpClientCompareOptions, 
 
 func resolveACPClientCompareAgents(opts acpClientCompareOptions) ([]acpclient.CompareAgent, error) {
 	targets := make([]acpclient.CompareAgent, 0, len(opts.Agents)+len(opts.Commands))
-	reg := acpclient.DefaultRegistry()
+	reg, err := defaultACPClientRegistry()
+	if err != nil {
+		return nil, err
+	}
 	for _, name := range opts.Agents {
 		spec, err := reg.Resolve(acpclient.RunOptions{Agent: name, Args: opts.Args})
 		if err != nil {
@@ -1014,6 +1283,10 @@ func executeACPClientFlowRun(ctx context.Context, opts acpClientFlowOptions, w i
 	if abs, err := filepath.Abs(cwd); err == nil {
 		cwd = abs
 	}
+	reg, err := defaultACPClientRegistry()
+	if err != nil {
+		return err
+	}
 	result, err := acpclient.RunFlow(ctx, def, input, acpclient.FlowRunOptions{
 		RunID:              opts.RunID,
 		RunRoot:            opts.RunRoot,
@@ -1021,6 +1294,7 @@ func executeACPClientFlowRun(ctx context.Context, opts acpClientFlowOptions, w i
 		DefaultAgent:       opts.DefaultAgent,
 		DefaultCommand:     opts.Command,
 		DefaultArgs:        opts.Args,
+		Registry:           reg,
 		AllowedPermissions: opts.AllowedPermissions,
 	})
 	if err != nil {
@@ -1094,7 +1368,11 @@ func executeACPClientDrain(ctx context.Context, store *acpclient.Store, id strin
 		Cwd:     cwd,
 		Timeout: opts.Timeout,
 	}
-	spec, err := acpclient.DefaultRegistry().Resolve(runOpts)
+	reg, err := defaultACPClientRegistry()
+	if err != nil {
+		return err
+	}
+	spec, err := reg.Resolve(runOpts)
 	if err != nil {
 		return err
 	}
@@ -1128,7 +1406,11 @@ func executeACPClientWatch(ctx context.Context, store *acpclient.Store, id strin
 		Cwd:     cwd,
 		Timeout: opts.Timeout,
 	}
-	spec, err := acpclient.DefaultRegistry().Resolve(runOpts)
+	reg, err := defaultACPClientRegistry()
+	if err != nil {
+		return err
+	}
+	spec, err := reg.Resolve(runOpts)
 	if err != nil {
 		return err
 	}

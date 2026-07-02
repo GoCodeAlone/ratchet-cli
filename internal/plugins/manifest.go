@@ -25,12 +25,13 @@ type Author struct {
 
 // Capabilities declares which capability directories/files a plugin provides.
 type Capabilities struct {
-	Skills   string `json:"skills,omitempty"`   // relative dir path
-	Agents   string `json:"agents,omitempty"`   // relative dir path
-	Commands string `json:"commands,omitempty"` // relative dir path
-	Tools    string `json:"tools,omitempty"`    // relative dir path
-	Hooks    string `json:"hooks,omitempty"`    // relative file path
-	MCP      string `json:"mcp,omitempty"`      // relative file path
+	Skills      string `json:"skills,omitempty"`      // relative dir path
+	Agents      string `json:"agents,omitempty"`      // relative dir path
+	Commands    string `json:"commands,omitempty"`    // relative dir path
+	Tools       string `json:"tools,omitempty"`       // relative dir path
+	Hooks       string `json:"hooks,omitempty"`       // relative file path
+	MCP         string `json:"mcp,omitempty"`         // relative file path
+	ACPProfiles string `json:"acpProfiles,omitempty"` // relative file path
 }
 
 // manifestPaths lists manifest locations in preference order.

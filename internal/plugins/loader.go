@@ -11,6 +11,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/GoCodeAlone/ratchet-cli/internal/acpclient"
 	"github.com/GoCodeAlone/ratchet-cli/internal/agent"
 	"github.com/GoCodeAlone/ratchet-cli/internal/hooks"
 	"github.com/GoCodeAlone/ratchet-cli/internal/skills"
@@ -40,12 +41,13 @@ type MCPConfig struct {
 
 // LoadResult aggregates all capabilities discovered across loaded plugins.
 type LoadResult struct {
-	Skills     []skills.Skill
-	Agents     []agent.AgentDefinition
-	Commands   []Command
-	Hooks      *hooks.HookConfig
-	Tools      []plugin.Tool
-	MCPConfigs []MCPConfig
+	Skills      []skills.Skill
+	Agents      []agent.AgentDefinition
+	Commands    []Command
+	Hooks       *hooks.HookConfig
+	Tools       []plugin.Tool
+	MCPConfigs  []MCPConfig
+	ACPProfiles []acpclient.Profile
 	// Daemons holds all started daemon processes so callers can stop them.
 	// Call StopDaemons() to cleanly shut them all down.
 	Daemons []*DaemonTool
@@ -168,6 +170,18 @@ func (l *Loader) loadPlugin(ctx context.Context, pluginDir string, m *Manifest, 
 			return fmt.Errorf("mcp: %w", err)
 		}
 		result.MCPConfigs = append(result.MCPConfigs, mc)
+	}
+
+	if m.Capabilities.ACPProfiles != "" {
+		profilesPath, err := resolveCapabilityPath(pluginDir, m.Capabilities.ACPProfiles)
+		if err != nil {
+			return fmt.Errorf("acpProfiles: %w", err)
+		}
+		profiles, err := loadACPProfiles(profilesPath, m, m.Capabilities.ACPProfiles)
+		if err != nil {
+			return fmt.Errorf("acpProfiles: %w", err)
+		}
+		result.ACPProfiles = append(result.ACPProfiles, profiles...)
 	}
 
 	return nil
@@ -309,6 +323,33 @@ func loadHooks(hooksFile string) (*hooks.HookConfig, error) {
 		hc.Hooks = make(map[hooks.Event][]hooks.Hook)
 	}
 	return &hc, nil
+}
+
+type acpProfilesFile struct {
+	Profiles []acpclient.Profile `json:"profiles" yaml:"profiles"`
+}
+
+func loadACPProfiles(path string, m *Manifest, rel string) ([]acpclient.Profile, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var file acpProfilesFile
+	if err := yaml.Unmarshal(data, &file); err != nil {
+		return nil, fmt.Errorf("parse profiles: %w", err)
+	}
+	for i := range file.Profiles {
+		p := &file.Profiles[i]
+		if p.Spec.Name == "" {
+			p.Spec.Name = p.Name
+		}
+		p.SourceKind = "plugin"
+		p.SourceID = fmt.Sprintf("plugin:%s@%s:%s/%s", m.Name, m.Version, filepath.ToSlash(filepath.Clean(rel)), p.Name)
+		p.PluginName = m.Name
+		p.PluginVersion = m.Version
+		p.Hash = p.DescriptorHash()
+	}
+	return file.Profiles, nil
 }
 
 // loadTools scans toolsDir for tool subdirectories and creates ExecTool or
