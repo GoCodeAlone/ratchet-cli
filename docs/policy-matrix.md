@@ -1,0 +1,97 @@
+# Policy Matrix
+
+This document is the source-of-truth matrix for ratchet-cli policy surfaces:
+permissions, sandboxing, trust, queue execution, extension points, and
+per-agent scope. It documents existing behavior and the boundaries required
+before later automation such as background drain or mutation-capable extension
+hooks.
+
+## Scope
+
+The matrix covers ratchet-cli-owned command, daemon, TUI, ACP client, MCP, team,
+and retro surfaces. It does not define a new policy evaluator. Trust matching,
+runtime trust decisions, and persistent trust grants continue to use
+`workflow-plugin-agent/policy.TrustEngine` and
+`workflow-plugin-agent/policy.PermissionStore`.
+
+## Non-Goals
+
+- Background or scheduled ACP client drain.
+- Config-file mutation from trust commands.
+- New sandbox/path/network enforcement.
+- Broad runtime extension SDK.
+- Credentialed third-party agent CI.
+- Raw ACPX JSON-RPC event-log archive compatibility.
+- ACPX TypeScript flow runtime compatibility.
+- Local-first gateway or channel routing.
+
+## Policy Precedence
+
+These rules describe the intended policy order for documented surfaces. Partial
+or deferred rows below must not be treated as fully enforced runtime behavior.
+
+1. Hard deny and missing authorization wins.
+2. Persistent deny grants beat persistent allow grants.
+3. Runtime deny rules beat runtime allow rules at the same scope.
+4. Runtime rules can narrow current process behavior but are not durable.
+5. Static config remains the daemon startup baseline.
+6. Unknown or missing policy falls back to explicit prompt or deny, not silent
+   auto-approval.
+
+## Layer Matrix
+
+| Layer | Owner | Status | Rule | Validation |
+|---|---|---|---|---|
+| Static config trust rules | `internal/config` plus `workflow-plugin-agent/policy.TrustEngine` | Supported | Config provides the daemon startup baseline for trust mode and rules. Runtime and persistent changes do not rewrite config. | Config and trust-engine tests; docs guard checks this layer name. |
+| Runtime trust rules | Daemon RPC, CLI, and TUI trust commands | Supported | `/mode`, `/trust allow`, `/trust deny`, `/trust list`, `ratchet trust allow`, `ratchet trust deny`, and `ratchet trust list` mutate or inspect daemon-local runtime state. | Daemon trust tests and `cmd/ratchet` docs guard. |
+| Persistent trust grants | `workflow-plugin-agent/policy.PermissionStore` through daemon RPC | Supported | `ratchet trust persist allow|deny`, `/trust persist allow|deny`, `ratchet trust grants`, `/trust grants`, `ratchet trust revoke`, and `/trust revoke` manage durable grants; deny grants preserve deny-wins semantics. | Daemon and command tests for grant persistence; docs guard checks this layer name. |
+| Permission prompts | Daemon permission gate and TUI prompt flow | Supported | Human approval remains explicit for unresolved decisions. Missing or unknown policy must not silently auto-approve. | Permission prompt tests and daemon/TUI behavior. |
+| ACP client queue/drain | `internal/acpclient` | Explicit drain only | `--no-wait` writes prompt text to a local FIFO queue; only `ratchet acp client drain` executes queued prompts. No background drain is supported. | ACP client binary smoke covers queue inspection and explicit drain. |
+| Sandbox/path/network controls | Agent plugin trust logic, mesh path guard, and future sandbox work | Partial | Existing trust decisions and mesh path guard cover only their implemented surfaces. ratchet-cli does not claim Codex/Claude-style full sandbox, network, or per-tool escalation parity. | Existing tests for implemented guards; future sandbox work needs a separate design. |
+| Hooks/extensions | `internal/hooks`, plugin manifests, and future extension work | Partial / Deferred | Existing named hooks and plugin extensibility are supported. Broad mutation-capable extension hooks, lifecycle interception SDKs, and unreviewed local mutation are deferred. | Existing hook tests; future extension hooks need opt-in policy and redaction design. |
+| Retro/self-improvement | `internal/retro` and local project evidence routing | Partial | Retro evidence is opt-in. Automatic local mutation and upstream PR creation are disabled unless a future configurable policy enables them. | Retro tests and config checks. |
+| Per-agent/team scopes | Daemon team manager and mesh configs | Partial / Deferred | Team orchestration and MCP team messaging exist. Per-agent permission scopes, worktree isolation policy, and channel routing are future work. | Team and MCP tests for current behavior; future per-agent scopes need a separate design. |
+
+## Sensitive Metadata
+
+Trust rules, grant patterns, queue contents, archive exports, retro evidence,
+and policy decisions are sensitive local policy metadata. They can reveal local
+paths, command names, provider usage, project conventions, prompts, responses,
+or operational habits. Do not expand logging, exports, or public docs with raw
+policy values unless a future design includes redaction and user consent.
+
+Grant listings and archive files should be handled like local credentials or
+conversation data:
+
+- prefer local-only storage under the user's state directory;
+- redact command/path/provider values in shared evidence;
+- avoid exporting queued prompts or grant lists unless explicitly requested;
+- keep retro evidence opt-in and redacted.
+
+## Deferred Automation
+
+The following work is intentionally blocked until a future locked design defines
+authorization, cancellation, audit evidence, and redaction boundaries:
+
+| Work | Status | Required policy decision |
+|---|---|---|
+| Background drain | Deferred | Define owner/session scope, cancellation semantics, prompt persistence warnings, and whether queued prompts can execute without a foreground operator. |
+| Extension hooks | Deferred | Define hook trust, mutation opt-in, environment redaction, command/path access, and reviewable local changes. |
+| Sandbox/path/network expansion | Deferred | Define enforced filesystem and network boundaries before claiming parity with Codex or Claude sandbox controls. |
+| Per-agent policy scopes | Deferred | Define how agent roles, teams, worktrees, channels, and scopes compose with persistent grants and runtime rules. |
+| Credentialed third-party agent CI | Deferred | Define secret handling, provider credentials, failure isolation, and artifact redaction. |
+| Raw ACPX event logs | Deferred | Define import/export compatibility without confusing ratchet-cli archive v1 with raw ACPX JSON-RPC logs. |
+| ACPX TypeScript runtime | Deferred | Define flow schema compatibility and runtime execution boundaries before adding a TypeScript-compatible flow engine. |
+| Local-first gateway/channels | Deferred | Define account/channel routing, inbox persistence, and sandboxing for non-main sessions. |
+
+## Verification
+
+The docs regression in `cmd/ratchet/harness_docs_test.go` must keep this matrix
+visible from the public docs and must fail if required policy layers, statuses,
+or sensitive local policy metadata warnings disappear.
+
+Run:
+
+```sh
+go test ./cmd/ratchet -run HarnessEmulationDocs -count=1
+```
