@@ -14,6 +14,8 @@ type trustClient interface {
 	SetTrustMode(context.Context, string) (*pb.TrustState, error)
 	AddTrustRule(context.Context, string, string, string) (*pb.TrustState, error)
 	ResetTrust(context.Context) (*pb.TrustState, error)
+	AddTrustGrant(context.Context, string, string, string) (*pb.TrustState, error)
+	RevokeTrustGrant(context.Context, string, string) (*pb.TrustState, error)
 }
 
 func modeCmd(args []string, c trustClient) *Result {
@@ -51,8 +53,12 @@ func trustCmd(args []string, c trustClient) *Result {
 		return &Result{Lines: []string{
 			"Usage:",
 			"  /trust list              — show active rules",
+			"  /trust grants            — show persistent grants",
 			"  /trust allow \"pattern\" [--scope scope]  — add allow rule",
 			"  /trust deny \"pattern\" [--scope scope]   — add deny rule",
+			"  /trust persist allow \"pattern\" [--scope scope]  — add persistent allow grant",
+			"  /trust persist deny \"pattern\" [--scope scope]   — add persistent deny grant",
+			"  /trust revoke \"pattern\" [--scope scope] — revoke persistent grant",
 			"  /trust reset             — revert to config defaults",
 		}}
 	}
@@ -67,6 +73,12 @@ func trustCmd(args []string, c trustClient) *Result {
 			return &Result{Lines: []string{fmt.Sprintf("Error: %v", err)}}
 		}
 		return formatTrustState(state)
+	case "grants":
+		state, err := c.GetTrustState(context.Background())
+		if err != nil {
+			return &Result{Lines: []string{fmt.Sprintf("Error: %v", err)}}
+		}
+		return formatTrustGrants(state.GetGrants())
 	case "allow":
 		if len(args) < 2 {
 			return &Result{Lines: []string{"Usage: /trust allow \"pattern\" [--scope scope]"}}
@@ -91,6 +103,30 @@ func trustCmd(args []string, c trustClient) *Result {
 			return &Result{Lines: []string{fmt.Sprintf("Error: %v", err)}}
 		}
 		return &Result{Lines: []string{fmt.Sprintf("Added deny rule: %s", pattern)}}
+	case "persist":
+		if len(args) < 3 || (args[1] != "allow" && args[1] != "deny") {
+			return &Result{Lines: []string{"Usage: /trust persist <allow|deny> \"pattern\" [--scope scope]"}}
+		}
+		pattern, scope, ok := parseTrustRuleArgs(args[2:])
+		if !ok || pattern == "" {
+			return &Result{Lines: []string{"Usage: /trust persist <allow|deny> \"pattern\" [--scope scope]"}}
+		}
+		if _, err := c.AddTrustGrant(context.Background(), pattern, args[1], scope); err != nil {
+			return &Result{Lines: []string{fmt.Sprintf("Error: %v", err)}}
+		}
+		return &Result{Lines: []string{fmt.Sprintf("Persisted %s grant: %s", args[1], pattern)}}
+	case "revoke":
+		if len(args) < 2 {
+			return &Result{Lines: []string{"Usage: /trust revoke \"pattern\" [--scope scope]"}}
+		}
+		pattern, scope, ok := parseTrustRuleArgs(args[1:])
+		if !ok || pattern == "" {
+			return &Result{Lines: []string{"Usage: /trust revoke \"pattern\" [--scope scope]"}}
+		}
+		if _, err := c.RevokeTrustGrant(context.Background(), pattern, scope); err != nil {
+			return &Result{Lines: []string{fmt.Sprintf("Error: %v", err)}}
+		}
+		return &Result{Lines: []string{fmt.Sprintf("Revoked persistent trust grant: %s", pattern)}}
 	case "reset":
 		state, err := c.ResetTrust(context.Background())
 		if err != nil {
@@ -111,13 +147,29 @@ func formatTrustState(state *pb.TrustState) *Result {
 	lines := []string{fmt.Sprintf("Mode: %s", state.Mode)}
 	if len(state.Rules) == 0 {
 		lines = append(lines, "No trust rules configured.")
-		return &Result{Lines: lines}
+	} else {
+		lines = append(lines, "Trust rules:")
+		for _, rule := range state.Rules {
+			lines = append(lines, fmt.Sprintf("  %-7s %-12s %s", rule.Action, rule.Scope, rule.Pattern))
+		}
 	}
-	lines = append(lines, "Trust rules:")
-	for _, rule := range state.Rules {
-		lines = append(lines, fmt.Sprintf("  %-7s %-12s %s", rule.Action, rule.Scope, rule.Pattern))
-	}
+	lines = append(lines, formatTrustGrantLines(state.GetGrants())...)
 	return &Result{Lines: lines}
+}
+
+func formatTrustGrants(grants []*pb.TrustGrant) *Result {
+	return &Result{Lines: formatTrustGrantLines(grants)}
+}
+
+func formatTrustGrantLines(grants []*pb.TrustGrant) []string {
+	if len(grants) == 0 {
+		return []string{"No persistent grants configured."}
+	}
+	lines := []string{"Persistent grants:"}
+	for _, grant := range grants {
+		lines = append(lines, fmt.Sprintf("  %-7s %-12s %-10s %s", grant.Action, grant.Scope, grant.GrantedBy, grant.Pattern))
+	}
+	return lines
 }
 
 func parseTrustRuleArgs(args []string) (pattern, scope string, ok bool) {

@@ -26,6 +26,9 @@ func TestTrustListUsesDaemonState(t *testing.T) {
 		state: &pb.TrustState{
 			Mode:  "conservative",
 			Rules: []*pb.TrustRule{{Pattern: "bash:go *", Action: "allow", Scope: "global"}},
+			Grants: []*pb.TrustGrant{
+				{Id: 1, Pattern: "bash:go test *", Action: "allow", Scope: "repo", GrantedBy: "operator"},
+			},
 		},
 	}
 	result := trustCmd([]string{"list"}, fake)
@@ -35,6 +38,9 @@ func TestTrustListUsesDaemonState(t *testing.T) {
 	}
 	if !resultContains(result, "Mode: conservative") || !resultContains(result, "bash:go *") {
 		t.Fatalf("result lines = %v", result.Lines)
+	}
+	if !resultContains(result, "Persistent grants:") || !resultContains(result, "bash:go test *") {
+		t.Fatalf("result lines missing grants = %v", result.Lines)
 	}
 }
 
@@ -66,11 +72,52 @@ func TestTrustAllowDenyAndResetUseDaemon(t *testing.T) {
 	}
 }
 
+func TestTrustPersistentGrantCommandsUseDaemon(t *testing.T) {
+	fake := &fakeTrustClient{
+		state: &pb.TrustState{
+			Mode:   "conservative",
+			Grants: []*pb.TrustGrant{{Id: 1, Pattern: "bash:go test *", Action: "allow", Scope: "repo", GrantedBy: "operator"}},
+		},
+	}
+
+	result := trustCmd([]string{"grants"}, fake)
+	if fake.listCalls != 1 || !resultContains(result, "Persistent grants:") || !resultContains(result, "bash:go test *") {
+		t.Fatalf("grants result/calls = %v / %d", result.Lines, fake.listCalls)
+	}
+
+	result = trustCmd([]string{"persist", "allow", "bash:go vet *", "--scope", "repo"}, fake)
+	if fake.grantPattern != "bash:go vet *" || fake.grantAction != "allow" || fake.grantScope != "repo" {
+		t.Fatalf("persist allow call = pattern=%q action=%q scope=%q", fake.grantPattern, fake.grantAction, fake.grantScope)
+	}
+	if !resultContains(result, "Persisted allow grant: bash:go vet *") {
+		t.Fatalf("persist allow result lines = %v", result.Lines)
+	}
+
+	result = trustCmd([]string{"persist", "deny", "bash:rm *"}, fake)
+	if fake.grantPattern != "bash:rm *" || fake.grantAction != "deny" || fake.grantScope != "global" {
+		t.Fatalf("persist deny call = pattern=%q action=%q scope=%q", fake.grantPattern, fake.grantAction, fake.grantScope)
+	}
+	if !resultContains(result, "Persisted deny grant: bash:rm *") {
+		t.Fatalf("persist deny result lines = %v", result.Lines)
+	}
+
+	result = trustCmd([]string{"revoke", "bash:rm *"}, fake)
+	if fake.revokePattern != "bash:rm *" || fake.revokeScope != "global" {
+		t.Fatalf("revoke call = pattern=%q scope=%q", fake.revokePattern, fake.revokeScope)
+	}
+	if !resultContains(result, "Revoked persistent trust grant: bash:rm *") {
+		t.Fatalf("revoke result lines = %v", result.Lines)
+	}
+}
+
 func TestTrustRuleScopeRequiresValue(t *testing.T) {
 	fake := &fakeTrustClient{}
 	for _, result := range []*Result{
 		trustCmd([]string{"allow", "--scope"}, fake),
 		trustCmd([]string{"deny", "bash:*", "--scope"}, fake),
+		trustCmd([]string{"persist", "allow", "--scope"}, fake),
+		trustCmd([]string{"persist", "deny", "bash:*", "--scope"}, fake),
+		trustCmd([]string{"revoke", "--scope"}, fake),
 	} {
 		if !resultContains(result, "Usage: /trust") {
 			t.Fatalf("result lines = %v", result.Lines)
@@ -87,6 +134,9 @@ func TestTrustCommandsRequireDaemon(t *testing.T) {
 		trustCmd([]string{"list"}, nil),
 		trustCmd([]string{"allow", "bash:go *"}, nil),
 		trustCmd([]string{"deny", "bash:rm *"}, nil),
+		trustCmd([]string{"grants"}, nil),
+		trustCmd([]string{"persist", "allow", "bash:go *"}, nil),
+		trustCmd([]string{"revoke", "bash:go *"}, nil),
 		trustCmd([]string{"reset"}, nil),
 	} {
 		if !resultContains(result, "Not connected to daemon") {
@@ -104,14 +154,19 @@ func TestTrustCommandReportsDaemonErrors(t *testing.T) {
 }
 
 type fakeTrustClient struct {
-	state       *pb.TrustState
-	err         error
-	mode        string
-	listCalls   int
-	resetCalls  int
-	rulePattern string
-	ruleAction  string
-	ruleScope   string
+	state         *pb.TrustState
+	err           error
+	mode          string
+	listCalls     int
+	resetCalls    int
+	rulePattern   string
+	ruleAction    string
+	ruleScope     string
+	grantPattern  string
+	grantAction   string
+	grantScope    string
+	revokePattern string
+	revokeScope   string
 }
 
 func (f *fakeTrustClient) GetTrustState(context.Context) (*pb.TrustState, error) {
@@ -149,6 +204,25 @@ func (f *fakeTrustClient) ResetTrust(context.Context) (*pb.TrustState, error) {
 		return nil, f.err
 	}
 	return &pb.TrustState{Mode: "conservative"}, nil
+}
+
+func (f *fakeTrustClient) AddTrustGrant(_ context.Context, pattern, action, scope string) (*pb.TrustState, error) {
+	f.grantPattern = pattern
+	f.grantAction = action
+	f.grantScope = scope
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &pb.TrustState{Mode: "custom", Grants: []*pb.TrustGrant{{Pattern: pattern, Action: action, Scope: scope, GrantedBy: "operator"}}}, nil
+}
+
+func (f *fakeTrustClient) RevokeTrustGrant(_ context.Context, pattern, scope string) (*pb.TrustState, error) {
+	f.revokePattern = pattern
+	f.revokeScope = scope
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &pb.TrustState{Mode: "custom"}, nil
 }
 
 func resultContains(result *Result, needle string) bool {
