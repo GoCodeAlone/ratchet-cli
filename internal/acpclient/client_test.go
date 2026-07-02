@@ -2,6 +2,7 @@ package acpclient
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -94,6 +95,67 @@ func TestClientRunPromptResetsCapturedUpdates(t *testing.T) {
 	}
 	if len(second.Updates) != 1 {
 		t.Fatalf("second Updates len = %d, want 1", len(second.Updates))
+	}
+}
+
+func TestClientRunPromptCapturesEventLog(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	clientToAgentR, clientToAgentW := io.Pipe()
+	agentToClientR, agentToClientW := io.Pipe()
+	t.Cleanup(func() {
+		_ = clientToAgentR.Close()
+		_ = clientToAgentW.Close()
+		_ = agentToClientR.Close()
+		_ = agentToClientW.Close()
+	})
+
+	agent := &echoAgent{}
+	agentConn := acpsdk.NewAgentSideConnection(agent, agentToClientW, clientToAgentR)
+	agent.conn = agentConn
+
+	client := NewInProcessClient(clientToAgentW, agentToClientR, RunOptions{
+		Cwd:     t.TempDir(),
+		Timeout: 5 * time.Second,
+	})
+
+	result, err := client.RunPrompt(ctx, "hello")
+	if err != nil {
+		t.Fatalf("RunPrompt: %v", err)
+	}
+	if len(result.Events) < 3 {
+		t.Fatalf("Events len = %d, want outbound prompt, inbound update, inbound response", len(result.Events))
+	}
+	var sawPrompt, sawUpdate, sawResponse bool
+	for i, event := range result.Events {
+		if event.Seq != i+1 {
+			t.Fatalf("event %d seq = %d, want %d", i, event.Seq, i+1)
+		}
+		if event.At.IsZero() {
+			t.Fatalf("event %d At is zero", i)
+		}
+		if err := ValidateJSONRPCMessage(event.Message); err != nil {
+			t.Fatalf("event %d invalid json-rpc message: %v\n%s", i, err, event.Message)
+		}
+		var msg struct {
+			Method string          `json:"method"`
+			Result json.RawMessage `json:"result"`
+		}
+		if err := json.Unmarshal(event.Message, &msg); err != nil {
+			t.Fatalf("unmarshal event %d: %v", i, err)
+		}
+		switch {
+		case event.Direction == EventDirectionOutbound && msg.Method == "session/prompt":
+			sawPrompt = true
+		case event.Direction == EventDirectionInbound && msg.Method == "session/update":
+			sawUpdate = true
+		case event.Direction == EventDirectionInbound && len(msg.Result) > 0:
+			sawResponse = true
+		}
+	}
+	if !sawPrompt || !sawUpdate || !sawResponse {
+		t.Fatalf("events missing expected envelopes: prompt=%t update=%t response=%t events=%#v", sawPrompt, sawUpdate, sawResponse, result.Events)
 	}
 }
 
