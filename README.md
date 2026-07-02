@@ -117,7 +117,11 @@ artifacts alongside Linux and macOS archives.
 ACP client archive v1 JSON is a ratchet-cli portable format with ACPX-shaped
 metadata, not a raw ACPX JSON-RPC event log. JSON v1 flows support `acp` and
 `compute` nodes, template prompts, shared session handles, and persisted run
-bundles; ACPX TypeScript flow runtime compatibility remains deferred.
+bundles. JSON v1 flows also support action nodes for runtime-owned local
+commands; action nodes require `--allow shell`, and node working directories
+outside the flow base require `--allow outside-cwd`. Action stdout/stderr in
+run bundles is sensitive local command output. ACPX TypeScript flow runtime
+compatibility remains deferred.
 
 ## ACP Client Examples
 
@@ -132,16 +136,22 @@ ratchet acp client compare \
   --command ./agent-b \
   "Summarize the current project risks"
 
-# Run a JSON v1 ACP/compute flow.
+# Run a JSON v1 ACP/compute/action flow.
 cat > flow.json <<'JSON'
 {
   "format_version": 1,
-  "start_at": "draft",
+  "start_at": "prepare",
   "nodes": [
+    {
+      "id": "prepare",
+      "type": "action",
+      "command": "ratchet",
+      "args": ["version"]
+    },
     {
       "id": "draft",
       "type": "acp",
-      "prompt": "Draft a brief answer for {{ .Input.topic }}",
+      "prompt": "Draft a brief answer for {{ .Input.topic }} after {{ .Outputs.prepare.stdout }}",
       "session": "shared"
     },
     {
@@ -150,12 +160,13 @@ cat > flow.json <<'JSON'
       "select": "draft"
     }
   ],
-  "edges": [{"from": "draft", "to": "result"}]
+  "edges": [{"from": "prepare", "to": "draft"}, {"from": "draft", "to": "result"}]
 }
 JSON
 ratchet acp client flow run flow.json \
   --input-json '{"topic":"release readiness"}' \
   --command ./agent \
+  --allow shell \
   --json
 
 # Explicitly drain queued prompts while this foreground command is running.

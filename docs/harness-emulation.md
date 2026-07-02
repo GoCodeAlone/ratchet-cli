@@ -63,9 +63,11 @@ trust slash commands, session lineage
 history/clone/fork/tree commands, branch summaries, compaction records with
 archive session links, Pi-style in-place branch navigation, and opt-in redacted
 retro evidence, ACP client session archive export/import, serial compare, and
-JSON v1 ACP/compute flows. The v0.20.0 release keeps Windows amd64/arm64 zip
-artifacts in the GoReleaser output while adding ACP client archive, compare,
-and flow commands. The policy boundaries are tracked in
+JSON v1 ACP/compute/action flows. JSON v1 action nodes run local commands only
+with `--allow shell`; node cwd escapes require `--allow outside-cwd`, and run
+bundles may contain sensitive local command output. The v0.20.0 release keeps
+Windows amd64/arm64 zip artifacts in the GoReleaser output while adding ACP
+client archive, compare, and flow commands. The policy boundaries are tracked in
 [docs/policy-matrix.md](policy-matrix.md): runtime trust rules, persistent
 trust grants, permission prompts, and explicit ACP client watch/drain are
 supported, while daemon background drain, broad extension hooks, ACPX TypeScript
@@ -104,7 +106,7 @@ disk.
 | cancel | Supported as cooperative request | `ratchet acp client cancel <id>` marks pending queued prompts canceled or writes a cancel-request file for active owners; active clients poll and send ACP cancel. |
 | import/export archives | Supported | `ratchet acp client sessions export <id> --output <archive.json>` writes ratchet-cli archive v1 JSON with ACPX-shaped metadata; `sessions import <archive.json> --session <id>` imports a copy. Binary smoke proves export/import through the built CLI and fixture ACP agent. Archives may contain prompt/response content and are not raw ACPX JSON-RPC event logs. |
 | compare commands | Supported | `ratchet acp client compare --command <agent-a> --command <agent-b> "prompt"` runs agents serially and emits table or JSON rows. Binary smoke proves compare through the built CLI and fixture ACP agent. |
-| flow commands | Supported | `ratchet acp client flow run flow.json --input-json '{"task":"x"}' --command <agent>` runs JSON v1 flows with `acp` and `compute` nodes, template prompts, shared ACP session handles, JSON output, and persisted run bundles. ACPX TypeScript flow runtime compatibility is deferred. |
+| flow commands | Supported | `ratchet acp client flow run flow.json --input-json '{"task":"x"}' --command <agent> --allow shell` runs JSON v1 flows with `acp`, `compute`, and `action` nodes, template prompts, shared ACP session handles, JSON output, and persisted run bundles. Action nodes require `--allow shell`; cwd escapes require `--allow outside-cwd`; action stdout/stderr is sensitive local command output. ACPX TypeScript flow runtime compatibility remains deferred. |
 
 ### ACP client examples
 
@@ -117,6 +119,7 @@ ratchet acp client compare --command ./agent-a --command ./agent-b "Review this 
 ratchet acp client flow run flow.json \
   --input-json '{"task":"review release notes"}' \
   --command ./agent \
+  --allow shell \
   --json
 
 ratchet acp client watch work \

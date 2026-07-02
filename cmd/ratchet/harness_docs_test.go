@@ -54,6 +54,10 @@ func TestHarnessEmulationDocsCoverPolicyMatrixLayers(t *testing.T) {
 		"Deferred",
 		"Explicit watch/drain only",
 		"sensitive local policy metadata",
+		"action nodes",
+		"--allow shell",
+		"outside-cwd",
+		"sensitive local command output",
 	} {
 		if !strings.Contains(matrix, required) {
 			t.Fatalf("policy matrix doc missing %q", required)
@@ -66,6 +70,9 @@ func TestHarnessEmulationDocsCoverPolicyMatrixLayers(t *testing.T) {
 		"ratchet acp client watch",
 		"background drain",
 		"extension hooks",
+		"action nodes",
+		"--allow shell",
+		"ACPX TypeScript flow runtime compatibility remains deferred",
 	} {
 		if !strings.Contains(publicDocs, required) {
 			t.Fatalf("public harness docs missing %q", required)
