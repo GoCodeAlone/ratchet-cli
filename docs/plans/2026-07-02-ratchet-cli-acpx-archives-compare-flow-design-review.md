@@ -40,3 +40,46 @@
 2. Two-tier event capture: preserve imported raw history exactly; generate normalized session/update/result events for new ratchet runs through typed SDK callbacks without claiming byte-for-byte stdio capture.
 
 **Verdict reasoning:** FAIL until the design explicitly wires event logs from ACP client results into compare/flow bundles and rejects unavailable raw export instead of emitting a misleading empty archive.
+
+## Cycle 2
+
+### Adversarial Review Report
+
+**Phase:** design
+**Artifact:** `docs/plans/2026-07-02-ratchet-cli-acpx-archives-compare-flow-design.md`
+**Status:** PASS
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- None.
+
+**Findings (Minor):**
+- `D5` [YAGNI] `## Design / Flow Replay Bundles`: replay-grade flow bundles are a sizable addition. Acceptable because they directly trace to the user's "flow orchestration" ask and ACPX replay contract; keep TypeScript runtime deferred.
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Clean | Windows, SDK reuse, local-sensitive data, and deferred automation boundaries are explicit. |
+| Assumptions under attack | Clean | A1 now fails closed for missing raw sidecar and distinguishes imported raw histories from normalized generated event logs. |
+| Repo-precedent conflicts | Clean | Uses existing `internal/acpclient` archive/compare/flow and `cmd/ratchet` patterns. |
+| Artifact-class precedent | Clean | Tests/docs targets match sibling archive/compare/flow tests and docs guard. |
+| YAGNI violations | Minor | Flow replay bundle breadth is justified by ACPX source contract and user ask. |
+| Missing failure modes | Clean | Missing raw history now errors instead of exporting lossy empty raw archives. |
+| Security/privacy architecture | Clean | Sensitive prompt/response/stdout metadata is local-only with docs warnings and read-only replay. |
+| Infrastructure impact | Clean | Only local state layout and release tag/assets; no cloud/prod change. |
+| Multi-component validation | Clean | Fixture ACP agent, sidecar event counts, compare bundles, flow replay command, and docs guard are required. |
+| Declared integration proof | Clean | Upstream-shaped ACPX raw archive fixture round-trip is now required. |
+| Contributed UI rendering proof | Clean | No UI contribution. |
+| Rollback story | Clean | Additive files and revert path documented. |
+| Simpler alternative not considered | Clean | Docs-only, raw stdio tap, and TypeScript runtime alternatives considered. |
+| User-intent drift | Clean | Archive, compare, and flow orchestration are all in scope; TypeScript runtime deferral is explicit. |
+| Existence/runtime-validity | Clean | Existing CLI/test surfaces verified; no assumed nonexistent external consumer command. |
+
+**Options the author may not have considered:**
+1. Exact stdio byte tap: still rejected because it duplicates SDK transport behavior.
+2. Raw-only archives by default: rejected because existing ratchet summary archive compatibility should remain stable.
+
+**Verdict reasoning:** PASS. Prior Important findings D1-D3 are resolved in design commit `fdc2d30`; remaining issue is a scope-size caution, not a blocker.
