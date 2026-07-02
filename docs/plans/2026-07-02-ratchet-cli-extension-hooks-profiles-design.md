@@ -52,7 +52,7 @@ Checked 2026-07-02 from primary sources:
 
 Add hook metadata and a local trust store:
 
-- Hook identity: hash over event, command, command_windows, glob, source kind, source path/plugin, and optional timeout/status fields.
+- Hook identity: hash over event, command, command_windows, glob, source kind, stable source id, and optional timeout/status fields. Stable source ids avoid absolute home paths: `user:hooks.yaml`, `project:.ratchet/hooks.yaml`, `plugin:<name>@<version>:<relpath>`.
 - Sources: `user`, `project`, `plugin`; future `managed` reserved.
 - Default policy:
   - user hooks from `~/.ratchet/hooks.yaml`: active, listed as user-owned;
@@ -66,6 +66,11 @@ Add hook metadata and a local trust store:
   - `ratchet hooks untrust <hash>` removes trust.
 - Plugin hook paths must stay inside plugin root; manifest `hooks` entries using `..` or absolute paths fail load.
 - Windows: add `command_windows`; on Windows, hooks without a Windows command are skipped with status `unsupported_platform`, not run through `sh`.
+- Daemon project-hook loading is workdir-scoped:
+  - user and plugin hooks load at engine startup;
+  - project hooks load from the event working directory when an event has `working_dir` or a resolvable `session_id`;
+  - project hooks do not fire for daemon events with no project/workdir context;
+  - `ratchet hooks list` defaults to the current working directory and can accept `--cwd` for review.
 
 ### ACP Launch Profiles
 
@@ -85,6 +90,7 @@ Add a local ACP launch profile store under ratchet state:
   - add manifest capability `acpProfiles` pointing to a JSON/YAML file or directory;
   - loader discovers templates but does not execute them;
   - `profiles install <plugin>/<profile> --as <name>` copies to the local profile store as untrusted unless `--trust` is given.
+- Plugin `acpProfiles` paths follow the same containment rule as plugin hooks: relative path only, clean path must remain inside plugin root.
 - Profiles are launch specs, not credentials. `env_keys` names allowed env vars but never stores values.
 
 ### Docs And Policy
