@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 )
 
 var ErrInvalidFlowDefinition = errors.New("invalid acp client flow definition")
@@ -90,6 +92,9 @@ func (def FlowDefinition) Validate() error {
 		if node.ID == "" {
 			return fmt.Errorf("%w: node id is required", ErrInvalidFlowDefinition)
 		}
+		if !safeFlowIdentifier(node.ID) {
+			return fmt.Errorf("%w: unsafe node id %s", ErrInvalidFlowDefinition, node.ID)
+		}
 		if _, exists := nodes[node.ID]; exists {
 			return fmt.Errorf("%w: duplicate node %s", ErrInvalidFlowDefinition, node.ID)
 		}
@@ -99,8 +104,10 @@ func (def FlowDefinition) Validate() error {
 				return fmt.Errorf("%w: acp node %s prompt is required", ErrInvalidFlowDefinition, node.ID)
 			}
 		case FlowNodeTypeCompute:
-			if len(node.Value) == 0 && node.Select == "" {
-				return fmt.Errorf("%w: compute node %s value or select is required", ErrInvalidFlowDefinition, node.ID)
+			hasValue := len(node.Value) > 0
+			hasSelect := node.Select != ""
+			if hasValue == hasSelect {
+				return fmt.Errorf("%w: compute node %s must set exactly one of value or select", ErrInvalidFlowDefinition, node.ID)
 			}
 		default:
 			return fmt.Errorf("%w: unknown node type %s", ErrInvalidFlowDefinition, node.Type)
@@ -121,10 +128,19 @@ func (def FlowDefinition) Validate() error {
 		if _, ok := nodes[edge.To]; !ok {
 			return fmt.Errorf("%w: edge to node %s does not exist", ErrInvalidFlowDefinition, edge.To)
 		}
+		if edge.To == def.StartAt {
+			return fmt.Errorf("%w: edge into start_at node %s is not allowed", ErrInvalidFlowDefinition, def.StartAt)
+		}
 		graph[edge.From] = append(graph[edge.From], edge.To)
 	}
-	if hasFlowCycle(def.StartAt, graph, map[string]bool{}, map[string]bool{}) {
-		return fmt.Errorf("%w: graph contains cycle", ErrInvalidFlowDefinition)
+	for id := range nodes {
+		if hasFlowCycle(id, graph, map[string]bool{}, map[string]bool{}) {
+			return fmt.Errorf("%w: graph contains cycle", ErrInvalidFlowDefinition)
+		}
+	}
+	reachable := reachableFlowNodes(def.StartAt, graph)
+	if len(reachable) != len(nodes) {
+		return fmt.Errorf("%w: graph contains unreachable nodes", ErrInvalidFlowDefinition)
 	}
 	return nil
 }
@@ -145,4 +161,28 @@ func hasFlowCycle(node string, graph map[string][]string, visiting, visited map[
 	visiting[node] = false
 	visited[node] = true
 	return false
+}
+
+func reachableFlowNodes(start string, graph map[string][]string) map[string]bool {
+	reachable := map[string]bool{}
+	var walk func(string)
+	walk = func(id string) {
+		if reachable[id] {
+			return
+		}
+		reachable[id] = true
+		for _, next := range graph[id] {
+			walk(next)
+		}
+	}
+	walk(start)
+	return reachable
+}
+
+func safeFlowIdentifier(id string) bool {
+	id = strings.TrimSpace(id)
+	if id == "" || id == "." || id == ".." {
+		return false
+	}
+	return id == filepath.Base(id) && !strings.ContainsAny(id, `/\`)
 }

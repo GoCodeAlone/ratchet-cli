@@ -44,6 +44,10 @@ func TestLoadFlowDefinitionRejectsInvalidGraphs(t *testing.T) {
 		{name: "unknown type", raw: `{"format_version":1,"start_at":"a","nodes":[{"id":"a","type":"shell","value":{}}]}`},
 		{name: "missing edge endpoint", raw: `{"format_version":1,"start_at":"a","nodes":[{"id":"a","type":"compute","value":{}}],"edges":[{"from":"a","to":"b"}]}`},
 		{name: "cycle", raw: `{"format_version":1,"start_at":"a","nodes":[{"id":"a","type":"compute","value":{}},{"id":"b","type":"compute","value":{}}],"edges":[{"from":"a","to":"b"},{"from":"b","to":"a"}]}`},
+		{name: "unreachable node", raw: `{"format_version":1,"start_at":"a","nodes":[{"id":"a","type":"compute","value":{}},{"id":"b","type":"compute","value":{}}]}`},
+		{name: "edge into start", raw: `{"format_version":1,"start_at":"a","nodes":[{"id":"a","type":"compute","value":{}},{"id":"b","type":"compute","value":{}}],"edges":[{"from":"b","to":"a"}]}`},
+		{name: "ambiguous compute", raw: `{"format_version":1,"start_at":"a","nodes":[{"id":"a","type":"compute","value":{},"select":"b"}]}`},
+		{name: "unsafe node id", raw: `{"format_version":1,"start_at":"../a","nodes":[{"id":"../a","type":"compute","value":{}}]}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -52,6 +56,26 @@ func TestLoadFlowDefinitionRejectsInvalidGraphs(t *testing.T) {
 				t.Fatalf("LoadFlowDefinition error = %v, want ErrInvalidFlowDefinition", err)
 			}
 		})
+	}
+}
+
+func TestFlowExecutionOrderHonorsFanInDependencies(t *testing.T) {
+	def := FlowDefinition{
+		FormatVersion: 1,
+		StartAt:       "a",
+		Nodes: []FlowNode{
+			{ID: "a", Type: FlowNodeTypeCompute, Value: json.RawMessage(`{}`)},
+			{ID: "b", Type: FlowNodeTypeCompute, Value: json.RawMessage(`{}`)},
+			{ID: "c", Type: FlowNodeTypeCompute, Value: json.RawMessage(`{}`)},
+			{ID: "d", Type: FlowNodeTypeCompute, Value: json.RawMessage(`{}`)},
+		},
+		Edges: []FlowEdge{{From: "a", To: "b"}, {From: "a", To: "c"}, {From: "b", To: "d"}, {From: "c", To: "d"}},
+	}
+	if err := def.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if got, want := strings.Join(flowExecutionOrder(def), ","), "a,b,c,d"; got != want {
+		t.Fatalf("flowExecutionOrder = %q, want %q", got, want)
 	}
 }
 
@@ -85,6 +109,19 @@ func TestFlowRunStoreWritesBundleFiles(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(root, "run-fixed", rel)); err != nil {
 			t.Fatalf("stat %s: %v", rel, err)
 		}
+	}
+}
+
+func TestFlowRunStoreRejectsUnsafeRunAndStepIDs(t *testing.T) {
+	if _, err := NewFlowRunStore(t.TempDir(), "../escape"); err == nil {
+		t.Fatal("NewFlowRunStore accepted unsafe run id")
+	}
+	store, err := NewFlowRunStore(t.TempDir(), "safe")
+	if err != nil {
+		t.Fatalf("NewFlowRunStore safe: %v", err)
+	}
+	if err := store.WriteStep("../escape", json.RawMessage(`{}`)); err == nil {
+		t.Fatal("WriteStep accepted unsafe node id")
 	}
 }
 

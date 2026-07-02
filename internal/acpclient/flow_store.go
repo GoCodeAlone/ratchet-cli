@@ -20,6 +20,9 @@ func NewFlowRunStore(rootDir, runID string) (*FlowRunStore, error) {
 	if runID == "" {
 		return nil, errors.New("flow run id is required")
 	}
+	if !safeFlowIdentifier(runID) {
+		return nil, errors.New("flow run id must be a safe path segment")
+	}
 	return &FlowRunStore{dir: filepath.Join(rootDir, runID)}, nil
 }
 
@@ -43,5 +46,8 @@ func (s *FlowRunStore) WriteState(state FlowRunState) error {
 }
 
 func (s *FlowRunStore) WriteStep(nodeID string, output json.RawMessage) error {
+	if !safeFlowIdentifier(nodeID) {
+		return errors.New("flow step id must be a safe path segment")
+	}
 	return writeJSONFileAtomic(filepath.Join(s.dir, "steps", nodeID+".json"), json.RawMessage(output), 0o600)
 }

@@ -215,23 +215,29 @@ func defaultFlowStartRunner(ctx context.Context, spec AgentSpec, opts RunOptions
 
 func flowExecutionOrder(def FlowDefinition) []string {
 	graph := map[string][]string{}
+	indegree := map[string]int{}
+	for _, node := range def.Nodes {
+		indegree[node.ID] = 0
+	}
 	for _, edge := range def.Edges {
 		graph[edge.From] = append(graph[edge.From], edge.To)
+		indegree[edge.To]++
 	}
-	seen := map[string]bool{}
-	var order []string
-	var walk func(string)
-	walk = func(id string) {
-		if seen[id] {
-			return
-		}
-		seen[id] = true
+	ready := []string{def.StartAt}
+	queued := map[string]bool{def.StartAt: true}
+	order := make([]string, 0, len(def.Nodes))
+	for len(ready) > 0 {
+		id := ready[0]
+		ready = ready[1:]
 		order = append(order, id)
 		for _, next := range graph[id] {
-			walk(next)
+			indegree[next]--
+			if indegree[next] == 0 && !queued[next] {
+				ready = append(ready, next)
+				queued[next] = true
+			}
 		}
 	}
-	walk(def.StartAt)
 	return order
 }
 
