@@ -301,6 +301,7 @@ func (defaultActionRunner) RunAction(ctx context.Context, opts ActionRunOptions)
 		result.ExitCode = exitErr.ExitCode()
 		return result, nil
 	}
+	result.ExitCode = -1
 	return result, err
 }
 
@@ -430,10 +431,19 @@ func resolveFlowNodeCWD(node FlowNode, opts FlowRunOptions, allowed map[string]b
 		return "", err
 	}
 	cwdAbs = filepath.Clean(cwdAbs)
-	if !pathWithin(baseAbs, cwdAbs) && !allowed["outside-cwd"] {
+	containmentBase := realPathOrClean(baseAbs)
+	containmentCWD := realPathOrClean(cwdAbs)
+	if !pathWithin(containmentBase, containmentCWD) && !allowed["outside-cwd"] {
 		return "", flowMissingPermissionError{permission: "outside-cwd"}
 	}
 	return cwdAbs, nil
+}
+
+func realPathOrClean(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return filepath.Clean(resolved)
+	}
+	return filepath.Clean(path)
 }
 
 func pathWithin(base, path string) bool {

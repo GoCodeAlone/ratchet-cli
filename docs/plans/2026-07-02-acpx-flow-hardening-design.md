@@ -18,7 +18,7 @@ Source: workspace `AGENTS.md`, repo `README.md`, `docs/harness-emulation.md`, `d
 
 | Guidance | Design response |
 |---|---|
-| Build for Windows. | Use portable Go; shell action runner selects platform shell explicitly and local verification includes Windows compile. |
+| Build for Windows. | Use portable Go; action nodes execute direct command+args without shell syntax, and local verification includes Windows compile. |
 | Avoid duplicated policy engines. | Permission preflight is flow-local allowlist validation, not a new trust engine; trust remains in `workflow-plugin-agent/policy`. |
 | Treat prompts, archives, and run bundles as sensitive local metadata. | Persist action stdout/stderr only inside existing flow run bundles with `0600` JSON files; docs warn about command output sensitivity. |
 | Keep daemon background drain and broad extension SDK separate. | No daemon scheduler, hook SDK, profile distribution, or local mutation loop is added. |
@@ -118,7 +118,7 @@ Update README, harness emulation, competitor parity, and policy matrix:
 | CWD escape via `../` or absolute paths. | Resolve/clean path; require `--allow outside-cwd` to run outside base cwd. |
 | Secret leakage in stdout/stderr. | Treat run bundles as sensitive; persist `0600`; bounded output; no public logs. |
 | Policy duplication. | No persistent permission store; no wildcard matcher; no trust precedence. |
-| Windows shell behavior. | Use `cmd /C` on Windows and `sh -c` on Unix only when string shell mode is needed; direct command+args remains preferred. |
+| Windows command behavior. | Execute direct command+args with `exec.CommandContext`; no `cmd /C` or `sh -c` string shell mode is added in this slice. |
 
 ## Infrastructure Impact
 

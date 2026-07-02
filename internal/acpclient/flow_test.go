@@ -333,6 +333,44 @@ func TestRunFlowOutsideCWDRequiresPermissionBeforeAnyNodeRuns(t *testing.T) {
 	}
 }
 
+func TestRunFlowSymlinkedCWDOutsideBaseRequiresPermission(t *testing.T) {
+	runner := &fakeActionRunner{}
+	root := t.TempDir()
+	base := filepath.Join(root, "base")
+	outside := filepath.Join(root, "outside")
+	if err := os.MkdirAll(base, 0o700); err != nil {
+		t.Fatalf("mkdir base: %v", err)
+	}
+	if err := os.MkdirAll(outside, 0o700); err != nil {
+		t.Fatalf("mkdir outside: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(base, "tools")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	def := FlowDefinition{
+		FormatVersion: 1,
+		StartAt:       "escape",
+		Nodes: []FlowNode{{
+			ID:      "escape",
+			Type:    FlowNodeTypeAction,
+			Command: "ratchet",
+			Cwd:     "tools",
+		}},
+	}
+
+	_, err := RunFlow(t.Context(), def, map[string]any{}, FlowRunOptions{
+		Cwd:                base,
+		AllowedPermissions: []string{"shell"},
+		ActionRunner:       runner,
+	})
+	if err == nil || !strings.Contains(err.Error(), "flow requires permission outside-cwd") {
+		t.Fatalf("RunFlow error = %v, want missing outside-cwd permission", err)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("preflight ran action %d times", runner.calls)
+	}
+}
+
 func TestRunFlowActionNodeStoresOutput(t *testing.T) {
 	root := t.TempDir()
 	base := filepath.Join(root, "base")
@@ -429,6 +467,41 @@ func TestRunFlowActionNonZeroExitPersistsFailedState(t *testing.T) {
 	if state.Status != FlowRunStatusFailed || len(state.Steps) != 1 ||
 		state.Steps[0].Status != FlowStepStatusFailed || !strings.Contains(state.Steps[0].Error, "exited with 2") {
 		t.Fatalf("state = %#v", state)
+	}
+}
+
+func TestRunFlowActionStartFailurePersistsNonZeroExitCode(t *testing.T) {
+	root := t.TempDir()
+	def := FlowDefinition{
+		FormatVersion: 1,
+		StartAt:       "missing",
+		Nodes:         []FlowNode{{ID: "missing", Type: FlowNodeTypeAction, Command: filepath.Join(t.TempDir(), "missing-command")}},
+	}
+
+	_, err := RunFlow(t.Context(), def, map[string]any{}, FlowRunOptions{
+		RunID:              "run-action-start-failed",
+		RunRoot:            root,
+		AllowedPermissions: []string{"shell"},
+	})
+	if err == nil {
+		t.Fatal("RunFlow succeeded, want start failure")
+	}
+	var state FlowRunState
+	b, readErr := os.ReadFile(filepath.Join(root, "run-action-start-failed", "state.json"))
+	if readErr != nil {
+		t.Fatalf("read state: %v", readErr)
+	}
+	if err := json.Unmarshal(b, &state); err != nil {
+		t.Fatalf("state json: %v\n%s", err, b)
+	}
+	var output struct {
+		ExitCode int `json:"exit_code"`
+	}
+	if err := json.Unmarshal(state.Steps[0].Output, &output); err != nil {
+		t.Fatalf("action output json: %v\n%s", err, state.Steps[0].Output)
+	}
+	if output.ExitCode != -1 {
+		t.Fatalf("exit_code = %d, want -1", output.ExitCode)
 	}
 }
 
