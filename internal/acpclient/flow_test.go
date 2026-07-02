@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	acpsdk "github.com/coder/acp-go-sdk"
 )
@@ -253,8 +254,12 @@ func TestLoadFlowDefinitionAcceptsActionNodes(t *testing.T) {
 		t.Fatalf("LoadFlowDefinition: %v", err)
 	}
 	node := def.Nodes[0]
+	var input map[string]string
+	if err := json.Unmarshal(node.Input, &input); err != nil {
+		t.Fatalf("node input json: %v", err)
+	}
 	if node.Type != FlowNodeTypeAction || node.Command != "ratchet" || node.Cwd != "tools" ||
-		node.Env["RATCHET_FLOW_TEST"] != "1" || string(node.Input) != `{"task":"inspect"}` {
+		node.Env["RATCHET_FLOW_TEST"] != "1" || input["task"] != "inspect" {
 		t.Fatalf("action node = %#v", node)
 	}
 }

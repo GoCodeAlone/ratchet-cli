@@ -5,6 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"text/template"
 	"time"
@@ -17,14 +20,36 @@ type FlowPromptRunner interface {
 	Prompt(context.Context, string) (Result, error)
 }
 
+type ActionRunner interface {
+	RunAction(context.Context, ActionRunOptions) (ActionResult, error)
+}
+
+type ActionRunOptions struct {
+	Command string
+	Args    []string
+	Cwd     string
+	Env     map[string]string
+	Input   json.RawMessage
+}
+
+type ActionResult struct {
+	ExitCode int
+	Stdout   string
+	Stderr   string
+	Duration time.Duration
+}
+
 type FlowRunOptions struct {
-	RunID          string
-	RunRoot        string
-	Cwd            string
-	DefaultAgent   string
-	DefaultCommand string
-	DefaultArgs    []string
-	StartRunner    func(context.Context, AgentSpec, RunOptions, string) (FlowPromptRunner, func() error, error)
+	RunID              string
+	RunRoot            string
+	Cwd                string
+	DefaultAgent       string
+	DefaultCommand     string
+	DefaultArgs        []string
+	AllowedPermissions []string
+	ActionOutputLimit  int
+	ActionRunner       ActionRunner
+	StartRunner        func(context.Context, AgentSpec, RunOptions, string) (FlowPromptRunner, func() error, error)
 }
 
 type FlowRunResult struct {
@@ -35,8 +60,14 @@ type FlowRunResult struct {
 	Steps   []FlowStepRecord           `json:"steps"`
 }
 
+const defaultActionOutputLimit = 64 * 1024
+
 func RunFlow(ctx context.Context, def FlowDefinition, input map[string]any, opts FlowRunOptions) (FlowRunResult, error) {
 	if err := def.Validate(); err != nil {
+		return FlowRunResult{}, err
+	}
+	allowed := flowPermissionSet(opts.AllowedPermissions)
+	if err := preflightFlowPermissions(def, opts, allowed); err != nil {
 		return FlowRunResult{}, err
 	}
 	runID := strings.TrimSpace(opts.RunID)
@@ -113,6 +144,8 @@ func runFlowNode(ctx context.Context, node FlowNode, input map[string]any, outpu
 	switch node.Type {
 	case FlowNodeTypeCompute:
 		return runComputeFlowNode(node, outputs)
+	case FlowNodeTypeAction:
+		return runActionFlowNode(ctx, node, opts)
 	case FlowNodeTypeACP:
 		return runACPFlowNode(ctx, node, input, outputs, runners, closers, opts)
 	default:
@@ -160,6 +193,35 @@ func runACPFlowNode(ctx context.Context, node FlowNode, input map[string]any, ou
 	})
 }
 
+func runActionFlowNode(ctx context.Context, node FlowNode, opts FlowRunOptions) (json.RawMessage, error) {
+	runner := opts.ActionRunner
+	if runner == nil {
+		runner = defaultActionRunner{}
+	}
+	cwd, err := resolveFlowNodeCWD(node, opts, flowPermissionSet(opts.AllowedPermissions))
+	if err != nil {
+		return nil, err
+	}
+	result, err := runner.RunAction(ctx, ActionRunOptions{
+		Command: node.Command,
+		Args:    node.Args,
+		Cwd:     cwd,
+		Env:     node.Env,
+		Input:   node.Input,
+	})
+	output, marshalErr := marshalActionOutput(result, cwd, opts.ActionOutputLimit)
+	if err != nil {
+		return output, err
+	}
+	if marshalErr != nil {
+		return nil, marshalErr
+	}
+	if result.ExitCode != 0 {
+		return output, fmt.Errorf("action %s exited with %d", node.ID, result.ExitCode)
+	}
+	return output, nil
+}
+
 func runComputeFlowNode(node FlowNode, outputs map[string]any) (json.RawMessage, error) {
 	if node.Select != "" {
 		selected, err := selectFlowOutput(node.Select, outputs)
@@ -194,10 +256,52 @@ func flowAgentSpec(node FlowNode, opts FlowRunOptions) (AgentSpec, RunOptions, e
 		Agent:   firstNonEmpty(node.Agent, opts.DefaultAgent),
 		Command: firstNonEmpty(node.Command, opts.DefaultCommand),
 		Args:    args,
-		Cwd:     opts.Cwd,
 	}
+	cwd, err := resolveFlowNodeCWD(node, opts, flowPermissionSet(opts.AllowedPermissions))
+	if err != nil {
+		return AgentSpec{}, RunOptions{}, err
+	}
+	runOpts.Cwd = cwd
 	spec, err := DefaultRegistry().Resolve(runOpts)
 	return spec, runOpts, err
+}
+
+type defaultActionRunner struct{}
+
+func (defaultActionRunner) RunAction(ctx context.Context, opts ActionRunOptions) (ActionResult, error) {
+	started := time.Now()
+	cmd := exec.CommandContext(ctx, opts.Command, opts.Args...)
+	if opts.Cwd != "" {
+		cmd.Dir = opts.Cwd
+	}
+	if len(opts.Env) > 0 {
+		env := os.Environ()
+		for k, v := range opts.Env {
+			env = append(env, k+"="+v)
+		}
+		cmd.Env = env
+	}
+	if len(opts.Input) > 0 {
+		cmd.Stdin = bytes.NewReader(opts.Input)
+	}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	result := ActionResult{
+		ExitCode: 0,
+		Stdout:   stdout.String(),
+		Stderr:   stderr.String(),
+		Duration: time.Since(started),
+	}
+	if err == nil {
+		return result, nil
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		result.ExitCode = exitErr.ExitCode()
+		return result, nil
+	}
+	return result, err
 }
 
 func defaultFlowStartRunner(ctx context.Context, spec AgentSpec, opts RunOptions, existingID string) (FlowPromptRunner, func() error, error) {
@@ -254,6 +358,118 @@ func persistFlowState(store *FlowRunStore, result FlowRunResult) error {
 		return nil
 	}
 	return store.WriteState(FlowRunState{RunID: result.RunID, Status: result.Status, Steps: result.Steps})
+}
+
+func preflightFlowPermissions(def FlowDefinition, opts FlowRunOptions, allowed map[string]bool) error {
+	required := flowPermissionSet(def.Requires)
+	for _, node := range def.Nodes {
+		if node.Type == FlowNodeTypeAction {
+			required["shell"] = true
+		}
+		if node.Type == FlowNodeTypeAction || node.Type == FlowNodeTypeACP {
+			if _, err := resolveFlowNodeCWD(node, opts, allowed); err != nil {
+				if missing, ok := missingFlowPermission(err); ok {
+					required[missing] = true
+					continue
+				}
+				return err
+			}
+		}
+	}
+	for permission := range required {
+		if !allowed[permission] {
+			return fmt.Errorf("flow requires permission %s; pass --allow %s", permission, permission)
+		}
+	}
+	return nil
+}
+
+func flowPermissionSet(values []string) map[string]bool {
+	out := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out[value] = true
+		}
+	}
+	return out
+}
+
+type flowMissingPermissionError struct {
+	permission string
+}
+
+func (e flowMissingPermissionError) Error() string {
+	return fmt.Sprintf("flow requires permission %s; pass --allow %s", e.permission, e.permission)
+}
+
+func missingFlowPermission(err error) (string, bool) {
+	e, ok := err.(flowMissingPermissionError)
+	return e.permission, ok
+}
+
+func resolveFlowNodeCWD(node FlowNode, opts FlowRunOptions, allowed map[string]bool) (string, error) {
+	base := strings.TrimSpace(opts.Cwd)
+	if base == "" {
+		base = "."
+	}
+	baseAbs, err := filepath.Abs(base)
+	if err != nil {
+		return "", err
+	}
+	baseAbs = filepath.Clean(baseAbs)
+	cwd := strings.TrimSpace(node.Cwd)
+	if cwd == "" {
+		return baseAbs, nil
+	}
+	if !filepath.IsAbs(cwd) {
+		cwd = filepath.Join(baseAbs, cwd)
+	}
+	cwdAbs, err := filepath.Abs(cwd)
+	if err != nil {
+		return "", err
+	}
+	cwdAbs = filepath.Clean(cwdAbs)
+	if !pathWithin(baseAbs, cwdAbs) && !allowed["outside-cwd"] {
+		return "", flowMissingPermissionError{permission: "outside-cwd"}
+	}
+	return cwdAbs, nil
+}
+
+func pathWithin(base, path string) bool {
+	if base == path {
+		return true
+	}
+	rel, err := filepath.Rel(base, path)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+func marshalActionOutput(result ActionResult, cwd string, limit int) (json.RawMessage, error) {
+	if limit <= 0 {
+		limit = defaultActionOutputLimit
+	}
+	stdout, stdoutTruncated := truncateRunes(result.Stdout, limit)
+	stderr, stderrTruncated := truncateRunes(result.Stderr, limit)
+	return marshalFlowOutput(map[string]any{
+		"exit_code":        result.ExitCode,
+		"stdout":           stdout,
+		"stderr":           stderr,
+		"stdout_truncated": stdoutTruncated,
+		"stderr_truncated": stderrTruncated,
+		"duration_ms":      result.Duration.Milliseconds(),
+		"cwd":              cwd,
+	})
+}
+
+func truncateRunes(value string, limit int) (string, bool) {
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value, false
+	}
+	return string(runes[:limit]), true
 }
 
 func marshalFlowOutput(value any) (json.RawMessage, error) {

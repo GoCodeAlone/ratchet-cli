@@ -13,6 +13,7 @@ var ErrInvalidFlowDefinition = errors.New("invalid acp client flow definition")
 
 const (
 	FlowNodeTypeACP     = "acp"
+	FlowNodeTypeAction  = "action"
 	FlowNodeTypeCompute = "compute"
 
 	FlowRunStatusRunning   = "running"
@@ -26,21 +27,25 @@ const (
 type FlowDefinition struct {
 	FormatVersion int        `json:"format_version"`
 	Name          string     `json:"name,omitempty"`
+	Requires      []string   `json:"requires,omitempty"`
 	StartAt       string     `json:"start_at"`
 	Nodes         []FlowNode `json:"nodes"`
 	Edges         []FlowEdge `json:"edges,omitempty"`
 }
 
 type FlowNode struct {
-	ID      string          `json:"id"`
-	Type    string          `json:"type"`
-	Prompt  string          `json:"prompt,omitempty"`
-	Agent   string          `json:"agent,omitempty"`
-	Command string          `json:"command,omitempty"`
-	Args    []string        `json:"args,omitempty"`
-	Session string          `json:"session,omitempty"`
-	Value   json.RawMessage `json:"value,omitempty"`
-	Select  string          `json:"select,omitempty"`
+	ID      string            `json:"id"`
+	Type    string            `json:"type"`
+	Prompt  string            `json:"prompt,omitempty"`
+	Agent   string            `json:"agent,omitempty"`
+	Command string            `json:"command,omitempty"`
+	Args    []string          `json:"args,omitempty"`
+	Session string            `json:"session,omitempty"`
+	Cwd     string            `json:"cwd,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+	Input   json.RawMessage   `json:"input,omitempty"`
+	Value   json.RawMessage   `json:"value,omitempty"`
+	Select  string            `json:"select,omitempty"`
 }
 
 type FlowEdge struct {
@@ -102,6 +107,10 @@ func (def FlowDefinition) Validate() error {
 		case FlowNodeTypeACP:
 			if node.Prompt == "" {
 				return fmt.Errorf("%w: acp node %s prompt is required", ErrInvalidFlowDefinition, node.ID)
+			}
+		case FlowNodeTypeAction:
+			if strings.TrimSpace(node.Command) == "" {
+				return fmt.Errorf("%w: action node %s command is required", ErrInvalidFlowDefinition, node.ID)
 			}
 		case FlowNodeTypeCompute:
 			hasValue := len(node.Value) > 0
