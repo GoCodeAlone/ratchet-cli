@@ -59,6 +59,12 @@ Source: workspace `AGENTS.md`, repo `README.md`, `docs/harness-emulation.md`, `d
   - ACP JSON-RPC validation: `jsonrpc:"2.0"` plus request/notification/response shape.
   - Sidecar path under the ACP client state directory: `events/<escaped-session-id>.ndjson`.
   - Event line schema for ratchet-owned logs: `{seq, at, direction, message}`.
+  - `EventLogProvider` interface for values that can expose event lines after a prompt run.
+- Extend live ACP client results without replacing `acp-go-sdk`:
+  - `Result` gains `Events []EventLogLine`.
+  - `Callbacks.SessionUpdate` records normalized inbound `session/update` JSON-RPC notifications.
+  - `SessionRunner.Prompt` records outbound prompt and inbound prompt response envelopes around the SDK call, with synthetic local IDs clearly scoped to the sidecar log.
+  - Imported ACPX raw histories remain exact raw `message` payloads; ratchet-generated sidecars are normalized ACP event logs, not byte-for-byte stdio taps.
 - `ImportSession`:
   - Accept ACPX archive v1 where `history` entries are raw JSON-RPC messages.
   - Preserve raw history into sidecar NDJSON.
@@ -67,7 +73,7 @@ Source: workspace `AGENTS.md`, repo `README.md`, `docs/harness-emulation.md`, `d
 - `ExportSession`:
   - Default remains current summary history for backward compatibility.
   - New `--history raw|summary|both` selects raw ACPX-compatible history, existing summary history, or both (`history` raw + `summary_history`).
-  - If raw requested and sidecar is absent, export an empty raw history plus metadata warning in JSON/human output; do not synthesize false wire history.
+  - If raw is requested and no sidecar exists, fail with a typed raw-history-unavailable error; do not synthesize false wire history and do not emit empty raw archives by default.
 - `sessions events <id>`:
   - Print event count and sidecar path by default; `--json` returns structured metadata.
   - `--output <path>` copies raw NDJSON for scripting/replay.
@@ -78,7 +84,7 @@ Source: workspace `AGENTS.md`, repo `README.md`, `docs/harness-emulation.md`, `d
   - flags: `--run-id <id>`, `--run-root <dir>`, `--save`.
   - default root: sibling of ACP client state, `compare/<run-id>`.
   - `compare.json`: prompt digest, agents, rows, started/finished timestamps, status.
-  - `agents/<safe-agent>/events.ndjson`: per-agent event logs when the runner returns them.
+  - `agents/<safe-agent>/events.ndjson`: per-agent event logs copied from `Result.Events`/`EventLogProvider`.
 - JSON/stdout rows remain compatible; `run_dir` is additive only when saved.
 - Human output stays table-oriented and never prints raw event payloads.
 
@@ -90,6 +96,10 @@ Source: workspace `AGENTS.md`, repo `README.md`, `docs/harness-emulation.md`, `d
   - `projections/run.json`, `projections/live.json`, `projections/steps.json`.
   - `artifacts/sha256-*.json|txt` for prompt text, action stdout/stderr, node outputs.
   - `sessions/<handle>/binding.json` and `sessions/<handle>/events.ndjson` for ACP node runs when event data is available.
+- Extend `FlowPromptRunner` with optional event access:
+  - existing fake runners keep compiling through a small adapter/default method path;
+  - real `SessionRunner` exposes `LastEvents()` after each prompt;
+  - flow store writes per-handle event bundles and node outcome trace links when events exist.
 - Add `ratchet acp client flow replay <run-dir> [--json]`:
   - validates manifest paths stay inside the run dir;
   - reads manifest/projections/trace counts;
@@ -131,10 +141,11 @@ No production deploy. Release is a Git tag + GoReleaser assets + Homebrew tap up
 | boundary | proof |
 |---|---|
 | Archive import/export ↔ store/event sidecars | Unit tests with ACPX-shaped raw archive fixture; binary smoke import/export through built CLI. |
-| ACP client ↔ fixture ACP agent | Existing fixture agent plus new smoke verifies saved event sidecar metadata/counts. |
+| ACP client ↔ fixture ACP agent | Existing fixture agent plus new smoke verifies saved event sidecar metadata/counts and includes outbound prompt, inbound update, and inbound response envelopes. |
 | Compare ↔ artifact bundle | Unit tests and binary smoke run two fixture agents, save bundle, read `compare.json` and event files. |
 | Flow runtime ↔ bundle replay | Unit tests and binary smoke run action+ACP JSON flow, then `flow replay --json` reads manifest/projections without launching agents. |
 | Docs ↔ policy/parity | `HarnessEmulationDocs` test asserts raw ACPX event logs no longer listed as deferred while TypeScript runtime remains deferred. |
+| ACPX archive fixture | Test imports an `exported_by:"acpx"` archive with raw JSON-RPC `history`, preserves sidecar events, exports `--history raw`, and asserts raw JSON-RPC messages round-trip. |
 
 ## Rollback
 
@@ -167,3 +178,11 @@ Revert feature PRs and release tag if needed. Old archives/flow bundles remain r
 - Pi JSONL branch-tree interoperability.
 - Local-first gateway/channels.
 - Full sandbox/path/network enforcement.
+
+## Review Resolutions
+
+| finding | resolution |
+|---|---|
+| D1 | Added `EventLogProvider`, `Result.Events`, `SessionRunner.LastEvents()`, compare bundle event copy, and flow per-handle event bundle requirements. |
+| D2 | Raw export now fails when sidecar raw history is unavailable; no empty raw archive is emitted by default. |
+| D3 | Multi-component validation now requires an upstream-shaped `exported_by:"acpx"` archive fixture round-trip. |
