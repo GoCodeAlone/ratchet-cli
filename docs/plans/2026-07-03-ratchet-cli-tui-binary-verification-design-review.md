@@ -652,3 +652,46 @@ None.
 3. Explicit `release-check` → Windows packaged-smoke CI DAG.
 
 **Verdict reasoning:** D56-D59 are resolved, but new Important gaps remain: slash-command claims exceed the real proof surface, Windows packaged proof lacks an explicit artifact dependency, and branch switching is not proven through the App-level chat reload path. Status is FAIL.
+
+## Cycle 16
+
+### Adversarial Review Report
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `D64` [Existence/runtime-validity / User-intent drift] [design:246-265,289-291; `internal/tui/commands/commands.go`:49-126]: D60 is directionally addressed, but fail-closed command classification is not mechanically defined. `commands.Parse` is a hand-written switch, `helpCmd` is a separate string list, and autocomplete is a third list; no enumerable command registry exists. Recommendation: require a single declarative command registry or an AST-based guard that extracts switch cases from `Parse` and compares them to help/autocomplete/coverage rows.
+- `D65` [Infrastructure impact / Repo-precedent conflicts] [design:300-302; `.github/workflows/ci.yml`:17-28,48-58]: The new non-race smoke CI job is specified only as a `go test` command; existing CI jobs do checkout, setup-go, and private-module Git rewrite. Recommendation: make the smoke command a step in a setup-equivalent job or explicitly require checkout, setup-go `1.26`, `GOPRIVATE`/`GONOSUMCHECK`, and the same Git rewrite.
+- `D66` [Declared integration proof / Rollback story] [design:402-413,545-547; `.goreleaser.yaml`:4-18]: Release guard runs packaged `help/version` only for host-compatible Unix and Windows zip; non-host Linux/Darwin artifacts are not binary-content checked beyond archive/member names. Recommendation: extract every packaged `ratchet` binary and byte-scan/`strings`-scan forbidden tokens for all OS/arch artifacts; keep executable runs where practical.
+
+**Findings (Minor):**
+- `D67` [Artifact-class precedent / Infrastructure impact] [design:331-333; `.github/workflows/ci.yml`:36-39]: Windows cross-build commands omit `-o`, unlike existing CI, and can write `ratchet.exe` into repo root. Recommendation: require explicit temp outputs.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | `docs/design-guidance.md` absent; fallback guidance captured, but Windows/release proof still has CI and artifact-proof gaps. |
+| Assumptions under attack | Finding | Design assumes non-declarative command surfaces can be enumerated and partial packaged-binary execution proves all release binaries. |
+| Repo-precedent conflicts | Finding | New non-race smoke job omits existing CI setup pattern. |
+| Artifact-class precedent | Finding | Existing Windows cross-build uses explicit `/tmp` outputs; proposed commands write into repo root. |
+| YAGNI violations | Clean | No ConPTY, visual snapshot framework, new command surface, external-provider CI, or import/export/flow scope. |
+| Missing failure modes | Finding | Manual command classification, CI private-module fetch failure, and non-host release binary contamination remain plausible. |
+| Security/privacy at architecture level | Clean | Temp state/workdir, build-tag isolation, socket containment, hook/instruction leak checks, and redaction are explicit. |
+| Infrastructure impact | Finding | CI topology for non-race smoke and cross-build artifact placement are underspecified. |
+| Multi-component validation | Finding | D56-D63 resolved in text, but release validation still does not inspect every packaged binary surface. |
+| Declared integration proof | Finding | GoReleaser/Windows handoff explicit, but non-host packaged binaries are not behaviorally checked for forbidden smoke surfaces. |
+| Contributed UI rendering proof | Clean | No plugin-contributed host UI is claimed. |
+| Rollback story | Finding | Source rollback is adequate, but guard can miss bad non-host release binary before publish. |
+| Simpler alternative not considered | Finding | Shared declarative command registry would be stricter than testing three manual lists. |
+| User-intent drift | Finding | Command-surface table can still drift without mechanical extraction. |
+| Existence/runtime-validity | Finding | `Parse` is not enumerable as designed; D64-D66 remain executable-contract gaps. |
+
+**Options the author may not have considered:**
+1. Shared command registry driving `Parse`, `/help`, autocomplete, CLI help snippets, and coverage classification.
+2. All-archive binary byte scan plus executable `help/version` runs where supported.
+
+**Verdict reasoning:** D56-D63 are resolved on paper, but the proof remains non-fail-closed in three places: command classification is not mechanically tied to the parser, the new smoke CI job lacks existing private-module setup, and release artifact inspection does not cover all packaged binaries.
