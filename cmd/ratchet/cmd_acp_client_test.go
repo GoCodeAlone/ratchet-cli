@@ -94,6 +94,9 @@ func TestParseACPClientCompareCommand(t *testing.T) {
 		"--command", "/bin/agent-b",
 		"--cwd", "/tmp/project",
 		"--timeout", "3s",
+		"--save",
+		"--run-id", "fixed-run",
+		"--run-root", "/tmp/compare-runs",
 		"compare", "prompt",
 	})
 	if err != nil {
@@ -105,7 +108,8 @@ func TestParseACPClientCompareCommand(t *testing.T) {
 	if got, want := strings.Join(cmd.compare.Commands, ","), "/bin/agent-a,/bin/agent-b"; got != want {
 		t.Fatalf("Commands = %q, want %q", got, want)
 	}
-	if cmd.compare.Cwd != "/tmp/project" || cmd.compare.Timeout != 3*time.Second || cmd.compare.Prompt != "compare prompt" {
+	if cmd.compare.Cwd != "/tmp/project" || cmd.compare.Timeout != 3*time.Second || cmd.compare.Prompt != "compare prompt" ||
+		!cmd.compare.Save || cmd.compare.RunID != "fixed-run" || cmd.compare.RunRoot != "/tmp/compare-runs" {
 		t.Fatalf("compare options = %#v", cmd.compare)
 	}
 
@@ -1290,6 +1294,60 @@ func TestExecuteACPClientCompareTextAndJSON(t *testing.T) {
 	}
 	if len(rows) != 2 || rows[0].Status != "ok" || rows[0].Final != "agent a final" {
 		t.Fatalf("rows = %#v", rows)
+	}
+}
+
+func TestExecuteACPClientCompareSaveBundle(t *testing.T) {
+	runRoot := t.TempDir()
+	runner := &fakeCompareCommandRunner{
+		results: map[string]acpclient.Result{
+			"/bin/agent-a": {
+				StopReason: acpsdk.StopReasonEndTurn,
+				Text:       "a final",
+				Events: []acpclient.EventLogLine{{
+					Seq:       1,
+					At:        time.Date(2026, 7, 3, 9, 40, 0, 0, time.UTC),
+					Direction: acpclient.EventDirectionOutbound,
+					Message:   json.RawMessage(`{"jsonrpc":"2.0","id":"prompt-1","method":"session/prompt","params":{"sessionId":"a"}}`),
+				}},
+			},
+			"/bin/agent-b": {StopReason: acpsdk.StopReasonEndTurn, Text: "b final"},
+		},
+	}
+	var out bytes.Buffer
+	err := executeACPClientCompare(t.Context(), acpClientCompareOptions{
+		Commands: []string{"/bin/agent-a", "/bin/agent-b"},
+		Cwd:      ".",
+		Prompt:   "bundle prompt",
+		JSON:     true,
+		Save:     true,
+		RunID:    "fixed-run",
+		RunRoot:  runRoot,
+	}, runner, &out)
+	if err != nil {
+		t.Fatalf("executeACPClientCompare: %v", err)
+	}
+	var payload struct {
+		RunID  string                 `json:"run_id"`
+		RunDir string                 `json:"run_dir"`
+		Status string                 `json:"status"`
+		Rows   []acpclient.CompareRow `json:"rows"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("compare save json: %v\n%s", err, out.String())
+	}
+	if payload.RunID != "fixed-run" || payload.Status != "completed" || len(payload.Rows) != 2 {
+		t.Fatalf("payload = %#v", payload)
+	}
+	if _, err := os.Stat(filepath.Join(payload.RunDir, "compare.json")); err != nil {
+		t.Fatalf("stat compare.json: %v", err)
+	}
+	eventsFiles, err := filepath.Glob(filepath.Join(payload.RunDir, "agents", "*", "events.ndjson"))
+	if err != nil {
+		t.Fatalf("glob events: %v", err)
+	}
+	if len(eventsFiles) != 1 {
+		t.Fatalf("events files = %#v, want one agent event file", eventsFiles)
 	}
 }
 
