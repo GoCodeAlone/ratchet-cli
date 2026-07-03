@@ -27,7 +27,7 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
 
 | guidance | design response |
 |---|---|
-| Build for Windows. | Keep production code portable. PTY proof is Unix-only because it depends on pseudo-terminal behavior; add Windows compile proof and non-PTY CLI smoke so Windows remains covered honestly. |
+| Build for Windows. | Keep production code portable. PTY proof is Unix-only because it depends on pseudo-terminal behavior; add Windows compile proof and packaged archive inspection so Windows remains covered honestly without changing runner classes. |
 | Prefer existing helpers and avoid duplicated plumbing. | Reuse daemon/client/TUI packages and built-in mock provider; do not add a parallel TUI runner or provider SDK. |
 | Verify real boundaries, not demos. | Build the release-shaped `ratchet` binary for normal CLI/daemon/startup smoke, and build a dedicated non-release `ratchet-tui-smoke` binary for credential-free PTY proof of the same Bubble Tea TUI event loop. |
 | Keep sensitive data local. | Use temp `HOME`/`XDG_STATE_HOME`; prompts are deterministic test strings; no credentials or real provider state. |
@@ -408,7 +408,8 @@ Mechanical fail-closed check:
 - Update public `ratchet help` / `printUsage` slash-command section to retain
   and match the same mode/trust/tree slash surface. Binary smoke must assert the
   built CLI help includes the aligned entries; removing the section is out of
-  scope for this slice because Windows packaged-help smoke depends on it.
+  scope for this slice because host-compatible packaged-help checks and docs
+  guards depend on it.
 - Add focused tests proving submitted-command support, `/help`, and
   autocomplete do not drift for the mode/trust/tree slash surface. Add a
   `cmd/ratchet` built-binary help assertion for `ratchet help`; that CLI test
@@ -1028,7 +1029,7 @@ preflight PR.
 | D66 | Required extraction and byte-scanning of every packaged `ratchet` binary from every GoReleaser archive, with executable help/version checks kept where practical. |
 | D67 | Changed Windows cross-build proof to write explicit temp output paths instead of repo-root `ratchet.exe`. |
 | D68 | Replaced broad command regex extraction with a test-owned typed command-spec table plus separate top-level parser, help-row, autocomplete, and subcommand checks. |
-| D69 | Chose the retained public `ratchet help` slash-section contract and required CLI help alignment because Windows packaged-help smoke asserts it. |
+| D69 | Chose the retained public `ratchet help` slash-section contract and required CLI help alignment because host-compatible packaged-help checks and docs guards assert it. |
 | D70 | Required draft-release postcheck to download actual uploaded GitHub release assets and run the same archive/all-binary byte-scan guard before undrafting. |
 | D71 | Split docs guard behavior: exact positive TUI smoke evidence required only in README harness table and `docs/harness-emulation.md`; RATCHET/parity/policy get negative overclaim scanning unless they claim TUI binary evidence. |
 | D72 | Added source-derived AST checks for `modeCmd` mode keys, `trustCmd` subcommands, and `providerCmd` subcommands, compared to the typed command spec and proof classifications. |

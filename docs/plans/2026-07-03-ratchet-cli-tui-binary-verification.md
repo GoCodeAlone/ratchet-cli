@@ -4,7 +4,7 @@
 
 **Goal:** Add credential-free automated proof for the Ratchet TUI binary, release-shaped startup behavior, Windows cross-build/package archive safety, and release/tap artifact guards that prevent `ratchet-tui-smoke` from leaking into public artifacts.
 
-**Architecture:** Keep the real release binary and the test-only TUI driver separate: untagged `ratchet` gets startup/daemon proof, while build-tagged Unix-only `ratchet-tui-smoke` drives the Bubble Tea event loop through PTY with a smoke daemon service. Add mode-gated `internal/releaseguard` Go tests plus thin scripts/workflows for GoReleaser, draft release assets, Windows zip smoke, and Homebrew Cask/Formula tap checks.
+**Architecture:** Keep the real release binary and the test-only TUI driver separate: untagged `ratchet` gets startup/daemon proof, while build-tagged Unix-only `ratchet-tui-smoke` drives the Bubble Tea event loop through PTY with a smoke daemon service. Add mode-gated `internal/releaseguard` Go tests plus thin scripts/workflows for GoReleaser, draft release assets, Windows archive checks, and Homebrew Cask/Formula tap checks.
 
 **Tech Stack:** Go 1.26, Bubble Tea v2, Unix PTY tests, gRPC daemon/client, GoReleaser v2.16+ config, GitHub Actions, Homebrew tap Ruby files, `gopkg.in/yaml.v3`.
 
@@ -35,7 +35,7 @@
 | 1 | `test: add tui smoke binary harness` | Task 1, Task 2, Task 3 | `feat/tui-smoke-binary-harness` |
 | 2 | `test: prove startup and command surfaces` | Task 4, Task 5, Task 6 | `feat/tui-startup-command-proof` |
 | 3 | `chore: guard release artifacts` | Task 7, Task 8 | `feat/release-artifact-guard` |
-| 4 | `chore: gate tap and windows release smoke` | Task 9, Task 10, Task 11 | `feat/release-tap-windows-smoke` |
+| 4 | `chore: gate tap and windows archive proof` | Task 9, Task 10, Task 11 | `feat/release-tap-windows-smoke` |
 | 5 | `docs: publish harness evidence` | Task 12 | `docs/tui-binary-verification-release` |
 | 6 | `docs: close tui verification release` | Task 13 | `docs/tui-verification-closeout` |
 
@@ -635,7 +635,7 @@ git commit -m "ci: add release and tui smoke checks"
 
 Rollback: revert CI commit; runtime code remains independently tested.
 
-### Task 11: Release Workflow, Draft Assets, Tap Postcheck, Windows Smoke
+### Task 11: Release Workflow, Draft Assets, Tap Postcheck, Windows Archive Proof
 
 **Files:**
 - Modify: `.github/workflows/release.yml`
