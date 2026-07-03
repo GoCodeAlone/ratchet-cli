@@ -477,3 +477,45 @@ None.
 3. Draft-release postcheck: after GoReleaser creates the draft release, inspect uploaded asset names/checksums before the existing publish script undrafts it.
 
 **Verdict reasoning:** The design is close, but it still has unresolved Important issues where implementation could either fail mechanically or pass while proving something different from the claim. Status is FAIL until the shortcut evidence matches actual rendering, the docs guard is made precise, and release workflow setup mirrors the repo's private-module CI requirements.
+
+## Cycle 12
+
+### Adversarial Review Report
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `D48` [Rollback story / Infrastructure impact / Declared integration proof] [design:304-308,443; `.goreleaser.yaml`:44-69; `.github/workflows/release.yml`:17-51]: The draft-release postcheck happens after `goreleaser release --clean` publishes all configured side effects, including the Homebrew cask repo update via `homebrew_casks.repository`. A GitHub draft can be held before undrafting, but a bad tap/cask commit is already pushed to the external tap by then; "before public release" is therefore false for that integration. Recommendation: either make the release path inspect the exact Homebrew cask material before any tap push, split tap publishing into a post-guard step, or state and accept that Homebrew rollback is after-the-fact rather than release-blocking.
+- `D49` [Repo-precedent conflicts / Artifact-class precedent / Existence/runtime-validity] [design:284-292; `.github/workflows/release.yml`:11-20]: The new PR/push `release-check` job does not say to checkout with `fetch-depth: 0`, while the existing release workflow does so before GoReleaser. GoReleaser derives versions/changelogs from git tags; a shallow PR checkout can make the preflight non-equivalent to the tag release path or fail for reasons the real release job avoids. Recommendation: require `actions/checkout@v4` with `fetch-depth: 0` in `release-check` and any other GoReleaser preflight job.
+
+**Findings (Minor):**
+- `D50` [Multi-component validation / Infrastructure impact] [design:233-239]: The non-race CI command is fixed to `-run 'HarnessSmoke|TUIBinarySmoke'`, but the design does not require the new release-shaped startup/onboarding smoke test to use a matching name. An implementer can add `TestReleaseStartupSmoke` or similar and still have CI skip the very proof that distinguishes untagged `ratchet` startup from the build-tagged TUI smoke. Recommendation: name the required tests explicitly or broaden the CI regex to include the startup smoke contract.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | The design targets real, Windows-honest, release-safe proof, but D48 means one release surface can publish before the guard can block it. |
+| Assumptions under attack | Finding | The design assumes draft-release postcheck gates every publish surface, assumes GoReleaser preflight has release-equivalent git state, and assumes CI regex will catch future startup-smoke naming. |
+| Repo-precedent conflicts | Finding | Existing release workflow uses full fetch before GoReleaser; the new `release-check` job omits that precedent. |
+| Artifact-class precedent | Finding | GoReleaser jobs and binary-smoke tests need exact runner/test discovery wiring; D49 and D50 leave those mechanics underspecified. |
+| YAGNI violations | Clean | No ConPTY runner, visual snapshot framework, external-provider CI, new runtime command, or broader policy work is added. |
+| Missing failure modes | Finding | Bad Homebrew tap publication before postcheck and CI skipping a differently named startup smoke are unhandled failure modes. |
+| Security/privacy at architecture level | Clean | Build-tag isolation, temp state/workdir, Unix-socket containment, and redaction boundaries are explicit enough at design level. |
+| Infrastructure impact | Finding | Release workflow and CI changes affect GoReleaser/Homebrew surfaces; D48 and D49 make the guard less reliable than claimed. |
+| Multi-component validation | Finding | TUI/daemon/mock proof is well scoped, but the untagged startup proof may not be guaranteed in CI if test naming drifts. |
+| Declared integration proof | Finding | Homebrew cask/tap is a declared release integration, but current postcheck cannot block that external publish side effect. |
+| Contributed UI rendering proof | Clean | No plugin-contributed host-shell UI is claimed; this is direct Bubble Tea TUI rendering. |
+| Rollback story | Finding | GitHub release rollback is covered, but Homebrew tap rollback is after-the-fact unless the publish step is split or prechecked against exact cask output. |
+| Simpler alternative not considered | Finding | A split release workflow that snapshots/builds, guards, then publishes GitHub assets and tap changes separately would make the guard easier to reason about. |
+| User-intent drift | Finding | The user asked for release-safe proof; claiming "before public release" while tap publishing can already happen drifts from that mandate. |
+| Existence/runtime-validity | Finding | The referenced release workflow and GoReleaser config exist and show full-fetch precedent plus Homebrew cask publishing side effects. |
+
+**Options the author may not have considered:**
+1. Split Homebrew publishing from GoReleaser asset publishing: generate and inspect the cask first, publish GitHub draft assets only after the guard passes, then push the tap update as a separate guarded step. Trade-off: more workflow plumbing, but the rollback story becomes genuinely pre-publication.
+2. Make smoke CI discover tests by contract rather than name regex: put all smoke tests behind an explicit `TestHarnessSmoke...` naming convention and enforce it in the design, or use a broader regex such as `Smoke|Startup` for the focused non-race job. Trade-off: broader regex can run a little more test code, but it avoids silent proof gaps.
+
+**Verdict reasoning:** The current text resolves most prior design failures, especially the build-tagged smoke binary, slash/mode/trust matrix, Windows safe-command smoke, and GoReleaser validation steps. It still has unresolved release-safety and CI-discovery gaps: the Homebrew tap can be modified before the proposed postcheck blocks public release, the GoReleaser PR preflight is not release-equivalent without full git history, and the startup smoke can be skipped by the fixed CI regex. Status is FAIL because open Important findings remain.
