@@ -158,3 +158,39 @@
 2. Move smoke-source manifest ownership into one table-driven testdata file updated by every task adding smoke/runtime/tooling token surfaces.
 
 **Verdict reasoning:** FAIL. P1-P12 were addressed, but plan could still pass focused task checks while missing source-manifest drift and tap-postcheck workflow interface proof.
+
+## Cycle 5
+
+### Adversarial Review Report
+
+**Phase:** plan
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `P16` [Infrastructure verification mismatch / release proof] [design:689-690,698; plan:621-637,659-670]: Design requires pre-publish gate that fails unless `.goreleaser.yaml` has `release.draft: true`, but plan only verifies draft state after GoReleaser has published assets. Recommendation: add releaseguard config tests and release workflow preflight asserting `.goreleaser.yaml` `release.draft == true` before `goreleaser release --clean`, and include it in Task 11 verification.
+
+**Findings (Minor):**
+- `P17` [Executable command robustness] [plan:427-436]: Task 7's missing-env negative check is written as a normal command even though expected result is failure. Recommendation: wrap it as explicit negative assertion and assert missing-env diagnostic.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | P16 weakens release-safe draft gate. |
+| Assumptions under attack | Finding | Plan assumed post-publish draft inspection is enough to prevent public-before-postcheck exposure. |
+| Missing failure modes | Finding | P16 misses release was never draft before publish; P17 command is easy to execute incorrectly. |
+| Infrastructure impact | Finding | P16 affects tag release/publication ordering. |
+| Declared integration proof | Finding | Draft asset integration proof is post-publish only unless fixed. |
+| Existence/runtime-validity | Finding | P16 consumer-validity gap for release workflow state; P17 command executability nit. |
+| Verification-class mismatch | Finding | P16 lacks required pre-publish config verification. |
+| Missing integration proof | Finding | Draft-release pre-public proof incomplete via P16. |
+| Infrastructure verification mismatch | Finding | P16. |
+
+**Options the author may not have considered:**
+1. Add `TestGoReleaserReleaseDraftConfig` under `internal/releaseguard` and call it from both snapshot wrapper and release workflow preflight.
+2. Workflow-only shell/YAML check before publish, but Go releaseguard keeps invariant with release safety contract.
+
+**Verdict reasoning:** FAIL. P1-P15 were addressed; remaining blocker was proving `release.draft: true` before publish, not only after assets may be public.

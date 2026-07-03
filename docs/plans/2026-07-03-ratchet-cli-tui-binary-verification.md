@@ -405,6 +405,7 @@ Add tests for:
 - ordinary `go test ./internal/releaseguard` runs unit fixtures and artifact tests skip with `releaseguard artifact mode not requested`;
 - explicit mode with missing env fails before scanning;
 - GoReleaser YAML parsing via `gopkg.in/yaml.v3`, no shell YAML parsing;
+- `TestGoReleaserReleaseDraftConfig` fails unless `.goreleaser.yaml` contains `release.draft: true`;
 - smoke-source guard tooling allowlist includes `internal/releaseguard` files that hold forbidden artifact tokens, while keeping them out of the smoke runtime manifest;
 - strict top-level taxonomy: current publish keys `builds`, `archives`, `checksum`, `homebrew_casks`, `brews`, `release`; unknown publishable key fails;
 - strict top-level taxonomy: current nonpublishable metadata keys `version` and `changelog` are allowed but not scanned as publishable artifact surfaces;
@@ -429,11 +430,15 @@ Implement Go helpers and shell wrapper. Update the smoke-source tooling allowlis
 ```bash
 gofmt -w internal/releaseguard
 go test ./internal/releaseguard -count=1
-RATCHET_RELEASE_GUARD_MODE=manifest go test ./internal/releaseguard -run TestManifestGuard -count=1
+if RATCHET_RELEASE_GUARD_MODE=manifest go test ./internal/releaseguard -run TestManifestGuard -count=1 2>&1 | tee /tmp/releaseguard-missing-env.log; then
+  echo "expected missing RATCHET_RELEASE_GUARD_DIST failure"
+  exit 1
+fi
+rg 'RATCHET_RELEASE_GUARD_DIST' /tmp/releaseguard-missing-env.log
 go test ./internal/tui -run SmokeSource -count=1
 ```
 
-Expected: first command PASS with artifact-mode skip message; second command FAIL before scan with missing `RATCHET_RELEASE_GUARD_DIST`.
+Expected: first command PASS with artifact-mode skip message; negative manifest command fails before scan and log contains `RATCHET_RELEASE_GUARD_DIST`.
 
 **Step 5: Verify local snapshot if GoReleaser available**
 
@@ -619,6 +624,7 @@ Rollback: revert CI commit; runtime code remains independently tested.
 **Step 1: Write failing releaseguard tests**
 
 Add tests for:
+- `TestGoReleaserReleaseDraftConfig` is run by release preflight and fails unless `.goreleaser.yaml` contains `release.draft: true`;
 - draft release assets mode reads an already-downloaded asset directory from `RATCHET_RELEASE_GUARD_ASSETS` plus `RATCHET_RELEASE_GUARD_VERSION`; it fails if expected archives/checksums are missing, if forbidden smoke tokens appear, or if fixture metadata says the release is not draft;
 - tap postcheck resolves exact path-changing commit per tap file, scans content/metadata, groups rollback targets by SHA, and warns on mixed commits;
 - Windows archive fixture requires both amd64 and arm64 zips; executes only amd64 in Windows job contract.
@@ -630,6 +636,7 @@ Before publish:
 - GoReleaser `check`;
 - GoReleaser snapshot `release --snapshot --clean --skip=publish`;
 - manifest guard;
+- pre-publish draft config guard with `go test ./internal/releaseguard -run TestGoReleaserReleaseDraftConfig -count=1` before `goreleaser release --clean`;
 - tap preflight with recorded cleanup/formula automation SHA evidence.
 
 After publish and before undraft:
@@ -662,12 +669,13 @@ Expected: executed path is under `package-amd64` extracted from `ratchet_windows
 GOOS=windows GOARCH=amd64 go build -o /tmp/ratchet-windows-amd64.exe ./cmd/ratchet
 GOOS=windows GOARCH=arm64 go build -o /tmp/ratchet-windows-arm64.exe ./cmd/ratchet
 go test ./internal/releaseguard -run 'DraftAssets|TapPostcheck|WindowsArchive' -count=1
+go test ./internal/releaseguard -run TestGoReleaserReleaseDraftConfig -count=1
 scripts/check-release-artifacts.sh
 scripts/check-release-artifacts.sh --manifest-only dist
 actionlint .github/workflows/ci.yml .github/workflows/release.yml
 ```
 
-Expected: PASS; Windows binaries are written only under `/tmp`; wrapper regenerates fresh `dist`; workflow lint is clean and release workflow sets `RATCHET_RELEASE_GUARD_TAP`, `RATCHET_RELEASE_GUARD_TAP_NAMES`, `RATCHET_RELEASE_GUARD_TAP_COMMITS`, and `RATCHET_RELEASE_GUARD_VERSION` for tap-postcheck.
+Expected: PASS; draft config test proves `release.draft: true` before publish; Windows binaries are written only under `/tmp`; wrapper regenerates fresh `dist`; workflow lint is clean and release workflow sets `RATCHET_RELEASE_GUARD_TAP`, `RATCHET_RELEASE_GUARD_TAP_NAMES`, `RATCHET_RELEASE_GUARD_TAP_COMMITS`, and `RATCHET_RELEASE_GUARD_VERSION` for tap-postcheck.
 
 **Step 5: Commit**
 
