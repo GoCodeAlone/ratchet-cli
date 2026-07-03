@@ -66,7 +66,7 @@ func (s *CompareRunStore) Save(run CompareRun) (CompareRunBundle, error) {
 		}
 	}
 	run.Rows = stripCompareRowEvents(run.Rows)
-	bundle.CompareRun.Rows = run.Rows
+	bundle.Rows = run.Rows
 	if err := writeJSONFileAtomic(filepath.Join(run.RunDir, "compare.json"), run, 0o600); err != nil {
 		return CompareRunBundle{}, err
 	}
