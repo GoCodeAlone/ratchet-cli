@@ -174,6 +174,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.showSidebar = !a.showSidebar
 				if a.showSidebar {
 					a.showTeam = false
+					a.showJobs = false
 				}
 			case "ctrl+t":
 				a.showTeam = !a.showTeam
@@ -186,6 +187,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if a.showJobs {
 					a.showSidebar = false
 					a.showTeam = false
+					cmds = append(cmds, a.jobPanel.Init())
 				}
 			}
 		}
@@ -232,6 +234,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case pages.ChatEventMsg:
 		if msg.SessionID != "" && msg.SessionID != a.sessionID {
 			return a, nil
+		}
+		switch msg.Event.GetEvent().(type) {
+		case *pb.ChatEvent_Complete, *pb.ChatEvent_Error:
+			a.loading = false
 		}
 
 	case components.SessionKillMsg:

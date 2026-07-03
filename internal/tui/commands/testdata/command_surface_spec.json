@@ -1,0 +1,27 @@
+{
+  "commands": [
+    {"command": "/help", "evidence": "pty-proven"},
+    {"command": "/provider list", "evidence": "pty-proven"},
+    {"command": "/tree", "evidence": "pty-proven"},
+    {"command": "/mode conservative", "evidence": "pty-proven"},
+    {"command": "/mode permissive", "evidence": "pty-proven"},
+    {"command": "/mode locked", "evidence": "pty-proven"},
+    {"command": "/mode sandbox", "evidence": "pty-proven"},
+    {"command": "/mode custom", "evidence": "pty-proven"},
+    {"command": "/trust list", "evidence": "pty-proven"},
+    {"command": "/trust allow \"smoke:allow\" --scope smoke", "evidence": "pty-proven"},
+    {"command": "/trust deny \"smoke:deny\" --scope smoke", "evidence": "pty-proven"},
+    {"command": "/trust persist allow \"smoke:persist-allow\" --scope smoke", "evidence": "pty-proven"},
+    {"command": "/trust persist deny \"smoke:persist-deny\" --scope smoke", "evidence": "pty-proven"},
+    {"command": "/trust grants", "evidence": "pty-proven"},
+    {"command": "/trust revoke \"smoke:persist-allow\" --scope smoke", "evidence": "pty-proven"},
+    {"command": "/trust reset", "evidence": "pty-proven"},
+    {"command": "/exit", "evidence": "pty-proven"}
+  ],
+  "shortcuts": [
+    {"keys": "ctrl+b", "evidence": "pty-proven"},
+    {"keys": "ctrl+s", "evidence": "pty-proven"},
+    {"keys": "ctrl+t", "evidence": "pty-proven"},
+    {"keys": "ctrl+j", "evidence": "pty-proven"}
+  ]
+}

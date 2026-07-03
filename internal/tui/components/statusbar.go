@@ -56,7 +56,7 @@ func (s StatusBar) View(t theme.Theme) string {
 	line1 := strings.Join(segments, "  ")
 
 	// Line 2: keybind hints (right-aligned)
-	hints := "Ctrl+S sidebar  Ctrl+T team  Ctrl+H thinking  Ctrl+C quit "
+	hints := statusBarHints(s.Width)
 	pad1 := s.Width - lipgloss.Width(line1)
 	if pad1 < 0 {
 		pad1 = 0
@@ -70,6 +70,24 @@ func (s StatusBar) View(t theme.Theme) string {
 	row2 := strings.Repeat(" ", pad2) + hints
 
 	return t.StatusBar.Width(s.Width).Render(row1 + "\n" + row2)
+}
+
+func statusBarHints(width int) string {
+	candidates := []string{
+		"Ctrl+B tree  Ctrl+S sidebar  Ctrl+T team  Ctrl+J jobs  Ctrl+H thinking  Ctrl+C quit ",
+		"Ctrl+B tree  Ctrl+J jobs  Ctrl+C quit ",
+		"Ctrl+C quit ",
+		"Ctrl+C",
+	}
+	if width <= 0 {
+		return ""
+	}
+	for _, candidate := range candidates {
+		if lipgloss.Width(candidate) <= width {
+			return candidate
+		}
+	}
+	return candidates[len(candidates)-1][:width]
 }
 
 func shortenPath(p string) string {

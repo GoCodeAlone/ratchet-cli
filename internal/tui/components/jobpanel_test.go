@@ -1,6 +1,8 @@
 package components
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -8,6 +10,16 @@ import (
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 	"github.com/GoCodeAlone/ratchet-cli/internal/tui/theme"
 )
+
+type failingJobClient struct{}
+
+func (failingJobClient) ListJobs(context.Context) (*pb.JobList, error) {
+	return nil, errors.New("boom")
+}
+
+func (failingJobClient) PauseJob(context.Context, string) error { return nil }
+
+func (failingJobClient) KillJob(context.Context, string) error { return nil }
 
 func TestJobPanel_Render(t *testing.T) {
 	jp := NewJobPanel(nil).SetSize(100, 24)
@@ -17,6 +29,27 @@ func TestJobPanel_Render(t *testing.T) {
 	}
 	if !strings.Contains(view, "No active jobs") {
 		t.Error("expected 'No active jobs' when list is empty")
+	}
+}
+
+func TestJobPanel_RenderRefreshError(t *testing.T) {
+	jp := newJobPanelWithClient(failingJobClient{}).SetSize(100, 24)
+	msg := jp.fetchJobs()()
+	refreshed, ok := msg.(JobListRefreshErrorMsg)
+	if !ok {
+		t.Fatalf("expected JobListRefreshErrorMsg, got %T", msg)
+	}
+	jp, _ = jp.Update(refreshed)
+
+	view := jp.View(theme.Dark())
+	if !strings.Contains(view, "Could not refresh jobs") {
+		t.Fatalf("expected refresh error in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "boom") {
+		t.Fatalf("expected original error detail in view, got:\n%s", view)
+	}
+	if strings.Contains(view, "No active jobs") {
+		t.Fatalf("refresh error should not also render empty state, got:\n%s", view)
 	}
 }
 

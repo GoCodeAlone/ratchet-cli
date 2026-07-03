@@ -25,20 +25,34 @@ type JobKillMsg struct{ JobID string }
 // JobListRefreshedMsg carries a fresh job list from the daemon.
 type JobListRefreshedMsg struct{ Jobs []*pb.Job }
 
+// JobListRefreshErrorMsg carries a daemon refresh failure.
+type JobListRefreshErrorMsg struct{ Err error }
+
 // JobTickMsg triggers a periodic refresh.
 type JobTickMsg struct{}
 
 // JobPanel displays active jobs from all managers in a table.
 type JobPanel struct {
-	jobs   []*pb.Job
-	cursor int
-	width  int
-	height int
-	c      *client.Client
+	jobs       []*pb.Job
+	cursor     int
+	width      int
+	height     int
+	c          jobPanelClient
+	refreshErr error
+}
+
+type jobPanelClient interface {
+	ListJobs(context.Context) (*pb.JobList, error)
+	PauseJob(context.Context, string) error
+	KillJob(context.Context, string) error
 }
 
 // NewJobPanel creates a JobPanel backed by the given daemon client.
 func NewJobPanel(c *client.Client) JobPanel {
+	return JobPanel{c: c}
+}
+
+func newJobPanelWithClient(c jobPanelClient) JobPanel {
 	return JobPanel{c: c}
 }
 
@@ -87,9 +101,13 @@ func (jp JobPanel) Update(msg tea.Msg) (JobPanel, tea.Cmd) {
 
 	case JobListRefreshedMsg:
 		jp.jobs = msg.Jobs
+		jp.refreshErr = nil
 		if jp.cursor >= len(jp.jobs) {
 			jp.cursor = max(0, len(jp.jobs)-1)
 		}
+
+	case JobListRefreshErrorMsg:
+		jp.refreshErr = msg.Err
 
 	case JobPauseMsg:
 		if jp.c != nil {
@@ -111,7 +129,7 @@ func (jp JobPanel) fetchJobs() tea.Cmd {
 		}
 		list, err := jp.c.ListJobs(context.Background())
 		if err != nil {
-			return JobListRefreshedMsg{}
+			return JobListRefreshErrorMsg{Err: err}
 		}
 		return JobListRefreshedMsg{Jobs: list.Jobs}
 	}
@@ -134,6 +152,13 @@ func (jp JobPanel) View(t theme.Theme) string {
 			"Type", "Name", "Status", "Elapsed", "Session"))
 
 	lines := []string{title, divider, header, divider}
+
+	if jp.refreshErr != nil {
+		lines = append(lines, lipgloss.NewStyle().
+			Foreground(t.Error).
+			Padding(0, 1).
+			Render("Could not refresh jobs: "+jp.refreshErr.Error()))
+	}
 
 	for i, job := range jp.jobs {
 		icon := statusIcon(job.Status)
@@ -167,7 +192,7 @@ func (jp JobPanel) View(t theme.Theme) string {
 		lines = append(lines, line)
 	}
 
-	if len(jp.jobs) == 0 {
+	if len(jp.jobs) == 0 && jp.refreshErr == nil {
 		lines = append(lines, lipgloss.NewStyle().
 			Foreground(t.Muted).
 			Padding(0, 1).
