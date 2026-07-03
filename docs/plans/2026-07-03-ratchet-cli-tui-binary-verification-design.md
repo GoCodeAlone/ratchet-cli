@@ -260,6 +260,12 @@ smoke include it or the public docs mark it out of scope.
 - Add Windows cross-build verification to the plan, not PTY execution:
   `GOOS=windows GOARCH=amd64 go build ./cmd/ratchet` and
   `GOOS=windows GOARCH=arm64 go build ./cmd/ratchet`.
+- Add a `windows-latest` CI smoke job that builds `ratchet.exe` and executes
+  safe non-PTY commands:
+  - `ratchet.exe version`;
+  - `ratchet.exe help`;
+  - output must include `ratchet`, `Commands:`, and the aligned slash-command
+    help entries, without starting the TUI or daemon.
 - If Go test cannot run Unix PTY on Windows CI, tests remain build-tagged by
   filename suffix and docs state that Windows interactive proof is not claimed.
 - The smoke package/client use `tui_smoke && !windows`; Windows verification
@@ -275,12 +281,20 @@ smoke include it or the public docs mark it out of scope.
 - Wire a PR/push CI job named `release-check` in `.github/workflows/ci.yml`:
   - checkout and setup Go `1.26`;
   - configure private-module Git rewrite like the existing jobs;
-  - run `goreleaser/goreleaser-action@v7` with `args: release --snapshot
-    --clean --skip=publish` and no publish tokens beyond the normal
-    `GITHUB_TOKEN`;
+  - run `goreleaser/goreleaser-action@v7` with `version: "~> v2"` and
+    `args: check`;
+  - run `goreleaser/goreleaser-action@v7` with `version: "~> v2"` and
+    `args: release --snapshot --clean --skip=publish`, with no publish tokens
+    beyond the normal `GITHUB_TOKEN`;
   - run `scripts/check-release-artifacts.sh --manifest-only dist`.
 - Keep `.github/workflows/release.yml` using the tag-only publishing command
-  `goreleaser release --clean`; the preflight script must stay publish-free.
+  `goreleaser release --clean`, but add a publish-free preflight before it:
+  - run `goreleaser/goreleaser-action@v7` with `version: "~> v2"` and
+    `args: check`;
+  - run `goreleaser/goreleaser-action@v7` with `version: "~> v2"` and
+    `args: release --snapshot --clean --skip=publish`;
+  - run `scripts/check-release-artifacts.sh --manifest-only dist`;
+  - only then run the existing publishing `goreleaser release --clean` step.
 - Local verification can run the script when GoReleaser is installed; ordinary
   `go test ./...` must not silently claim release-artifact coverage if
   GoReleaser is absent.
@@ -364,15 +378,17 @@ smoke include it or the public docs mark it out of scope.
 | Release-shaped startup leaks daemon process. | Cleanup stops or kills the temp-home daemon and asserts pid/socket files are gone. |
 | Binary smoke skipped under race. | Add non-race CI smoke job for `cmd/ratchet` and `internal/tui` smoke tests alongside the existing race suite. |
 | Release artifact guard only runs manually. | Add the publish-free `release-check` CI job; CI uses GoReleaser action for snapshot generation and the same manifest guard script local runs use. |
+| Tag release bypasses artifact guard. | Add the same publish-free `goreleaser check` + snapshot + manifest guard to `.github/workflows/release.yml` before the publishing step. |
 | Platform mismatch. | Unix PTY proof is explicitly Unix-only; Windows claim is limited to build/noninteractive smoke. |
 
 ## Infrastructure Impact
 
 No cloud resources, secrets, migrations, registry entries, Homebrew publishing,
-or production deploy. The only infrastructure change is a publish-free CI
-release-preflight job that installs GoReleaser and inspects local snapshot
-artifacts. Local test-only process and temp files only. Runtime behavior does
-not change in release builds because the smoke entrypoint is build-tagged out.
+or production deploy. Infrastructure changes are limited to publish-free
+GoReleaser preflight jobs on PR/push and before tag publishing, plus a
+`windows-latest` safe-command smoke job. Local test-only process and temp files
+only. Runtime behavior does not change in release builds because the smoke
+entrypoint is build-tagged out.
 
 ## Multi-Component Validation
 
@@ -387,8 +403,8 @@ not change in release builds because the smoke entrypoint is build-tagged out.
 | Shortcuts | PTY sends control keys and asserts branch tree/pane transitions with fixed-size full-frame checks; focused tests reject advertised-but-unimplemented shortcuts. |
 | Docs to tests | Docs guard fails if automated TUI smoke evidence is removed. |
 | Binary smoke to CI | Non-race CI smoke job runs the built-binary/startup/TUI smoke tests that the race suite skips. |
-| Release preflight to CI | `release-check` job runs GoReleaser snapshot generation and the same artifact-manifest guard used locally. |
-| Windows build | Cross-build commands prove release-shaped `ratchet` still compiles for Windows; `ratchet-tui-smoke` interactive PTY remains Unix-only. |
+| Release preflight to CI/release | `release-check` and tag release workflow both run `goreleaser check`, snapshot generation, and the same artifact-manifest guard before publish. |
+| Windows build/smoke | Cross-build commands prove release-shaped `ratchet` still compiles for Windows; `windows-latest` executes `ratchet.exe version` and `ratchet.exe help`; `ratchet-tui-smoke` interactive PTY remains Unix-only. |
 
 ## Integration Matrix
 
@@ -403,7 +419,8 @@ not change in release builds because the smoke entrypoint is build-tagged out.
 | Slash help/autocomplete/CLI help | runtime-integrated | Focused tests invoke in-TUI `/help`, autocomplete models, and built `ratchet help` to prove submitted command support and discoverability stay aligned. |
 | Non-race binary smoke CI | config-only | `.github/workflows/ci.yml` runs a focused non-race smoke job for subprocess/startup tests that are intentionally skipped under `-race`. |
 | Docs guard | config-only | `cmd/ratchet/harness_docs_test.go` checks public docs mention exact evidence boundaries. |
-| GoReleaser snapshot artifacts | runtime-integrated | Publish-free `release-check` CI job plus local script run `goreleaser check`/snapshot generation and archive inspection with deterministic `.goreleaser.yaml` fallback to prove `ratchet-tui-smoke` is absent from archives/checksums/Homebrew artifacts/release assets. |
+| GoReleaser snapshot artifacts | runtime-integrated | Publish-free `release-check` CI job, tag release preflight, and local script run `goreleaser check`/snapshot generation and archive inspection with deterministic `.goreleaser.yaml` fallback to prove `ratchet-tui-smoke` is absent from archives/checksums/Homebrew artifacts/release assets before publish. |
+| Windows safe-command smoke | runtime-integrated | `windows-latest` builds `ratchet.exe` and runs `version` and `help` to prove non-PTY Windows CLI startup/help behavior. |
 | Windows smoke package boundary | config-only | `GOOS=windows GOARCH=amd64/arm64 go list` and `go build -tags tui_smoke ./cmd/ratchet-tui-smoke` fail with the expected Unix-only no-buildable-files class. |
 | Windows interactive PTY | deferred | No ConPTY runner in this slice; Windows coverage is build/noninteractive only. |
 
@@ -411,13 +428,15 @@ not change in release builds because the smoke entrypoint is build-tagged out.
 
 Revert `cmd/ratchet-tui-smoke`, the `tui_smoke` client constructor, smoke
 helper, PTY test, help/autocomplete/CLI-help alignment, shortcut hint fix,
-non-race smoke CI job, `release-check` CI job, release-artifact script, and docs
-updates. No data migration exists. Release binaries are unaffected because
-`cmd/ratchet` does not contain a smoke command/flag. If a future release
-accidentally includes `ratchet-tui-smoke`, remove it from the release config,
-delete the bad artifact/checksum/tap reference where possible, and cut a patch
-release. If the CI preflight itself is bad, revert that job/script and rely on
-the existing tag-only release workflow while cutting a corrected preflight PR.
+non-race smoke CI job, Windows safe-command smoke job, `release-check` CI job,
+release-workflow preflight, release-artifact script, and docs updates. No data
+migration exists. Release binaries are unaffected because `cmd/ratchet` does
+not contain a smoke command/flag. If a future release accidentally includes
+`ratchet-tui-smoke`, remove it from the release config, delete the bad
+artifact/checksum/tap reference where possible, and cut a patch release. If the
+CI or release preflight itself is bad, revert that job/script while keeping the
+existing tag-only release workflow's publish step, then cut a corrected
+preflight PR.
 
 ## Assumptions
 
@@ -496,3 +515,7 @@ the existing tag-only release workflow while cutting a corrected preflight PR.
 | D37 | Added shortcut source-of-truth matrix covering `/tree`, `ctrl+b`, `esc`, `ctrl+s`, `ctrl+j`, `ctrl+t`, `ctrl+c`, and `ctrl+d`; stale advertised `ctrl+h` must be implemented or removed with tests. |
 | D38 | Added non-race CI smoke job for subprocess/startup/TUI smoke tests skipped by the race suite. |
 | D39 | Added public `ratchet help` / `printUsage` to the slash discoverability contract and built-binary help assertions. |
+| D40 | Added explicit `goreleaser check` steps to CI and release preflight paths and pinned the GoReleaser action to `~> v2`. |
+| D41 | Added publish-free snapshot artifact guard to `.github/workflows/release.yml` before the publishing GoReleaser step so tag releases cannot bypass the manifest guard. |
+| D42 | Added a `windows-latest` safe-command smoke job that builds `ratchet.exe` and runs `version` and `help`; Windows interactive PTY remains deferred. |
+| D43 | Mirrored the release workflow's GoReleaser `version: "~> v2"` in preflight action steps. |

@@ -390,3 +390,46 @@ None.
 2. Dedicated non-race smoke CI job: keep the main `go test -race ./...` job, but add `go test ./cmd/ratchet ./internal/tui -run 'HarnessSmoke|TUIBinarySmoke' -count=1` so binary subprocess tests are actually exercised in PR/push CI.
 
 **Verdict reasoning:** The current design is much stronger than the earlier cycles, but it still leaves Important gaps where implementation could pass while proving less than the user asked for: not all advertised/core shortcuts, no guaranteed CI execution for release-shaped startup smoke, and stale built CLI help. Status is FAIL until those are mechanically covered or the claims are narrowed.
+
+## Cycle 10
+
+### Adversarial Review Report
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `D40` [Existence/runtime-validity / Declared integration proof] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:271-281,406]: CI snapshot generation does not run `goreleaser check`. The design's local script default runs `goreleaser check`, but the CI path runs `goreleaser release --snapshot --clean --skip=publish` then `--manifest-only`; local GoReleaser v2.16.0 help says `--snapshot` skips validation. Recommendation: add an explicit CI `goreleaser check` step or run the script's full default mode in CI after installing GoReleaser.
+- `D41` [Rollback story / Infrastructure impact] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:282-283,410-420; .github/workflows/release.yml:17-20]: The release artifact guard is only PR/push preflight; the tag release workflow remains unchanged and can publish without running the new manifest guard. That is not release-safe unless tag publishing is formally gated elsewhere, which the design does not state. Recommendation: run `scripts/check-release-artifacts.sh --manifest-only dist` in `.github/workflows/release.yml` after GoReleaser snapshot/build and before publishing, or document/enforce an explicit protected release gate.
+- `D42` [Project-guidance conflicts / User-intent drift] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:29,260-267,367,391,407; .github/workflows/ci.yml:32-46]: The design promises Windows "non-PTY CLI smoke" / "build/noninteractive smoke," but the concrete Windows proof is Linux-hosted cross-build plus negative smoke-package build checks. No Windows runner executes `ratchet.exe version` or `ratchet.exe help`. Recommendation: either add a `windows-latest` non-PTY smoke for safe commands, or change all wording to "Windows cross-build proof only."
+
+**Findings (Minor):**
+- `D43` [Repo-precedent conflicts / Artifact-class precedent] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:275-281; .github/workflows/release.yml:17-20]: The new `release-check` job does not say to pin GoReleaser action version `~> v2`, while the real release workflow does. Recommendation: mirror the release workflow's action version input so preflight and publishing use the same GoReleaser major.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | Windows-honest proof is overworded as noninteractive smoke while only cross-build proof is specified. |
+| Assumptions under attack | Finding | The design assumes PR/push preflight is enough for release safety and assumes snapshot release validates config; both are false or unstated. |
+| Repo-precedent conflicts | Finding | Existing release workflow pins GoReleaser `~> v2`; proposed preflight omits the same pin. |
+| Artifact-class precedent | Finding | Release artifact precedent exists in `.goreleaser.yaml` and `.github/workflows/release.yml`, but the new preflight is not wired like the actual release path. |
+| YAGNI violations | Clean | No new runtime user feature, ConPTY runner, visual snapshot framework, or external provider CI is added. |
+| Missing failure modes | Finding | Tag-publish bypass and snapshot-validation skip are release failure modes not handled by the current text. |
+| Security/privacy at architecture level | Clean | Build-tag isolation, temp state, Unix socket containment, and redaction boundaries are now explicit enough at design level. |
+| Infrastructure impact | Finding | New CI release preflight changes release infrastructure but does not gate the actual tag release workflow. |
+| Multi-component validation | Clean | TUI/daemon/mock provider, docs, CI smoke, and artifact inspection boundaries are otherwise split clearly. |
+| Declared integration proof | Finding | GoReleaser integration is declared, but CI omits `goreleaser check` even though snapshot skips validation. |
+| Contributed UI rendering proof | Clean | No plugin-contributed host-shell UI is claimed; direct Bubble Tea TUI rendering is the relevant UI surface. |
+| Rollback story | Finding | Rollback describes bad artifact cleanup, but the guard may not run before a tag release publishes those artifacts. |
+| Simpler alternative not considered | Finding | The design does not consider putting the manifest guard directly into the release workflow as a publish-blocking preflight. |
+| User-intent drift | Finding | "Windows noninteractive smoke" wording drifts beyond the specified cross-build-only proof. |
+| Existence/runtime-validity | Finding | Local GoReleaser help confirms `--snapshot` skips validation, so the CI command sequence does not prove what the design claims. |
+
+**Options the author may not have considered:**
+1. Release-workflow guard: run the artifact manifest check in `.github/workflows/release.yml` before assets are published. This is stricter than PR-only preflight and directly protects tag releases.
+2. Windows runtime smoke: add a `windows-latest` job that builds and runs `ratchet.exe version` and `ratchet.exe help`, while keeping TUI PTY proof Unix-only.
+
+**Verdict reasoning:** The design is strong on TUI isolation and prior slash/shortcut gaps, but it still has unresolved Important release and Windows-honesty issues. The biggest mechanical problem is that the proposed CI path can skip GoReleaser config validation and the actual tag release path can bypass the new artifact guard entirely. Status is FAIL.
