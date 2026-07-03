@@ -102,7 +102,9 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
     `{path, buildConstraint, exportedSymbols, exactTokens}` for every
     persistent non-test smoke-only Go file, initially
     `cmd/ratchet-tui-smoke/main.go` and
-    `internal/client/client_tui_smoke.go`;
+    `internal/client/client_tui_smoke.go`, plus the smoke-only daemon helper
+    file that exposes the explicit smoke service option/constructor, e.g.
+    `internal/daemon/service_tui_smoke.go`;
   - each manifest row must exist, must contain the exact build constraint
     `//go:build tui_smoke && !windows`, and must contain only the declared
     smoke-only exported symbols/tokens for that file;
@@ -111,6 +113,12 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
     package/path token `ratchet-tui-smoke`, manifest exported symbol names such
     as `ConnectSmokeUnix`, or any additional exact source token declared in the
     manifest row;
+  - verification tooling gets a separate exact-token allowlist, not a smoke
+    runtime-file exemption: `internal/releaseguard` may contain declared
+    forbidden-token constants such as `ratchet-tui-smoke` and `tui_smoke` only
+    for artifact scanning, and the source guard fails if those tooling files
+    contain smoke build tags, smoke exported constructors, or call paths into
+    smoke runtime helpers;
   - the guard does not fail on broad pathname-only `smoke` matches in non-test
     files; existing `*_smoke_test.go` files are explicitly allowlisted as
     test-only precedent and are not part of the non-test source leak scan;
@@ -626,8 +634,17 @@ Mechanical fail-closed check:
   - if the postcheck fails, leave the GitHub release draft, delete or supersede
     contaminated assets per rollback, and do not undraft.
 - Fail closed when expected artifact classes are missing:
-  - at least one Linux archive, one Darwin archive, one Windows archive, and
-    `checksums.txt` must be present;
+  - parse `.goreleaser.yaml` and derive the complete expected archive matrix
+    from each `builds[].id`, `goos`, `goarch`, archive `ids`, archive format
+    overrides, and archive `name_template`; for the current config this means
+    `ratchet_linux_amd64.tar.gz`, `ratchet_linux_arm64.tar.gz`,
+    `ratchet_darwin_amd64.tar.gz`, `ratchet_darwin_arm64.tar.gz`,
+    `ratchet_windows_amd64.zip`, and `ratchet_windows_arm64.zip`;
+  - every expected archive must exist in `dist/`, have a `checksums.txt` entry,
+    and be included in member-list plus packaged-binary byte scans; one archive
+    per OS is not enough;
+  - `checksums.txt` must be present and must not contain unexpected smoke
+    artifact names;
   - if `.goreleaser.yaml` has `homebrew_casks`, snapshot output must either
     contain generated cask/tap material or the guard must parse `.goreleaser.yaml`
     as deterministic fallback proof;
@@ -813,7 +830,7 @@ smoke entrypoint is build-tagged out.
 | TUI help/autocomplete command-surface guard | config-only + focused proof | Focused tests invoke in-TUI `/help`, inspect autocomplete models, parse command surfaces, and compare them to the typed command spec; this prevents discoverability drift but is not claimed as host-runtime proof for every non-`pty-proven` command. |
 | Non-race binary smoke CI | config-only | `.github/workflows/ci.yml` runs a focused non-race smoke job for subprocess/startup tests that are intentionally skipped under `-race`, with explicit test names for release startup and TUI binary smoke. |
 | Docs guard | config-only | `cmd/ratchet/harness_docs_test.go` checks public docs mention exact evidence boundaries. |
-| GoReleaser snapshot and GitHub draft assets | runtime-integrated | Publish-free `release-check` CI job, tag release preflight, local script, and release draft postcheck run `goreleaser check`/snapshot generation plus archive/upload inspection, all-archive packaged-binary byte scans, host/Windows packaged-binary help/version checks, and deterministic `.goreleaser.yaml` fallback. The postcheck downloads draft GitHub release assets and repeats the same checks before undraft, proving uploaded archives/checksums do not contain `ratchet-tui-smoke`. |
+| GoReleaser snapshot and GitHub draft assets | runtime-integrated | Publish-free `release-check` CI job, tag release preflight, local script, and release draft postcheck run `goreleaser check`/snapshot generation plus full `.goreleaser.yaml`-derived OS/arch archive matrix inspection, checksum-entry checks, all-archive packaged-binary byte scans, host/Windows packaged-binary help/version checks, and deterministic `.goreleaser.yaml` fallback. The postcheck downloads draft GitHub release assets and repeats the same checks before undraft, proving uploaded archives/checksums do not contain `ratchet-tui-smoke`. |
 | Homebrew/tap install files | config-only + preflight + post-publish audit | Snapshot/config precheck proves Homebrew ids/binaries do not reference smoke artifacts; before publish, tap preflight discovers root/Formula/Casks drift that would make postcheck fail; after publish, the guard discovers and scans every relevant tap file at its exact path-changing commit. Current GoReleaser workflow can still push the tap before postcheck, so current-release tap safety is after-the-fact audit plus rollback, not pre-public gating. Split-publish pre-public gating is deferred. |
 | Windows safe-command smoke | runtime-integrated | `windows-safe-command-smoke` on x64 `windows-latest` declares `needs: release-check`, builds source `ratchet.exe`, downloads `ratchet-snapshot-dist` from `release-check`, requires `ratchet_windows_amd64.zip` and `ratchet_windows_arm64.zip`, byte-scans both, extracts amd64 only for execution, and runs packaged `ratchet.exe version`, `ratchet.exe help`, and `ratchet.exe daemon status` with temp Windows home/state env to prove non-PTY Windows CLI startup/help/daemon-status behavior and packaged-archive absence of smoke surfaces. |
 | Windows smoke package boundary | config-only | `GOOS=windows GOARCH=amd64/arm64 go list` and `go build -tags tui_smoke ./cmd/ratchet-tui-smoke` fail with the expected Unix-only no-buildable-files class. |
@@ -992,3 +1009,6 @@ preflight PR.
 | D110 | Split command-surface guards by artifact class: TUI parser/help/autocomplete under `internal/tui/commands`, public `printUsage`/built help under `cmd/ratchet`, sharing only a test fixture spec. |
 | D111 | Added pre-publish Homebrew tap drift audit so stale root/Formula/Casks install surfaces fail before GoReleaser publishes. |
 | D112 | Changed tap rollback diagnostics to group contaminated paths by unique SHA and warn when a mixed commit would revert clean paths. |
+| D113 | Split smoke-source scanning into a smoke runtime manifest and verification-tooling exact-token allowlist so `internal/releaseguard` can hold forbidden artifact tokens without becoming a smoke runtime path. |
+| D114 | Added the smoke-only daemon helper file to the smoke-source manifest with exact build-tag/exported-token constraints. |
+| D115 | Required releaseguard to derive and require every expected GoReleaser OS/arch archive and checksum entry from `.goreleaser.yaml`, including Linux/Darwin/Windows amd64 and arm64. |

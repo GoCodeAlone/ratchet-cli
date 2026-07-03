@@ -1220,3 +1220,47 @@ None.
 2. Two-package command guard with TUI surfaces in `internal/tui/commands` and CLI help in `cmd/ratchet`.
 
 **Verdict reasoning:** D106-D108 are materially addressed, but the latest design exposes three open Important issues: smoke daemon isolation, wrong artifact-class ownership for CLI help guard, and tap drift only detected after publish.
+
+## Cycle 29
+
+### Adversarial Review Report
+
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `D113` [Existence/runtime-validity / Repo-precedent conflicts] [design:109-113,488-506,572-575,600-603]: The smoke-source leak guard forbids exact non-test Go tokens `ratchet-tui-smoke` and `tui_smoke` outside the manifest, but planned `internal/releaseguard` helper code must know those forbidden tokens to scan release artifacts. Recommendation: explicitly exempt `internal/releaseguard` token constants from the smoke-source leak guard, or require forbidden-token literals to live in `_test.go`/script data outside non-test Go source.
+- `D114` [Existence/runtime-validity / Security/privacy] [design:65-87,101-105]: The design requires a smoke-only daemon service option/constructor, but the initial smoke-source manifest lists only `cmd/ratchet-tui-smoke/main.go` and `internal/client/client_tui_smoke.go`. A real daemon smoke helper will need either a tagged non-test file, which the manifest omits, or an untagged production daemon option, which weakens the release-binary isolation claim. Recommendation: add the exact daemon smoke helper file(s), exported symbols, and tokens to the manifest, or state that the helper is generated/test-only and never enters non-test source.
+- `D115` [Declared integration proof / Infrastructure impact] [design:628-630; `.goreleaser.yaml`:9-15,22-29; `README.md`:11-13]: The release guard only fails if fewer than one Linux, one Darwin, one Windows archive, and `checksums.txt` exist. `.goreleaser.yaml` declares a 3 OS x 2 arch matrix, and the guard can pass with missing Linux arm64 or Darwin arm64 archives. Recommendation: derive the full expected archive matrix from GoReleaser `builds.goos`, `builds.goarch`, archive `ids`, and `name_template`, then require every expected archive/checksum entry before artifact checks pass.
+
+**Findings (Minor):**
+- None.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Clean | No repo-local guidance; reviewed README/RATCHET and referenced docs. |
+| Assumptions under attack | Finding | Exact smoke-token source scanning must coexist with releaseguard and daemon smoke helper code. |
+| Repo-precedent conflicts | Finding | Existing docs/release guards live under normal Go source/tests, so forbidden-token literals in `internal/releaseguard` need a precise exception. |
+| Artifact-class precedent | Finding | Release artifact checks should follow the configured GoReleaser artifact matrix, not a weaker one-per-OS check. |
+| YAGNI violations | Clean | The added guards are tied to concrete prior release/docs/smoke-leak risks. |
+| Missing failure modes | Finding | Missing arch-specific archives and source-guard false failures remain plausible. |
+| Security/privacy at architecture level | Finding | Daemon smoke helper outside the manifest can leak smoke-only behavior into release source unless constrained. |
+| Infrastructure impact | Finding | Release CI can pass with incomplete non-Windows archive coverage despite GoReleaser declaring both amd64 and arm64. |
+| Multi-component validation | Finding | Smoke helper/source-guard contract is not executable as written. |
+| Declared integration proof | Finding | GoReleaser archive integration is declared runtime-integrated, but artifact completeness is under-specified. |
+| Contributed UI rendering proof | Clean | No plugin-contributed host-shell UI is involved. |
+| Rollback story | Clean | Source revert plus draft retention/asset/tap correction is adequate once detection is reliable. |
+| Simpler alternative not considered | Finding | Separate source-guard allowlist for releaseguard plus generated GoReleaser matrix check. |
+| User-intent drift | Clean | Slice still targets TUI binary verification and Windows/release honesty. |
+| Existence/runtime-validity | Finding | D113-D115 are executable-contract gaps against current repo files/config. |
+
+**Options the author may not have considered:**
+1. Split source-guard roles: smoke runtime manifest plus separate verification-tooling allowlist for forbidden scan tokens.
+2. Generate expected release artifacts from `.goreleaser.yaml` and scan the complete OS/arch matrix.
+
+**Verdict reasoning:** FAIL. The smoke-source guard conflicts with planned verification/helper code, and release artifact completeness is weaker than the configured GoReleaser matrix.
