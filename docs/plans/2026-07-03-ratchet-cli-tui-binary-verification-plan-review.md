@@ -194,3 +194,42 @@
 2. Workflow-only shell/YAML check before publish, but Go releaseguard keeps invariant with release safety contract.
 
 **Verdict reasoning:** FAIL. P1-P15 were addressed; remaining blocker was proving `release.draft: true` before publish, not only after assets may be public.
+
+## Cycle 6
+
+### Adversarial Review Report
+
+**Phase:** plan
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `P18` [Missing integration proof / Verification-class mismatch] [design:282-324; plan:198-204,303-309]: Design requires PTY proof for every documented `/mode` value and full trust slash-command matrix, but Task 3 only names `/mode` and `/trust` as families. Recommendation: make `TestTUIBinarySmoke` enumerate exact matrix: all five `/mode` values plus `/trust list`, allow, deny, persist allow/deny, grants, revoke, reset with follow-up state assertions.
+- `P19` [Infrastructure verification mismatch / Repo-precedent conflict] [design:507-508,847; plan:654-664; `.github/workflows/ci.yml`:14-15,27-28,41-42]: Windows safe-command smoke job builds source `ratchet.exe`, but plan omits private-module Git rewrite that every existing Go-building CI job uses. Recommendation: add explicit `GOPRIVATE`/`GONOSUMCHECK` plus same Git rewrite step and workflow assertion.
+
+**Findings (Minor):**
+- None.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | P18 weakens real-boundary TUI proof; P19 weakens Windows CI reliability. |
+| Assumptions under attack | Finding | Plan assumed family-level command wording implied matrix execution, and Windows source build could fetch private modules. |
+| Repo-precedent conflicts | Finding | Existing CI repeats private-module Git rewrite in every Go build/test job; Windows smoke omitted it. |
+| Missing failure modes | Finding | Missing PTY matrix leaves command-state regressions unproven; Windows job can fail before package proof. |
+| Infrastructure impact | Finding | P19 affects added CI workflow execution. |
+| Multi-component validation | Finding | P18 can leave TUI input to daemon trust/mode RPC behavior only focused-tested. |
+| Declared integration proof | Finding | Integration matrix promises selected slash-command runtime proof, but task text does not force full matrix. |
+| Existence/runtime-validity | Finding | P19 executable workflow setup gap against CI precedent. |
+| Verification-class mismatch | Finding | P18 substitutes vague family/focused proof for required PTY matrix proof. |
+| Missing integration proof | Finding | P18 misses explicit PTY execution for each required mode/trust command row. |
+| Infrastructure verification mismatch | Finding | P19 needs workflow-level private-module setup proof. |
+
+**Options the author may not have considered:**
+1. Drive PTY matrix from the same command-surface JSON fixture.
+2. Copy existing private-module setup into `windows-safe-command-smoke`.
+
+**Verdict reasoning:** FAIL. P1-P17 were addressed; remaining gaps were explicit PTY matrix proof and Windows private-module setup.

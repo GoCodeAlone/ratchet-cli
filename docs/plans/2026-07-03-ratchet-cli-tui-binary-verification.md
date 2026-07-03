@@ -198,7 +198,8 @@ Add `TestTUIBinarySmoke` in a Unix-only test file with `//go:build !windows`; do
 PTY run must assert:
 - splash/onboarding boundary, chat prompt, input visible;
 - mock provider response stream completion;
-- `/help`, `/provider list`, `/tree`, `/mode`, `/trust`, `/exit`;
+- every `pty-proven` slash row from `internal/tui/commands/testdata/command_surface_spec.json`, including `/help`, `/provider list`, `/tree`, `/exit`, every documented mode value (`/mode conservative`, `/mode permissive`, `/mode locked`, `/mode sandbox`, `/mode custom`), and the trust matrix (`/trust list`, `/trust allow "smoke:allow"`, `/trust deny "smoke:deny"`, `/trust persist allow "smoke:persist-allow"`, `/trust persist deny "smoke:persist-deny"`, `/trust grants`, `/trust revoke "smoke:persist-allow"`, `/trust reset`);
+- post-`/trust reset` follow-up state assertions from the design: mode returns to smoke config default `conservative`, runtime allow/deny rules reset to config defaults, and unreverted persisted grants remain listed or are explicitly revoked by the tested command sequence;
 - `ctrl+b`, `ctrl+s`, `ctrl+t`, `ctrl+j`, and advertised branch-tree navigation where classified `pty-proven`;
 - job panel path has no RPC error and shows marker/empty state;
 - `/exit`, `ctrl+c`, and `ctrl+d` each terminate through bounded subprocess/subtests.
@@ -301,6 +302,7 @@ Rollback: revert commit; existing daemon start behavior returns. Check no temp d
 **Step 1: Write failing contract tests**
 
 Shared fixture rows classify slash commands as `pty-proven`, `focused-proven`, or `deferred-runtime`. Tests assert:
+- the fixture contains exact `pty-proven` rows for all five `/mode` values and each required `/trust` matrix command used by `TestTUIBinarySmoke`;
 - parser switch cases, `/help`, autocomplete literals, `modeCmd`, `trustCmd`, and `providerCmd` surfaces are classified;
 - nonliteral/generated command cases fail unless fixture marks them runtime-tested;
 - `cmd/ratchet` public help slash section and extracted `printUsage` rows match fixture;
@@ -653,7 +655,7 @@ After publish and before undraft:
 
 **Step 3: Add Windows packaged safe-command smoke**
 
-In CI, add `windows-safe-command-smoke` on `windows-latest` with `needs: release-check`; build source `ratchet.exe` to `$env:RUNNER_TEMP\\source\\ratchet.exe` only for source cross-build proof, download `ratchet-snapshot-dist`, require amd64/arm64 Windows zips, byte-scan both, extract `ratchet_windows_amd64.zip` into `$env:RUNNER_TEMP\\package-amd64`, assert `$env:RUNNER_TEMP\\package-amd64\\ratchet.exe` exists, and run that extracted package path explicitly:
+In CI, add `windows-safe-command-smoke` on `windows-latest` with `needs: release-check`; setup Go `1.26`, set `GOPRIVATE`/`GONOSUMCHECK`, and run the same private-module Git rewrite as existing Go jobs before any `go build`. Then build source `ratchet.exe` to `$env:RUNNER_TEMP\\source\\ratchet.exe` only for source cross-build proof, download `ratchet-snapshot-dist`, require amd64/arm64 Windows zips, byte-scan both, extract `ratchet_windows_amd64.zip` into `$env:RUNNER_TEMP\\package-amd64`, assert `$env:RUNNER_TEMP\\package-amd64\\ratchet.exe` exists, and run that extracted package path explicitly:
 
 ```powershell
 & "$env:RUNNER_TEMP\\package-amd64\\ratchet.exe" version
@@ -675,7 +677,7 @@ scripts/check-release-artifacts.sh --manifest-only dist
 actionlint .github/workflows/ci.yml .github/workflows/release.yml
 ```
 
-Expected: PASS; draft config test proves `release.draft: true` before publish; Windows binaries are written only under `/tmp`; wrapper regenerates fresh `dist`; workflow lint is clean and release workflow sets `RATCHET_RELEASE_GUARD_TAP`, `RATCHET_RELEASE_GUARD_TAP_NAMES`, `RATCHET_RELEASE_GUARD_TAP_COMMITS`, and `RATCHET_RELEASE_GUARD_VERSION` for tap-postcheck.
+Expected: PASS; draft config test proves `release.draft: true` before publish; Windows binaries are written only under `/tmp`; wrapper regenerates fresh `dist`; workflow lint is clean; `windows-safe-command-smoke` contains `GOPRIVATE`, `GONOSUMCHECK`, and the private-module Git rewrite before source build; release workflow sets `RATCHET_RELEASE_GUARD_TAP`, `RATCHET_RELEASE_GUARD_TAP_NAMES`, `RATCHET_RELEASE_GUARD_TAP_COMMITS`, and `RATCHET_RELEASE_GUARD_VERSION` for tap-postcheck.
 
 **Step 5: Commit**
 
