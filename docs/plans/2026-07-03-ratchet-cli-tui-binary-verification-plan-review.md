@@ -308,3 +308,45 @@
 2. Keep task order unchanged but make Task 3 use inline PTY matrix only; Task 5 later asserts JSON fixture matches that matrix.
 
 **Verdict reasoning:** FAIL. P1-P22 fixes appear addressed; remaining issues were fixture ordering and exact non-cacheable releaseguard workflow commands.
+
+## Cycle 9
+
+### Adversarial Review Report
+
+**Phase:** plan
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `P25` [Manifest drift / hidden serial dependency] [plan:17-38,733-793]: Scope Manifest assigns Task 13 to PR5, but Task 13 opens/monitors all PRs, releases only after PR5 merges, creates retro, then commits state. That post-merge/post-release commit cannot be contained in PR5. Recommendation: make Task 13 non-mutating orchestration evidence only, or add explicit PR6/direct-closeout path and update PR count/scope manifest.
+- `P26` [Workflow linting / executable gap] [plan:601-609,674-686,740-756; `go.mod`:210]: Plan requires `actionlint` but only says it passes where installed. Recommendation: use pinned executable command such as `go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 ...`, or add explicit install/CI step.
+- `P27` [Tap postcheck auth wiring / infrastructure verification mismatch] [design:624-648; plan:649-659; `.goreleaser.yaml`:52-56]: Design requires cloning configured Homebrew tap with `HOMEBREW_TAP_TOKEN`; Task 11 only says clone tap. Recommendation: spell out clone/auth using same tap repo/branch/token and add workflow assertions for token wiring.
+
+**Findings (Minor):**
+- None.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | P25/P26 weaken executable-gate discipline. |
+| Assumptions under attack | Finding | Plan assumed PR5 can contain post-PR5 release/retro commits and `actionlint` exists. |
+| Repo-precedent conflicts | Finding | Closeout PR accounting drifts despite manifest passing plugin checker. |
+| Artifact-class precedent | Finding | Closeout retro/release-state artifact misclassified as feature docs PR. |
+| Missing failure modes | Finding | P27 misses external tap clone/auth failure before postcheck. |
+| Infrastructure impact | Finding | P27 affects release/tap workflow reliability. |
+| Declared integration proof | Finding | Tap postcheck integration lacks full clone auth wiring. |
+| Existence/runtime-validity | Finding | P25/P26 are executable sequencing/tooling gaps. |
+| Verification-class mismatch | Finding | P26 makes workflow linting optional in practice. |
+| Hidden serial dependencies | Finding | P25 release/retro depends on PR5 merge but scoped inside PR5. |
+| Missing integration proof | Finding | P27 leaves external tap clone/auth unproven. |
+| Infrastructure verification mismatch | Finding | P27. |
+
+**Options the author may not have considered:**
+1. Split Task 13: keep PR5 docs/evidence only, add PR6 close release state.
+2. Replace bare `actionlint` with pinned `go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12`.
+3. Centralize tap clone auth in wrapper so workflows pass same `HOMEBREW_TAP_TOKEN` path.
+
+**Verdict reasoning:** FAIL. P23-P24 were fixed; remaining blockers were closeout PR accounting, executable workflow linting, and tap auth clone wiring.

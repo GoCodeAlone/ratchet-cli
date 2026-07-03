@@ -14,7 +14,7 @@
 
 ## Scope Manifest
 
-**PR Count:** 5
+**PR Count:** 6
 **Tasks:** 13
 **Estimated Lines of Change:** ~2600
 **External prerequisites:** 1 Homebrew tap PR/direct commit recorded by Task 9 before Tasks 10-11 start.
@@ -35,7 +35,8 @@
 | 2 | `test: prove startup and command surfaces` | Task 4, Task 5, Task 6 | `feat/tui-startup-command-proof` |
 | 3 | `chore: guard release artifacts` | Task 7, Task 8 | `feat/release-artifact-guard` |
 | 4 | `chore: gate tap and windows release smoke` | Task 9, Task 10, Task 11 | `feat/release-tap-windows-smoke` |
-| 5 | `docs: publish harness evidence` | Task 12, Task 13 | `docs/tui-binary-verification-release` |
+| 5 | `docs: publish harness evidence` | Task 12 | `docs/tui-binary-verification-release` |
+| 6 | `docs: close tui verification release` | Task 13 | `docs/tui-verification-closeout` |
 
 **External prerequisite:**
 
@@ -603,10 +604,10 @@ Modify CI:
 ```bash
 go test ./cmd/ratchet ./internal/tui -run 'HarnessSmoke|TUIBinarySmoke|StartupSmoke' -count=1 -timeout=10m
 scripts/check-release-artifacts.sh
-actionlint .github/workflows/ci.yml .github/workflows/release.yml
+go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/ci.yml .github/workflows/release.yml
 ```
 
-Expected: PASS locally where GoReleaser and actionlint are installed; `scripts/check-release-artifacts.sh` regenerates fresh `dist`.
+Expected: PASS locally where GoReleaser is installed; pinned actionlint command succeeds; `scripts/check-release-artifacts.sh` regenerates fresh `dist`.
 
 **Step 3: Commit**
 
@@ -649,7 +650,7 @@ Before publish:
 After publish and before undraft:
 - resolve draft release id by listing releases with retries;
 - use GitHub Script/API to verify the resolved release is still draft, download all assets for that release id into `$RUNNER_TEMP/release-assets`, write a small metadata file in that directory containing the release id/tag/draft state, then run draft asset postcheck with `RATCHET_RELEASE_GUARD_MODE=draft-assets`, `RATCHET_RELEASE_GUARD_ASSETS=$RUNNER_TEMP/release-assets`, and `RATCHET_RELEASE_GUARD_VERSION=<tag-or-version>` using `go test -count=1 ./internal/releaseguard -run TestDraftAssets`;
-- clone tap and derive exact path-changing commits;
+- clone the configured Homebrew tap repo/branch using `HOMEBREW_TAP_TOKEN` with the same owner/name/branch from `.goreleaser.yaml` (`GoCodeAlone/homebrew-tap`, `main`) and derive exact path-changing commits from that authenticated checkout;
 - run tap postcheck with the full required env:
   `RATCHET_RELEASE_GUARD_MODE=tap-postcheck`,
   `RATCHET_RELEASE_GUARD_TAP=<tap-checkout>`,
@@ -680,10 +681,10 @@ go test ./internal/releaseguard -run 'DraftAssets|TapPostcheck|WindowsArchive' -
 go test ./internal/releaseguard -run TestGoReleaserReleaseDraftConfig -count=1
 scripts/check-release-artifacts.sh
 scripts/check-release-artifacts.sh --manifest-only dist
-actionlint .github/workflows/ci.yml .github/workflows/release.yml
+go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/ci.yml .github/workflows/release.yml
 ```
 
-Expected: PASS; draft config test proves `release.draft: true` before publish; Windows binaries are written only under `/tmp`; wrapper regenerates fresh `dist`; workflow lint is clean; `windows-safe-command-smoke` contains `GOPRIVATE`, `GONOSUMCHECK`, and the private-module Git rewrite before source build; release workflow sets `RATCHET_RELEASE_GUARD_TAP`, `RATCHET_RELEASE_GUARD_TAP_NAMES`, `RATCHET_RELEASE_GUARD_TAP_COMMITS`, and `RATCHET_RELEASE_GUARD_VERSION` for tap-postcheck.
+Expected: PASS; draft config test proves `release.draft: true` before publish; Windows binaries are written only under `/tmp`; wrapper regenerates fresh `dist`; pinned workflow lint is clean; `windows-safe-command-smoke` contains `GOPRIVATE`, `GONOSUMCHECK`, and the private-module Git rewrite before source build; release workflow clones the tap with `HOMEBREW_TAP_TOKEN`; release workflow sets `RATCHET_RELEASE_GUARD_TAP`, `RATCHET_RELEASE_GUARD_TAP_NAMES`, `RATCHET_RELEASE_GUARD_TAP_COMMITS`, and `RATCHET_RELEASE_GUARD_VERSION` for tap-postcheck.
 
 **Step 5: Commit**
 
@@ -730,12 +731,14 @@ git commit -m "docs: publish tui verification evidence"
 
 Rollback: revert docs commit.
 
-### Task 13: Full Verification, PRs, Release, And Retro
+### Task 13: Release, Retro, And Closeout State
 
 **Files:**
 - Modify: `docs/plans/2026-07-03-ratchet-cli-tui-binary-verification.md`
 - Create: `docs/retros/2026-07-03-ratchet-cli-tui-binary-verification-retro.md`
 - Optional modify: `internal/version/version.go` only if repo uses source version bumps for releases
+
+**Precondition:** PRs 1-5 have merged and `master` is green. This task runs on the PR6 closeout branch `docs/tui-verification-closeout`.
 
 **Step 1: Run local verification**
 
@@ -752,14 +755,14 @@ go vet ./...
 goreleaser check
 scripts/check-release-artifacts.sh
 scripts/check-release-artifacts.sh --manifest-only dist
-actionlint .github/workflows/ci.yml .github/workflows/release.yml
+go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/ci.yml .github/workflows/release.yml
 ```
 
-Expected: PASS for all commands; `-race` may skip smoke-specific PTY test with explicit race-disabled message; Windows binaries are written only under `/tmp`; release wrapper regenerates fresh `dist` before manifest-only inspection.
+Expected: PASS for all commands from current `master`; `-race` may skip smoke-specific PTY test with explicit race-disabled message; Windows binaries are written only under `/tmp`; release wrapper regenerates fresh `dist` before manifest-only inspection.
 
 **Step 2: PR and monitor**
 
-Open PRs in manifest order. For each PR:
+Confirm PRs 1-5 were opened, monitored, and merged in manifest order. For each merged PR:
 - ensure local focused tests pass before push;
 - monitor CI until green;
 - address code review with `autodev:receiving-code-review`;
