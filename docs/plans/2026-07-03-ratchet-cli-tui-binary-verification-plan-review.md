@@ -821,3 +821,33 @@
 | Planned-code compile-validity | Finding | P53 made Task 1 build impossible until Task 2. |
 
 **Verdict reasoning:** FAIL. P48-P50 remain fixed, but tap evidence wording, deprecated GoReleaser Formula config, and Task 1 smoke build ordering required correction.
+
+## Cycle 19
+
+### Adversarial Review Report
+
+**Phase:** plan
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification.md
+**Status:** PASS
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- None.
+
+**Findings (Minor):**
+- None.
+
+**Regression checks from reviewer:**
+- P51 fixed: tap proof accepts merged cleanup PR SHA or existing tap HEAD SHA plus `TestTapPreflight` PASS, and requires the Task 8 cask-guard SHA.
+- P52 fixed: plan is cask-only, rejects deprecated `brews`, preserves GoReleaser v2.16+ validation, and treats legacy Formula as a cleanup target.
+- P53 fixed: Task 1 creates minimal `internal/daemon/service_tui_smoke.go` before requiring tagged smoke build success; Task 2 expands behavior.
+
+**Read-only checks run by reviewer:**
+```text
+goreleaser check
+go test ./cmd/ratchet -run TestHarnessSmokeVersionHelpAndDaemonStatus -count=1
+```
+
+**Verdict reasoning:** PASS. No remaining Critical or Important blockers found in scope, Windows runner boundary, tap gating, releaseguard modes, Task 5 PTY rerun, or PR6 closeout path.
