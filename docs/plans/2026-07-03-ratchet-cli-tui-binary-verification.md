@@ -15,7 +15,7 @@
 ## Scope Manifest
 
 **PR Count:** 5
-**Tasks:** 12
+**Tasks:** 13
 **Estimated Lines of Change:** ~2600
 
 **Out of scope:**
@@ -33,8 +33,8 @@
 | 1 | `test: add tui smoke binary harness` | Task 1, Task 2, Task 3 | `feat/tui-smoke-binary-harness` |
 | 2 | `test: prove startup and command surfaces` | Task 4, Task 5, Task 6 | `feat/tui-startup-command-proof` |
 | 3 | `chore: guard release artifacts` | Task 7, Task 8 | `feat/release-artifact-guard` |
-| 4 | `chore: gate tap and windows release smoke` | Task 9, Task 10 | `feat/release-tap-windows-smoke` |
-| 5 | `docs: publish harness evidence` | Task 11, Task 12 | `docs/tui-binary-verification-release` |
+| 4 | `chore: gate tap and windows release smoke` | Task 9, Task 10, Task 11 | `feat/release-tap-windows-smoke` |
+| 5 | `docs: publish harness evidence` | Task 12, Task 13 | `docs/tui-binary-verification-release` |
 
 **Status:** Draft
 
@@ -44,7 +44,7 @@ Source: no repo-local `docs/design-guidance.md`, `AGENTS.md`, or `CLAUDE.md` fou
 
 | guidance | plan response |
 |---|---|
-| Build for Windows honestly. | Tasks 8-10 add Windows cross-build and packaged non-PTY command smoke; ConPTY remains out of scope. |
+| Build for Windows honestly. | Tasks 10-11 add Windows cross-build and packaged non-PTY command smoke; ConPTY remains out of scope. |
 | Avoid duplicated plumbing. | Use existing daemon, client, TUI, GoReleaser, and Homebrew tap mechanisms; releaseguard is internal test/helper logic only. |
 | Runtime claims need real boundaries. | Tasks 2-6 launch binaries, daemon/client RPCs, mock provider, PTY, and docs/command contracts. |
 | Sensitive local data must not leak. | Tasks 1-6 add temp home/workdir, hook/instruction leak checks, and shared redaction for failure payloads. |
@@ -61,11 +61,11 @@ Source: no repo-local `docs/design-guidance.md`, `AGENTS.md`, or `CLAUDE.md` fou
 | Built-in mock provider | runtime-integrated | Task 2/3 chat prompt streams deterministic mock response. |
 | Slash commands and shortcuts | runtime-integrated + focused proof | Tasks 3,5 split `pty-proven` and `focused-proven` rows with guards against overclaiming. |
 | GoReleaser snapshot/draft assets | runtime-integrated | Tasks 7,10 inspect generated/uploaded archives, checksums, packaged binaries, cask/formula material. |
-| Homebrew tap | config-only + cleanup + preflight + postcheck | Tasks 8-10 remove stale root file, add `brews`, preflight active surfaces, postcheck exact path-changing commits. |
-| Windows packaged commands | runtime-integrated | Task 10 downloads snapshot zips and runs `ratchet.exe version/help/daemon status` on `windows-latest`. |
+| Homebrew tap | config-only + cleanup + preflight + postcheck | Tasks 8-11 add `brews`, remove stale root file, preflight active surfaces, postcheck exact path-changing commits. |
+| Windows packaged commands | runtime-integrated | Task 11 downloads snapshot zips and runs `ratchet.exe version/help/daemon status` on `windows-latest`. |
 | Windows interactive PTY | deferred | Explicit out of scope. |
 
-## Task 1: Smoke Binary Boundary And Source Manifest
+### Task 1: Smoke Binary Boundary And Source Manifest
 
 **Files:**
 - Create: `cmd/ratchet-tui-smoke/main.go`
@@ -116,7 +116,7 @@ git commit -m "test: add tui smoke binary boundary"
 
 Rollback: revert commit; no release binary behavior changes because smoke code is build-tagged.
 
-## Task 2: Smoke Daemon Service And Job Panel RPC Proof
+### Task 2: Smoke Daemon Service And Job Panel RPC Proof
 
 **Files:**
 - Modify: `internal/daemon/engine.go`
@@ -166,7 +166,7 @@ git commit -m "test: wire tui smoke daemon service"
 
 Rollback: revert commit; production daemon path remains through existing constructors.
 
-## Task 3: Unix PTY TUI Binary Smoke
+### Task 3: Unix PTY TUI Binary Smoke
 
 **Files:**
 - Create: `internal/tui/tui_binary_smoke_unix_test.go`
@@ -178,7 +178,7 @@ Rollback: revert commit; production daemon path remains through existing constru
 
 **Step 1: Write failing PTY tests**
 
-Add `TestTUIBinarySmoke` with `tui_smoke && !windows`; skip under `-race` via package-local helper. Test builds `ratchet-tui-smoke` to temp path, launches in PTY with fixed size, temp home/state/workdir, harmless prompts, and synchronized bounded read snapshots.
+Add `TestTUIBinarySmoke` in a Unix-only test file with `//go:build !windows`; do not require `tui_smoke` on the test file itself. Skip under `-race` via package-local helper. The test builds `cmd/ratchet-tui-smoke` to a temp path with `go build -tags tui_smoke -o <tmp>/ratchet-tui-smoke ./cmd/ratchet-tui-smoke`, launches that binary in PTY with fixed size, temp home/state/workdir, harmless prompts, and synchronized bounded read snapshots.
 
 PTY run must assert:
 - splash/onboarding boundary, chat prompt, input visible;
@@ -191,7 +191,7 @@ PTY run must assert:
 **Step 2: Run red check**
 
 ```bash
-go test -tags tui_smoke ./internal/tui -run TestTUIBinarySmoke -count=1 -timeout=8m
+go test ./internal/tui -run TestTUIBinarySmoke -count=1 -timeout=8m
 ```
 
 Expected: FAIL with missing smoke binary/service assertions.
@@ -204,7 +204,7 @@ Use display-cell width checks (`lipgloss.Width` or `runewidth`) after ANSI strip
 
 ```bash
 gofmt -w internal/tui
-go test -tags tui_smoke ./internal/tui -run TestTUIBinarySmoke -count=1 -timeout=8m
+go test ./internal/tui -run TestTUIBinarySmoke -count=1 -timeout=8m
 go test -race ./internal/tui -run TestTUIBinarySmoke -count=1
 ```
 
@@ -219,7 +219,7 @@ git commit -m "test: drive tui smoke binary through pty"
 
 Rollback: revert commit; only test/smoke-tag code is removed.
 
-## Task 4: Release-Shaped Startup Smoke And Daemon Shutdown
+### Task 4: Release-Shaped Startup Smoke And Daemon Shutdown
 
 **Files:**
 - Modify: `internal/daemon/daemon.go`
@@ -269,7 +269,7 @@ git commit -m "test: prove release startup cleanup"
 
 Rollback: revert commit; existing daemon start behavior returns. Check no temp daemon remains with `ratchet daemon status` under the test temp home if rerunning manually.
 
-## Task 5: Command Surface, Help, And Shortcut Contracts
+### Task 5: Command Surface, Help, And Shortcut Contracts
 
 **Files:**
 - Create: `internal/tui/commands/testdata/command_surface_spec.json`
@@ -323,7 +323,7 @@ git commit -m "test: lock tui command surface"
 
 Rollback: revert commit; no production CLI command behavior intentionally changes.
 
-## Task 6: Documentation Evidence Guards
+### Task 6: Documentation Evidence Guards
 
 **Files:**
 - Modify: `docs/harness-emulation.md`
@@ -370,7 +370,7 @@ git commit -m "docs: describe tui binary evidence"
 
 Rollback: revert docs/test commit.
 
-## Task 7: Releaseguard Package And Wrapper
+### Task 7: Releaseguard Package And Wrapper
 
 **Files:**
 - Create: `internal/releaseguard/guard.go`
@@ -433,16 +433,14 @@ git add internal/releaseguard scripts/check-release-artifacts.sh go.mod go.sum
 git commit -m "test: guard release artifacts"
 ```
 
-Rollback: revert commit; release workflow remains pre-existing tag-only publish until Task 10 lands.
+Rollback: revert commit; release workflow remains pre-existing tag-only publish until Task 11 lands.
 
-## Task 8: GoReleaser Formula Automation And Tap Cleanup Prereq
+### Task 8: GoReleaser Formula Automation
 
 **Files:**
 - Modify: `.goreleaser.yaml`
 - Modify: `internal/releaseguard/goreleaser.go`
 - Modify: `internal/releaseguard/tap.go`
-- External modify: `GoCodeAlone/homebrew-tap:ratchet-cli.rb` removal only if stale root file exists
-- External inspect: `GoCodeAlone/homebrew-tap:Formula/ratchet-cli.rb`, `GoCodeAlone/homebrew-tap:Casks/ratchet-cli.rb`
 
 **Step 1: Write failing config tests**
 
@@ -452,7 +450,7 @@ Add releaseguard tests asserting:
 - `brews[0].ids == ["ratchet"]`;
 - `brews[0].repository` matches `homebrew_casks[0].repository`;
 - `brews[0].install` installs only `bin.install "ratchet"`;
-- tap preflight fails if root `ratchet-cli.rb` exists or if active Formula/Cask lacks matching GoReleaser automation.
+- fixture tap preflight fails if root `ratchet-cli.rb` exists or if active Formula/Cask lacks matching GoReleaser automation.
 
 **Step 2: Run red checks**
 
@@ -466,44 +464,97 @@ Expected: FAIL because `brews` is absent and tap fixture has stale root file.
 
 Add GoReleaser v2 `brews` section targeting `GoCodeAlone/homebrew-tap` `main` with same token/author as cask and install block `bin.install "ratchet"`.
 
-**Step 4: Prepare external tap cleanup**
-
-In a separate checkout of `GoCodeAlone/homebrew-tap`, remove only stale root `ratchet-cli.rb`; preserve active `Formula/ratchet-cli.rb` and `Casks/ratchet-cli.rb`. Open and merge a tap PR or record the direct commit SHA if admin-merging. Record the SHA in this plan as a backport note before enabling fail-closed release workflow checks.
-
-Verification:
-
-```bash
-RATCHET_RELEASE_GUARD_MODE=tap-preflight RATCHET_RELEASE_GUARD_TAP=<tap-checkout> go test ./internal/releaseguard -run TestTapPreflight -count=1
-```
-
-Expected before tap cleanup: FAIL naming stale root `ratchet-cli.rb`. Expected after cleanup plus `brews`: PASS.
-
-**Step 5: Verify repo config**
+**Step 4: Verify repo config with fresh snapshot**
 
 ```bash
 goreleaser check
+scripts/check-release-artifacts.sh
 scripts/check-release-artifacts.sh --manifest-only dist
 go test ./internal/releaseguard -run 'GoReleaserHomebrew|TapPreflight' -count=1
 ```
 
-Expected: PASS after snapshot `dist` exists; no smoke token in cask/formula material.
+Expected: PASS; wrapper regenerates fresh `dist` before manifest-only check; no smoke token in cask/formula material.
 
-**Step 6: Commit**
+**Step 5: Commit**
 
 ```bash
 git add .goreleaser.yaml internal/releaseguard
 git commit -m "chore: automate homebrew formula release"
 ```
 
-Rollback: revert ratchet-cli commit and tap cleanup commit if fail-closed checks have not merged; if tap cleanup already merged, leave stale root removed because it is unmanaged.
+Rollback: revert ratchet-cli commit if fail-closed checks have not merged.
 
-## Task 9: CI Release-Check And Non-Race Smoke Jobs
+### Task 9: Homebrew Tap Cleanup Prerequisite
+
+**Files:**
+- External modify: `GoCodeAlone/homebrew-tap:ratchet-cli.rb` removal only if stale root file exists
+- External inspect: `GoCodeAlone/homebrew-tap:Formula/ratchet-cli.rb`, `GoCodeAlone/homebrew-tap:Casks/ratchet-cli.rb`
+- Modify: `docs/plans/2026-07-03-ratchet-cli-tui-binary-verification.md`
+
+**Step 1: Clone and inspect tap**
+
+```bash
+gh repo clone GoCodeAlone/homebrew-tap <tap-checkout>
+test -f <tap-checkout>/Formula/ratchet-cli.rb
+test -f <tap-checkout>/Casks/ratchet-cli.rb
+test -f <tap-checkout>/ratchet-cli.rb
+```
+
+Expected before cleanup: active Formula and Cask exist; stale unmanaged root `ratchet-cli.rb` exists or the command exits non-zero if a prior cleanup already landed.
+
+**Step 2: Run preflight before cleanup**
+
+```bash
+RATCHET_RELEASE_GUARD_MODE=tap-preflight RATCHET_RELEASE_GUARD_TAP=<tap-checkout> go test ./internal/releaseguard -run TestTapPreflight -count=1
+```
+
+Expected before cleanup: FAIL naming stale root `ratchet-cli.rb`, unless the stale root was already removed.
+
+**Step 3: Remove only stale root file**
+
+In the tap checkout, remove root `ratchet-cli.rb` only. Preserve `Formula/ratchet-cli.rb` and `Casks/ratchet-cli.rb`. Commit, push, open PR, wait for tap checks, and admin merge when green; direct admin commit is allowed only if repository policy permits it. Record the merged tap commit SHA.
+
+**Step 4: Verify cleanup with formula automation**
+
+```bash
+git -C <tap-checkout> fetch origin main
+git -C <tap-checkout> checkout origin/main
+RATCHET_RELEASE_GUARD_MODE=tap-preflight RATCHET_RELEASE_GUARD_TAP=<tap-checkout> go test ./internal/releaseguard -run TestTapPreflight -count=1
+```
+
+Expected after cleanup and Task 8 formula automation: PASS.
+
+**Step 5: Record prerequisite evidence**
+
+Append a compact backport note to this plan:
+
+```markdown
+### Backport YYYY-MM-DD: Homebrew tap cleanup prerequisite
+
+Evidence: GoCodeAlone/homebrew-tap@<sha> removed stale root `ratchet-cli.rb`; `Formula/ratchet-cli.rb` and `Casks/ratchet-cli.rb` remain; `TestTapPreflight` PASS.
+Scope: no manifest change.
+```
+
+Tasks 10 and 11 must not enable fail-closed `tap-preflight` or release postcheck until this SHA and Task 8's ratchet-cli formula automation commit SHA are recorded.
+
+**Step 6: Commit plan evidence**
+
+```bash
+git add docs/plans/2026-07-03-ratchet-cli-tui-binary-verification.md
+git commit -m "docs: record homebrew tap cleanup"
+```
+
+Rollback: if fail-closed checks have not merged, revert the ratchet-cli formula automation commit and leave stale root removed because it is unmanaged. If tap cleanup itself must be reverted, restore only root `ratchet-cli.rb` from the recorded tap SHA and rerun tap preflight to confirm the expected failure before disabling fail-closed enforcement.
+
+### Task 10: CI Release-Check And Non-Race Smoke Jobs
 
 **Files:**
 - Modify: `.github/workflows/ci.yml`
 - Modify: `scripts/check-release-artifacts.sh`
 - Modify: `cmd/ratchet/harness_smoke_test.go`
 - Test: `.github/workflows/ci.yml`
+
+**Precondition:** Task 9 backport note records a merged tap cleanup SHA and Task 8 formula automation commit SHA.
 
 **Step 1: Add workflow checks**
 
@@ -512,14 +563,15 @@ Modify CI:
 - `tui-smoke`: setup equivalent to existing CI and run `go test ./cmd/ratchet ./internal/tui -run 'HarnessSmoke|TUIBinarySmoke|StartupSmoke' -count=1 -timeout=10m` without `-race`.
 - `tap-preflight`: read-only clone `GoCodeAlone/homebrew-tap`, run explicit tap preflight.
 
-**Step 2: Verify workflow syntax**
+**Step 2: Verify workflow syntax and fresh release snapshot**
 
 ```bash
 go test ./cmd/ratchet ./internal/tui -run 'HarnessSmoke|TUIBinarySmoke|StartupSmoke' -count=1 -timeout=10m
 scripts/check-release-artifacts.sh
+actionlint .github/workflows/ci.yml .github/workflows/release.yml
 ```
 
-Expected: PASS locally where GoReleaser is installed. If GitHub action syntax checker is available, run `actionlint`; expected PASS.
+Expected: PASS locally where GoReleaser and actionlint are installed; `scripts/check-release-artifacts.sh` regenerates fresh `dist`.
 
 **Step 3: Commit**
 
@@ -530,7 +582,7 @@ git commit -m "ci: add release and tui smoke checks"
 
 Rollback: revert CI commit; runtime code remains independently tested.
 
-## Task 10: Release Workflow, Draft Assets, Tap Postcheck, Windows Smoke
+### Task 11: Release Workflow, Draft Assets, Tap Postcheck, Windows Smoke
 
 **Files:**
 - Modify: `.github/workflows/release.yml`
@@ -539,6 +591,8 @@ Rollback: revert CI commit; runtime code remains independently tested.
 - Modify: `internal/releaseguard/tap.go`
 - Create: `internal/releaseguard/github_assets.go`
 - Test: `.github/workflows/*`, `internal/releaseguard/*_test.go`
+
+**Precondition:** Task 9 backport note records a merged tap cleanup SHA and Task 8 formula automation commit SHA.
 
 **Step 1: Write failing releaseguard tests**
 
@@ -575,14 +629,18 @@ In CI, add `windows-safe-command-smoke` on `windows-latest` with `needs: release
 
 Expected daemon status output contains `daemon is not running` under temp Windows home/state env.
 
-**Step 4: Verify local releaseguard**
+**Step 4: Verify local Windows cross-build and releaseguard**
 
 ```bash
+GOOS=windows GOARCH=amd64 go build -o /tmp/ratchet-windows-amd64.exe ./cmd/ratchet
+GOOS=windows GOARCH=arm64 go build -o /tmp/ratchet-windows-arm64.exe ./cmd/ratchet
 go test ./internal/releaseguard -run 'DraftAssets|TapPostcheck|WindowsArchive' -count=1
+scripts/check-release-artifacts.sh
 scripts/check-release-artifacts.sh --manifest-only dist
+actionlint .github/workflows/ci.yml .github/workflows/release.yml
 ```
 
-Expected: PASS.
+Expected: PASS; Windows binaries are written only under `/tmp`; wrapper regenerates fresh `dist`; workflow lint is clean.
 
 **Step 5: Commit**
 
@@ -593,7 +651,7 @@ git commit -m "ci: verify release assets and tap"
 
 Rollback: revert workflow/releaseguard commit; if a tag release failed after GoReleaser publish, leave GitHub release draft, delete/supersede contaminated assets, and revert/supersede tap path-changing commits reported by postcheck.
 
-## Task 11: Final Docs, Harness Table, And Overclaim Proof
+### Task 12: Final Docs, Harness Table, And Overclaim Proof
 
 **Files:**
 - Modify: `docs/harness-emulation.md`
@@ -629,7 +687,7 @@ git commit -m "docs: publish tui verification evidence"
 
 Rollback: revert docs commit.
 
-## Task 12: Full Verification, PRs, Release, And Retro
+### Task 13: Full Verification, PRs, Release, And Retro
 
 **Files:**
 - Modify: `docs/plans/2026-07-03-ratchet-cli-tui-binary-verification.md`
@@ -641,14 +699,18 @@ Rollback: revert docs commit.
 ```bash
 go test ./internal/releaseguard -count=1
 go test ./internal/daemon ./cmd/ratchet ./internal/tui/commands ./internal/tui/components ./internal/tui -run 'Shutdown|StartupSmoke|CommandSurface|CLIHelp|Shortcut|Docs|SmokeService|ListJobs|JobPanel|TUIBinarySmoke' -count=1 -timeout=12m
-go test -tags tui_smoke ./internal/tui -run TestTUIBinarySmoke -count=1 -timeout=8m
+go test ./internal/tui -run TestTUIBinarySmoke -count=1 -timeout=8m
+GOOS=windows GOARCH=amd64 go build -o /tmp/ratchet-windows-amd64.exe ./cmd/ratchet
+GOOS=windows GOARCH=arm64 go build -o /tmp/ratchet-windows-arm64.exe ./cmd/ratchet
 go test -race ./... 
 go vet ./...
 goreleaser check
 scripts/check-release-artifacts.sh
+scripts/check-release-artifacts.sh --manifest-only dist
+actionlint .github/workflows/ci.yml .github/workflows/release.yml
 ```
 
-Expected: PASS for all commands; `-race` may skip smoke-specific PTY test with explicit race-disabled message.
+Expected: PASS for all commands; `-race` may skip smoke-specific PTY test with explicit race-disabled message; Windows binaries are written only under `/tmp`; release wrapper regenerates fresh `dist` before manifest-only inspection.
 
 **Step 2: PR and monitor**
 
