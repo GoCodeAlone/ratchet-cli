@@ -1487,3 +1487,44 @@ None.
 3. If formula automation is not ready, narrow the design: keep Formula preservation out of fail-closed release enforcement and record it as accepted risk/deferred work.
 
 **Verdict reasoning:** FAIL. Formula automation is now required while the releaseguard taxonomy still omits `brews`, and releaseguard's Go-test execution model is ambiguous under ordinary CI.
+
+## Cycle 35
+
+### Adversarial Review Report
+
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** PASS
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- None.
+
+**Findings (Minor):**
+- None.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Clean | No repo-local `AGENTS.md`, `CLAUDE.md`, `docs/design-guidance.md`, or `docs/PORTFOLIO.md`; current design follows README/RATCHET Windows and harness-proof direction. |
+| Assumptions under attack | Clean | A1/A3 are now bounded by explicit release-shaped vs `ratchet-tui-smoke` proof split and Windows packaged safe-command smoke. |
+| Repo-precedent conflicts | Clean | Current text mirrors existing CI private-module setup, binary smoke shape, PTY build-tag practice, and daemon/client constraints. |
+| Artifact-class precedent | Clean | Release, docs, command-surface, PTY, and Homebrew/tap artifacts now have class-specific locations and guard mechanics. |
+| YAGNI violations | Clean | Still avoids ConPTY, broad command registry refactor, new runtime commands, external provider CI, and split-publish tap redesign. |
+| Missing failure modes | Clean | Current design covers PTY hangs, race skips, daemon cleanup, job-panel RPC errors, docs overclaims, release contamination, and tap rollback. |
+| Security/privacy at architecture level | Clean | Build-tag isolation, temp home/workdir/socket containment, redaction, instruction/hook leak checks, and no release-binary smoke path are explicit. |
+| Infrastructure impact | Clean | CI/release/tap changes are declared, with PR/push preflight, release preflight/postcheck, Windows artifact handoff, and Homebrew/tap limitation stated. |
+| Multi-component validation | Clean | Real boundaries are split honestly: release binary startup, smoke TUI/daemon/mock provider, command docs/spec, release artifacts, Windows packaged commands. |
+| Declared integration proof | Clean | Integration matrix now classifies release binary, smoke binary, docs, GoReleaser, Homebrew/tap, Windows smoke, and deferred Windows PTY. |
+| Contributed UI rendering proof | Clean | Not applicable; this is direct TUI rendering, not plugin-contributed host UI. |
+| Rollback story | Clean | Source revert, draft asset handling, tap rollback by path-changing SHA, and bad preflight rollback are covered. |
+| Simpler alternative not considered | Clean | Laziest docs-only and in-process-only options are explicitly rejected; no remaining simpler blocker found. |
+| User-intent drift | Clean | Scope remains the requested TUI binary verification slice while preserving cross-platform and release honesty. |
+| Existence/runtime-validity | Clean | Checked current command surfaces, daemon/client paths, GoReleaser v2.16 snapshot behavior, generated artifact shape, tap files, and CI/release workflow precedent. |
+
+**Options the author may not have considered:**
+- None.
+
+**Verdict reasoning:** PASS. The current artifact resolves the late-cycle blockers from D130-D132: `brews` is now a current guarded GoReleaser surface, releaseguard ordinary-test behavior is mode-gated, and Windows proof is stated as cross-build plus packaged non-PTY safe-command smoke. No new executable gap was found in repo precedent, CI/release/tap wiring, Windows coverage, privacy isolation, rollback, or validation claims.
