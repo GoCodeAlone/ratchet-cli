@@ -538,6 +538,17 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 		replaySummary.StepCount != 3 || replaySummary.TraceCount != 3 || replaySummary.SessionCount != 1 {
 		t.Fatalf("flow replay summary = %#v", replaySummary)
 	}
+	replayText := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "flow", "replay", flowResult.RunDir)
+	replayText.Dir = repoRoot
+	replayText.Env = env
+	replayTextOut, err := replayText.Output()
+	if err != nil {
+		t.Fatalf("flow replay text: %v\n%s", err, replayTextOut)
+	}
+	if got := string(replayTextOut); !strings.Contains(got, "trace events: 3") ||
+		strings.Contains(got, "binary flow") || strings.Contains(got, "fixture-session") || strings.Contains(got, "ratchet ") {
+		t.Fatalf("flow replay human output leaked payload or missed counts: %q", got)
+	}
 }
 
 func TestACPClientWatchBinarySmoke(t *testing.T) {
