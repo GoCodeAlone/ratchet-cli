@@ -173,3 +173,47 @@ None.
 2. Artifact manifest test helper: after GoReleaser snapshot, build a normalized manifest of `dist/` files, archive members, checksum entries, cask/tap files, and release metadata, then assert allowed/forbidden names against that manifest. This makes D12 mechanical and reusable.
 
 **Verdict reasoning:** Cycle 4 resolves the literal D10, D11, and D13 wording, and it largely fixes the docs overclaiming problem from earlier cycles. It still leaves Important design gaps around socket containment, Unix-only build boundaries, fail-closed release artifact inspection, and redaction scope. Because unresolved Important findings remain, Status is FAIL.
+
+## Cycle 5
+
+### Adversarial Review Report
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+None.
+
+**Findings (Important):**
+- `D20` [User-intent drift / Multi-component validation] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:202-212,310]: The docs guard requirement only says public docs must "mention" the release-shaped `ratchet` boundary does not claim credential-free chat. That can still pass if docs also contain contradictory wording like "full TUI automated for `ratchet`" elsewhere. This reopens the D6 overclaim class. Recommendation: require explicit forbidden-phrase/assert-not checks for release-binary credential-free chat/full interactive coverage, alongside positive checks for the split `ratchet` vs `ratchet-tui-smoke` evidence.
+- `D21` [Declared integration proof / Rollback story / Existence-runtime-validity] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:181-198; .goreleaser.yaml:44-56]: D17 is still not fully fail-closed for Homebrew/release asset proof. The design allows the guard to "record the exact GoReleaser snapshot behavior" when cask/tap material is unavailable, but `.goreleaser.yaml` declares `homebrew_casks`; recording absence is not the same as proving the cask/release boundary cannot include `ratchet-tui-smoke`. Recommendation: define a deterministic fallback check for skipped Homebrew/release classes, such as parsing `.goreleaser.yaml` cask `ids`/`binaries` and release build IDs, and fail if any publishable config surface can reference anything other than `ratchet`.
+- `D22` [Security/privacy at architecture level / Missing failure modes] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:136-143,183-188; .goreleaser.yaml:30-31]: The universal redaction/assertion rule conflicts with release artifact inspection: GoReleaser intentionally packages `RATCHET.md`, but the design says all artifact-manifest failure payloads go through the helper and failure assertions reject known instruction filenames from the source checkout. That can either make the artifact guard fail on a valid release archive or force redaction that hides the very archive contents being inspected. Recommendation: scope "instruction filename must not appear" assertions to PTY/TUI/daemon output, and separately allow expected release archive members like `RATCHET.md` in artifact manifests.
+- `D23` [Project-guidance conflicts / Existence-runtime-validity] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:78-83,170-177,257]: D16 is only partially resolved. The smoke command/client are tagged `tui_smoke && !windows`, but the negative Windows check is only `GOOS=windows GOARCH=amd64 go list`; it does not cover `arm64`, and it does not include the "go list/build expectation" requested in Cycle 4. Recommendation: add both `windows/amd64` and `windows/arm64` negative checks and specify whether `go build -tags tui_smoke ./cmd/ratchet-tui-smoke` must fail with the same no-buildable-files class.
+
+**Findings (Minor):**
+- `D24` [Declared integration proof] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:257]: The integration matrix classifies "Windows smoke package boundary" as `runtime-integrated`, but the proof is a negative `go list` failure, not runtime integration. Recommendation: classify this row as `config-only` or `negative-build-boundary` wording inside the proof column, while keeping Windows release binary builds as `runtime-integrated` or build-integrated evidence.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | Windows honesty is improved with `tui_smoke && !windows`, but the Windows negative check is narrower than the Cycle 4 requested build/list expectation. |
+| Assumptions under attack | Finding | A1 remains acceptable only if docs guards reject contradictory release-chat claims, not merely mention the intended boundary. |
+| Repo-precedent conflicts | Finding | GoReleaser precedent intentionally archives `RATCHET.md`, conflicting with the proposed universal instruction-filename rejection across artifact-manifest payloads. |
+| Artifact-class precedent | Finding | Existing release config has concrete Homebrew cask and archive surfaces, but snapshot-missing cask output can still be accepted by "record behavior" rather than mechanically checked. |
+| YAGNI violations | Clean | The design still avoids ConPTY, visual snapshot framework, external-provider CI, and new user-facing TUI behavior. |
+| Missing failure modes | Finding | The redaction/assertion policy misses the valid-artifact-member case and can create false failure or blind redaction. |
+| Security/privacy at architecture level | Finding | D15 socket containment is resolved on paper, but the all-output redaction rule is overbroad for release manifests and under-specific about where instruction filenames are sensitive. |
+| Infrastructure impact | Finding | No cloud impact exists, but local release artifact/Homebrew guard behavior remains ambiguous enough to affect release rollback confidence. |
+| Multi-component validation | Finding | TUI smoke boundaries are split, but docs validation can still pass contradictory public claims. |
+| Declared integration proof | Finding | The GoReleaser/Homebrew proof and Windows negative boundary are not classified or enforced precisely enough. |
+| Contributed UI rendering proof | Clean | No host-shell contributed UI/plugin route is claimed; this is the primary Bubble Tea TUI. |
+| Rollback story | Finding | Rollback names bad cask/tap/checksum removal, but the guard still may not prove those publishable surfaces before release. |
+| Simpler alternative not considered | Clean | D19 is resolved: generated test-only smoke main is explicitly considered and rejected. |
+| User-intent drift | Finding | The slice targets the TUI proof gap, but weak docs negative assertions can drift back into overclaiming full release-binary TUI proof. |
+| Existence/runtime-validity | Finding | The GoReleaser command exists locally, but the design still lacks a deterministic fallback for snapshot-skipped cask/release outputs and underspecifies Windows negative build coverage. |
+
+**Options the author may not have considered:**
+1. Split redaction policies by evidence class: use strict "no instruction filenames" only for runtime PTY/daemon outputs, and use an allowlisted archive-manifest policy for release artifacts where `RATCHET.md` is expected.
+2. Make docs guard bidirectional: require positive text for both proof rows and explicit negative assertions that public docs do not contain forbidden release-chat/full-TUI phrases for untagged `ratchet`.
+
+**Verdict reasoning:** Cycle 5 resolves much of D15-D19 in text, especially final socket checks, Unix-only build tags, and explicit rejection of generated smoke main. It still leaves Important gaps in the release artifact guard, docs overclaim prevention, and redaction scope. Because unresolved Important findings remain, Status is FAIL.

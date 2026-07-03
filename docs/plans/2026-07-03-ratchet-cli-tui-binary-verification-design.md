@@ -78,9 +78,13 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
 - Add negative assertions:
   - `go build ./cmd/ratchet` succeeds without `tui_smoke` and exposes no
     smoke command/flag/help text;
-  - `GOOS=windows GOARCH=amd64 go list -tags tui_smoke ./cmd/ratchet-tui-smoke`
-    fails with no buildable Go files or an equivalent expected Unix-only
+  - both `GOOS=windows GOARCH=amd64 go list -tags tui_smoke ./cmd/ratchet-tui-smoke`
+    and `GOOS=windows GOARCH=arm64 go list -tags tui_smoke ./cmd/ratchet-tui-smoke`
+    fail with no buildable Go files or an equivalent expected Unix-only
     package error;
+  - both `GOOS=windows GOARCH=amd64 go build -tags tui_smoke ./cmd/ratchet-tui-smoke`
+    and `GOOS=windows GOARCH=arm64 go build -tags tui_smoke ./cmd/ratchet-tui-smoke`
+    fail with the same expected Unix-only package class;
   - `goreleaser check` passes and a snapshot release/archive inspection finds
     no archive member, checksum entry, Homebrew artifact, or release asset named
     `ratchet-tui-smoke`;
@@ -133,14 +137,18 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
 - Test has timeouts and cleanup that kills the child process if it hangs.
 - Test includes an untagged repo-root discovery/build helper rather than
   reusing `internal/tui/pty_test.go`, which is behind the `integration` tag.
-- All test failure payloads pass through one redaction helper before
+- All runtime/test failure payloads pass through one redaction helper before
   `t.Log`/`t.Fatalf`: PTY frames, stdout/stderr, build output, GoReleaser
   snapshot output, daemon cleanup output, docs-guard output, artifact-manifest
   output, and command errors. It redacts real home path, repo workspace path,
   temp roots, socket path, executable path, generated artifact paths, trust
   output body, and deterministic prompt frames down to bounded excerpts.
-- Failure assertions reject output containing the repo workspace path, real home
-  path, or known instruction filenames from the source checkout.
+- Runtime PTY/TUI/daemon failure assertions reject output containing the repo
+  workspace path, real home path, or known instruction filenames from the source
+  checkout.
+- Release artifact manifests use an allowlist policy instead: `RATCHET.md` is
+  expected because `.goreleaser.yaml` archives it, while `ratchet-tui-smoke`
+  remains forbidden.
 
 ### Normal Launch Smoke
 
@@ -173,8 +181,8 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
 - If Go test cannot run Unix PTY on Windows CI, tests remain build-tagged by
   filename suffix and docs state that Windows interactive proof is not claimed.
 - The smoke package/client use `tui_smoke && !windows`; Windows verification
-  explicitly asserts release-shaped `./cmd/ratchet` builds and smoke package is
-  unavailable on Windows.
+  explicitly asserts release-shaped `./cmd/ratchet` builds and smoke package
+  `go list`/`go build` are unavailable on Windows amd64 and arm64.
 
 ### Release Artifact Guard
 
@@ -190,11 +198,16 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
   - at least one Linux archive, one Darwin archive, one Windows archive, and
     `checksums.txt` must be present;
   - if `.goreleaser.yaml` has `homebrew_casks`, snapshot output must either
-    contain generated cask/tap material or the guard must record the exact
-    GoReleaser snapshot behavior that makes cask generation unavailable without
-    publish credentials.
+    contain generated cask/tap material or the guard must parse `.goreleaser.yaml`
+    as deterministic fallback proof;
+  - fallback proof parses `.goreleaser.yaml` and fails unless every build
+    `id`, archive `ids` entry, `homebrew_casks[].ids` entry,
+    `homebrew_casks[].binaries` entry, and release-publish build surface is
+    exactly `ratchet`.
 - Assert the manifest contains `ratchet` and never contains
   `ratchet-tui-smoke`.
+- Assert archive manifests may contain allowlisted `RATCHET.md` but no smoke
+  binary/package names.
 - Snapshot output and manifest failures are redacted through the shared helper.
 
 ### Documentation
@@ -210,6 +223,12 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
   smoke, slash commands, shortcuts, temp home/workdir, mock provider, Windows
   compile proof, and the fact that release-shaped `ratchet` proof does not
   claim credential-free chat.
+- Make the docs guard bidirectional:
+  - positive assertions require the split `ratchet` startup/onboarding proof
+    and `ratchet-tui-smoke` interactive proof;
+  - negative assertions reject public-doc phrases that imply release-shaped
+    `ratchet` has credential-free chat, full interactive TUI automation, or
+    slash/shortcut proof without naming `ratchet-tui-smoke`.
 
 ## Security Review
 
@@ -218,7 +237,7 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
 | Smoke mode becomes a user-facing bypass. | Compile it only with `tui_smoke`; release binaries do not contain the path. |
 | Test leaks real home/provider/project state. | Set temp `HOME`/`XDG_STATE_HOME`/`cmd.Dir`/session `WorkingDir`; temp workdir contains no instruction or hook files; assert captured output excludes real workspace/home paths. |
 | PTY test hangs in CI. | Per-read deadline, process kill cleanup, bounded waits, and no external network/provider dependency. |
-| Sensitive prompts/log paths in logs. | Use harmless deterministic prompts and route every test failure payload through one redaction helper that removes real home/workspace/temp/socket/executable/artifact paths plus trust/prompt bodies. |
+| Sensitive prompts/log paths in logs. | Use harmless deterministic prompts and route every test failure payload through one redaction helper that removes real home/workspace/temp/socket/executable/artifact paths plus trust/prompt bodies; runtime outputs reject instruction filenames, release manifests allowlist expected `RATCHET.md`. |
 | Release-shaped startup leaks daemon process. | Cleanup stops or kills the temp-home daemon and asserts pid/socket files are gone. |
 | Platform mismatch. | Unix PTY proof is explicitly Unix-only; Windows claim is limited to build/noninteractive smoke. |
 
@@ -253,8 +272,8 @@ out.
 | Built-in mock provider | runtime-integrated | Chat prompt streams deterministic mock response. |
 | Slash commands and shortcuts | runtime-integrated | PTY sends input/control keys and asserts resulting UI states. |
 | Docs guard | config-only | `cmd/ratchet/harness_docs_test.go` checks public docs mention exact evidence boundaries. |
-| GoReleaser snapshot artifacts | runtime-integrated | `goreleaser check` plus snapshot/archive inspection proves `ratchet-tui-smoke` is absent from archives/checksums/Homebrew artifacts/release assets. |
-| Windows smoke package boundary | runtime-integrated | `GOOS=windows GOARCH=amd64 go list -tags tui_smoke ./cmd/ratchet-tui-smoke` fails with the expected Unix-only no-buildable-files class. |
+| GoReleaser snapshot artifacts | runtime-integrated | `goreleaser check` plus snapshot/archive inspection and deterministic `.goreleaser.yaml` fallback prove `ratchet-tui-smoke` is absent from archives/checksums/Homebrew artifacts/release assets. |
+| Windows smoke package boundary | config-only | `GOOS=windows GOARCH=amd64/arm64 go list` and `go build -tags tui_smoke ./cmd/ratchet-tui-smoke` fail with the expected Unix-only no-buildable-files class. |
 | Windows interactive PTY | deferred | No ConPTY runner in this slice; Windows coverage is build/noninteractive only. |
 
 ## Rollback
@@ -321,3 +340,8 @@ and cut a patch release.
 | D17 | Release guard now defines exact snapshot command, `dist/` manifest contents, expected artifact classes, and fail-closed behavior for missing artifacts. |
 | D18 | Redaction helper now covers every test failure payload, including build, GoReleaser, daemon cleanup, docs guard, artifact manifest, PTY, stdout/stderr, and command errors. |
 | D19 | Added and rejected generated test-only smoke main alternative in the approaches table. |
+| D20 | Docs guard now has positive split-proof checks and forbidden-phrase assertions against release-shaped credential-free/full-interactive `ratchet` claims. |
+| D21 | Release guard now parses `.goreleaser.yaml` as deterministic fallback for snapshot-skipped cask/release surfaces and fails unless publishable ids/binaries are exactly `ratchet`. |
+| D22 | Runtime output rejects instruction filenames; release artifact manifests use allowlist semantics and permit expected `RATCHET.md`. |
+| D23 | Windows negative checks now cover amd64 and arm64 for both `go list` and `go build -tags tui_smoke ./cmd/ratchet-tui-smoke`. |
+| D24 | Windows smoke package boundary is classified as `config-only` negative build-boundary proof, not runtime-integrated. |
