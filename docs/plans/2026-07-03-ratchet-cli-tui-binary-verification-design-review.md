@@ -84,3 +84,47 @@ None.
 2. Interface-first TUI seam: define a narrow TUI daemon-client interface and adapt `*client.Client` to it. This makes smoke testing easier without exporting a broad arbitrary gRPC constructor, but it touches more TUI code and should be scoped carefully.
 
 **Verdict reasoning:** Cycle 2 resolves the big D1/D3/D5 shape problems and mostly addresses D2/D4, but it still leaves Important ambiguity around what the public docs may claim, how the smoke path avoids real project state, and how the tagged binary can actually construct the concrete client required by `tui.Run`. Status remains FAIL until those contracts are tightened.
+
+## Cycle 3
+
+### Adversarial Review Report
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+None.
+
+**Findings (Important):**
+- `D10` [Existence/runtime-validity / Repo-precedent conflicts] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:87-92]: D8 is not fully resolved. The proposed `ConnectSmokeUnix(ctx context.Context, socketPath string)` contract says the socket must be "under the caller-provided temp root," but the API does not accept that root, so the constructor cannot enforce its own stated containment rule. Existing `internal/client.Client` has unexported fields and `Connect()` hardcodes `daemon.SocketPath()` in `internal/client/client.go:20-38`, so this exact seam matters. Recommendation: change the contract to `ConnectSmokeUnix(ctx, tempRoot, socketPath string)` or an options struct, and require validation of `Abs`, `EvalSymlinks`/clean path containment, socket mode, and `unix://` only before constructing the client.
+- `D11` [Missing failure modes / Infrastructure impact] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:127-137]: The release-shaped startup smoke launches normal `ratchet`, which enters `runInteractive` and calls `client.EnsureDaemon()`; that can fork a background daemon under the temp home. The design only says "exit cleanly" and does not require daemon stop/kill, pid/socket cleanup, or a post-test assertion that no temp-home daemon remains. This can leak local processes in CI and leave temp state active after the PTY exits. Recommendation: require the test to run `ratchet daemon stop` with the same temp env, or read the temp pid file and terminate/wait; assert the socket and pid file are gone.
+- `D12` [Rollback story / Infrastructure impact] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:77-81,210-216]: D9 is only partially resolved. Checking that the GoReleaser target/package list does not mention `cmd/ratchet-tui-smoke` is weaker than proving release artifacts do not contain it. Current `.goreleaser.yaml` archives only build id `ratchet`, but the design should guard the artifact boundary, not just the config text. Recommendation: require `goreleaser check` plus a snapshot release/archive inspection that no archive, checksum entry, Homebrew cask binary, or release asset contains `ratchet-tui-smoke`.
+
+**Findings (Minor):**
+- `D13` [Artifact-class precedent / Existence/runtime-validity] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:100-106]: The new non-integration test is placed in `internal/tui`, but the existing repo-root discovery and PTY build helper live in `internal/tui/pty_test.go` behind the `integration` build tag, so the new test cannot reuse them in an untagged build. The design says to build `./cmd/ratchet-tui-smoke` but does not state that the command must run from repo root, unlike existing binary smoke precedent in `cmd/ratchet/acp_client_binary_test.go:17-28`. Recommendation: require an untagged shared helper or explicit repo-root discovery for the new test.
+- `D14` [Missing failure modes / Security/privacy at architecture level] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:122-125,169-175]: Failure-output redaction excludes trust bodies and deterministic prompt frames, but it does not cover daemon logs from startup/onboarding or provider/setup text that may include temp paths, executable paths, or environment-derived metadata. Recommendation: require all PTY/stderr/stdout failure dumps to pass through one redaction helper before logging, then assert no real home, workspace, socket path, or instruction filename survives.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | The design follows the workspace/repo goal of real boundary proof, but process cleanup and release-artifact guards are not strong enough for cross-platform release hygiene. |
+| Assumptions under attack | Finding | A1 is now bounded by non-release docs, but the client seam assumes containment it cannot enforce with the proposed signature. |
+| Repo-precedent conflicts | Finding | Existing `client.Client` only connects to the default daemon socket, and existing untagged binary-smoke tests set repo root explicitly; the design misses both exact precedents. |
+| Artifact-class precedent | Finding | Binary build tests already use repo-root-aware helpers, while the proposed untagged `internal/tui` test would need its own helper because current PTY helpers are integration-tagged. |
+| YAGNI violations | Clean | The slice still avoids ConPTY, snapshots, new user-facing commands, external-provider CI, and broader policy work. |
+| Missing failure modes | Finding | Normal startup smoke can leave a background daemon alive, and failure logs are not globally redacted. |
+| Security/privacy at architecture level | Finding | D7 is mostly resolved for temp state and Unix socket exposure, but log redaction and process lifetime boundaries remain incomplete. |
+| Infrastructure impact | Finding | No cloud/IAM impact exists, but the local daemon process/socket/pid lifecycle is real infrastructure for CI and is not cleaned up in the design. |
+| Multi-component validation | Clean | D6 is resolved: the design splits release-shaped startup/onboarding proof from non-release interactive TUI proof. |
+| Declared integration proof | Clean | The integration matrix uses `runtime-integrated`, `config-only`, and `deferred` classifications. |
+| Contributed UI rendering proof | Clean | No host-shell contributed UI/plugin route is claimed; this is the primary TUI process. |
+| Rollback story | Finding | Source rollback is described, but accidental release inclusion is guarded by config inspection rather than artifact inspection. |
+| Simpler alternative not considered | Finding | The design considers a dedicated smoke binary, but not a narrower untagged internal helper package plus test-only `main` generated under `t.TempDir()` to avoid adding a persistent module package. |
+| User-intent drift | Clean | The revised docs boundaries avoid overclaiming Windows interactive or release-binary credential-free chat proof. |
+| Existence/runtime-validity | Finding | The smoke client API cannot validate its stated temp-root rule, and the proposed untagged `internal/tui` test lacks an untagged repo-root/PTTY helper contract. |
+
+**Options the author may not have considered:**
+1. Test-generated smoke main: have the untagged PTY test write a tiny `main.go` into `t.TempDir()` that imports internal smoke helper packages and build it with `-tags tui_smoke`. This avoids adding a permanent `cmd/ratchet-tui-smoke` package that broad package patterns might discover, while still keeping release `cmd/ratchet` untouched. Trade-off: the test is a little more complex and the generated source must stay small.
+2. Interface-first TUI client seam: define the minimal daemon-client interface consumed by TUI and adapt `*client.Client` to it. Then the smoke path can use a test/smoke client wrapper without exporting another concrete constructor. Trade-off: broader TUI refactor, but it reduces pressure on `internal/client` to support arbitrary endpoints.
+
+**Verdict reasoning:** Cycle 3 fixes the major Cycle 2 documentation split and removes the shipped hidden env gate, so D6 and most of D7 are resolved. But D8 still has a concrete API-contract bug, the release-shaped startup smoke can leak a background daemon, and D9's guard is weaker than an artifact-level release check. These are actionable Important findings, so the design remains FAIL.

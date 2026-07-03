@@ -77,8 +77,9 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
 - Add negative assertions:
   - `go build ./cmd/ratchet` succeeds without `tui_smoke` and exposes no
     smoke command/flag/help text;
-  - release-shaped GoReleaser target/package list does not include
-    `cmd/ratchet-tui-smoke`;
+  - `goreleaser check` passes and a snapshot release/archive inspection finds
+    no archive member, checksum entry, Homebrew artifact, or release asset named
+    `ratchet-tui-smoke`;
   - captured PTY frames/logs do not contain the developer workspace path or
     real home path.
 
@@ -86,9 +87,13 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
 
 - Add `internal/client/client_tui_smoke.go` with `//go:build tui_smoke`.
 - API:
-  `func ConnectSmokeUnix(ctx context.Context, socketPath string) (*Client, error)`.
+  `func ConnectSmokeUnix(ctx context.Context, tempRoot, socketPath string) (*Client, error)`.
 - Contract:
-  - `socketPath` must be absolute and under the caller-provided temp root;
+  - `tempRoot` and `socketPath` are converted to absolute clean paths;
+  - symlink-aware containment is checked by resolving the existing temp root and
+    socket parent with `filepath.EvalSymlinks`;
+  - `socketPath` must be under `tempRoot`;
+  - socket file must exist and be mode `0600` before dialing;
   - dial target is `unix://` only; no TCP target is accepted;
   - uses `grpc.WithTransportCredentials(insecure.NewCredentials())` because the
     socket is process-local, temp-owned, and permissioned `0600`;
@@ -119,8 +124,12 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
   - `/exit` or `ctrl+c` exits cleanly.
 - Assertions strip ANSI and bound line width for representative frames.
 - Test has timeouts and cleanup that kills the child process if it hangs.
-- Failure logs redact `/trust list` bodies and deterministic prompt frames down
-  to bounded excerpts; no real grants, credentials, or home state are loaded.
+- Test includes an untagged repo-root discovery/build helper rather than
+  reusing `internal/tui/pty_test.go`, which is behind the `integration` tag.
+- All PTY/stdout/stderr failure logs pass through one redaction helper before
+  `t.Log`/`t.Fatalf`; it redacts real home path, repo workspace path, temp
+  roots, socket path, executable path, trust output body, and deterministic
+  prompt frames down to bounded excerpts.
 - Failure assertions reject output containing the repo workspace path, real home
   path, or known instruction filenames from the source checkout.
 
@@ -132,9 +141,14 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
   expected provider setup/onboarding boundary, not chat:
   - build release-shaped binary without tags;
   - set temp `HOME`/`XDG_STATE_HOME`;
+  - set `cmd.Dir` to an empty temp workdir;
   - launch in PTY;
   - assert splash/onboarding or provider-setup boundary appears;
-  - exit cleanly.
+  - exit cleanly;
+  - run `ratchet daemon stop` with the same temp env if a temp pid/socket exists,
+    or read the temp pid file and terminate/wait;
+  - assert temp `.ratchet/daemon.pid` and `.ratchet/daemon.sock` are gone after
+    cleanup.
 - Docs distinguish:
   - release-shaped binary: startup/help/daemon/onboarding boundary;
   - `ratchet-tui-smoke` binary: credential-free interactive TUI
@@ -171,7 +185,8 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
 | Smoke mode becomes a user-facing bypass. | Compile it only with `tui_smoke`; release binaries do not contain the path. |
 | Test leaks real home/provider/project state. | Set temp `HOME`/`XDG_STATE_HOME`/`cmd.Dir`/session `WorkingDir`; temp workdir contains no instruction or hook files; assert captured output excludes real workspace/home paths. |
 | PTY test hangs in CI. | Per-read deadline, process kill cleanup, bounded waits, and no external network/provider dependency. |
-| Sensitive prompts in logs. | Use harmless deterministic prompts; failure output is local test output only. |
+| Sensitive prompts/log paths in logs. | Use harmless deterministic prompts and route all failure output through one redaction helper that removes real home/workspace/temp/socket/executable paths plus trust/prompt bodies. |
+| Release-shaped startup leaks daemon process. | Cleanup stops or kills the temp-home daemon and asserts pid/socket files are gone. |
 | Platform mismatch. | Unix PTY proof is explicitly Unix-only; Windows claim is limited to build/noninteractive smoke. |
 
 ## Infrastructure Impact
@@ -185,7 +200,7 @@ out.
 
 | boundary | proof |
 |---|---|
-| Release-shaped built binary to startup | Untagged PTY or subprocess smoke launches compiled `ratchet` with temp home/workdir and reaches help/daemon/onboarding boundary. |
+| Release-shaped built binary to startup | Untagged PTY or subprocess smoke launches compiled `ratchet` with temp home/workdir, reaches help/daemon/onboarding boundary, then stops the temp daemon and verifies pid/socket cleanup. |
 | Smoke built binary to TUI | `-tags tui_smoke` PTY test launches compiled `ratchet-tui-smoke` and reads rendered frames. |
 | TUI to daemon gRPC | Smoke service uses real daemon service/client RPCs for provider list, session tree, trust mode/rules, and chat send; docs do not claim auto-daemon socket proof from this row. |
 | TUI to mock provider | Chat prompt reaches built-in mock provider and streams a response. |
@@ -205,6 +220,7 @@ out.
 | Built-in mock provider | runtime-integrated | Chat prompt streams deterministic mock response. |
 | Slash commands and shortcuts | runtime-integrated | PTY sends input/control keys and asserts resulting UI states. |
 | Docs guard | config-only | `cmd/ratchet/harness_docs_test.go` checks public docs mention exact evidence boundaries. |
+| GoReleaser snapshot artifacts | runtime-integrated | `goreleaser check` plus snapshot/archive inspection proves `ratchet-tui-smoke` is absent from archives/checksums/Homebrew artifacts/release assets. |
 | Windows interactive PTY | deferred | No ConPTY runner in this slice; Windows coverage is build/noninteractive only. |
 
 ## Rollback
@@ -213,7 +229,8 @@ Revert `cmd/ratchet-tui-smoke`, the `tui_smoke` client constructor, smoke
 helper, PTY test, and docs updates. No data migration exists. Release binaries
 are unaffected because `cmd/ratchet` does not contain a smoke command/flag. If a
 future release accidentally includes `ratchet-tui-smoke`, remove it from the
-release config and cut a patch release.
+release config, delete the bad artifact/checksum/tap reference where possible,
+and cut a patch release.
 
 ## Assumptions
 
@@ -258,5 +275,10 @@ release config and cut a patch release.
 | D5 | Added declared integration matrix with `runtime-integrated`, `config-only`, and `deferred` classifications. |
 | D6 | Public docs must split release-shaped `ratchet` startup/onboarding proof from non-release `ratchet-tui-smoke` interactive proof, and docs guard must reject credential-free release chat wording. |
 | D7 | Smoke binary must run with temp `HOME`, `XDG_STATE_HOME`, `cmd.Dir`, and session `WorkingDir`; daemon listens on a temp Unix socket only; output must exclude real workspace/home paths. |
-| D8 | Added exact `tui_smoke`-only `client.ConnectSmokeUnix(ctx, socketPath)` contract; no general arbitrary-target constructor ships in release builds. |
-| D9 | Added release-shaped guard that no smoke command/flag/help text is present and release config does not include `cmd/ratchet-tui-smoke`. |
+| D8 | Added exact `tui_smoke`-only `client.ConnectSmokeUnix(ctx, tempRoot, socketPath)` contract; no general arbitrary-target constructor ships in release builds. |
+| D9 | Added release-shaped guard that no smoke command/flag/help text is present and release artifacts do not include `ratchet-tui-smoke`. |
+| D10 | Updated smoke client API to `ConnectSmokeUnix(ctx, tempRoot, socketPath)` and required absolute, symlink-aware containment plus socket mode validation. |
+| D11 | Release-shaped startup smoke must stop/kill the temp-home daemon and assert pid/socket cleanup. |
+| D12 | Release guard now requires `goreleaser check` plus snapshot/archive inspection for archives, checksums, Homebrew artifacts, and release assets. |
+| D13 | Added untagged repo-root/build helper requirement for the non-integration PTY test. |
+| D14 | Added single redaction helper for all PTY/stdout/stderr failure logs, covering real home/workspace/temp/socket/executable paths and prompt/trust bodies. |
