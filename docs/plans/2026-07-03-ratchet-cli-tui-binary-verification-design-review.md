@@ -911,3 +911,47 @@ None.
 2. Paragraph/table-row docs scanner.
 
 **Verdict reasoning:** D80-D83 are resolved in shape, but smoke package no-tag boundary and docs line-wrap false negatives remain Important blockers.
+
+## Cycle 22
+
+### Adversarial Review Report
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `D87` [Security/privacy / Existence-runtime-validity] [design:84-86,94-96]: Smoke source guard names specific paths plus vague "smoke helper files"; smoke-only helper code elsewhere can compile into release builds and evade the guard. Recommendation: define checked smoke-source manifest or repository-wide guard for smoke-only symbols/constructors and require exact `//go:build tui_smoke && !windows` unless explicitly test-only allowlisted.
+- `D88` [Missing failure modes / User-intent drift] [design:562-588]: Paragraph claim unit catches hard-wrapped false negatives but can merge unrelated sentences into false positives. Recommendation: unwrap prose, split into sentence claim units, scan table rows separately, and keep paragraph context only for reporting.
+- `D89` [Declared integration proof / Infrastructure impact] [design:511-530]: GoReleaser fallback parser asserts selected ids/binaries but does not recursively scan scalar strings under artifact/publish sections. Recommendation: recursively scan all scalar strings under artifact/publish sections for forbidden smoke tokens, then layer id/binary assertions.
+
+**Findings (Minor):**
+- `D90` [Artifact-class precedent / YAGNI] [design:422-430]: `cmd/ratchet-release-guard` adds an untagged installable helper command. Recommendation: use `internal/releaseguard` and a Go test or `tools/` wrapper, or justify public `cmd`.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | D88/D89 weaken honest harness/release evidence boundaries. |
+| Assumptions under attack | Finding | Named smoke globs, paragraph claim units, and id/binary-only fallback are not fail-closed. |
+| Repo-precedent conflicts | Finding | Repo `cmd` surface is product command; release guards/scripts are internal tooling. |
+| Artifact-class precedent | Finding | Internal release guard should not create user-facing command surface. |
+| YAGNI violations | Finding | Public helper command shape is unnecessary. |
+| Missing failure modes | Finding | Release-build leakage, docs false positives, nested GoReleaser config contamination. |
+| Security/privacy at architecture level | Finding | Smoke-only code can compile into release builds outside named paths. |
+| Infrastructure impact | Finding | D89 affects artifact guard reliability; D90 expands `go build ./...` command surface. |
+| Multi-component validation | Finding | Docs-to-test validation can pass/fail based on claim-unit artifacts rather than evidence semantics. |
+| Declared integration proof | Finding | GoReleaser fallback proof incomplete for nested publish config. |
+| Contributed UI rendering proof | Clean | No plugin-contributed UI. |
+| Rollback story | Clean | Detection gap, not rollback-text gap. |
+| Simpler alternative not considered | Finding | Source manifest, sentence-aware scanner, internal releaseguard package. |
+| User-intent drift | Finding | Docs guard could police wording artifacts instead of proof boundary. |
+| Existence/runtime-validity | Finding | D87/D89 remain executable-contract gaps. |
+
+**Options the author may not have considered:**
+1. Smoke-source manifest with unlisted smoke symbol/file failures.
+2. Sentence-aware docs scanner.
+3. `internal/releaseguard` package driven by tests and shell wrapper.
+
+**Verdict reasoning:** D80-D86 are materially resolved, but fail-closed smoke source isolation, docs claim modeling, and GoReleaser fallback scalar coverage remain Important blockers.

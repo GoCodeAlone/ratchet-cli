@@ -83,9 +83,14 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
     equivalent build-constraint class;
   - on Unix hosts, `go build -tags tui_smoke ./cmd/ratchet-tui-smoke` succeeds
     to prove the smoke package is intentionally buildable only under the tag;
-  - source guard asserts every smoke-only Go file under
-    `cmd/ratchet-tui-smoke`, `internal/client/*tui_smoke*`, and smoke helper
-    files begins with exact `//go:build tui_smoke && !windows`;
+  - source guard uses a test-owned smoke-source manifest listing every
+    non-test smoke-only Go file and its required build constraint; the guard
+    fails if any manifest file is missing exact
+    `//go:build tui_smoke && !windows`, if any non-test Go file outside the
+    manifest contains smoke-only identifiers (`tui_smoke`,
+    `ConnectSmokeUnix`, `ratchet-tui-smoke`, `SmokeUnix`, or smoke helper
+    constructor names), or if any unmanifested file/path includes `smoke` and
+    is not an explicitly allowlisted test file;
   - both `GOOS=windows GOARCH=amd64 go list -tags tui_smoke ./cmd/ratchet-tui-smoke`
     and `GOOS=windows GOARCH=arm64 go list -tags tui_smoke ./cmd/ratchet-tui-smoke`
     fail with no buildable Go files or an equivalent expected Unix-only
@@ -419,14 +424,19 @@ Mechanical fail-closed check:
 
 ### Release Artifact Guard
 
-- Add `cmd/ratchet-release-guard` as the structured release guard and
+- Add `internal/releaseguard` as the structured release guard implementation and
   `scripts/check-release-artifacts.sh` as a thin shell wrapper:
+  - the Go helper code lives under `internal/releaseguard` and is exercised by
+    Go tests; the shell wrapper invokes it through `go test` or a temporary
+    `go run` wrapper under `tools/` so no new untagged product `cmd/*` package
+    is introduced;
   - the Go helper uses existing Go module dependencies, including
     `gopkg.in/yaml.v3`, to parse `.goreleaser.yaml` and inspect generated
     artifact directories; do not implement YAML parsing in shell or add an
     unpinned external `yq` dependency;
-  - the shell wrapper only runs `goreleaser` when needed and invokes
-    `go run ./cmd/ratchet-release-guard ...`;
+  - the shell wrapper only runs `goreleaser` when needed and invokes the
+    `internal/releaseguard` test/helper entrypoint without adding a product
+    command;
   - default mode runs `goreleaser check`, `goreleaser release --snapshot
     --clean --skip=publish`, then the artifact-manifest guard;
   - `--manifest-only dist` mode inspects an already-generated `dist/` tree.
@@ -518,6 +528,12 @@ Mechanical fail-closed check:
     `id`, archive `ids` entry, `homebrew_casks[].ids` entry,
     `homebrew_casks[].binaries` entry, and release-publish build surface is
     exactly `ratchet`.
+- In fallback mode, recursively scan every scalar string under artifact/publish
+  sections (`builds`, `archives`, `checksum`, `homebrew_casks`, `release`, and
+  any future artifact/publish taxonomy entry) for forbidden smoke tokens before
+  applying the id/binary assertions. This catches nested hooks/templates/custom
+  blocks/signing/publisher fields that reference smoke artifacts without
+  changing ids.
 - The fallback parser is intentionally strict:
   - it parses `.goreleaser.yaml` top-level keys into an explicit taxonomy;
   - current nonpublishable metadata keys are `version` and `changelog`;
@@ -559,10 +575,12 @@ Mechanical fail-closed check:
     starts making TUI binary-smoke evidence claims;
   - positive assertions require the split `ratchet` startup/onboarding proof
     and `ratchet-tui-smoke` interactive proof;
-  - negative assertions scan each table row as one deterministic claim unit and
-    each Markdown paragraph as one deterministic claim unit by joining adjacent
-    nonblank non-table lines; this catches hard-wrapped prose where surface and
-    evidence tokens appear on different physical lines;
+  - negative assertions scan each table row as one deterministic claim unit;
+  - negative assertions unwrap adjacent nonblank non-table lines into
+    paragraphs, split those paragraphs into sentence claim units, and apply the
+    overclaim predicate to each sentence; paragraph context is retained only for
+    diagnostics so hard-wrapped prose is caught without merging unrelated
+    sentences into false positives;
   - each claim unit is normalized by lowercasing, collapsing whitespace, and
     treating punctuation separators (`/`, `-`, `:`, `;`, comma) as spaces;
   - a claim unit fails only when it is an evidence claim: it contains an exact
@@ -592,7 +610,7 @@ Mechanical fail-closed check:
 | risk | control |
 |---|---|
 | Smoke mode becomes a user-facing bypass. | Compile it only with `tui_smoke`; release binaries do not contain the path. |
-| Smoke package accidentally becomes default-buildable. | Unix no-tag `go list`/`go build ./cmd/ratchet-tui-smoke` fail; tagged Unix build succeeds; source guard requires exact `//go:build tui_smoke && !windows` on smoke-only files. |
+| Smoke package accidentally becomes default-buildable. | Unix no-tag `go list`/`go build ./cmd/ratchet-tui-smoke` fail; tagged Unix build succeeds; test-owned smoke-source manifest plus repo-wide smoke identifier/path scan requires exact `//go:build tui_smoke && !windows` on every non-test smoke-only file and fails on unmanifested smoke code. |
 | Test leaks real home/provider/project state. | Set temp `HOME`/`XDG_STATE_HOME`/`cmd.Dir`/session `WorkingDir`; temp workdir contains no instruction files/dirs from `internal/agent/instructions.go` and no hook configs from `internal/hooks/hooks.go` (`~/.ratchet/hooks.yaml`, `.ratchet/hooks.yaml`); assert captured output excludes real workspace/home paths. |
 | PTY test hangs or flakes in CI. | Per-read deadline, process kill cleanup, bounded waits, synchronized PTY output snapshots, and no external network/provider dependency. |
 | PTY exit path is only partly tested. | Use one long interaction PTY run ending with `/exit`, plus separate short PTY subprocess subtests for `ctrl+c` and `ctrl+d`. |
@@ -604,7 +622,7 @@ Mechanical fail-closed check:
 | Binary smoke skipped under race. | Add package-local `internal/tui` race helper files; `TestTUIBinarySmoke` skips under `-race`, and a focused non-race CI smoke job for `cmd/ratchet` and `internal/tui` smoke tests runs alongside the existing race suite. |
 | Non-race smoke CI cannot fetch private modules. | Make the smoke job setup-equivalent to existing CI: checkout, setup-go `1.26`, `GOPRIVATE`/`GONOSUMCHECK`, and private-module Git rewrite before `go test`. |
 | Release artifact guard only runs manually. | Add the publish-free `release-check` CI job; CI uses GoReleaser action for snapshot generation and the same manifest guard script local runs use. |
-| Shell release guard misparses GoReleaser YAML. | Implement the artifact/config guard as `cmd/ratchet-release-guard` in Go with `gopkg.in/yaml.v3`; shell wrapper only orchestrates GoReleaser and invokes the Go helper. |
+| Shell release guard misparses GoReleaser YAML. | Implement the artifact/config guard under `internal/releaseguard` in Go with `gopkg.in/yaml.v3`; shell wrapper only orchestrates GoReleaser and invokes Go tests/helper logic without adding a product `cmd/*` package. |
 | Tag release bypasses artifact guard. | Add the same publish-free `goreleaser check` + snapshot + manifest guard to `.github/workflows/release.yml` before the publishing step. |
 | Release jobs cannot fetch private modules. | Mirror CI's `GOPRIVATE`/`GONOSUMCHECK` and private-module Git rewrite in release preflight/publish and Windows safe-command smoke jobs. |
 | Snapshot guard differs from uploaded release. | Add a draft-release postcheck before undrafting that downloads uploaded GitHub release archives/checksums and runs the same archive manifest plus all-packaged-binary byte-scan guard against actual uploaded assets; explicitly treat Homebrew/tap postcheck as after-the-fact rollback under the current GoReleaser workflow. |
@@ -800,10 +818,14 @@ corrected preflight PR.
 | D77 | Added hard draft-state gates: `.goreleaser.yaml` must keep `release.draft: true`, and postcheck fails if the resolved release is not draft. |
 | D78 | Made Windows archive handling architecture-aware: require amd64 and arm64 zips, byte-scan both, execute only `ratchet_windows_amd64.zip` on x64 `windows-latest`. |
 | D79 | Corrected stale D71 resolution wording to match the narrowed positive-docs guard scope. |
-| D80 | Changed release artifact/config guard to a Go helper (`cmd/ratchet-release-guard`) using `gopkg.in/yaml.v3`; shell script is only a wrapper. |
+| D80 | Changed release artifact/config guard to internal Go helper logic (`internal/releaseguard`) using `gopkg.in/yaml.v3`; shell script is only a wrapper and no product `cmd/*` helper is added. |
 | D81 | Split PTY exit proof into one long `/exit` interaction run plus separate short `ctrl+c` and `ctrl+d` subprocess subtests. |
 | D82 | Made docs overclaim guard context-aware: interactive-surface evidence claims fail even without a release-target token unless assigned to `ratchet-tui-smoke` or explicitly deferred for release-shaped `ratchet`. |
 | D83 | Added per-command help/autocomplete requirements so commands such as `/mcp` can be parser/autocomplete-covered while intentionally help-omitted. |
 | D84 | Added Unix no-tag `go list`/`go build` negative checks, tagged Unix positive build, and exact smoke-file build-tag source guard. |
 | D85 | Changed docs overclaim scanner to use paragraph claim units plus table rows, not physical lines only. |
 | D86 | Required display-cell width assertions with `lipgloss.Width` or `runewidth` for ANSI-stripped PTY frames. |
+| D87 | Replaced vague smoke helper globs with a test-owned smoke-source manifest plus repo-wide non-test smoke identifier/path scan that fails unmanifested smoke code. |
+| D88 | Changed docs scanner to unwrap paragraphs but scan sentence claim units plus table rows, keeping paragraph context only for diagnostics. |
+| D89 | Added recursive forbidden-token scalar scanning under all GoReleaser artifact/publish sections in fallback mode before id/binary assertions. |
+| D90 | Moved release guard implementation shape from product `cmd/*` to `internal/releaseguard` plus tests/shell wrapper to avoid a public helper binary surface. |
