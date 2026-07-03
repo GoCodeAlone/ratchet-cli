@@ -128,3 +128,48 @@ None.
 2. Interface-first TUI client seam: define the minimal daemon-client interface consumed by TUI and adapt `*client.Client` to it. Then the smoke path can use a test/smoke client wrapper without exporting another concrete constructor. Trade-off: broader TUI refactor, but it reduces pressure on `internal/client` to support arbitrary endpoints.
 
 **Verdict reasoning:** Cycle 3 fixes the major Cycle 2 documentation split and removes the shipped hidden env gate, so D6 and most of D7 are resolved. But D8 still has a concrete API-contract bug, the release-shaped startup smoke can leak a background daemon, and D9's guard is weaker than an artifact-level release check. These are actionable Important findings, so the design remains FAIL.
+
+## Cycle 4
+
+### Adversarial Review Report
+
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `D15` [Security/privacy at architecture level / Missing failure modes] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:90-97]: `ConnectSmokeUnix` validates the temp root and socket parent with `EvalSymlinks`, but does not require `Lstat`/socket-type validation on the final socket path or full final-path symlink resolution. A symlinked final component can satisfy parent containment while dialing outside the temp root. Recommendation: require `Lstat(socketPath)` rejects symlinks, `ModeSocket` is present, permissions are `0600`, full resolved socket path remains under resolved `tempRoot`, and validation is repeated immediately before dialing.
+- `D16` [Project-guidance conflicts / Existence/runtime-validity] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:57-60,88-90,161-165]: The design says production remains portable and Windows proof is honest, but the new smoke command/client files are only specified as `//go:build tui_smoke`, not `tui_smoke && !windows`. The Windows gate only cross-builds `./cmd/ratchet`, so smoke-tagged code can rot or accidentally compile/run ambiguously on Windows despite Unix-socket-only semantics. Recommendation: mark smoke command/client with explicit Unix-only build tags and add a negative or documented `GOOS=windows go list/build -tags tui_smoke` expectation.
+- `D17` [Declared integration proof / Rollback story / Infrastructure impact] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:80-82,223,226-233]: D12 is asserted but still not fail-closed. The design says inspect snapshot archives/checksums/Homebrew artifacts/release assets, but does not define the snapshot command, produced artifact paths, how `homebrew_casks` are generated without publishing/token side effects, or what happens if GoReleaser produces no Homebrew/release artifact in snapshot mode. That can degrade back into config-text checking. Recommendation: specify exact command and artifact manifest checks, e.g. `goreleaser release --snapshot --clean --skip=publish`, enumerate `dist/*`, archive member lists, `checksums.txt`, generated cask/tap files if present, and fail if an expected artifact class is absent rather than silently clean.
+- `D18` [Security/privacy at architecture level / Missing failure modes] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:77-83,129-134,140-150,176-179]: D14 is only partially resolved. The redaction requirement is scoped to PTY/stdout/stderr failure logs, but this design also adds build failures, GoReleaser snapshot output, daemon-stop output, and docs-guard output that can include repo root, temp dirs, executable paths, socket paths, and generated artifact paths. Recommendation: require one redaction helper for every test failure payload before `t.Log`/`t.Fatalf`, including build/snapshot/daemon cleanup/docs-guard outputs, not only PTY frames.
+
+**Findings (Minor):**
+- `D19` [Simpler alternative not considered / Artifact-class precedent] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:45-51,246-255]: Cycle 3's test-generated smoke `main.go` alternative is not carried into the revised approaches. A permanent `cmd/ratchet-tui-smoke` package is defensible, but the design does not document why a generated test-only main was rejected after it was raised. Recommendation: add a short rejection row comparing permanent command package vs generated test main.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | Windows honesty is mostly addressed, but smoke-tagged Unix-only code lacks explicit `!windows` boundaries. |
+| Assumptions under attack | Finding | A1/A3 remain acceptable only if non-release and Unix-only limits are mechanically enforced, not just documented. |
+| Repo-precedent conflicts | Finding | Existing binary smoke tests build from repo root and print raw build output; new universal redaction must cover that precedent rather than only PTY logs. |
+| Artifact-class precedent | Finding | Existing GoReleaser config has concrete archives/checksums/Homebrew cask surfaces, but the design does not specify artifact-level enumeration/fail-closed checks. |
+| YAGNI violations | Clean | No new user feature, ConPTY, visual snapshot, external provider CI, or broader policy work is added. |
+| Missing failure modes | Finding | Final socket symlink/dial escape and non-PTY failure-output leakage remain under-specified. |
+| Security/privacy at architecture level | Finding | Temp isolation is improved, but socket final-component validation and all-output redaction are incomplete. |
+| Infrastructure impact | Finding | No cloud impact; local daemon cleanup is now covered, but release artifact/tap guard behavior remains ambiguous. |
+| Multi-component validation | Clean | Release startup and smoke TUI/daemon/mock-provider boundaries are now split clearly. |
+| Declared integration proof | Finding | Integration matrix exists, but GoReleaser snapshot/Homebrew/release-asset proof lacks executable artifact criteria. |
+| Contributed UI rendering proof | Clean | No plugin-contributed host UI is involved; PTY-rendered TUI proof covers the relevant UI surface. |
+| Rollback story | Finding | Source rollback is fine, but accidental release inclusion still depends on an underspecified artifact guard. |
+| Simpler alternative not considered | Finding | Test-generated smoke main from Cycle 3 was not explicitly evaluated in the revised alternatives. |
+| User-intent drift | Clean | The slice still targets the documented manual TUI proof gap without claiming Windows interactive proof. |
+| Existence/runtime-validity | Finding | D10/D11/D13 are resolved at contract level; D12/D14 still need fail-closed artifact/output mechanics. |
+
+**Options the author may not have considered:**
+1. Generated smoke main under `t.TempDir()`: keep smoke daemon/client helpers internal, write a tiny test-only `main.go`, then build it with `-tags tui_smoke`. This avoids a permanent `cmd/ratchet-tui-smoke` package and reduces accidental package/release discovery risk. Trade-off: the test becomes more complex and must keep generated source minimal.
+2. Artifact manifest test helper: after GoReleaser snapshot, build a normalized manifest of `dist/` files, archive members, checksum entries, cask/tap files, and release metadata, then assert allowed/forbidden names against that manifest. This makes D12 mechanical and reusable.
+
+**Verdict reasoning:** Cycle 4 resolves the literal D10, D11, and D13 wording, and it largely fixes the docs overclaiming problem from earlier cycles. It still leaves Important design gaps around socket containment, Unix-only build boundaries, fail-closed release artifact inspection, and redaction scope. Because unresolved Important findings remain, Status is FAIL.
