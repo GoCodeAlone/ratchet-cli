@@ -217,3 +217,46 @@ None.
 2. Make docs guard bidirectional: require positive text for both proof rows and explicit negative assertions that public docs do not contain forbidden release-chat/full-TUI phrases for untagged `ratchet`.
 
 **Verdict reasoning:** Cycle 5 resolves much of D15-D19 in text, especially final socket checks, Unix-only build tags, and explicit rejection of generated smoke main. It still leaves Important gaps in the release artifact guard, docs overclaim prevention, and redaction scope. Because unresolved Important findings remain, Status is FAIL.
+
+## Cycle 6
+
+### Adversarial Review Report
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+None.
+
+**Findings (Important):**
+- `D25` [Multi-component validation / User-intent drift] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:126-135,266-273; docs/harness-emulation.md:171-181; README.md:97-104]: The smoke only drives `/help`, `/provider list`, `/mode`, `/trust list`, `/tree`, exit, and shortcuts, but public docs expose broader TUI slash behavior including `/trust allow`, `/trust deny`, `/trust reset`, `/trust persist`, `/trust grants`, and `/trust revoke`. Claiming "slash commands" are binary-proven can still miss policy-sensitive slash-command paths that mutate or expose local trust metadata. Recommendation: either narrow docs to "selected slash commands" or require a command matrix that drives every publicly documented TUI trust/slash command through the PTY with temp-state assertions.
+- `D26` [Existence/runtime-validity / User-intent drift] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:222-231,343]: D20 is only partially resolved. The design requires negative assertions against "phrases that imply" release-shaped credential-free chat/full interactive coverage, but does not define concrete forbidden strings/regexes or which public docs are scanned. A weak implementation could satisfy this with subjective checks and still allow contradictory table wording. Recommendation: list exact public-doc paths and forbidden regexes, including release-shaped `ratchet` + `credential-free chat`, `full TUI automated`, `slash/shortcut proof`, or `interactive chat` unless the same row/sentence names `ratchet-tui-smoke`.
+- `D27` [Security/privacy at architecture level / Missing failure modes] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:74-76,146-150; internal/agent/instructions.go:31-77]: The instruction-file isolation list omits real discovery surfaces: `.github/copilot-instructions.md`, `.claude/`, `.github/instructions/`, `.cursor/rules/`, `.ratchet/instructions/`, `~/.ratchet/instructions.md`, and provider-specific `instructions.<provider>.md`. Temp `HOME` and temp `cmd.Dir` reduce risk, but the design's "known instruction filenames" rejection can still be implemented from the incomplete list and miss a future leak from the actual discovery contract. Recommendation: derive the forbidden runtime instruction patterns from `internal/agent/instructions.go` or name the complete file/dir set in the design.
+
+**Findings (Minor):**
+- `D28` [Artifact-class precedent / Infrastructure impact] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:187-211]: The GoReleaser guard is artifact-level now, but the deterministic fallback is still described as custom parsing of selected YAML fields. That is brittle against GoReleaser schema changes or future publish surfaces not in the named field list. Recommendation: require `goreleaser check` plus parsing through a YAML struct that fails on unknown publishable sections, or add an explicit "no unrecognized publish surfaces" check.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | The design follows Windows honesty and no hidden release path, but broad "slash commands" proof still drifts beyond what the selected PTY drive list proves. |
+| Assumptions under attack | Finding | A1 remains acceptable only if docs guards are mechanical and the public claim is narrowed or full slash-command coverage is added. |
+| Repo-precedent conflicts | Finding | `internal/agent/instructions.go` has a broader instruction discovery set than the design's isolation/rejection list. |
+| Artifact-class precedent | Finding | Release guard shape follows GoReleaser artifacts, but fallback YAML parsing is under-specified for future publishable surfaces. |
+| YAGNI violations | Clean | No ConPTY, visual snapshots, external-provider CI, new user-facing TUI features, or broader policy work is added. |
+| Missing failure modes | Finding | Runtime leak checks omit several actual instruction file and directory names. |
+| Security/privacy at architecture level | Finding | Trust/prompt redaction is addressed, but incomplete instruction-source rejection weakens the privacy boundary. |
+| Infrastructure impact | Finding | No cloud/IAM impact exists, but local release artifact guard behavior still depends on brittle fallback parsing. |
+| Multi-component validation | Finding | The PTY proof exercises real TUI/daemon/mock boundaries, but not the full documented slash-command surface. |
+| Declared integration proof | Clean | D24 is resolved: Windows smoke package boundary is now config-only/negative-build proof, not runtime-integrated. |
+| Contributed UI rendering proof | Clean | No plugin-contributed host-shell UI is claimed; this is the primary Bubble Tea TUI. |
+| Rollback story | Clean | Source revert plus artifact/tap removal and patch release is adequate for this test/docs/smoke-binary slice. |
+| Simpler alternative not considered | Finding | A table-driven TUI command matrix using existing public docs/help as source of truth is not considered. |
+| User-intent drift | Finding | The user asked for shortcuts/slash commands broadly; selected-command proof may be over-reported as full slash-command proof. |
+| Existence/runtime-validity | Finding | D21-D24 are mostly resolved, but docs negative checks and instruction-name checks are not concrete enough to be reliably implemented. |
+
+**Options the author may not have considered:**
+1. Source-of-truth slash matrix: generate or hand-maintain a small table from `internal/tui/commands` plus README/harness trust-command docs, then drive every command with safe temp-state inputs in the PTY smoke. This costs a little more test time, but prevents "slash commands verified" from meaning only a handpicked subset.
+2. Narrowed claim path: keep the PTY smoke small and explicitly document "selected representative slash commands and core shortcuts." This is cheaper, but the harness gap remains for policy-sensitive trust mutation commands.
+
+**Verdict reasoning:** Cycle 6 resolves the exact D20-D24 wording much better than Cycle 5: docs guards are bidirectional in intent, GoReleaser fallback now checks publishable ids/binaries, artifact manifests allow `RATCHET.md`, Windows negative checks cover amd64/arm64 list/build, and the Windows smoke boundary is no longer runtime-integrated. The revised design still has unresolved Important issues: it can overclaim slash-command proof, leaves docs-guard forbidden phrases too subjective, and uses an incomplete instruction-source list for privacy assertions. Status remains FAIL.
