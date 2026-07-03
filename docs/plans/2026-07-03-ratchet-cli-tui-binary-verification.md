@@ -185,6 +185,7 @@ Rollback: revert commit; production daemon path remains through existing constru
 ### Task 3: Unix PTY TUI Binary Smoke
 
 **Files:**
+- Create: `internal/tui/commands/testdata/command_surface_spec.json`
 - Create: `internal/tui/tui_binary_smoke_unix_test.go`
 - Create: `internal/tui/pty_capture_test.go`
 - Modify: `internal/tui/pty_test.go`
@@ -195,6 +196,8 @@ Rollback: revert commit; production daemon path remains through existing constru
 **Step 1: Write failing PTY tests**
 
 Add `TestTUIBinarySmoke` in a Unix-only test file with `//go:build !windows`; do not require `tui_smoke` on the test file itself. Skip under `-race` via package-local helper. The test builds `cmd/ratchet-tui-smoke` to a temp path with `go build -tags tui_smoke -o <tmp>/ratchet-tui-smoke ./cmd/ratchet-tui-smoke`, launches that binary in PTY with fixed size, temp home/state/workdir, harmless prompts, and synchronized bounded read snapshots.
+
+Create the initial `internal/tui/commands/testdata/command_surface_spec.json` fixture before the PTY test consumes it. Include the `pty-proven` rows required by the PTY run; Task 5 expands the same fixture for focused/help/autocomplete classifications.
 
 PTY run must assert:
 - splash/onboarding boundary, chat prompt, input visible;
@@ -230,7 +233,7 @@ Expected: first command PASS; second command SKIP with race-disabled message.
 **Step 5: Commit**
 
 ```bash
-git add internal/tui
+git add internal/tui internal/tui/commands/testdata/command_surface_spec.json
 git commit -m "test: drive tui smoke binary through pty"
 ```
 
@@ -289,7 +292,7 @@ Rollback: revert commit; existing daemon start behavior returns. Check no temp d
 ### Task 5: Command Surface, Help, And Shortcut Contracts
 
 **Files:**
-- Create: `internal/tui/commands/testdata/command_surface_spec.json`
+- Modify: `internal/tui/commands/testdata/command_surface_spec.json`
 - Modify: `internal/tui/commands/commands_test.go`
 - Modify: `internal/tui/components/autocomplete_test.go`
 - Modify: `cmd/ratchet/main.go`
@@ -302,7 +305,7 @@ Rollback: revert commit; existing daemon start behavior returns. Check no temp d
 
 **Step 1: Write failing contract tests**
 
-Shared fixture rows classify slash commands as `pty-proven`, `focused-proven`, or `deferred-runtime`. Tests assert:
+Expand the Task 3 fixture rows to classify every slash command as `pty-proven`, `focused-proven`, or `deferred-runtime`. Tests assert:
 - the fixture contains exact `pty-proven` rows for all five `/mode` values and each scoped `/trust` matrix command used by `TestTUIBinarySmoke`, including `--scope smoke` where applicable and required follow-up assertions for pattern/action/scope state;
 - parser switch cases, `/help`, autocomplete literals, `modeCmd`, `trustCmd`, and `providerCmd` surfaces are classified;
 - nonliteral/generated command cases fail unless fixture marks them runtime-tested;
@@ -640,19 +643,20 @@ Before publish:
 - GoReleaser `check`;
 - GoReleaser snapshot `release --snapshot --clean --skip=publish`;
 - manifest guard;
-- pre-publish draft config guard with `go test ./internal/releaseguard -run TestGoReleaserReleaseDraftConfig -count=1` before `goreleaser release --clean`;
+- pre-publish draft config guard with `go test -count=1 ./internal/releaseguard -run TestGoReleaserReleaseDraftConfig` before `goreleaser release --clean`;
 - tap preflight with recorded cleanup/formula automation SHA evidence.
 
 After publish and before undraft:
 - resolve draft release id by listing releases with retries;
-- use GitHub Script/API to verify the resolved release is still draft, download all assets for that release id into `$RUNNER_TEMP/release-assets`, write a small metadata file in that directory containing the release id/tag/draft state, then run draft asset postcheck with `RATCHET_RELEASE_GUARD_MODE=draft-assets`, `RATCHET_RELEASE_GUARD_ASSETS=$RUNNER_TEMP/release-assets`, and `RATCHET_RELEASE_GUARD_VERSION=<tag-or-version>`;
+- use GitHub Script/API to verify the resolved release is still draft, download all assets for that release id into `$RUNNER_TEMP/release-assets`, write a small metadata file in that directory containing the release id/tag/draft state, then run draft asset postcheck with `RATCHET_RELEASE_GUARD_MODE=draft-assets`, `RATCHET_RELEASE_GUARD_ASSETS=$RUNNER_TEMP/release-assets`, and `RATCHET_RELEASE_GUARD_VERSION=<tag-or-version>` using `go test -count=1 ./internal/releaseguard -run TestDraftAssets`;
 - clone tap and derive exact path-changing commits;
 - run tap postcheck with the full required env:
   `RATCHET_RELEASE_GUARD_MODE=tap-postcheck`,
   `RATCHET_RELEASE_GUARD_TAP=<tap-checkout>`,
   `RATCHET_RELEASE_GUARD_TAP_NAMES=<tap-names>`,
   `RATCHET_RELEASE_GUARD_TAP_COMMITS=<path=sha,...>`, and
-  `RATCHET_RELEASE_GUARD_VERSION=<tag-or-version>`;
+  `RATCHET_RELEASE_GUARD_VERSION=<tag-or-version>` using
+  `go test -count=1 ./internal/releaseguard -run TestTapPostcheck`;
 - only then undraft.
 
 **Step 3: Add Windows packaged safe-command smoke**

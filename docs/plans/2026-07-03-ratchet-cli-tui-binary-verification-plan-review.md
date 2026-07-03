@@ -275,3 +275,36 @@
 2. Drive PTY trust matrix from JSON command spec with exact command strings including `--scope smoke`.
 
 **Verdict reasoning:** FAIL. P1-P19 mostly addressed; remaining blockers were incomplete guard manifest staging and insufficient scoped trust state proof.
+
+## Cycle 8
+
+### Adversarial Review Report
+
+**Phase:** plan
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `P23` [Hidden serial dependency / executable gap] [plan:197-203,291-306]: Task 3 requires `TestTUIBinarySmoke` to drive every `pty-proven` row from `internal/tui/commands/testdata/command_surface_spec.json`, but that fixture is not created until Task 5. Recommendation: move command-surface fixture creation/classification into Task 3 before PTY test consumes it, or reorder Task 5 before Task 3.
+- `P24` [Verification-class mismatch / release workflow cache risk] [design:523-526; plan:643,648-655]: Design requires artifact-reading releaseguard invocations through non-cacheable `go test -count=1`, but Task 11 workflow prose spells draft-config guard without `-count=1` and lists draft/tap postcheck env wiring without exact non-cacheable test commands. Recommendation: make release workflow steps explicit for draft-assets and tap-postcheck, including `go test -count=1 ./internal/releaseguard -run TestDraftAssets` / `TestTapPostcheck`, and add `-count=1` to draft config preflight.
+
+**Findings (Minor):**
+- None.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Assumptions under attack | Finding | P23 assumes command fixture exists before creating task; P24 assumes prose implies non-cacheable guard execution. |
+| Existence/runtime-validity | Finding | P23 consumed-fixture existence/order gap; P24 executable workflow command specificity gap. |
+| Verification-class mismatch | Finding | P24 weakens non-cacheable artifact-reading command contract. |
+| Hidden serial dependencies | Finding | P23 Task 3 depends on Task 5 fixture. |
+| Infrastructure verification mismatch | Finding | P24 underspecifies release workflow guard commands. |
+
+**Options the author may not have considered:**
+1. Move command-surface JSON fixture and minimal classifier into Task 3, then let Task 5 expand help/autocomplete/docs alignment.
+2. Keep task order unchanged but make Task 3 use inline PTY matrix only; Task 5 later asserts JSON fixture matches that matrix.
+
+**Verdict reasoning:** FAIL. P1-P22 fixes appear addressed; remaining issues were fixture ordering and exact non-cacheable releaseguard workflow commands.
