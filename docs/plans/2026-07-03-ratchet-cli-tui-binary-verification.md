@@ -540,7 +540,7 @@ Expected before cleanup: active Formula and Cask exist; output records either `s
 **Step 2: Run preflight before cleanup**
 
 ```bash
-RATCHET_RELEASE_GUARD_MODE=tap-preflight RATCHET_RELEASE_GUARD_TAP=<tap-checkout> go test ./internal/releaseguard -run TestTapPreflight -count=1
+RATCHET_RELEASE_GUARD_MODE=tap-preflight RATCHET_RELEASE_GUARD_TAP=<tap-checkout> go test -count=1 ./internal/releaseguard -run TestTapPreflight
 ```
 
 Expected before cleanup: FAIL naming stale root `ratchet-cli.rb`, unless the stale root was already removed.
@@ -554,7 +554,7 @@ In the tap checkout, remove root `ratchet-cli.rb` only. Preserve `Formula/ratche
 ```bash
 git -C <tap-checkout> fetch origin main
 git -C <tap-checkout> checkout origin/main
-RATCHET_RELEASE_GUARD_MODE=tap-preflight RATCHET_RELEASE_GUARD_TAP=<tap-checkout> go test ./internal/releaseguard -run TestTapPreflight -count=1
+RATCHET_RELEASE_GUARD_MODE=tap-preflight RATCHET_RELEASE_GUARD_TAP=<tap-checkout> go test -count=1 ./internal/releaseguard -run TestTapPreflight
 ```
 
 Expected after cleanup and Task 8 formula automation: PASS.
@@ -597,7 +597,7 @@ Rollback: if fail-closed checks have not merged, revert the ratchet-cli formula 
 Modify CI:
 - `release-check`: checkout `fetch-depth: 0`, setup Go `1.26`, private-module Git rewrite, GoReleaser action `check`, GoReleaser action `release --snapshot --clean --skip=publish`, `scripts/check-release-artifacts.sh --manifest-only dist`, upload `ratchet-snapshot-dist`.
 - `tui-smoke`: setup equivalent to existing CI and run `go test ./cmd/ratchet ./internal/tui -run 'HarnessSmoke|TUIBinarySmoke|StartupSmoke' -count=1 -timeout=10m` without `-race`.
-- `tap-preflight`: read-only clone `GoCodeAlone/homebrew-tap`, run explicit tap preflight.
+- `tap-preflight`: read-only clone `GoCodeAlone/homebrew-tap`, then run `RATCHET_RELEASE_GUARD_MODE=tap-preflight RATCHET_RELEASE_GUARD_TAP=<tap-checkout> go test -count=1 ./internal/releaseguard -run TestTapPreflight`.
 
 **Step 2: Verify workflow syntax and fresh release snapshot**
 
@@ -662,15 +662,19 @@ After publish and before undraft:
 
 **Step 3: Add Windows packaged safe-command smoke**
 
-In CI, add `windows-safe-command-smoke` on `windows-latest` with `needs: release-check`; setup Go `1.26`, set `GOPRIVATE`/`GONOSUMCHECK`, and run the same private-module Git rewrite as existing Go jobs before any `go build`. Then build source `ratchet.exe` to `$env:RUNNER_TEMP\\source\\ratchet.exe` only for source cross-build proof, download `ratchet-snapshot-dist`, require amd64/arm64 Windows zips, byte-scan both, extract `ratchet_windows_amd64.zip` into `$env:RUNNER_TEMP\\package-amd64`, assert `$env:RUNNER_TEMP\\package-amd64\\ratchet.exe` exists, and run that extracted package path explicitly:
+In CI, add `windows-safe-command-smoke` on `windows-latest` with `needs: release-check`; setup Go `1.26`, set `GOPRIVATE`/`GONOSUMCHECK`, and run the same private-module Git rewrite as existing Go jobs before any `go build`. Then build source `ratchet.exe` to `$env:RUNNER_TEMP\\source\\ratchet.exe` only for source cross-build proof, download `ratchet-snapshot-dist`, require amd64/arm64 Windows zips, byte-scan both, extract `ratchet_windows_amd64.zip` into `$env:RUNNER_TEMP\\package-amd64`, assert `$env:RUNNER_TEMP\\package-amd64\\ratchet.exe` exists, set temp Windows `HOME`, `USERPROFILE`, and `XDG_STATE_HOME` under `$env:RUNNER_TEMP` before command execution, and run that extracted package path explicitly:
 
 ```powershell
+$env:HOME = Join-Path $env:RUNNER_TEMP "ratchet-home"
+$env:USERPROFILE = $env:HOME
+$env:XDG_STATE_HOME = Join-Path $env:RUNNER_TEMP "ratchet-state"
+New-Item -ItemType Directory -Force -Path $env:HOME, $env:XDG_STATE_HOME | Out-Null
 & "$env:RUNNER_TEMP\\package-amd64\\ratchet.exe" version
 & "$env:RUNNER_TEMP\\package-amd64\\ratchet.exe" help
 & "$env:RUNNER_TEMP\\package-amd64\\ratchet.exe" daemon status
 ```
 
-Expected: executed path is under `package-amd64` extracted from `ratchet_windows_amd64.zip`; daemon status output contains `daemon is not running` under temp Windows home/state env.
+Expected: executed path is under `package-amd64` extracted from `ratchet_windows_amd64.zip`; temp env assignment precedes `daemon status`; daemon status output contains `daemon is not running` under temp Windows home/state env.
 
 **Step 4: Verify local Windows cross-build and releaseguard**
 
@@ -684,7 +688,7 @@ scripts/check-release-artifacts.sh --manifest-only dist
 go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/ci.yml .github/workflows/release.yml
 ```
 
-Expected: PASS; draft config test proves `release.draft: true` before publish; Windows binaries are written only under `/tmp`; wrapper regenerates fresh `dist`; pinned workflow lint is clean; `windows-safe-command-smoke` contains `GOPRIVATE`, `GONOSUMCHECK`, and the private-module Git rewrite before source build; release workflow clones the tap with `HOMEBREW_TAP_TOKEN`; release workflow sets `RATCHET_RELEASE_GUARD_TAP`, `RATCHET_RELEASE_GUARD_TAP_NAMES`, `RATCHET_RELEASE_GUARD_TAP_COMMITS`, and `RATCHET_RELEASE_GUARD_VERSION` for tap-postcheck.
+Expected: PASS; draft config test proves `release.draft: true` before publish; Windows binaries are written only under `/tmp`; wrapper regenerates fresh `dist`; pinned workflow lint is clean; `tap-preflight` uses `RATCHET_RELEASE_GUARD_MODE=tap-preflight`, `RATCHET_RELEASE_GUARD_TAP`, and `go test -count=1`; `windows-safe-command-smoke` contains `GOPRIVATE`, `GONOSUMCHECK`, private-module Git rewrite before source build, and temp `HOME`/`USERPROFILE`/`XDG_STATE_HOME` assignment before packaged `daemon status`; release workflow clones the tap with `HOMEBREW_TAP_TOKEN`; release workflow sets `RATCHET_RELEASE_GUARD_TAP`, `RATCHET_RELEASE_GUARD_TAP_NAMES`, `RATCHET_RELEASE_GUARD_TAP_COMMITS`, and `RATCHET_RELEASE_GUARD_VERSION` for tap-postcheck.
 
 **Step 5: Commit**
 

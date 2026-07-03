@@ -350,3 +350,43 @@
 3. Centralize tap clone auth in wrapper so workflows pass same `HOMEBREW_TAP_TOKEN` path.
 
 **Verdict reasoning:** FAIL. P23-P24 were fixed; remaining blockers were closeout PR accounting, executable workflow linting, and tap auth clone wiring.
+
+## Cycle 10
+
+### Adversarial Review Report
+
+**Phase:** plan
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `P28` [Verification-class mismatch / Security privacy] [design:489-506; plan:663-673,675-687]: Windows packaged smoke must run `daemon status` with temp Windows `HOME`/`USERPROFILE`/`XDG_STATE_HOME`, but executable PowerShell snippet only runs extracted binary and leaves temp env setup implicit. Recommendation: add explicit temp env assignments under `$env:RUNNER_TEMP` before packaged command execution, plus workflow assertion that setup precedes `daemon status`.
+- `P29` [Infrastructure verification mismatch / releaseguard cache risk] [design:523-533,566-572; plan:595-600]: Task 10 `tap-preflight` CI job says run explicit tap preflight but does not spell non-cacheable command/env. Recommendation: require `RATCHET_RELEASE_GUARD_MODE=tap-preflight RATCHET_RELEASE_GUARD_TAP=<tap-checkout> go test -count=1 ./internal/releaseguard -run TestTapPreflight` in CI workflow plan and workflow assertion.
+
+**Findings (Minor):**
+- None.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | P28 weakens temp-state proof; P29 weakens executable release/tap proof. |
+| Assumptions under attack | Finding | Plan assumed expected prose implies env/`-count=1` wiring. |
+| Repo-precedent conflicts | Finding | Existing binary smoke sets temp `HOME`/`XDG_STATE_HOME`; Windows package smoke did not specify equivalent env. |
+| Missing failure modes | Finding | P28 allows real runner state; P29 allows stale cached tap-preflight evidence. |
+| Security/privacy | Finding | P28 can read/write runner profile state. |
+| Infrastructure impact | Finding | P29 affects CI tap gate reliability. |
+| Multi-component validation | Finding | P28 under-specifies packaged Windows binary plus temp-state boundary. |
+| Declared integration proof | Finding | P28/P29 leave Windows/tap integration proofs partially implicit. |
+| Existence/runtime-validity | Finding | P28/P29 executable command gaps. |
+| Verification-class mismatch | Finding | P28/P29 mismatch required proof class with command specificity. |
+| Missing integration proof | Finding | P28/P29 leave gaps in Windows package and tap workflow proof. |
+| Infrastructure verification mismatch | Finding | P29 under-specifies CI tap-preflight command. |
+
+**Options the author may not have considered:**
+1. Put Windows packaged command smoke in a small checked-in PowerShell script.
+2. Route all releaseguard modes through wrapper so CI cannot forget `-count=1`.
+
+**Verdict reasoning:** FAIL. P1-P27 were materially addressed; remaining blockers were Windows temp state and exact non-cacheable tap-preflight command.
