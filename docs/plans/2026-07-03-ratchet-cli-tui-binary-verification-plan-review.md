@@ -420,3 +420,61 @@
 2. Add Task 7/11 representative failure fixtures for GoReleaser, manifest, draft-assets, tap, workflow, docs guard, and command errors.
 
 **Verdict reasoning:** FAIL. P1-P29 were materially addressed; P30 remained as the executable security gap for full redaction coverage outside runtime smoke paths.
+
+## Cycle 12
+
+### Adversarial Review Report
+
+**Phase:** plan
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `P31` [User-intent drift / Infrastructure impact] [plan:73,678-692; design:494-508]: The plan adds a new `windows-latest` job for packaged Windows smoke, but the user ask explicitly says no runner changes. This is a workflow runner-class change, not just a Windows build proof. Recommendation: either get an explicit user-approved exception recorded in the plan, or replace the Windows runtime job with existing-runner cross-build/archive/byte-scan proof and defer Windows executable runtime to a separate approved runner-change plan.
+- `P32` [Project-guidance conflict / Verification-class mismatch] [plan:786-790]: The closeout task allows admin merge once local tests pass and checks are delayed, but the user ask says admin merge once green and asks for autodev pipeline discipline. This plan can execute by merging without green CI. Recommendation: remove the delayed-check bypass or require a fresh explicit user override recorded as a plan amendment before any non-green merge.
+- `P33` [Planned-code compile-validity / Missing failure mode] [plan:250-266; `internal/client/client.go`:20-38; `internal/daemon/service.go`:240-254]: Task 4 says cleanup uses normal untagged `client.Connect()` plus the public Shutdown RPC, but `client.Client` exposes no `Shutdown` method and its generated daemon client field is unexported. The task files also omit `internal/client/client.go`, so the planned cmd-level cleanup path is not executable as written. Recommendation: add an explicit `Client.Shutdown(ctx)` wrapper and include `internal/client/client.go` in Task 4, or specify a direct generated-proto gRPC dial path in the test plan.
+
+**Findings (Minor):**
+- None.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | P32 conflicts with green-CI/admin-merge discipline. |
+| Assumptions under attack | Finding | P31 assumes adding `windows-latest` is not a runner change; P33 assumes `client.Connect()` exposes Shutdown. |
+| Repo-precedent conflicts | Clean | Existing Go test, GoReleaser, harness smoke, and docs-guard shapes are mostly followed. |
+| Artifact-class precedent | Clean | The plan uses existing docs/plans, smoke test, workflow, GoReleaser, and tap artifact classes. |
+| YAGNI violations | Finding | P31 may add a new runner class where the user constrained runner changes. |
+| Missing failure modes | Finding | P33 misses failure where startup cleanup cannot call Shutdown through public client wrapper. |
+| Security/privacy at architecture level | Clean | P30 appears fixed across runtime, releaseguard, workflow, docs, artifact, prompt, trust, and path payloads. |
+| Infrastructure impact | Finding | P31 changes CI runner topology; P32 weakens merge gate discipline. |
+| Multi-component validation | Finding | P33 leaves release-shaped binary startup cleanup under-specified across cmd/client/daemon. |
+| Declared integration proof | Finding | P31 declares Windows runtime proof through a runner change not authorized by the user ask. |
+| Contributed UI rendering proof | Clean | No plugin-contributed UI route is in scope. |
+| Rollback story | Clean | Rollback covers smoke code, workflows, release assets, and tap contamination. |
+| Simpler alternative not considered | Finding | Existing-runner Windows proof was not considered as an alternative to `windows-latest`. |
+| User-intent drift | Finding | P31/P32 drift from no runner changes and admin merge once green. |
+| Existence/runtime-validity | Finding | P33 references a client cleanup capability absent from current public client API. |
+| Over-decomposition/under-decomposition | Clean | Thirteen tasks across six PRs is heavy but proportional. |
+| Verification-class mismatch | Finding | P32 allows local-only verification to substitute for green CI; P33 lacks a runnable cleanup path. |
+| Auth/authz chain composition | Clean | Trust command proof goes through daemon state and scoped follow-up assertions. |
+| Hidden serial dependencies | Clean | Fixture/tap/order dependencies are represented as Task 3 fixture creation and Task 9 preconditions. |
+| Missing rollback wiring | Clean | Rollback is wired per task and release/tap path. |
+| Missing integration proof | Finding | P33 leaves cmd/client/daemon Shutdown proof incomplete. |
+| Missing declared integration matrix | Clean | Plan includes matrix classifications. |
+| Missing contributed UI route proof | Clean | Not applicable. |
+| Infrastructure verification mismatch | Finding | P31 verifies Windows by adding an unauthorized runner class. |
+| Plugin-loader runtime layout | Clean | No external Workflow plugin loader layout is introduced. |
+| Config-validation schema rules | Clean | No new schema-validated Workflow config is introduced. |
+| Identifier/naming-convention match | Clean | Env vars, task names, and command names match conventions. |
+| Planned-code compile-validity | Finding | P33 depends on an unexposed Shutdown RPC wrapper. |
+
+**Options the author may not have considered:**
+1. Existing-runner Windows proof: keep `GOOS=windows` cross-builds, archive matrix checks, Windows zip byte scans, and releaseguard package-boundary checks on the current runner; defer actual `ratchet.exe` execution to a future approved runner-change plan.
+2. Explicit shutdown wrapper: add `func (c *Client) Shutdown(ctx context.Context) error` in `internal/client`.
+3. Strict merge gate: require green GitHub checks before admin merge.
+
+**Verdict reasoning:** FAIL. P30 is fixed, but the plan still had an unauthorized Windows runner change, a non-green merge bypass, and a concrete cmd/client/daemon cleanup path that was not executable with the current client API.

@@ -41,7 +41,7 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
 | Slash commands | parser/unit tests and in-process App tests. | No built-binary proof that submitted `/help`, `/provider list`, `/mode`, `/trust list`, `/tree`, and `/exit` render in the interactive TUI. |
 | Shortcuts | in-process tests for `ctrl+b` session tree; render tests for input key handling. | No binary PTY proof for `ctrl+b`, `esc`, `ctrl+s`, `ctrl+j`, or `ctrl+c`/`ctrl+d`. |
 | Provider path | daemon E2E harness has `e2e-mock`; binary smoke only checks version/help/daemon status. | Real binary TUI starts a background daemon from disk and may enter onboarding unless a provider exists. |
-| Windows | GoReleaser emits Windows artifacts. | Interactive PTY cannot be proven with the current Unix PTY library; need compile/noninteractive proof only. |
+| Windows | GoReleaser emits Windows artifacts. | Interactive PTY cannot be proven with the current Unix PTY library; this no-runner-change slice proves cross-build plus packaged archive inspection only. |
 
 ## Approaches
 
@@ -491,21 +491,15 @@ Mechanical fail-closed check:
   and
   `GOOS=windows GOARCH=arm64 go build -o "$TMPDIR/ratchet-windows-arm64.exe" ./cmd/ratchet`
   locally; CI uses `$RUNNER_TEMP` instead of `$TMPDIR`.
-- Add a `windows-safe-command-smoke` job on `windows-latest` that declares
-  `needs: release-check`, builds source `ratchet.exe`, downloads the
-  `ratchet-snapshot-dist` workflow artifact from `release-check`, fails unless
+- Add Windows package archive proof without changing CI runner classes: the
+  existing `release-check` job generates the GoReleaser snapshot, fails unless
   both `ratchet_windows_amd64.zip` and `ratchet_windows_arm64.zip` are present,
-  byte-scans both zips/binaries for forbidden smoke tokens, extracts the
-  runner-compatible `ratchet_windows_amd64.zip`, and executes safe non-PTY
-  commands from that packaged executable:
-  - `ratchet.exe version`;
-  - `ratchet.exe help`;
-  - `ratchet.exe daemon status` with temp Windows `HOME`/`USERPROFILE` and
-    `XDG_STATE_HOME`;
-  - output must include `ratchet`, `Commands:`, the aligned slash-command help
-    entries, and `daemon is not running`, without starting the TUI or daemon.
-  - configure `GOPRIVATE`, `GONOSUMCHECK`, and the same private-module Git
-    rewrite used by existing CI jobs before `go build`.
+  byte-scans both zips and contained `ratchet.exe` files for forbidden smoke
+  tokens, asserts each zip contains the expected release binary layout exactly
+  once, and checks generated checksums include both Windows archives.
+- Do not add `windows-latest` or any new runner class in this slice; packaged
+  Windows executable runtime (`ratchet.exe version/help/daemon status`) is
+  deferred to a separate runner-change plan.
 - If Go test cannot run Unix PTY on Windows CI, PTY tests and PTY-only helpers
   remain explicitly build-constrained with `//go:build !windows`, and docs
   state that Windows interactive proof is not claimed.
@@ -560,9 +554,8 @@ Mechanical fail-closed check:
     `args: release --snapshot --clean --skip=publish`, with no publish tokens
     beyond the normal `GITHUB_TOKEN`;
   - run `scripts/check-release-artifacts.sh --manifest-only dist`;
-  - upload the generated `dist/` directory as a short-lived
-    `ratchet-snapshot-dist` artifact with `actions/upload-artifact@v4`, for the
-    dependent `windows-latest` packaged-zip proof.
+  - verify the generated Windows package archives in the same job without
+    adding a new runner class.
 - Wire a PR/push read-only tap gate named `tap-preflight` in
   `.github/workflows/ci.yml`:
   - checkout ratchet-cli and clone `GoCodeAlone/homebrew-tap` with read-only
@@ -679,13 +672,10 @@ Mechanical fail-closed check:
     each binary for forbidden smoke tokens (`ratchet-tui-smoke`, `tui_smoke`,
     smoke command/flag/help markers); this is content proof even when the
     binary cannot execute on the current runner;
-  - for Windows, the `windows-safe-command-smoke` job on `windows-latest`
-    declares `needs: release-check`, downloads `ratchet-snapshot-dist` with
-    `actions/download-artifact@v4`, requires `ratchet_windows_amd64.zip` and
-    `ratchet_windows_arm64.zip`, byte-scans both, extracts the snapshot
-    `ratchet_windows_amd64.zip` produced by `release-check`, and runs packaged
-    `ratchet.exe version`, `ratchet.exe help`, and `ratchet.exe daemon status`
-    with the same forbidden-output checks.
+  - for Windows, the existing `release-check` job requires
+    `ratchet_windows_amd64.zip` and `ratchet_windows_arm64.zip`, byte-scans
+    both archives and contained executables, verifies member layout/checksums,
+    and does not execute `ratchet.exe`.
 - Add a release draft asset postcheck script path before undrafting:
   - preflight fails unless `.goreleaser.yaml` has `release.draft: true`;
   - after `goreleaser release --clean` creates the draft release, reuse the
@@ -844,11 +834,11 @@ Mechanical fail-closed check:
 | Release artifact guard only runs manually. | Add the publish-free `release-check` CI job; CI uses GoReleaser action for snapshot generation and the same manifest guard script local runs use. |
 | Shell release guard misparses GoReleaser YAML. | Implement the artifact/config guard under `internal/releaseguard` in Go with `gopkg.in/yaml.v3`; shell wrapper only orchestrates GoReleaser and invokes Go tests/helper logic without adding a product `cmd/*` package. |
 | Tag release bypasses artifact guard. | Add the same publish-free `goreleaser check` + snapshot + manifest guard to `.github/workflows/release.yml` before the publishing step. |
-| Release jobs cannot fetch private modules. | Mirror CI's `GOPRIVATE`/`GONOSUMCHECK` and private-module Git rewrite in release preflight/publish and Windows safe-command smoke jobs. |
+| Release jobs cannot fetch private modules. | Mirror CI's `GOPRIVATE`/`GONOSUMCHECK` and private-module Git rewrite in release preflight/publish jobs; no new Windows runner job is added in this slice. |
 | Snapshot guard differs from uploaded release. | Add a draft-release postcheck before undrafting that downloads uploaded GitHub release archives/checksums and runs the same archive manifest plus all-packaged-binary byte-scan guard against actual uploaded assets; add Homebrew tap preflight before publish to catch stale root/Formula/Casks drift, then an executable tap postcheck after publish that discovers every relevant install file, resolves each path-changing commit for the current release, scans each file content and commit metadata, and prints exact rollback targets on contamination. |
 | Draft release lookup flakes or misses assets. | Reuse the existing `listReleases` retry-by-tag workflow, pass the resolved release id to postcheck and undraft, and download assets by release id. |
 | Release is public before postcheck. | Preflight fails unless `.goreleaser.yaml` keeps `release.draft: true`; postcheck fails if the resolved release is not draft before inspection. |
-| Platform mismatch. | Unix PTY proof is explicitly Unix-only; Windows claim is limited to build/noninteractive smoke. |
+| Platform mismatch. | Unix PTY proof is explicitly Unix-only; Windows claim is limited to cross-build and packaged archive inspection until a runner-change plan is approved. |
 
 ## Infrastructure Impact
 
@@ -862,9 +852,8 @@ adds GoReleaser automation for the active Formula plus existing Cask surfaces,
 Homebrew/tap preflight that clones `GoCodeAlone/homebrew-tap` before publish,
 an after-the-fact Homebrew/tap postcheck that scans every relevant `ratchet`
 Formula/Casks tap install file at its exact path-changing commit for the current
-release, plus a
-`windows-safe-command-smoke` job on `windows-latest`. GitHub release artifacts
-are pre-public gated; Homebrew/tap remains prechecked plus
+release, plus Windows package archive proof in the existing `release-check`
+job. GitHub release artifacts are pre-public gated; Homebrew/tap remains prechecked plus
 postchecked/rollback under the current GoReleaser workflow. Fully pre-public
 Homebrew/tap gating is deferred to a split-publish workflow. These workflow
 paths must mirror existing
@@ -887,7 +876,7 @@ smoke entrypoint is build-tagged out.
 | Docs to tests | Docs guard fails if automated TUI smoke evidence is removed. |
 | Binary smoke to CI | Non-race CI smoke job runs the built-binary/startup/TUI smoke tests that the race suite skips; `internal/tui` owns its race skip helper so package-local tests compile in both race and non-race suites. |
 | Release preflight to CI/release | `release-check` and tag release workflow both run `goreleaser check`, snapshot generation, and the same artifact-manifest guard before publish; guard extracts and byte-scans every packaged `ratchet` binary from every archive, runs executable help/version checks where practical, and release postcheck downloads uploaded GitHub draft release assets and repeats the same checks before undrafting; PR/push `tap-preflight` merge-gates tap cleanup and formula automation, Homebrew/tap cleanup removes unmanaged stale root files before fail-closed release preflight, preflight rejects unmanaged root files or active Formula/Cask surfaces without matching GoReleaser automation, and postcheck remains after-the-fact with rollback for the current GoReleaser Formula/Cask push. |
-| Windows build/smoke | Cross-build commands prove release-shaped `ratchet` still compiles for Windows; `windows-safe-command-smoke` on x64 `windows-latest` declares `needs: release-check`, builds source `ratchet.exe`, downloads the `release-check` snapshot `dist/` artifact, requires both Windows zips, byte-scans amd64 and arm64 archives, extracts `ratchet_windows_amd64.zip`, then executes packaged `ratchet.exe version`, `ratchet.exe help`, and `ratchet.exe daemon status` with temp Windows home/state env; `ratchet-tui-smoke` interactive PTY remains Unix-only. |
+| Windows build/archive proof | Cross-build commands prove release-shaped `ratchet` still compiles for Windows; existing-runner release checks require both Windows zips, byte-scan amd64 and arm64 archives plus contained executables, verify archive members/checksums, and do not add a new runner class; `ratchet-tui-smoke` interactive PTY and Windows executable runtime smoke remain deferred. |
 
 ## Integration Matrix
 
@@ -904,17 +893,17 @@ smoke entrypoint is build-tagged out.
 | TUI help/autocomplete command-surface guard | config-only + focused proof | Focused tests invoke in-TUI `/help`, inspect autocomplete models, parse command surfaces, and compare them to the typed command spec; this prevents discoverability drift but is not claimed as host-runtime proof for every non-`pty-proven` command. |
 | Non-race binary smoke CI | config-only | `.github/workflows/ci.yml` runs a focused non-race smoke job for subprocess/startup tests that are intentionally skipped under `-race`, with explicit test names for release startup and TUI binary smoke. |
 | Docs guard | config-only | `cmd/ratchet/harness_docs_test.go` checks public docs mention exact evidence boundaries. |
-| GoReleaser snapshot and GitHub draft assets | runtime-integrated | Publish-free `release-check` CI job, tag release preflight, local script, and release draft postcheck run `goreleaser check`/snapshot generation plus full `.goreleaser.yaml`-derived OS/arch archive matrix inspection, checksum-entry checks, all-archive packaged-binary byte scans, host/Windows packaged-binary help/version checks, and deterministic `.goreleaser.yaml` fallback. The postcheck downloads draft GitHub release assets and repeats the same checks before undraft, proving uploaded archives/checksums do not contain `ratchet-tui-smoke`. |
+| GoReleaser snapshot and GitHub draft assets | runtime-integrated | Publish-free `release-check` CI job, tag release preflight, local script, and release draft postcheck run `goreleaser check`/snapshot generation plus full `.goreleaser.yaml`-derived OS/arch archive matrix inspection, checksum-entry checks, all-archive packaged-binary byte scans, host executable help/version checks where supported by the current runner, Windows archive/member/executable byte scans without execution, and deterministic `.goreleaser.yaml` fallback. The postcheck downloads draft GitHub release assets and repeats the same checks before undraft, proving uploaded archives/checksums do not contain `ratchet-tui-smoke`. |
 | Homebrew/tap install files | config-only + cleanup + PR gate + preflight + post-publish audit | Snapshot/config precheck proves Homebrew ids/binaries do not reference smoke artifacts; prerequisite tap cleanup removes stale unmanaged root files and adds GoReleaser automation for active `Formula/ratchet-cli.rb` while preserving existing `Casks/ratchet-cli.rb`; PR/push `tap-preflight` verifies cleanup and automation before merge; before publish, release tap preflight rejects unmanaged root files, active Formula/Cask surfaces without automation, or forbidden smoke tokens, but does not require the live tap to already contain the current version/checksum; after publish, the guard scans active Formula/Cask files at exact path-changing commits for current version/checksum context. Current GoReleaser workflow can still push the tap before postcheck, so current-release tap safety is after-the-fact audit plus rollback, not pre-public gating. Split-publish pre-public gating is deferred. |
-| Windows safe-command smoke | runtime-integrated | `windows-safe-command-smoke` on x64 `windows-latest` declares `needs: release-check`, builds source `ratchet.exe`, downloads `ratchet-snapshot-dist` from `release-check`, requires `ratchet_windows_amd64.zip` and `ratchet_windows_arm64.zip`, byte-scans both, extracts amd64 only for execution, and runs packaged `ratchet.exe version`, `ratchet.exe help`, and `ratchet.exe daemon status` with temp Windows home/state env to prove non-PTY Windows CLI startup/help/daemon-status behavior and packaged-archive absence of smoke surfaces. |
+| Windows packaged archive proof | artifact-integrated | Existing-runner release checks require `ratchet_windows_amd64.zip` and `ratchet_windows_arm64.zip`, byte-scan both archives and contained `ratchet.exe` files, verify member layout/checksums, and defer non-PTY Windows CLI startup/help/daemon-status execution until a separate runner-change plan is approved. |
 | Windows smoke package boundary | config-only | `GOOS=windows GOARCH=amd64/arm64 go list` and `go build -tags tui_smoke ./cmd/ratchet-tui-smoke` fail with the expected Unix-only no-buildable-files class. |
-| Windows interactive PTY | deferred | No ConPTY runner in this slice; Windows coverage is build/noninteractive only. |
+| Windows interactive PTY | deferred | No ConPTY runner in this slice; Windows coverage is cross-build and packaged archive inspection only. |
 
 ## Rollback
 
 Revert `cmd/ratchet-tui-smoke`, the `tui_smoke` client constructor, smoke
 helper, PTY test, help/autocomplete/CLI-help alignment, shortcut hint fix,
-non-race smoke CI job, Windows safe-command smoke job, `release-check` CI job,
+non-race smoke CI job, Windows packaged-archive proof in `release-check`,
 release-workflow preflight/postcheck, release-artifact script, and docs updates.
 No data migration exists. Release binaries are unaffected because `cmd/ratchet`
 does not contain a smoke command/flag. If a future GitHub release accidentally
@@ -936,7 +925,7 @@ preflight PR.
 |---|---|---|---|
 | A1 | A dedicated build-tagged smoke binary is acceptable evidence for credential-free TUI proof. | It is not byte-for-byte the release binary. | Keep release-shaped startup smoke separate and document the boundary precisely. |
 | A2 | Built-in mock provider response is stable enough for PTY assertions. | Mock wording may change. | Assert broad substrings plus stream completion markers, not exact full transcript. |
-| A3 | Unix PTY proof plus Windows cross-build and packaged safe-command smoke is sufficient cross-platform honesty. | User may require Windows interactive proof. | Add a separate Windows ConPTY design if a Windows runner is available. |
+| A3 | Unix PTY proof plus Windows cross-build and packaged archive inspection is sufficient cross-platform honesty for this no-runner-change slice. | User may require Windows executable runtime proof. | Add a separate Windows runner/ConPTY or safe-command design if a Windows runner change is approved. |
 | A4 | Extracting daemon mock service construction is lower risk than seeding production DB state. | Helper extraction may touch daemon internals. | Keep helper private/internal and covered by existing daemon tests. |
 
 ## Self-Challenge
@@ -1012,11 +1001,11 @@ preflight PR.
 | D39 | Added public `ratchet help` / `printUsage` to the slash discoverability contract and built-binary help assertions. |
 | D40 | Added explicit `goreleaser check` steps to CI and release preflight paths and pinned the GoReleaser action to `~> v2`. |
 | D41 | Added publish-free snapshot artifact guard to `.github/workflows/release.yml` before the publishing GoReleaser step so tag releases cannot bypass the manifest guard. |
-| D42 | Added a `windows-latest` safe-command smoke job that builds `ratchet.exe` and runs `version` and `help`; Windows interactive PTY remains deferred. |
+| D42 | Superseded by no-runner-change correction: Windows proof is cross-build plus packaged-archive inspection; Windows executable runtime remains deferred. |
 | D43 | Mirrored the release workflow's GoReleaser `version: "~> v2"` in preflight action steps. |
 | D44 | Changed `ctrl+j`/`ctrl+t` evidence to match current full-panel behavior: panel opens, repeated shortcut returns to chat/input; no hidden layout redesign. |
 | D45 | Narrowed docs negative guard to evidence claims only and tightened exceptions so product support statements are allowed and generic `not claimed` cannot mask contradictory release-binary proof claims. |
-| D46 | Required `GOPRIVATE`/`GONOSUMCHECK` plus private-module Git rewrite in release preflight/publish and Windows safe-command smoke jobs. |
+| D46 | Required `GOPRIVATE`/`GONOSUMCHECK` plus private-module Git rewrite in release preflight/publish jobs; no Windows runner job is added. |
 | D47 | Added draft-release postcheck before undrafting so uploaded assets/checksums/tap references are inspected, not only snapshot artifacts. |
 | D48 | Reframed Homebrew/tap safety honestly: snapshot/config precheck plus after-the-fact tap postcheck/rollback under the current GoReleaser workflow; full pre-public tap blocking is deferred to a split-publish workflow. |
 | D49 | Required `fetch-depth: 0` for GoReleaser preflight checkout so PR/push preflight has release-equivalent git tag/changelog state. |
@@ -1024,14 +1013,14 @@ preflight PR.
 | D51 | Removed the contradictory "no Homebrew publishing" claim and split release safety into GitHub pre-public gating versus Homebrew/tap precheck plus after-the-fact audit/rollback. |
 | D52 | Added `internal/tui/pages/chat.go` to the shortcut source of truth and required focused proof for conditional `ctrl+h` thinking-panel behavior. |
 | D53 | Added focused branch-tree navigation proof for README-advertised keys (`j`/`k`, arrows, `h`/`l`, `Enter`, `r`, `Esc`). |
-| D54 | Added snapshot archive extraction and packaged release-binary `version`/`help` checks, including Windows zip execution on `windows-latest`, to catch smoke command/flag/help text in uploaded artifacts. |
+| D54 | Added snapshot archive extraction, host-compatible packaged release-binary `version`/`help` checks, and Windows archive/member/executable byte scans without Windows execution to catch smoke command/flag/help text in uploaded artifacts. |
 | D55 | Replaced destructive-looking trust patterns with harmless deterministic `smoke:*` placeholders. |
 | D56 | Replaced the `_unix_test.go` reliance with explicit `//go:build !windows` on the PTY smoke test and PTY-only helpers. |
 | D57 | Added `internal/tui` package-local race helper files and required `TestTUIBinarySmoke` to skip under `-race`; the non-race CI job is the execution path. |
-| D58 | Added `release-check` upload of the snapshot `dist/` artifact and `windows-latest` download/extraction of that artifact before packaged `ratchet.exe` checks. |
+| D58 | Kept Windows packaged-archive proof inside `release-check` so no cross-runner artifact handoff is required. |
 | D59 | Added bounded daemon cleanup wait plus terminate/wait fallback before asserting temp pid/socket removal. |
 | D60 | Added a command-surface coverage contract from `commands.Parse`/`helpCmd`, narrowed PTY claims to `pty-proven` rows, and required docs guard failure on overclaims. |
-| D61 | Made `windows-safe-command-smoke` explicitly depend on `release-check`, download `ratchet-snapshot-dist`, fail without a Windows zip, and run the packaged executable. |
+| D61 | Required `release-check` to fail without both Windows zips and inspect packaged Windows executables without adding a Windows runner. |
 | D62 | Added App-level branch-switch proof through `SessionTreeSelectedMsg`, selected-session update, child chat-history reload, and post-switch chat submit. |
 | D63 | Required synchronized PTY capture helper output instead of copying the unsynchronized integration helper pattern. |
 | D64 | Added an AST-based command-surface guard that extracts `Parse` switch cases, help output, and autocomplete literals, compares them to the coverage classification map, and fails on unclassified drift without adding a command registry refactor. |
@@ -1043,12 +1032,12 @@ preflight PR.
 | D70 | Required draft-release postcheck to download actual uploaded GitHub release assets and run the same archive/all-binary byte-scan guard before undrafting. |
 | D71 | Split docs guard behavior: exact positive TUI smoke evidence required only in README harness table and `docs/harness-emulation.md`; RATCHET/parity/policy get negative overclaim scanning unless they claim TUI binary evidence. |
 | D72 | Added source-derived AST checks for `modeCmd` mode keys, `trustCmd` subcommands, and `providerCmd` subcommands, compared to the typed command spec and proof classifications. |
-| D73 | Added packaged Windows `ratchet.exe daemon status` smoke with temp Windows home/state env and expected `daemon is not running` output. |
+| D73 | Superseded by no-runner-change correction: Windows `daemon status` runtime proof is deferred; package archive/member/executable byte scans remain in scope. |
 | D74 | Required draft postcheck to reuse the existing `listReleases` retry-by-tag lookup, pass release id to postcheck/undraft, and download assets by release id. |
 | D75 | Narrowed exact positive docs assertions to README harness table and `docs/harness-emulation.md`; RATCHET/parity get links plus negative overclaim checks unless they claim TUI evidence. |
 | D76 | Added behavior-derived `/trust` table tests for nested persist allow/deny and rejected nested actions, tied to the typed command spec. |
 | D77 | Added hard draft-state gates: `.goreleaser.yaml` must keep `release.draft: true`, and postcheck fails if the resolved release is not draft. |
-| D78 | Made Windows archive handling architecture-aware: require amd64 and arm64 zips, byte-scan both, execute only `ratchet_windows_amd64.zip` on x64 `windows-latest`. |
+| D78 | Made Windows archive handling architecture-aware: require amd64 and arm64 zips, byte-scan both, and defer execution until a Windows runner change is approved. |
 | D79 | Corrected stale D71 resolution wording to match the narrowed positive-docs guard scope. |
 | D80 | Changed release artifact/config guard to internal Go helper logic (`internal/releaseguard`) using `gopkg.in/yaml.v3`; shell script is only a wrapper and no product `cmd/*` helper is added. |
 | D81 | Split PTY exit proof into one long `/exit` interaction run plus separate short `ctrl+c` and `ctrl+d` subprocess subtests. |
@@ -1102,4 +1091,4 @@ preflight PR.
 | D129 | Preserved the active Homebrew Formula by requiring GoReleaser formula automation and releaseguard coverage, removing only unmanaged stale root tap files. |
 | D130 | Made GoReleaser v2 `brews` a current guarded artifact/publish surface with explicit Formula fields and releaseguard checks for generated/fallback formula material. |
 | D131 | Defined releaseguard ordinary-test behavior: broad `go test` runs unit fixtures, artifact tests skip with an explicit no-mode message, and mode-selected artifact tests fail on missing env. |
-| D132 | Updated the Windows assumption to include packaged non-PTY safe-command smoke, leaving only interactive ConPTY proof deferred. |
+| D132 | Superseded by P31 correction: Windows assumption now covers cross-build and packaged archive inspection only; all Windows executable runtime proof is deferred. |

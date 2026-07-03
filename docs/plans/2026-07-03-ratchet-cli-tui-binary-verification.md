@@ -2,7 +2,7 @@
 
 > **For the implementing agent:** REQUIRED SUB-SKILL: Use autodev:executing-plans to implement this plan task-by-task.
 
-**Goal:** Add credential-free automated proof for the Ratchet TUI binary, release-shaped startup behavior, Windows packaged CLI smoke, and release/tap artifact guards that prevent `ratchet-tui-smoke` from leaking into public artifacts.
+**Goal:** Add credential-free automated proof for the Ratchet TUI binary, release-shaped startup behavior, Windows cross-build/package archive safety, and release/tap artifact guards that prevent `ratchet-tui-smoke` from leaking into public artifacts.
 
 **Architecture:** Keep the real release binary and the test-only TUI driver separate: untagged `ratchet` gets startup/daemon proof, while build-tagged Unix-only `ratchet-tui-smoke` drives the Bubble Tea event loop through PTY with a smoke daemon service. Add mode-gated `internal/releaseguard` Go tests plus thin scripts/workflows for GoReleaser, draft release assets, Windows zip smoke, and Homebrew Cask/Formula tap checks.
 
@@ -21,6 +21,7 @@
 
 **Out of scope:**
 - Windows interactive ConPTY proof.
+- New CI runner classes, including `windows-latest`, until a separate runner-change plan is approved.
 - Credentialed external provider CI.
 - Broad slash-command registry refactor.
 - Split-publish pre-public Homebrew/tap gating.
@@ -52,7 +53,7 @@ Source: no repo-local `docs/design-guidance.md`, `AGENTS.md`, or `CLAUDE.md` fou
 
 | guidance | plan response |
 |---|---|
-| Build for Windows honestly. | Tasks 10-11 add Windows cross-build and packaged non-PTY command smoke; ConPTY remains out of scope. |
+| Build for Windows honestly. | Tasks 10-11 add Windows cross-build and packaged archive inspection without changing CI runner classes; ConPTY and Windows executable runtime remain out of scope. |
 | Avoid duplicated plumbing. | Use existing daemon, client, TUI, GoReleaser, and Homebrew tap mechanisms; releaseguard is internal test/helper logic only. |
 | Runtime claims need real boundaries. | Tasks 2-6 launch binaries, daemon/client RPCs, mock provider, PTY, and docs/command contracts. |
 | Sensitive local data must not leak. | Tasks 1-12 add temp home/workdir plus one shared redaction helper for TUI, daemon, command, docs-guard, GoReleaser, releaseguard, tap, draft-asset, workflow, and artifact-manifest failure payloads. |
@@ -70,7 +71,7 @@ Source: no repo-local `docs/design-guidance.md`, `AGENTS.md`, or `CLAUDE.md` fou
 | Slash commands and shortcuts | runtime-integrated + focused proof | Tasks 3,5 split `pty-proven` and `focused-proven` rows with guards against overclaiming. |
 | GoReleaser snapshot/draft assets | runtime-integrated | Tasks 7,10 inspect generated/uploaded archives, checksums, packaged binaries, cask/formula material. |
 | Homebrew tap | config-only + cleanup + preflight + postcheck | Tasks 8-11 add `brews`, remove stale root file, preflight active surfaces, postcheck exact path-changing commits. |
-| Windows packaged commands | runtime-integrated | Task 11 downloads snapshot zips and runs `ratchet.exe version/help/daemon status` on `windows-latest`. |
+| Windows packaged archives | artifact-integrated | Task 11 requires Windows amd64/arm64 snapshot zips, byte-scans archive members and packaged executables, and cross-builds Windows binaries on existing runners; Windows executable runtime is deferred because no runner change is in scope. |
 | Windows interactive PTY | deferred | Explicit out of scope. |
 
 ### Task 1: Smoke Binary Boundary And Source Manifest
@@ -251,15 +252,17 @@ Rollback: revert commit; only test/smoke-tag code is removed.
 - Modify: `internal/daemon/daemon.go`
 - Modify: `internal/daemon/service.go`
 - Modify: `internal/daemon/shutdown_test.go`
+- Modify: `internal/client/client.go`
 - Modify: `cmd/ratchet/harness_smoke_test.go`
 - Modify: `cmd/ratchet/race_disabled_test.go`
 - Modify: `cmd/ratchet/race_enabled_test.go`
-- Test: `cmd/ratchet/*_test.go`, `internal/daemon/*_test.go`
+- Test: `cmd/ratchet/*_test.go`, `internal/client/*_test.go`, `internal/daemon/*_test.go`
 
 **Step 1: Write failing tests**
 
 Add tests that assert:
 - production `daemon.Start` installs a real `Shutdown` callback that cancels server context, gracefully stops gRPC, and removes pid/socket files;
+- `internal/client.Client` exposes `Shutdown(ctx context.Context) error` as a thin public wrapper over the generated daemon RPC;
 - public `Shutdown` over normal background daemon path removes pid/socket files;
 - release-shaped built `ratchet` launches without `tui_smoke`, temp home/state/workdir, and reaches help/onboarding/provider setup boundary;
 - cleanup sets parent test `HOME`/`USERPROFILE`/`XDG_STATE_HOME` to temp before normal untagged `client.Connect()`, verifies socket containment/`ModeSocket`/`0600`, then uses RPC/process handle only;
@@ -268,20 +271,20 @@ Add tests that assert:
 **Step 2: Run red checks**
 
 ```bash
-go test ./internal/daemon ./cmd/ratchet -run 'Shutdown|StartupSmoke' -count=1 -timeout=8m
+go test ./internal/client ./internal/daemon ./cmd/ratchet -run 'Shutdown|StartupSmoke|ClientShutdown' -count=1 -timeout=8m
 ```
 
 Expected: FAIL because production shutdown callback/startup cleanup is incomplete.
 
 **Step 3: Implement shutdown and startup smoke**
 
-Wire `daemon.Start` callback and bounded cleanup. Add redacted diagnostics for leftovers without terminating unrelated PIDs. Keep startup smoke skipped under race if needed; add focused non-race CI in Task 10.
+Add `Client.Shutdown(ctx)` to call `pb.RatchetDaemonClient.Shutdown`. Wire `daemon.Start` callback and bounded cleanup. Add redacted diagnostics for leftovers without terminating unrelated PIDs. Keep startup smoke skipped under race if needed; add focused non-race CI in Task 10.
 
 **Step 4: Verify**
 
 ```bash
-gofmt -w internal/daemon cmd/ratchet
-go test ./internal/daemon ./cmd/ratchet -run 'Shutdown|StartupSmoke' -count=1 -timeout=8m
+gofmt -w internal/client internal/daemon cmd/ratchet
+go test ./internal/client ./internal/daemon ./cmd/ratchet -run 'Shutdown|StartupSmoke|ClientShutdown' -count=1 -timeout=8m
 ```
 
 Expected: PASS; pid/socket temp paths removed.
@@ -289,7 +292,7 @@ Expected: PASS; pid/socket temp paths removed.
 **Step 5: Commit**
 
 ```bash
-git add internal/daemon cmd/ratchet
+git add internal/client internal/daemon cmd/ratchet
 git commit -m "test: prove release startup cleanup"
 ```
 
@@ -380,7 +383,7 @@ Expected: FAIL until docs name the new evidence boundaries.
 Document:
 - release-shaped startup smoke ≠ full TUI PTY proof;
 - `ratchet-tui-smoke` is build-tagged test-only;
-- Unix PTY rows and Windows packaged safe-command rows;
+- Unix PTY rows and Windows cross-build/package archive rows;
 - Homebrew/tap safety is prechecked + postchecked/rollback, not fully pre-public gated.
 
 **Step 4: Verify**
@@ -675,21 +678,11 @@ After publish and before undraft:
   `go test -count=1 ./internal/releaseguard -run TestTapPostcheck`;
 - only then undraft.
 
-**Step 3: Add Windows packaged safe-command smoke**
+**Step 3: Add Windows package archive proof without runner change**
 
-In CI, add `windows-safe-command-smoke` on `windows-latest` with `needs: release-check`; setup Go `1.26`, set `GOPRIVATE`/`GONOSUMCHECK`, and run the same private-module Git rewrite as existing Go jobs before any `go build`. Then build source `ratchet.exe` to `$env:RUNNER_TEMP\\source\\ratchet.exe` only for source cross-build proof, download `ratchet-snapshot-dist`, require amd64/arm64 Windows zips, byte-scan both, extract `ratchet_windows_amd64.zip` into `$env:RUNNER_TEMP\\package-amd64`, assert `$env:RUNNER_TEMP\\package-amd64\\ratchet.exe` exists, set temp Windows `HOME`, `USERPROFILE`, and `XDG_STATE_HOME` under `$env:RUNNER_TEMP` before command execution, and run that extracted package path explicitly:
+In the existing `release-check` job, keep the current runner class and extend artifact inspection after GoReleaser snapshot generation: require both `ratchet_windows_amd64.zip` and `ratchet_windows_arm64.zip`, list archive members, assert each zip contains exactly one `ratchet.exe` payload in the expected package layout, byte-scan each archive and contained executable for `ratchet-tui-smoke`, `tui_smoke`, smoke-only flags, and smoke help text, and compare generated checksums against the Windows archives. Do not add `windows-latest` or any new runner class; Windows executable runtime smoke is deferred to a future runner-change plan.
 
-```powershell
-$env:HOME = Join-Path $env:RUNNER_TEMP "ratchet-home"
-$env:USERPROFILE = $env:HOME
-$env:XDG_STATE_HOME = Join-Path $env:RUNNER_TEMP "ratchet-state"
-New-Item -ItemType Directory -Force -Path $env:HOME, $env:XDG_STATE_HOME | Out-Null
-& "$env:RUNNER_TEMP\\package-amd64\\ratchet.exe" version
-& "$env:RUNNER_TEMP\\package-amd64\\ratchet.exe" help
-& "$env:RUNNER_TEMP\\package-amd64\\ratchet.exe" daemon status
-```
-
-Expected: executed path is under `package-amd64` extracted from `ratchet_windows_amd64.zip`; temp env assignment precedes `daemon status`; daemon status output contains `daemon is not running` under temp Windows home/state env.
+Expected: `release-check` remains on its existing runner; Windows archive inspection fails if either zip is missing, if `ratchet.exe` is missing or duplicated, if checksums omit either zip, or if any archive/member/executable contains smoke tokens.
 
 **Step 4: Verify local Windows cross-build and releaseguard**
 
@@ -704,7 +697,7 @@ scripts/check-release-artifacts.sh --manifest-only dist
 go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/ci.yml .github/workflows/release.yml
 ```
 
-Expected: PASS; draft config test proves `release.draft: true` before publish; redaction tests prove draft/tap/workflow/Windows failure payloads use the shared helper; Windows binaries are written only under `/tmp`; wrapper regenerates fresh `dist`; pinned workflow lint is clean; `tap-preflight` uses `RATCHET_RELEASE_GUARD_MODE=tap-preflight`, `RATCHET_RELEASE_GUARD_TAP`, and `go test -count=1`; `windows-safe-command-smoke` contains `GOPRIVATE`, `GONOSUMCHECK`, private-module Git rewrite before source build, and temp `HOME`/`USERPROFILE`/`XDG_STATE_HOME` assignment before packaged `daemon status`; release workflow clones the tap with `HOMEBREW_TAP_TOKEN`; release workflow sets `RATCHET_RELEASE_GUARD_TAP`, `RATCHET_RELEASE_GUARD_TAP_NAMES`, `RATCHET_RELEASE_GUARD_TAP_COMMITS`, and `RATCHET_RELEASE_GUARD_VERSION` for tap-postcheck.
+Expected: PASS; draft config test proves `release.draft: true` before publish; redaction tests prove draft/tap/workflow/Windows failure payloads use the shared helper; Windows binaries are written only under `/tmp`; wrapper regenerates fresh `dist`; pinned workflow lint is clean; `tap-preflight` uses `RATCHET_RELEASE_GUARD_MODE=tap-preflight`, `RATCHET_RELEASE_GUARD_TAP`, and `go test -count=1`; workflow diff contains no `windows-latest` or new runner class; `release-check` proves Windows amd64/arm64 archives/checksums/member scans; release workflow clones the tap with `HOMEBREW_TAP_TOKEN`; release workflow sets `RATCHET_RELEASE_GUARD_TAP`, `RATCHET_RELEASE_GUARD_TAP_NAMES`, `RATCHET_RELEASE_GUARD_TAP_COMMITS`, and `RATCHET_RELEASE_GUARD_VERSION` for tap-postcheck.
 
 **Step 5: Commit**
 
@@ -730,7 +723,7 @@ Rollback: revert workflow/releaseguard commit; if a tag release failed after GoR
 Document final evidence:
 - automated Unix PTY TUI smoke through `ratchet-tui-smoke`;
 - release-shaped startup smoke for untagged `ratchet`;
-- Windows packaged safe-command smoke;
+- Windows cross-build and packaged archive safety proof; Windows executable runtime remains deferred pending approved runner changes;
 - GoReleaser/draft asset/Homebrew tap checks;
 - exact deferred Windows interactive PTY boundary.
 
@@ -765,7 +758,7 @@ Rollback: revert docs commit.
 ```bash
 go test ./internal/releaseguard -count=1
 go test ./internal/harnessredact ./internal/releaseguard ./cmd/ratchet ./internal/tui -run 'Redact|ReleaseGuardRedaction|WorkflowCommandRedaction|HarnessDocs|TUIBinarySmoke' -count=1 -timeout=12m
-go test ./internal/daemon ./cmd/ratchet ./internal/tui/commands ./internal/tui/components ./internal/tui -run 'Shutdown|StartupSmoke|CommandSurface|CLIHelp|Shortcut|Docs|SmokeService|ListJobs|JobPanel|TUIBinarySmoke' -count=1 -timeout=12m
+go test ./internal/client ./internal/daemon ./cmd/ratchet ./internal/tui/commands ./internal/tui/components ./internal/tui -run 'Shutdown|StartupSmoke|ClientShutdown|CommandSurface|CLIHelp|Shortcut|Docs|SmokeService|ListJobs|JobPanel|TUIBinarySmoke' -count=1 -timeout=12m
 go test -tags tui_smoke ./internal/client -run 'ConnectSmokeUnix' -count=1
 go test -tags tui_smoke ./internal/daemon -run 'SmokeService|ListJobs' -count=1
 go test ./internal/tui -run TestTUIBinarySmoke -count=1 -timeout=8m
@@ -787,7 +780,7 @@ Confirm PRs 1-5 were opened, monitored, and merged in manifest order. For each m
 - ensure local focused tests pass before push;
 - monitor CI until green;
 - address code review with `autodev:receiving-code-review`;
-- admin merge once green/approved or once local tests pass and checks are delayed per user approval.
+- admin merge only after required GitHub checks are green and review requirements are satisfied.
 
 **Step 3: Release**
 
