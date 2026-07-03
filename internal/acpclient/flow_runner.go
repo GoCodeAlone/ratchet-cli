@@ -118,10 +118,8 @@ func RunFlow(ctx context.Context, def FlowDefinition, input map[string]any, opts
 			result.Status = FlowRunStatusFailed
 			result.Steps = append(result.Steps, step)
 			if store != nil {
-				if len(output) > 0 {
-					if writeErr := store.WriteStep(node.ID, output); writeErr != nil {
-						return result, writeErr
-					}
+				if writeErr := store.WriteStep(node.ID, output); writeErr != nil {
+					return result, writeErr
 				}
 				if recErr := replay.RecordStep(node, step); recErr != nil {
 					return result, recErr

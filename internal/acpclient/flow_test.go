@@ -221,8 +221,13 @@ func TestRunFlowWritesReplayBundleFiles(t *testing.T) {
 		t.Fatalf("LoadFlowReplaySummary: %v", err)
 	}
 	if summary.RunID != "run-replay" || summary.Status != FlowRunStatusCompleted ||
-		summary.StepCount != 2 || summary.TraceCount != 2 || summary.SessionCount != 1 {
+		summary.ManifestPath != "manifest.json" || summary.StepCount != 2 || summary.TraceCount != 2 || summary.SessionCount != 1 {
 		t.Fatalf("summary = %#v", summary)
+	}
+	var runProjection FlowReplaySummary
+	readFlowJSONFile(t, filepath.Join(runDir, "projections", "run.json"), &runProjection)
+	if runProjection.ManifestPath != "manifest.json" {
+		t.Fatalf("run projection manifest path = %q, want relative manifest.json", runProjection.ManifestPath)
 	}
 }
 
@@ -241,6 +246,32 @@ func TestLoadFlowReplaySummaryRejectsManifestPathsOutsideRunDir(t *testing.T) {
 	}
 	if _, err := LoadFlowReplaySummary(runDir); err == nil || !strings.Contains(err.Error(), "outside run dir") {
 		t.Fatalf("LoadFlowReplaySummary error = %v, want outside run dir", err)
+	}
+}
+
+func TestLoadFlowReplaySummaryRejectsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	runDir := filepath.Join(root, "run")
+	outside := filepath.Join(root, "outside.ndjson")
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		t.Fatalf("mkdir run: %v", err)
+	}
+	if err := os.WriteFile(outside, []byte("{}\n"), 0o600); err != nil {
+		t.Fatalf("write outside: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(runDir, "trace.ndjson")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if err := writeJSONFileAtomic(filepath.Join(runDir, "manifest.json"), map[string]any{
+		"schema": "acpx.flow-run-bundle.v1",
+		"run_id": "escape",
+		"status": FlowRunStatusCompleted,
+		"trace":  "trace.ndjson",
+	}, 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	if _, err := LoadFlowReplaySummary(runDir); err == nil || !strings.Contains(err.Error(), "outside run dir") {
+		t.Fatalf("LoadFlowReplaySummary error = %v, want symlink outside run dir", err)
 	}
 }
 
@@ -708,6 +739,32 @@ func TestRunFlowActionNonZeroExitWritesReplayFailedStep(t *testing.T) {
 	}
 	if summary.Status != FlowRunStatusFailed || summary.StepCount != 1 || summary.TraceCount != 1 {
 		t.Fatalf("summary = %#v", summary)
+	}
+}
+
+func TestRunFlowACPFailureWritesNullReplayStep(t *testing.T) {
+	root := t.TempDir()
+	def := FlowDefinition{
+		FormatVersion: 1,
+		StartAt:       "fail",
+		Nodes:         []FlowNode{{ID: "fail", Type: FlowNodeTypeACP, Prompt: "fail", Command: "fixture"}},
+	}
+	_, err := RunFlow(t.Context(), def, map[string]any{}, FlowRunOptions{
+		RunID:   "run-acp-replay-failed",
+		RunRoot: root,
+		StartRunner: func(context.Context, AgentSpec, RunOptions, string) (FlowPromptRunner, func() error, error) {
+			return &fakeFlowPromptRunner{err: errors.New("agent failed")}, func() error { return nil }, nil
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "agent failed") {
+		t.Fatalf("RunFlow error = %v, want agent failed", err)
+	}
+	stepBytes, err := os.ReadFile(filepath.Join(root, "run-acp-replay-failed", "steps", "fail.json"))
+	if err != nil {
+		t.Fatalf("read failed step: %v", err)
+	}
+	if strings.TrimSpace(string(stepBytes)) != "null" {
+		t.Fatalf("failed ACP step = %s, want null", stepBytes)
 	}
 }
 

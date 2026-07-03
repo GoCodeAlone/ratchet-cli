@@ -195,7 +195,7 @@ func (r *flowReplayRecorder) Finalize(result FlowRunResult) error {
 	runProjection := FlowReplaySummary{
 		RunID:        result.RunID,
 		Status:       result.Status,
-		ManifestPath: filepath.Join(r.store.Dir(), "manifest.json"),
+		ManifestPath: "manifest.json",
 		StepCount:    len(r.steps),
 		TraceCount:   r.seq,
 		SessionCount: len(sessions),
@@ -264,7 +264,7 @@ func (s *FlowRunStore) WriteArtifact(kind string, data []byte) (FlowReplayArtifa
 	return FlowReplayArtifactRef{Kind: kind, SHA256: "sha256:" + hash, Path: rel}, nil
 }
 
-func (s *FlowRunStore) AppendTraceEvent(event FlowTraceEvent) error {
+func (s *FlowRunStore) AppendTraceEvent(event FlowTraceEvent) (err error) {
 	if s == nil {
 		return errors.New("flow run store is required")
 	}
@@ -276,7 +276,11 @@ func (s *FlowRunStore) AppendTraceEvent(event FlowTraceEvent) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close() //nolint:errcheck
+	defer func() {
+		if closeErr := f.Close(); err == nil && closeErr != nil {
+			err = closeErr
+		}
+	}()
 	return json.NewEncoder(f).Encode(event)
 }
 
@@ -335,7 +339,7 @@ func LoadFlowReplaySummary(runDir string) (FlowReplaySummary, error) {
 	return FlowReplaySummary{
 		RunID:        manifest.RunID,
 		Status:       manifest.Status,
-		ManifestPath: manifestPath,
+		ManifestPath: "manifest.json",
 		StepCount:    stepCount,
 		TraceCount:   traceCount,
 		SessionCount: len(manifest.Sessions),
@@ -346,8 +350,19 @@ func containedReplayPath(runDir, rel string) (string, error) {
 	if filepath.IsAbs(rel) || strings.HasPrefix(filepath.ToSlash(rel), "../") {
 		return "", fmt.Errorf("flow replay path %q is outside run dir", rel)
 	}
-	path := filepath.Clean(filepath.Join(runDir, filepath.FromSlash(rel)))
-	if !pathWithin(filepath.Clean(runDir), path) {
+	base := filepath.Clean(runDir)
+	path := filepath.Clean(filepath.Join(base, filepath.FromSlash(rel)))
+	if !pathWithin(base, path) {
+		return "", fmt.Errorf("flow replay path %q is outside run dir", rel)
+	}
+	resolvedPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return path, nil
+		}
+		return "", err
+	}
+	if !pathWithin(realPathOrClean(base), filepath.Clean(resolvedPath)) {
 		return "", fmt.Errorf("flow replay path %q is outside run dir", rel)
 	}
 	return path, nil

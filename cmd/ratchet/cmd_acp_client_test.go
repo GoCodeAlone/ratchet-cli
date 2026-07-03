@@ -1498,7 +1498,7 @@ func TestExecuteACPClientFlowReplayTextAndJSON(t *testing.T) {
 		t.Fatalf("flow replay json: %v\n%s", err, jsonOut.String())
 	}
 	if summary.RunID != "run-replay" || summary.Status != acpclient.FlowRunStatusCompleted ||
-		summary.StepCount != 2 || summary.TraceCount != 2 || summary.SessionCount != 1 {
+		summary.ManifestPath != "manifest.json" || summary.StepCount != 2 || summary.TraceCount != 2 || summary.SessionCount != 1 {
 		t.Fatalf("summary = %#v", summary)
 	}
 }
