@@ -140,7 +140,10 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
   - `/provider list` renders `e2e-mock`;
   - documented mode/trust slash-command matrix listed below;
   - shortcut matrix listed below;
-  - `/exit`, `ctrl+c`, and `ctrl+d` exit cleanly.
+  - one long interaction run exits with `/exit`.
+- Add separate short PTY subprocess subtests for `ctrl+c` and `ctrl+d` so every
+  terminal exit mechanism is proven independently; one process cannot prove
+  more than one exit path after it terminates.
 - Assertions strip ANSI and bound line width for representative frames.
 - Frame assertions require header/status/input anchors to be simultaneously
   visible in normal chat and sidebar states; branch tree, team panel, and job
@@ -257,7 +260,8 @@ autocomplete command models.
 | `/clear`, `/plan` | `focused-proven` | Focused command tests assert parse result/help text only; no PTY runtime claim. |
 | `/model`, `/cost`, `/agents`, `/sessions`, `/compact`, `/review`, `/jobs`, `/login` | `focused-proven` | Focused command tests with fake/stub clients assert parse behavior, help/autocomplete presence, and no docs overclaim of PTY proof. |
 | `/provider add`, `/provider remove`, `/provider default`, `/provider test` | `focused-proven` | Focused command tests assert usage/dispatch behavior; provider setup wizard/runtime side effects are not PTY-proven in this slice. |
-| `/loop`, `/cron`, `/fleet`, `/mcp`, `/team`, `/approve`, `/reject` | `deferred-runtime` | Help/autocomplete/parse entries remain covered by focused tests; full runtime orchestration is out of scope for this TUI binary-proof slice and must not be documented as PTY-proven here. |
+| `/loop`, `/cron`, `/fleet`, `/team`, `/approve`, `/reject` | `deferred-runtime` | Parse/help/autocomplete presence is checked where the current code exposes it; full runtime orchestration is out of scope for this TUI binary-proof slice and must not be documented as PTY-proven here. |
+| `/mcp` | `deferred-runtime` | Parse and autocomplete entries are checked; `/help` is allowed to omit `/mcp` until product docs choose to expose it. Full runtime orchestration is out of scope and must not be documented as PTY-proven here. |
 
 The docs guard scans public harness evidence claims and fails if a
 `focused-proven` or `deferred-runtime` row is described as PTY/binary-smoke
@@ -324,6 +328,10 @@ Mechanical fail-closed check:
   the AST command-surface guard for `commands.Parse`, `helpCmd`, and the
   autocomplete model, compare that list to the coverage contract above, and
   fail closed on unclassified additions.
+- The command spec has per-command `requiresHelp` and `requiresAutocomplete`
+  booleans. A command such as `/mcp` can be parser/autocomplete-covered while
+  intentionally help-omitted; the guard fails only when the source surface
+  diverges from the explicit per-command requirements.
 - This aligns existing discoverability surfaces only; it does not add new
   commands or change command semantics, and it does not turn
   `focused-proven`/`deferred-runtime` commands into PTY runtime claims.
@@ -401,7 +409,14 @@ Mechanical fail-closed check:
 
 ### Release Artifact Guard
 
-- Add `scripts/check-release-artifacts.sh` as the executable release preflight:
+- Add `cmd/ratchet-release-guard` as the structured release guard and
+  `scripts/check-release-artifacts.sh` as a thin shell wrapper:
+  - the Go helper uses existing Go module dependencies, including
+    `gopkg.in/yaml.v3`, to parse `.goreleaser.yaml` and inspect generated
+    artifact directories; do not implement YAML parsing in shell or add an
+    unpinned external `yq` dependency;
+  - the shell wrapper only runs `goreleaser` when needed and invokes
+    `go run ./cmd/ratchet-release-guard ...`;
   - default mode runs `goreleaser check`, `goreleaser release --snapshot
     --clean --skip=publish`, then the artifact-manifest guard;
   - `--manifest-only dist` mode inspects an already-generated `dist/` tree.
@@ -539,13 +554,17 @@ Mechanical fail-closed check:
   - each claim unit is normalized by lowercasing, collapsing whitespace, and
     treating punctuation separators (`/`, `-`, `:`, `;`, comma) as spaces;
   - a claim unit fails only when it is an evidence claim: it contains an exact
-    release-target token (`` `ratchet` ``, `ratchet` command, `release-shaped`,
-    `release binary`, or `untagged`), an evidence token (`proof`, `proves`,
-    `proven`, `covered`, `coverage`, `smoke`, `automated`, `automation`,
-    `verified`, `binary smoke`, or `CI`), and an interactive-surface token
-    (`credential free chat`, `interactive chat`, `interactive tui`, `full tui`,
-    `slash command`, `slash commands`, `shortcut`, `shortcuts`, or
-    `slash shortcut`);
+    evidence token (`proof`, `proves`, `proven`, `covered`, `coverage`,
+    `smoke`, `automated`, `automation`, `verified`, `binary smoke`, or `CI`)
+    and an interactive-surface token (`credential free chat`,
+    `interactive chat`, `interactive tui`, `full tui`, `slash command`,
+    `slash commands`, `shortcut`, `shortcuts`, or `slash shortcut`);
+  - release-target tokens (`` `ratchet` ``, `ratchet` command,
+    `release-shaped`, `release binary`, or `untagged`) make a failure more
+    specific, but are not required for suspicious interactive-evidence claims;
+    generic claims such as "full TUI coverage is automated" fail unless the
+    same claim unit assigns the proof to `ratchet-tui-smoke` or explicitly
+    says release-shaped `ratchet` does not claim that proof;
   - valid product-support statements such as "ratchet-cli supports trust slash
     commands" are allowed unless they also claim automation/evidence for the
     release-shaped binary;
@@ -563,6 +582,7 @@ Mechanical fail-closed check:
 | Smoke mode becomes a user-facing bypass. | Compile it only with `tui_smoke`; release binaries do not contain the path. |
 | Test leaks real home/provider/project state. | Set temp `HOME`/`XDG_STATE_HOME`/`cmd.Dir`/session `WorkingDir`; temp workdir contains no instruction files/dirs from `internal/agent/instructions.go` and no hook configs from `internal/hooks/hooks.go` (`~/.ratchet/hooks.yaml`, `.ratchet/hooks.yaml`); assert captured output excludes real workspace/home paths. |
 | PTY test hangs or flakes in CI. | Per-read deadline, process kill cleanup, bounded waits, synchronized PTY output snapshots, and no external network/provider dependency. |
+| PTY exit path is only partly tested. | Use one long interaction PTY run ending with `/exit`, plus separate short PTY subprocess subtests for `ctrl+c` and `ctrl+d`. |
 | Shortcut proof misses broken layout. | Use fixed PTY size and assert representative full frames for chat/sidebar input-visible states and branch-tree/team/job panel states, then return to chat and assert input usability. |
 | Shortcut hint drifts from handlers. | Treat app/page/component key handling plus README/statusbar hints as a checked contract; prove global shortcuts, conditional `ctrl+h`, and advertised branch-tree navigation. |
 | Slash-command proof overclaims broad coverage. | Maintain a command-surface classification table from `commands.Parse`/`helpCmd`; docs may claim PTY proof only for `pty-proven` rows. |
@@ -571,6 +591,7 @@ Mechanical fail-closed check:
 | Binary smoke skipped under race. | Add package-local `internal/tui` race helper files; `TestTUIBinarySmoke` skips under `-race`, and a focused non-race CI smoke job for `cmd/ratchet` and `internal/tui` smoke tests runs alongside the existing race suite. |
 | Non-race smoke CI cannot fetch private modules. | Make the smoke job setup-equivalent to existing CI: checkout, setup-go `1.26`, `GOPRIVATE`/`GONOSUMCHECK`, and private-module Git rewrite before `go test`. |
 | Release artifact guard only runs manually. | Add the publish-free `release-check` CI job; CI uses GoReleaser action for snapshot generation and the same manifest guard script local runs use. |
+| Shell release guard misparses GoReleaser YAML. | Implement the artifact/config guard as `cmd/ratchet-release-guard` in Go with `gopkg.in/yaml.v3`; shell wrapper only orchestrates GoReleaser and invokes the Go helper. |
 | Tag release bypasses artifact guard. | Add the same publish-free `goreleaser check` + snapshot + manifest guard to `.github/workflows/release.yml` before the publishing step. |
 | Release jobs cannot fetch private modules. | Mirror CI's `GOPRIVATE`/`GONOSUMCHECK` and private-module Git rewrite in release preflight/publish and Windows safe-command smoke jobs. |
 | Snapshot guard differs from uploaded release. | Add a draft-release postcheck before undrafting that downloads uploaded GitHub release archives/checksums and runs the same archive manifest plus all-packaged-binary byte-scan guard against actual uploaded assets; explicitly treat Homebrew/tap postcheck as after-the-fact rollback under the current GoReleaser workflow. |
@@ -603,6 +624,7 @@ smoke entrypoint is build-tagged out.
 | TUI to daemon gRPC | Smoke service uses real daemon service/client RPCs for provider list, session tree, trust mode/rules, and chat send; docs do not claim auto-daemon socket proof from this row. |
 | TUI to mock provider | Chat prompt reaches built-in mock provider and streams a response. |
 | Slash commands | PTY submits representative slash commands through the input widget and asserts rendered system output/navigation for `pty-proven` rows: `/help`, `/provider list`, `/tree`, `/mode`, `/trust`, and `/exit`. |
+| TUI exit paths | `/exit`, `ctrl+c`, and `ctrl+d` each run in their own PTY subprocess/subtest; the long interaction run exits with `/exit`, while control-key runs prove clean termination independently. |
 | Slash discoverability | Focused tests keep in-TUI `/help`, autocomplete, public `ratchet help`, and the command-surface classification table aligned with `commands.Parse`/`helpCmd`; docs cannot claim PTY proof for `focused-proven` or `deferred-runtime` commands. |
 | Shortcuts | PTY sends global control keys and asserts branch tree/pane transitions with fixed-size full-frame checks matching current behavior; focused tests prove conditional `ctrl+h`, advertised branch-tree navigation, and App-level branch switch into child chat history. |
 | Docs to tests | Docs guard fails if automated TUI smoke evidence is removed. |
@@ -765,3 +787,7 @@ corrected preflight PR.
 | D77 | Added hard draft-state gates: `.goreleaser.yaml` must keep `release.draft: true`, and postcheck fails if the resolved release is not draft. |
 | D78 | Made Windows archive handling architecture-aware: require amd64 and arm64 zips, byte-scan both, execute only `ratchet_windows_amd64.zip` on x64 `windows-latest`. |
 | D79 | Corrected stale D71 resolution wording to match the narrowed positive-docs guard scope. |
+| D80 | Changed release artifact/config guard to a Go helper (`cmd/ratchet-release-guard`) using `gopkg.in/yaml.v3`; shell script is only a wrapper. |
+| D81 | Split PTY exit proof into one long `/exit` interaction run plus separate short `ctrl+c` and `ctrl+d` subprocess subtests. |
+| D82 | Made docs overclaim guard context-aware: interactive-surface evidence claims fail even without a release-target token unless assigned to `ratchet-tui-smoke` or explicitly deferred for release-shaped `ratchet`. |
+| D83 | Added per-command help/autocomplete requirements so commands such as `/mcp` can be parser/autocomplete-covered while intentionally help-omitted. |

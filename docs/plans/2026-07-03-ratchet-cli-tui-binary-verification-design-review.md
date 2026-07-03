@@ -825,3 +825,47 @@ None.
 2. Architecture-aware release artifact contract: execute `windows_amd64`, inspect `windows_arm64`.
 
 **Verdict reasoning:** D68-D75 are directionally resolved, but nested trust action drift, pre-public draft-state enforcement, and Windows archive selection remain tangible blockers.
+
+## Cycle 20
+
+### Adversarial Review Report
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `D80` [Existence/runtime-validity / Infrastructure impact] [design:404-407,492-505]: Release guard is specified as shell script but must strictly parse `.goreleaser.yaml`; shell parsing is brittle and no `yq` dependency is declared. Recommendation: implement guard as Go helper/test using existing `gopkg.in/yaml.v3`, with shell wrapper only for ergonomics.
+- `D81` [Missing failure modes / Multi-component validation] [design:136-143,180-189]: One PTY process cannot prove `/exit`, `ctrl+c`, and `ctrl+d`; first exit terminates the process. Recommendation: separate PTY subprocess/subtests for each exit mechanism plus one non-exit interaction run.
+- `D82` [Project-guidance conflicts / Missing failure modes] [design:525-557]: Docs overclaim guard requires release-target token, so generic "full TUI coverage is automated" can evade. Recommendation: treat TUI/interactive-surface + evidence tokens as suspicious even without release-target token unless assigned to `ratchet-tui-smoke` or release-binary chat proof is explicitly deferred.
+
+**Findings (Minor):**
+- `D83` [Existence/runtime-validity / Artifact-class precedent] [design:260,303-329]: Command-surface table says deferred commands keep help/autocomplete/parse entries covered, but `/mcp` is autocomplete-only today. Recommendation: define per-command required help surface explicitly.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | D82 weakens honest docs boundary. |
+| Assumptions under attack | Finding | Shell YAML parsing and one-process exit proof are false assumptions. |
+| Repo-precedent conflicts | Finding | Existing scripts are simple shell; new guard needs structured parsing. |
+| Artifact-class precedent | Finding | Command surface guard must handle current help/autocomplete asymmetry explicitly. |
+| YAGNI violations | Clean | Heavy gates are tied to concrete release-contamination findings. |
+| Missing failure modes | Finding | Exit-path proof and docs-overclaim evasion remain. |
+| Security/privacy at architecture level | Clean | Temp state, socket containment, redaction, trust output, and build-tag isolation explicit. |
+| Infrastructure impact | Finding | CI/local parser dependency undeclared. |
+| Multi-component validation | Finding | Process-exit behavior needs separate subprocesses. |
+| Declared integration proof | Clean | D72-D78 are materially resolved. |
+| Contributed UI rendering proof | Clean | No plugin UI. |
+| Rollback story | Clean | Source revert, draft retention, asset deletion/patch release, and tap rollback described. |
+| Simpler alternative not considered | Finding | Go release helper and process-per-exit PTY split. |
+| User-intent drift | Clean | Prerequisite TUI/Windows verification slice remains aligned. |
+| Existence/runtime-validity | Finding | D80-D83 are executable-contract gaps. |
+
+**Options the author may not have considered:**
+1. Small Go release-artifact guard using `gopkg.in/yaml.v3`, shell wrapper only.
+2. One interaction PTY run plus three short exit-only subprocess proofs.
+3. Context-aware docs guard keyed by TUI/interactive evidence claims even without `ratchet` token.
+
+**Verdict reasoning:** D72-D79 appear resolved, but release-guard parser validity, exit-path separation, and docs-overclaim false negatives remain Important blockers.
