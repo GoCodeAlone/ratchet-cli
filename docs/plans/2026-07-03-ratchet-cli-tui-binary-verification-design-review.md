@@ -1087,3 +1087,48 @@ None.
 2. Dedicated tap postcheck helper: add a `releaseguard` mode that takes a checked-out Homebrew tap path and cask name, then scans the actual generated cask after GoReleaser pushes it.
 
 **Verdict reasoning:** The latest commit resolves D95-D97 in text, but the design still leaves two Important gaps: `/trust reset` does not explicitly prove mode reset after mode mutations, and the Homebrew/tap audit is not specified enough to be an executable release safety check.
+
+## Cycle 26
+
+### Adversarial Review Report
+
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `D102` [Infrastructure impact / Rollback story] [design:499-515; `.goreleaser.yaml`:44-56]: Homebrew tap postcheck assumes the tap branch `HEAD` is the GoReleaser cask commit. If another commit lands on `GoCodeAlone/homebrew-tap/main` between GoReleaser publish and postcheck, the audit can scan the wrong commit and print the wrong rollback SHA. Recommendation: resolve the exact cask-changing commit for the current release, e.g. `git log -1 -- Casks/ratchet-cli.rb` after clone, verify it contains the expected version/checksum context, scan that commit's cask content and changed-file list, and report that SHA as rollback target.
+
+**Findings (Minor):**
+- `D103` [Artifact-class precedent / Missing failure modes] [design:80-86; `cmd/ratchet/harness_smoke_test.go`:43-57]: Positive build assertions use `go build ./cmd/ratchet` and `go build -tags tui_smoke ./cmd/ratchet-tui-smoke` without `-o`, which writes binaries into the current working directory if implemented literally. Existing smoke tests build to `t.TempDir()`. Recommendation: require temp output paths for every positive build assertion.
+- `D104` [Simpler alternative / Multi-component validation] [design:64-74; `internal/daemon/service.go`:499-575; `internal/daemon/testharness_test.go`:155-199]: The design keeps direct mock-provider DB seeding even though the production `AddProvider` RPC supports keyless `mock` providers. Direct seeding adds smoke-only daemon surface and bypasses provider validation/cache behavior. Recommendation: seed `e2e-mock` through `AddProvider` over the smoke gRPC client, or explicitly justify why DB seeding is required.
+- `D105` [Existence/runtime-validity] [design:305-324]: The command-surface AST guard extracts only string-literal cases/entries, but does not require failure on nonliteral command cases, generated help rows, or computed autocomplete entries. A later refactor could hide a command from the guard. Recommendation: fail closed on any nonliteral command-like case/entry in guarded surfaces unless the typed spec explicitly marks it as generated and tests the runtime output.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Clean | No repo-local `AGENTS.md`, `CLAUDE.md`, or `docs/design-guidance.md` exists; reviewed `README.md`, `RATCHET.md`, referenced docs, and workspace portfolio. |
+| Assumptions under attack | Finding | Tap postcheck assumes branch HEAD is the relevant cask commit; command guard assumes literal-only command surfaces remain stable. |
+| Repo-precedent conflicts | Finding | Existing smoke tests build to temp paths; design build checks omit `-o`. |
+| Artifact-class precedent | Finding | Release/tap audit shape is close, but exact tap commit selection is not tied to the published cask artifact. |
+| YAGNI violations | Finding | Direct DB seeding may be unnecessary because `AddProvider` already seeds keyless mock providers through the real daemon boundary. |
+| Missing failure modes | Finding | Wrong tap HEAD, cwd binary pollution, and nonliteral command-surface drift are not covered. |
+| Security/privacy at architecture level | Clean | Build-tag isolation, temp state/workdir, Unix socket permissions, and redaction boundaries are explicit. |
+| Infrastructure impact | Finding | Homebrew/tap audit is after-the-fact and must identify the exact published tap commit to make rollback reliable. |
+| Multi-component validation | Finding | Provider setup can be proven through daemon RPC instead of smoke-only DB seeding. |
+| Declared integration proof | Finding | Homebrew/tap post-publish audit is declared but not pinned to the exact consumed cask commit. |
+| Contributed UI rendering proof | Clean | No plugin-contributed host-shell UI is claimed; direct Bubble Tea TUI proof is the relevant surface. |
+| Rollback story | Finding | Tap rollback target can be wrong if postcheck scans branch HEAD after another tap commit. |
+| Simpler alternative not considered | Finding | Use `AddProvider` RPC for mock seeding and temp `-o` build outputs. |
+| User-intent drift | Clean | Slice remains aligned with TUI binary verification while keeping Windows interactive PTY deferred. |
+| Existence/runtime-validity | Finding | Some planned verification commands and AST extraction rules are not fail-closed enough as written. |
+
+**Options the author may not have considered:**
+1. Exact tap commit audit: scan `git show <cask-sha>:Casks/ratchet-cli.rb` where `<cask-sha>` is the latest commit touching the cask for the current release, not branch `HEAD`.
+2. RPC-based smoke provider setup: start smoke daemon, connect via `ConnectSmokeUnix`, call `AddProvider(alias=e2e-mock,type=mock,isDefault=true)`, then create the session.
+3. Temp-output build helper: one shared helper for positive build checks that always passes `-o <temp>` and never writes binaries into the checkout.
+
+**Verdict reasoning:** The design has converged on most prior issues, but D102 is still an unresolved Important release-safety gap: the Homebrew tap audit can inspect the wrong commit and produce an unusable rollback target.
