@@ -1176,3 +1176,47 @@ None.
 3. PID identity check before fallback daemon termination.
 
 **Verdict reasoning:** FAIL because D106 and D107 are unresolved Important issues: the tap audit can miss formula/root install surfaces, and docs can overclaim PTY proof for focused shortcut behavior.
+
+## Cycle 28
+
+### Adversarial Review Report
+
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `D109` [Missing failure modes / Security/privacy] [design:65-76; `internal/daemon/engine.go`:101-117]: Smoke daemon construction is underspecified. If implemented through production `NewService`, it starts environment-dependent MCP CLI discovery and plugin loading, which can inspect host `PATH` and plugin directories despite the temp-home/no-external-dependency claim. Recommendation: define a smoke service constructor that disables MCP discovery, plugin loading/daemon tools, autoresponder loading, and unrelated background work, or require explicit assertions that those paths are inert under the smoke environment.
+- `D110` [Artifact-class precedent / Existence-runtime-validity] [design:302-342; `cmd/ratchet/main.go`:143-177]: The design puts the command-surface guard in `internal/tui/commands/command_surface_test.go` but also makes it responsible for public `printUsage` slash rows from package `main`. `printUsage` is unexported, and existing docs/CLI guard precedent lives under `cmd/ratchet`. Recommendation: split guards: keep `Parse`/`helpCmd`/autocomplete checks in `internal/tui/commands`, and add a `cmd/ratchet` test that captures `printUsage` or runs built `ratchet help` and compares it to the typed spec.
+- `D111` [Infrastructure impact / Rollback story] [design:523-554,739-748; `GoCodeAlone/homebrew-tap:ratchet-cli.rb`:8; `GoCodeAlone/homebrew-tap:Formula/ratchet-cli.rb`:4]: The new tap postcheck discovers every root/Formula/Casks install file and requires current release context, but the current tap already has multiple stale ratchet install surfaces. Since this check runs after GoReleaser publishes, the workflow can fail only after pushing tap changes and creating release side effects. Recommendation: add a pre-publish tap drift audit/remediation step, or explicitly mark stale legacy tap files as accepted risk/out-of-scope before enforcing post-publish failure.
+
+**Findings (Minor):**
+- `D112` [Rollback story] [design:550-552]: The rollback command says `git revert <tap-sha>` per contaminated path. If one tap commit changes multiple relevant files, this can suggest reverting the same commit multiple times; if a commit mixes good and bad paths, it reverts more than the contaminated file. Recommendation: report unique SHAs once and include path-specific rollback guidance for mixed commits.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | No repo-local guidance; D111 conflicts with release-retro guidance to verify all tap install surfaces before relying on release success. |
+| Assumptions under attack | Finding | Temp home/workdir may not isolate smoke daemon startup; internal TUI tests cannot own CLI help extraction; post-publish tap failure may be too late. |
+| Repo-precedent conflicts | Finding | CLI help/docs checks live under `cmd/ratchet`, not `internal/tui/commands`. |
+| Artifact-class precedent | Finding | CLI `printUsage` belongs to the CLI command artifact class. |
+| YAGNI violations | Clean | No ConPTY, visual snapshot system, production command registry refactor, or external-provider CI is added. |
+| Missing failure modes | Finding | Smoke daemon can start environment-dependent discovery/loading; tap postcheck can fail after publish with known stale tap files. |
+| Security/privacy at architecture level | Finding | MCP discovery and plugin loading can observe host CLI/plugin environment unless explicitly disabled or proven inert. |
+| Infrastructure impact | Finding | Release/tap workflow changes are concrete infrastructure; D111 leaves late failure against known stale tap surfaces. |
+| Multi-component validation | Finding | TUI/daemon/mock proof is strong, but D109 means extra daemon components may be active without validation. |
+| Declared integration proof | Finding | Homebrew/tap integration is declared, but current tap surface drift is not handled before publish. |
+| Contributed UI rendering proof | Clean | No plugin-contributed host-shell UI is claimed. |
+| Rollback story | Finding | Tap rollback target reporting is ambiguous for shared commits and late stale-surface failures. |
+| Simpler alternative not considered | Finding | Smoke daemon options and two-package command guard. |
+| User-intent drift | Finding | Late tap failures and environment-dependent smoke startup weaken autonomous follow-through. |
+| Existence/runtime-validity | Finding | Current `engine.go`, `printUsage`, and tap files show executable-contract gaps. |
+
+**Options the author may not have considered:**
+1. Smoke daemon options that disable MCP discovery, plugin daemons, autoresponder, and cron/background work.
+2. Two-package command guard with TUI surfaces in `internal/tui/commands` and CLI help in `cmd/ratchet`.
+
+**Verdict reasoning:** D106-D108 are materially addressed, but the latest design exposes three open Important issues: smoke daemon isolation, wrong artifact-class ownership for CLI help guard, and tap drift only detected after publish.
