@@ -93,9 +93,9 @@ Source: no repo-local `docs/design-guidance.md`, `AGENTS.md`, or `CLAUDE.md` fou
 Add tests that assert:
 - every non-test smoke file is listed in a test-owned manifest with exact `//go:build tui_smoke && !windows`;
 - no unmanifested non-test Go file contains `ratchet-tui-smoke`, `tui_smoke`, or the smoke-only exported client constructor;
-- `go list ./cmd/ratchet-tui-smoke` and `go build ./cmd/ratchet-tui-smoke` fail without tags on Unix;
+- `go list -f '{{len .GoFiles}}' ./cmd/ratchet-tui-smoke` reports zero non-test buildable files and `go build ./cmd/ratchet-tui-smoke` fails without tags on Unix;
 - `go build -tags tui_smoke -o <tmp>/ratchet-tui-smoke ./cmd/ratchet-tui-smoke` succeeds on Unix;
-- `GOOS=windows GOARCH=amd64/arm64 go list/build -tags tui_smoke ./cmd/ratchet-tui-smoke` fails with the expected Unix-only no-buildable-files class.
+- `GOOS=windows GOARCH=amd64/arm64 go list -f '{{len .GoFiles}}' -tags tui_smoke ./cmd/ratchet-tui-smoke` reports zero non-test buildable files and `GOOS=windows GOARCH=amd64/arm64 go build -tags tui_smoke ./cmd/ratchet-tui-smoke` fails with the expected Unix-only no-buildable-files class.
 - tagged `internal/client` tests prove `ConnectSmokeUnix(ctx, tempRoot, socketPath)` accepts only a valid Unix socket inside `tempRoot` and rejects outside-temp paths, symlink final components, wrong file mode, non-`0600` permissions, unresolved parent paths, and TCP/non-`unix://` addresses.
 
 **Step 2: Run red checks**

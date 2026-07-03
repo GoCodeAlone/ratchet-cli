@@ -103,9 +103,10 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
 - Add negative assertions:
   - `go build -o <tempdir>/ratchet ./cmd/ratchet` succeeds without
     `tui_smoke` and exposes no smoke command/flag/help text;
-  - on Unix hosts, no-tag `go list ./cmd/ratchet-tui-smoke` and
-    `go build ./cmd/ratchet-tui-smoke` fail with no buildable Go files or an
-    equivalent build-constraint class;
+  - on Unix hosts,
+    `go list -f '{{len .GoFiles}}' ./cmd/ratchet-tui-smoke` reports zero
+    non-test buildable files and `go build ./cmd/ratchet-tui-smoke` fails with
+    no buildable Go files or an equivalent build-constraint class;
   - on Unix hosts, `go build -tags tui_smoke -o
     <tempdir>/ratchet-tui-smoke ./cmd/ratchet-tui-smoke` succeeds to prove the
     smoke package is intentionally buildable only under the tag;
@@ -133,10 +134,9 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
   - the guard does not fail on broad pathname-only `smoke` matches in non-test
     files; existing `*_smoke_test.go` files are explicitly allowlisted as
     test-only precedent and are not part of the non-test source leak scan;
-  - both `GOOS=windows GOARCH=amd64 go list -tags tui_smoke ./cmd/ratchet-tui-smoke`
-    and `GOOS=windows GOARCH=arm64 go list -tags tui_smoke ./cmd/ratchet-tui-smoke`
-    fail with no buildable Go files or an equivalent expected Unix-only
-    package error;
+  - both `GOOS=windows GOARCH=amd64 go list -f '{{len .GoFiles}}' -tags tui_smoke ./cmd/ratchet-tui-smoke`
+    and `GOOS=windows GOARCH=arm64 go list -f '{{len .GoFiles}}' -tags tui_smoke ./cmd/ratchet-tui-smoke`
+    report zero non-test buildable files;
   - both `GOOS=windows GOARCH=amd64 go build -tags tui_smoke ./cmd/ratchet-tui-smoke`
     and `GOOS=windows GOARCH=arm64 go build -tags tui_smoke ./cmd/ratchet-tui-smoke`
     fail with the same expected Unix-only package class;
@@ -826,7 +826,7 @@ Mechanical fail-closed check:
 | risk | control |
 |---|---|
 | Smoke mode becomes a user-facing bypass. | Compile it only with `tui_smoke`; release binaries do not contain the path. |
-| Smoke package accidentally becomes default-buildable. | Unix no-tag `go list`/`go build ./cmd/ratchet-tui-smoke` fail; tagged Unix build succeeds; test-owned smoke-source manifest requires exact `//go:build tui_smoke && !windows` on every non-test smoke-only file and scans non-test Go files for exact smoke-surface tokens instead of broad pathname matches. |
+| Smoke package accidentally becomes default-buildable. | Unix no-tag `go list -f '{{len .GoFiles}}' ./cmd/ratchet-tui-smoke` reports zero non-test buildable files, no-tag `go build ./cmd/ratchet-tui-smoke` fails, tagged Unix build succeeds, and the test-owned smoke-source manifest requires exact `//go:build tui_smoke && !windows` on every non-test smoke-only file and scans non-test Go files for exact smoke-surface tokens instead of broad pathname matches. |
 | Test leaks real home/provider/project state. | Set temp `HOME`/`XDG_STATE_HOME`/`cmd.Dir`/session `WorkingDir`; temp workdir contains no instruction files/dirs from `internal/agent/instructions.go` and no hook configs from `internal/hooks/hooks.go` (`~/.ratchet/hooks.yaml`, `.ratchet/hooks.yaml`); assert captured output excludes real workspace/home paths. |
 | PTY test hangs or flakes in CI. | Per-read deadline, process kill cleanup, bounded waits, synchronized PTY output snapshots, and no external network/provider dependency. |
 | PTY exit path is only partly tested. | Use one long interaction PTY run ending with `/exit`, plus separate short PTY subprocess subtests for `ctrl+c` and `ctrl+d`. |
@@ -902,7 +902,7 @@ smoke entrypoint is build-tagged out.
 | GoReleaser snapshot and GitHub draft assets | runtime-integrated | Publish-free `release-check` CI job, tag release preflight, local script, and release draft postcheck run `goreleaser check`/snapshot generation plus full `.goreleaser.yaml`-derived OS/arch archive matrix inspection, checksum-entry checks, all-archive packaged-binary byte scans, host executable help/version checks where supported by the current runner, Windows archive/member/executable byte scans without execution, and deterministic `.goreleaser.yaml` fallback. The postcheck downloads draft GitHub release assets and repeats the same checks before undraft, proving uploaded archives/checksums do not contain `ratchet-tui-smoke`. |
 | Homebrew/tap install files | config-only + cleanup + PR gate + preflight + post-publish audit | Snapshot/config precheck proves Homebrew ids/binaries do not reference smoke artifacts; prerequisite tap cleanup removes stale unmanaged root and legacy Formula files while preserving existing `Casks/ratchet-cli.rb`; PR/push `tap-preflight` verifies cleanup and cask automation before merge; before publish, release tap preflight rejects unmanaged root/Formula files, active Cask surfaces without automation, deprecated `brews`, or forbidden smoke tokens, but does not require the live tap to already contain the current version/checksum; after publish, the guard scans active Cask files at exact path-changing commits for current version/checksum context. Current GoReleaser workflow can still push the tap before postcheck, so current-release tap safety is after-the-fact audit plus rollback, not pre-public gating. Split-publish pre-public gating is deferred. |
 | Windows packaged archive proof | artifact-integrated | Existing-runner release checks require `ratchet_windows_amd64.zip` and `ratchet_windows_arm64.zip`, scan archive names/member names/checksums plus contained `ratchet.exe` bytes, verify member layout/checksums, and defer non-PTY Windows CLI startup/help/daemon-status execution until a separate runner-change plan is approved. |
-| Windows smoke package boundary | config-only | `GOOS=windows GOARCH=amd64/arm64 go list` and `go build -tags tui_smoke ./cmd/ratchet-tui-smoke` fail with the expected Unix-only no-buildable-files class. |
+| Windows smoke package boundary | config-only | `GOOS=windows GOARCH=amd64/arm64 go list -f '{{len .GoFiles}}' -tags tui_smoke ./cmd/ratchet-tui-smoke` reports zero non-test buildable files, and `go build -tags tui_smoke ./cmd/ratchet-tui-smoke` fails with the expected Unix-only no-buildable-files class. |
 | Windows interactive PTY | deferred | No ConPTY runner in this slice; Windows coverage is cross-build and packaged archive inspection only. |
 
 ## Rollback
@@ -1099,3 +1099,4 @@ preflight PR.
 | D131 | Defined releaseguard ordinary-test behavior: broad `go test` runs unit fixtures, artifact tests skip with an explicit no-mode message, and mode-selected artifact tests fail on missing env. |
 | D132 | Superseded by P31 correction: Windows assumption now covers cross-build and packaged archive inspection only; all Windows executable runtime proof is deferred. |
 | D133 | GoReleaser v2.16 fully deprecates `brews`; keep Homebrew publishing on supported `homebrew_casks`, reject `brews` in releaseguard, and remove unmanaged stale root/legacy Formula tap files before fail-closed release checks. |
+| D134 | See `decisions/0001-smoke-package-list-boundary.md`: raw `go list` succeeds for an untagged `_test.go`-only package, so smoke package boundary proof uses zero non-test `.GoFiles` plus default `go build` failure without changing the locked manifest. |
