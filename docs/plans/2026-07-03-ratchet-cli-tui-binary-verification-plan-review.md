@@ -390,3 +390,33 @@
 2. Route all releaseguard modes through wrapper so CI cannot forget `-count=1`.
 
 **Verdict reasoning:** FAIL. P1-P27 were materially addressed; remaining blockers were Windows temp state and exact non-cacheable tap-preflight command.
+
+## Cycle 11
+
+### Adversarial Review Report
+
+**Phase:** plan
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `P30` [Security/privacy / Missing task / Verification-class mismatch] [design:219-224,747,834,840; plan:58,222,273,395-467,621-700]: The design requires one redaction path for every runtime/test failure payload, including build output, GoReleaser snapshot output, daemon cleanup output, docs-guard output, artifact-manifest output, command errors, generated artifact paths, and trust/prompt bodies. The plan only makes redaction executable in the TUI/runtime smoke area and daemon leftover diagnostics; Tasks 7-11 add releaseguard, GoReleaser, draft-asset, tap, workflow, and artifact-manifest failure paths without requiring tests or implementation steps proving those outputs use the same redactor. Recommendation: add an explicit releaseguard/shared-redaction task or Task 7/11 test bullets that exercise representative GoReleaser, manifest, draft-assets, tap-postcheck, workflow-command, docs-guard, and command-error failures and assert real home/workspace/temp/socket/executable/artifact paths plus trust/prompt bodies are redacted before logging/failing.
+
+**Findings (Minor):**
+- None.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Security/privacy | Finding | Release/tap/workflow/docs failure payloads lacked executable shared-redaction proof. |
+| Verification-class mismatch | Finding | Design-level redaction promise was not mapped to releaseguard/task tests. |
+| Missing task | Finding | No shared helper task/file owned the cross-path redaction contract. |
+
+**Options the author may not have considered:**
+1. Create `internal/harnessredact` before PTY tests and reuse it from releaseguard/docs tests.
+2. Add Task 7/11 representative failure fixtures for GoReleaser, manifest, draft-assets, tap, workflow, docs guard, and command errors.
+
+**Verdict reasoning:** FAIL. P1-P29 were materially addressed; P30 remained as the executable security gap for full redaction coverage outside runtime smoke paths.

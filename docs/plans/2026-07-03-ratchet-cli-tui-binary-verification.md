@@ -55,7 +55,7 @@ Source: no repo-local `docs/design-guidance.md`, `AGENTS.md`, or `CLAUDE.md` fou
 | Build for Windows honestly. | Tasks 10-11 add Windows cross-build and packaged non-PTY command smoke; ConPTY remains out of scope. |
 | Avoid duplicated plumbing. | Use existing daemon, client, TUI, GoReleaser, and Homebrew tap mechanisms; releaseguard is internal test/helper logic only. |
 | Runtime claims need real boundaries. | Tasks 2-6 launch binaries, daemon/client RPCs, mock provider, PTY, and docs/command contracts. |
-| Sensitive local data must not leak. | Tasks 1-6 add temp home/workdir, hook/instruction leak checks, and shared redaction for failure payloads. |
+| Sensitive local data must not leak. | Tasks 1-12 add temp home/workdir plus one shared redaction helper for TUI, daemon, command, docs-guard, GoReleaser, releaseguard, tap, draft-asset, workflow, and artifact-manifest failure payloads. |
 | CI/CD should stay portable through `wfctl`-style simple commands where possible. | Workflows run standard Go, GoReleaser, and shell wrapper commands; no platform-specific release logic beyond GitHub Actions release/tap mechanics already present. |
 
 ## Integration Matrix
@@ -187,6 +187,8 @@ Rollback: revert commit; production daemon path remains through existing constru
 
 **Files:**
 - Create: `internal/tui/commands/testdata/command_surface_spec.json`
+- Create: `internal/harnessredact/redact.go`
+- Create: `internal/harnessredact/redact_test.go`
 - Create: `internal/tui/tui_binary_smoke_unix_test.go`
 - Create: `internal/tui/pty_capture_test.go`
 - Modify: `internal/tui/pty_test.go`
@@ -208,33 +210,36 @@ PTY run must assert:
 - `ctrl+b`, `ctrl+s`, `ctrl+t`, `ctrl+j`, and advertised branch-tree navigation where classified `pty-proven`;
 - job panel path has no RPC error and shows marker/empty state;
 - `/exit`, `ctrl+c`, and `ctrl+d` each terminate through bounded subprocess/subtests.
+- shared redaction helper removes real home, workspace, temp, Unix socket, executable, generated artifact paths, prompt bodies, and trust grant bodies from synthetic runtime/build/command-error payloads before any failure logging.
 
 **Step 2: Run red check**
 
 ```bash
+go test ./internal/harnessredact -run Redact -count=1
 go test ./internal/tui -run TestTUIBinarySmoke -count=1 -timeout=8m
 ```
 
-Expected: FAIL with missing smoke binary/service assertions.
+Expected: FAIL with missing shared redactor and smoke binary/service assertions.
 
 **Step 3: Implement PTY capture helpers**
 
-Use display-cell width checks (`lipgloss.Width` or `runewidth`) after ANSI stripping. Route every failure payload through shared redaction for home/workspace/temp/socket/executable paths and prompt/trust bodies. Reject runtime output containing instruction surfaces from `internal/agent/instructions.go` or hook config surfaces from `internal/hooks/hooks.go`.
+Use display-cell width checks (`lipgloss.Width` or `runewidth`) after ANSI stripping. Implement `internal/harnessredact` as the single failure-payload redaction path for home/workspace/temp/socket/executable/generated-artifact paths plus prompt/trust bodies. Route PTY capture, subprocess stdout/stderr, build errors, and command errors through it before `t.Fatal`/`t.Fatalf`. Reject runtime output containing instruction surfaces from `internal/agent/instructions.go` or hook config surfaces from `internal/hooks/hooks.go`.
 
 **Step 4: Verify**
 
 ```bash
-gofmt -w internal/tui
+gofmt -w internal/harnessredact internal/tui
+go test ./internal/harnessredact -run Redact -count=1
 go test ./internal/tui -run TestTUIBinarySmoke -count=1 -timeout=8m
 go test -race ./internal/tui -run TestTUIBinarySmoke -count=1
 ```
 
-Expected: first command PASS; second command SKIP with race-disabled message.
+Expected: redactor command PASS and raw sensitive fixture strings absent from failure-rendered output; TUI command PASS; race command SKIP with race-disabled message.
 
 **Step 5: Commit**
 
 ```bash
-git add internal/tui internal/tui/commands/testdata/command_surface_spec.json
+git add internal/harnessredact internal/tui internal/tui/commands/testdata/command_surface_spec.json
 git commit -m "test: drive tui smoke binary through pty"
 ```
 
@@ -299,6 +304,7 @@ Rollback: revert commit; existing daemon start behavior returns. Check no temp d
 - Modify: `cmd/ratchet/main.go`
 - Create: `cmd/ratchet/cli_help_surface_test.go`
 - Modify: `cmd/ratchet/harness_docs_test.go`
+- Modify: `internal/harnessredact/redact_test.go`
 - Modify: `internal/tui/pages/chat.go`
 - Modify: `internal/tui/pages/session_tree_test.go`
 - Modify: `internal/tui/app_session_tree_test.go`
@@ -314,11 +320,13 @@ Expand the Task 3 fixture rows to classify every slash command as `pty-proven`, 
 - docs cannot claim PTY proof for focused/deferred rows;
 - shortcut matrix distinguishes `pty-proven` and `focused-proven`;
 - focused tests cover conditional `ctrl+h`, advertised branch-tree navigation, App-level branch switch into child chat history, and job-panel `Esc` close.
+- docs-guard and CLI help failure paths call `internal/harnessredact` before reporting command output, extracted docs snippets, or generated command-error payloads.
 
 **Step 2: Run red checks**
 
 ```bash
 go test ./internal/tui/commands ./internal/tui/components ./internal/tui ./cmd/ratchet -run 'CommandSurface|CLIHelp|Shortcut|Docs' -count=1
+go test ./internal/harnessredact -run 'Redact.*Docs|Redact.*Command' -count=1
 ```
 
 Expected: FAIL with missing fixture/extractor classifications.
@@ -400,6 +408,8 @@ Rollback: revert docs/test commit.
 - Create: `internal/releaseguard/goreleaser.go`
 - Create: `internal/releaseguard/tap.go`
 - Create: `internal/releaseguard/testdata/*`
+- Modify: `internal/harnessredact/redact.go`
+- Modify: `internal/harnessredact/redact_test.go`
 - Modify: `internal/tui/smoke_source_manifest_test.go`
 - Create: `scripts/check-release-artifacts.sh`
 - Modify: `go.mod`
@@ -420,24 +430,28 @@ Add tests for:
 - fallback scalar scan under artifact/publish sections rejects smoke tokens;
 - archive matrix derives linux/darwin/windows amd64/arm64 and checks all archives/checksums/members/packaged binaries;
 - generated/fallback cask and formula material only references release `ratchet` binary and formula/cask file name `ratchet-cli`.
+- releaseguard, wrapper, and manifest failure paths all use `internal/harnessredact` and tests cover representative GoReleaser snapshot output, artifact-manifest output, draft-assets output, tap-preflight/tap-postcheck output, workflow-command errors, docs-guard output, generic command errors, and generated artifact paths;
+- releaseguard redaction tests inject raw home/workspace/temp/socket/executable/artifact paths plus prompt and trust bodies into those representative failures and assert raw strings are absent while stable placeholders such as `<home>`, `<workspace>`, `<temp>`, `<socket>`, `<executable>`, `<artifact>`, `<prompt>`, and `<trust>` are present.
 
 **Step 2: Run red checks**
 
 ```bash
 go test ./internal/releaseguard -count=1
+go test ./internal/harnessredact ./internal/releaseguard -run 'Redact|ReleaseGuardRedaction' -count=1
 ```
 
 Expected: FAIL with missing package.
 
 **Step 3: Implement releaseguard**
 
-Implement Go helpers and shell wrapper. Update the smoke-source tooling allowlist for `internal/releaseguard` exact forbidden-token constants without adding releaseguard files to the smoke runtime manifest. Wrapper defaults to `goreleaser check`, `goreleaser release --snapshot --clean --skip=publish`, then `--manifest-only dist`; `--manifest-only <dir>` skips generation and runs explicit manifest mode.
+Implement Go helpers and shell wrapper. Route every releaseguard error, wrapper-captured GoReleaser stdout/stderr, manifest diff, draft-asset/tap diagnostic, workflow-command fixture, docs-guard fixture, and command-error fixture through `internal/harnessredact` before logging or failing. Update the smoke-source tooling allowlist for `internal/releaseguard` exact forbidden-token constants without adding releaseguard files to the smoke runtime manifest. Wrapper defaults to `goreleaser check`, `goreleaser release --snapshot --clean --skip=publish`, then `--manifest-only dist`; `--manifest-only <dir>` skips generation and runs explicit manifest mode.
 
 **Step 4: Verify unit/fallback behavior**
 
 ```bash
 gofmt -w internal/releaseguard
 go test ./internal/releaseguard -count=1
+go test ./internal/harnessredact ./internal/releaseguard -run 'Redact|ReleaseGuardRedaction' -count=1
 if RATCHET_RELEASE_GUARD_MODE=manifest go test ./internal/releaseguard -run TestManifestGuard -count=1 2>&1 | tee /tmp/releaseguard-missing-env.log; then
   echo "expected missing RATCHET_RELEASE_GUARD_DIST failure"
   exit 1
@@ -446,7 +460,7 @@ rg 'RATCHET_RELEASE_GUARD_DIST' /tmp/releaseguard-missing-env.log
 go test ./internal/tui -run SmokeSource -count=1
 ```
 
-Expected: first command PASS with artifact-mode skip message; negative manifest command fails before scan and log contains `RATCHET_RELEASE_GUARD_DIST`.
+Expected: first command PASS with artifact-mode skip message; redaction command PASS and no raw home/workspace/temp/socket/executable/artifact/prompt/trust fixtures survive; negative manifest command fails before scan and log contains `RATCHET_RELEASE_GUARD_DIST`.
 
 **Step 5: Verify local snapshot if GoReleaser available**
 
@@ -460,7 +474,7 @@ Expected: PASS; no manifest/checksum/archive member contains `ratchet-tui-smoke`
 **Step 6: Commit**
 
 ```bash
-git add internal/releaseguard internal/tui/smoke_source_manifest_test.go scripts/check-release-artifacts.sh go.mod go.sum
+git add internal/harnessredact internal/releaseguard internal/tui/smoke_source_manifest_test.go scripts/check-release-artifacts.sh go.mod go.sum
 git commit -m "test: guard release artifacts"
 ```
 
@@ -636,6 +650,7 @@ Add tests for:
 - draft release assets mode reads an already-downloaded asset directory from `RATCHET_RELEASE_GUARD_ASSETS` plus `RATCHET_RELEASE_GUARD_VERSION`; it fails if expected archives/checksums are missing, if forbidden smoke tokens appear, or if fixture metadata says the release is not draft;
 - tap postcheck resolves exact path-changing commit per tap file, scans content/metadata, groups rollback targets by SHA, and warns on mixed commits;
 - Windows archive fixture requires both amd64 and arm64 zips; executes only amd64 in Windows job contract.
+- draft-assets, tap-postcheck, Windows archive, workflow-command, GoReleaser release, and tap clone/auth failure fixtures prove they use `internal/harnessredact`; raw release asset directory, generated archive path, Windows executable path, workspace path, token-like prompt/trust body, and temp tap checkout path must be absent from failing output.
 
 **Step 2: Update release workflow**
 
@@ -683,17 +698,18 @@ GOOS=windows GOARCH=amd64 go build -o /tmp/ratchet-windows-amd64.exe ./cmd/ratch
 GOOS=windows GOARCH=arm64 go build -o /tmp/ratchet-windows-arm64.exe ./cmd/ratchet
 go test ./internal/releaseguard -run 'DraftAssets|TapPostcheck|WindowsArchive' -count=1
 go test ./internal/releaseguard -run TestGoReleaserReleaseDraftConfig -count=1
+go test ./internal/harnessredact ./internal/releaseguard -run 'Redact|ReleaseGuardRedaction|WorkflowCommandRedaction' -count=1
 scripts/check-release-artifacts.sh
 scripts/check-release-artifacts.sh --manifest-only dist
 go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/ci.yml .github/workflows/release.yml
 ```
 
-Expected: PASS; draft config test proves `release.draft: true` before publish; Windows binaries are written only under `/tmp`; wrapper regenerates fresh `dist`; pinned workflow lint is clean; `tap-preflight` uses `RATCHET_RELEASE_GUARD_MODE=tap-preflight`, `RATCHET_RELEASE_GUARD_TAP`, and `go test -count=1`; `windows-safe-command-smoke` contains `GOPRIVATE`, `GONOSUMCHECK`, private-module Git rewrite before source build, and temp `HOME`/`USERPROFILE`/`XDG_STATE_HOME` assignment before packaged `daemon status`; release workflow clones the tap with `HOMEBREW_TAP_TOKEN`; release workflow sets `RATCHET_RELEASE_GUARD_TAP`, `RATCHET_RELEASE_GUARD_TAP_NAMES`, `RATCHET_RELEASE_GUARD_TAP_COMMITS`, and `RATCHET_RELEASE_GUARD_VERSION` for tap-postcheck.
+Expected: PASS; draft config test proves `release.draft: true` before publish; redaction tests prove draft/tap/workflow/Windows failure payloads use the shared helper; Windows binaries are written only under `/tmp`; wrapper regenerates fresh `dist`; pinned workflow lint is clean; `tap-preflight` uses `RATCHET_RELEASE_GUARD_MODE=tap-preflight`, `RATCHET_RELEASE_GUARD_TAP`, and `go test -count=1`; `windows-safe-command-smoke` contains `GOPRIVATE`, `GONOSUMCHECK`, private-module Git rewrite before source build, and temp `HOME`/`USERPROFILE`/`XDG_STATE_HOME` assignment before packaged `daemon status`; release workflow clones the tap with `HOMEBREW_TAP_TOKEN`; release workflow sets `RATCHET_RELEASE_GUARD_TAP`, `RATCHET_RELEASE_GUARD_TAP_NAMES`, `RATCHET_RELEASE_GUARD_TAP_COMMITS`, and `RATCHET_RELEASE_GUARD_VERSION` for tap-postcheck.
 
 **Step 5: Commit**
 
 ```bash
-git add .github/workflows internal/releaseguard
+git add .github/workflows internal/harnessredact internal/releaseguard
 git commit -m "ci: verify release assets and tap"
 ```
 
@@ -748,6 +764,7 @@ Rollback: revert docs commit.
 
 ```bash
 go test ./internal/releaseguard -count=1
+go test ./internal/harnessredact ./internal/releaseguard ./cmd/ratchet ./internal/tui -run 'Redact|ReleaseGuardRedaction|WorkflowCommandRedaction|HarnessDocs|TUIBinarySmoke' -count=1 -timeout=12m
 go test ./internal/daemon ./cmd/ratchet ./internal/tui/commands ./internal/tui/components ./internal/tui -run 'Shutdown|StartupSmoke|CommandSurface|CLIHelp|Shortcut|Docs|SmokeService|ListJobs|JobPanel|TUIBinarySmoke' -count=1 -timeout=12m
 go test -tags tui_smoke ./internal/client -run 'ConnectSmokeUnix' -count=1
 go test -tags tui_smoke ./internal/daemon -run 'SmokeService|ListJobs' -count=1
