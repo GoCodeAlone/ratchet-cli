@@ -227,8 +227,11 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
   `internal/agent/instructions.go`, or hook config surfaces derived from
   `internal/hooks/hooks.go`.
 - Release artifact manifests use an allowlist policy instead: `RATCHET.md` is
-  expected because `.goreleaser.yaml` archives it, while `ratchet-tui-smoke`
-  remains forbidden.
+  expected because `.goreleaser.yaml` archives it. Archive file names, member
+  names, checksum entries, packaged executable bytes, Homebrew generated
+  material, and tap material must not contain `ratchet-tui-smoke` or other smoke
+  markers. Packaged Markdown doc content is validated by docs guards and
+  approved wording templates, not by the release-binary leak scan.
 
 ### Shortcut Matrix
 
@@ -495,9 +498,10 @@ Mechanical fail-closed check:
 - Add Windows package archive proof without changing CI runner classes: the
   existing `release-check` job generates the GoReleaser snapshot, fails unless
   both `ratchet_windows_amd64.zip` and `ratchet_windows_arm64.zip` are present,
-  byte-scans both zips and contained `ratchet.exe` files for forbidden smoke
-  tokens, asserts each zip contains the expected release binary layout exactly
-  once, and checks generated checksums include both Windows archives.
+  rejects smoke tokens in zip file names, member names, checksum entries, and
+  contained `ratchet.exe` bytes, asserts each zip contains the expected release
+  binary layout exactly once, and checks generated checksums include both
+  Windows archives.
 - Do not add `windows-latest` or any new runner class in this slice; packaged
   Windows executable runtime (`ratchet.exe version/help/daemon status`) is
   deferred to a separate runner-change plan.
@@ -673,10 +677,13 @@ Mechanical fail-closed check:
     each binary for forbidden smoke tokens (`ratchet-tui-smoke`, `tui_smoke`,
     smoke command/flag/help markers); this is content proof even when the
     binary cannot execute on the current runner;
+  - do not byte-scan packaged Markdown docs as binary-leak inputs; docs content
+    may mention approved `ratchet-tui-smoke` evidence boundaries only through
+    docs-guarded templates;
   - for Windows, the existing `release-check` job requires
-    `ratchet_windows_amd64.zip` and `ratchet_windows_arm64.zip`, byte-scans
-    both archives and contained executables, verifies member layout/checksums,
-    and does not execute `ratchet.exe`.
+    `ratchet_windows_amd64.zip` and `ratchet_windows_arm64.zip`, scans member
+    names/checksums plus contained executable bytes, verifies member
+    layout/checksums, and does not execute `ratchet.exe`.
 - Add a release draft asset postcheck script path before undrafting:
   - preflight fails unless `.goreleaser.yaml` has `release.draft: true`;
   - after `goreleaser release --clean` creates the draft release, reuse the
@@ -731,10 +738,12 @@ Mechanical fail-closed check:
     like `publishers`, `nfpms`, `sboms`, `dockers`, `scoops`, `nix`,
     `aurs`, `winget`, or `signs`, must be added to the taxonomy with explicit
     id/binary/artifact assertions before the guard can pass.
-- Assert the manifest contains `ratchet` and never contains
-  `ratchet-tui-smoke`.
-- Assert archive manifests may contain allowlisted `RATCHET.md` but no smoke
-  binary/package names.
+- Assert the manifest contains `ratchet` and never contains `ratchet-tui-smoke`
+  in artifact names, member names, checksum entries, executable bytes,
+  Homebrew generated material, or tap material.
+- Assert archive manifests may contain allowlisted `RATCHET.md` and packaged docs
+  may contain docs-guarded `ratchet-tui-smoke` evidence wording, but no smoke
+  binary/package names or executable-byte markers.
 - Snapshot output and manifest failures are redacted through the shared helper.
 
 ### Documentation
@@ -896,7 +905,7 @@ smoke entrypoint is build-tagged out.
 | Docs guard | config-only | `cmd/ratchet/harness_docs_test.go` checks public docs mention exact evidence boundaries. |
 | GoReleaser snapshot and GitHub draft assets | runtime-integrated | Publish-free `release-check` CI job, tag release preflight, local script, and release draft postcheck run `goreleaser check`/snapshot generation plus full `.goreleaser.yaml`-derived OS/arch archive matrix inspection, checksum-entry checks, all-archive packaged-binary byte scans, host executable help/version checks where supported by the current runner, Windows archive/member/executable byte scans without execution, and deterministic `.goreleaser.yaml` fallback. The postcheck downloads draft GitHub release assets and repeats the same checks before undraft, proving uploaded archives/checksums do not contain `ratchet-tui-smoke`. |
 | Homebrew/tap install files | config-only + cleanup + PR gate + preflight + post-publish audit | Snapshot/config precheck proves Homebrew ids/binaries do not reference smoke artifacts; prerequisite tap cleanup removes stale unmanaged root files and adds GoReleaser automation for active `Formula/ratchet-cli.rb` while preserving existing `Casks/ratchet-cli.rb`; PR/push `tap-preflight` verifies cleanup and automation before merge; before publish, release tap preflight rejects unmanaged root files, active Formula/Cask surfaces without automation, or forbidden smoke tokens, but does not require the live tap to already contain the current version/checksum; after publish, the guard scans active Formula/Cask files at exact path-changing commits for current version/checksum context. Current GoReleaser workflow can still push the tap before postcheck, so current-release tap safety is after-the-fact audit plus rollback, not pre-public gating. Split-publish pre-public gating is deferred. |
-| Windows packaged archive proof | artifact-integrated | Existing-runner release checks require `ratchet_windows_amd64.zip` and `ratchet_windows_arm64.zip`, byte-scan both archives and contained `ratchet.exe` files, verify member layout/checksums, and defer non-PTY Windows CLI startup/help/daemon-status execution until a separate runner-change plan is approved. |
+| Windows packaged archive proof | artifact-integrated | Existing-runner release checks require `ratchet_windows_amd64.zip` and `ratchet_windows_arm64.zip`, scan archive names/member names/checksums plus contained `ratchet.exe` bytes, verify member layout/checksums, and defer non-PTY Windows CLI startup/help/daemon-status execution until a separate runner-change plan is approved. |
 | Windows smoke package boundary | config-only | `GOOS=windows GOARCH=amd64/arm64 go list` and `go build -tags tui_smoke ./cmd/ratchet-tui-smoke` fail with the expected Unix-only no-buildable-files class. |
 | Windows interactive PTY | deferred | No ConPTY runner in this slice; Windows coverage is cross-build and packaged archive inspection only. |
 

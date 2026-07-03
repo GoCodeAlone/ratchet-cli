@@ -478,3 +478,61 @@
 3. Strict merge gate: require green GitHub checks before admin merge.
 
 **Verdict reasoning:** FAIL. P30 is fixed, but the plan still had an unauthorized Windows runner change, a non-green merge bypass, and a concrete cmd/client/daemon cleanup path that was not executable with the current client API.
+
+## Cycle 13
+
+### Adversarial Review Report
+
+**Phase:** plan
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `P34` [User-intent drift / Verification-class mismatch] [plan:655; design:501-503,929,1095]: Task 11 still says the Windows archive fixture executes only amd64 in Windows job contract. The main P31 runner/job shape is fixed, but this remaining executable-runtime wording can steer implementation back toward a Windows command-smoke contract despite the no-runner-change scope. Recommendation: delete the execution clause and require only Windows cross-build plus amd64/arm64 archive/member/checksum/executable byte inspection, with workflow guards proving no `windows-latest` and no `ratchet.exe` execution step.
+- `P35` [Artifact-class precedent / Verification-class mismatch] [`.goreleaser.yaml`:30-31; plan:364-386,683-685,716-727; design:229-231,735-738]: The plan updates packaged `RATCHET.md` docs to mention `ratchet-tui-smoke`, while Task 11 still says to byte-scan each Windows archive/member/executable for smoke tokens. Because `.goreleaser.yaml` packages `RATCHET.md`, a content-level archive/member token scan can either fail on intended evidence docs or pressure the author to hide the documented proof boundary. Recommendation: split checks explicitly: member names and executable bytes forbid smoke tokens; packaged Markdown docs are checked by docs guard/allowed templates, not by the release-binary leak scan.
+- `P36` [Hidden serial dependency / Infrastructure impact] [plan:747-810]: Task 13 runs on PR6 and commits closeout state, but the PR/monitor/merge step only covers PRs 1-5. That leaves the closeout plan/retro commit without an explicit green-check/review/admin-merge path, drifting from the user’s admin merge once green and workspace per-PR green-CI discipline. Recommendation: add a final PR6 step after the closeout commit: open PR, monitor required GitHub checks, satisfy review requirements, then admin merge only when green.
+
+**Findings (Minor):**
+- `P37` [Missing failure mode / Existence-runtime validity] [plan:689-700; design:1030,1066]: Local Windows cross-build verification writes fixed `/tmp/ratchet-windows-*.exe` paths. That is weaker than the design’s temp-output-path invariant and can collide with stale files or local symlinks. Recommendation: use a unique temp dir from `mktemp -d` or `t.TempDir`-equivalent wrapper and clean it up.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | P36 conflicts with per-PR CI green before merge; P34 conflicts with no-runner-change correction. |
+| Assumptions under attack | Finding | Stale Windows execution wording and PR6 omission can change execution behavior. |
+| Repo-precedent conflicts | Finding | P36 skips the same PR green-check discipline applied to other PRs. |
+| Artifact-class precedent | Finding | P35 mixes packaged docs content with release binary/member leak scanning. |
+| YAGNI violations | Clean | No new user-facing CLI or broad command registry is added. |
+| Missing failure modes | Finding | P37 leaves fixed `/tmp` cross-build outputs open to stale-file/collision cases. |
+| Security/privacy at architecture level | Clean | P30 remains fixed via shared redaction coverage. |
+| Infrastructure impact | Finding | P34 affects CI/release workflow scope; P36 affects PR6 merge discipline. |
+| Multi-component validation | Finding | P35 can make releaseguard fail against the real GoReleaser archive/docs combination. |
+| Declared integration proof | Finding | P34 leaves Windows proof phrased as runtime execution in one task bullet. |
+| Contributed UI rendering proof | Clean | No contributed UI route is in scope. |
+| Rollback story | Clean | Rollback covers smoke code, workflows, release assets, and tap contamination. |
+| Simpler alternative not considered | Finding | P35 can split executable/member scans from docs guards. |
+| User-intent drift | Finding | P34/P36 drift from no Windows runtime proof and admin merge only once green. |
+| Existence/runtime-validity | Finding | P34 stale Windows execution contract and P37 fixed `/tmp` paths are executable gaps. |
+| Over-decomposition/under-decomposition | Clean | Thirteen tasks across six PRs is proportional. |
+| Verification-class mismatch | Finding | P34/P35 mismatch archive inspection vs runtime execution or broad docs-content token scans. |
+| Auth/authz chain composition | Clean | Trust proof goes through daemon state and scoped follow-up assertions. |
+| Hidden serial dependencies | Finding | P36 omits final PR6 merge dependency after closeout commit. |
+| Missing rollback wiring | Clean | Rollback is wired. |
+| Missing integration proof | Finding | P35 lacks coherent proof split for archives that intentionally contain docs. |
+| Missing declared integration matrix | Clean | Matrix includes Windows runtime as deferred. |
+| Missing contributed UI route proof | Clean | Not applicable. |
+| Infrastructure verification mismatch | Finding | P36 does not wire final closeout PR into required-check path. |
+| Plugin-loader runtime layout | Clean | No external plugin layout introduced. |
+| Config-validation schema rules | Clean | No new schema config introduced. |
+| Identifier/naming-convention match | Clean | Identifiers otherwise match conventions. |
+| Planned-code compile-validity | Clean | P33 remains fixed by `Client.Shutdown(ctx)` plan. |
+
+**Options the author may not have considered:**
+1. Split releaseguard checks by artifact layer: archive filenames/member names and executable bytes forbid smoke tokens; packaged Markdown docs are validated by docs guards with approved evidence templates.
+2. Add a PR6 closeout template: after release/retro commit, open PR6, monitor checks/reviews, then admin merge when green.
+3. Add a negative workflow assertion that searches release/CI YAML for Windows executable invocation patterns, not just `windows-latest`.
+
+**Verdict reasoning:** FAIL. P30 is fixed, and P31-P33 corrections are present, but stale Windows runtime wording, releaseguard/docs packaging contradiction, and missing green-check merge path for PR6 remained.

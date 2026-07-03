@@ -650,9 +650,9 @@ Rollback: revert CI commit; runtime code remains independently tested.
 
 Add tests for:
 - `TestGoReleaserReleaseDraftConfig` is run by release preflight and fails unless `.goreleaser.yaml` contains `release.draft: true`;
-- draft release assets mode reads an already-downloaded asset directory from `RATCHET_RELEASE_GUARD_ASSETS` plus `RATCHET_RELEASE_GUARD_VERSION`; it fails if expected archives/checksums are missing, if forbidden smoke tokens appear, or if fixture metadata says the release is not draft;
+- draft release assets mode reads an already-downloaded asset directory from `RATCHET_RELEASE_GUARD_ASSETS` plus `RATCHET_RELEASE_GUARD_VERSION`; it fails if expected archives/checksums are missing, if forbidden smoke tokens appear in artifact names, archive member names, packaged executable bytes, Homebrew generated material, or tap material, or if fixture metadata says the release is not draft;
 - tap postcheck resolves exact path-changing commit per tap file, scans content/metadata, groups rollback targets by SHA, and warns on mixed commits;
-- Windows archive fixture requires both amd64 and arm64 zips; executes only amd64 in Windows job contract.
+- Windows archive fixture requires both amd64 and arm64 zips and proves no workflow step executes `ratchet.exe` or adds a Windows runner class in this slice.
 - draft-assets, tap-postcheck, Windows archive, workflow-command, GoReleaser release, and tap clone/auth failure fixtures prove they use `internal/harnessredact`; raw release asset directory, generated archive path, Windows executable path, workspace path, token-like prompt/trust body, and temp tap checkout path must be absent from failing output.
 
 **Step 2: Update release workflow**
@@ -680,15 +680,17 @@ After publish and before undraft:
 
 **Step 3: Add Windows package archive proof without runner change**
 
-In the existing `release-check` job, keep the current runner class and extend artifact inspection after GoReleaser snapshot generation: require both `ratchet_windows_amd64.zip` and `ratchet_windows_arm64.zip`, list archive members, assert each zip contains exactly one `ratchet.exe` payload in the expected package layout, byte-scan each archive and contained executable for `ratchet-tui-smoke`, `tui_smoke`, smoke-only flags, and smoke help text, and compare generated checksums against the Windows archives. Do not add `windows-latest` or any new runner class; Windows executable runtime smoke is deferred to a future runner-change plan.
+In the existing `release-check` job, keep the current runner class and extend artifact inspection after GoReleaser snapshot generation: require both `ratchet_windows_amd64.zip` and `ratchet_windows_arm64.zip`, list archive members, assert each zip contains exactly one `ratchet.exe` payload in the expected package layout, reject smoke tokens in archive file names/member names/checksum entries, byte-scan contained executable payloads and generated Homebrew/tap material for `ratchet-tui-smoke`, `tui_smoke`, smoke-only flags, and smoke help text, and compare generated checksums against the Windows archives. Packaged Markdown docs such as `RATCHET.md` are not binary-leak inputs; they are validated by the docs guard/approved wording templates. Do not add `windows-latest` or any new runner class; Windows executable runtime smoke is deferred to a future runner-change plan.
 
-Expected: `release-check` remains on its existing runner; Windows archive inspection fails if either zip is missing, if `ratchet.exe` is missing or duplicated, if checksums omit either zip, or if any archive/member/executable contains smoke tokens.
+Expected: `release-check` remains on its existing runner; Windows archive inspection fails if either zip is missing, if `ratchet.exe` is missing or duplicated, if checksums omit either zip, if any artifact name/member name/executable/Homebrew/tap material contains forbidden smoke tokens, or if workflow YAML contains `windows-latest` or a `ratchet.exe` execution step. Packaged docs may mention approved `ratchet-tui-smoke` evidence boundaries only through docs-guarded templates.
 
 **Step 4: Verify local Windows cross-build and releaseguard**
 
 ```bash
-GOOS=windows GOARCH=amd64 go build -o /tmp/ratchet-windows-amd64.exe ./cmd/ratchet
-GOOS=windows GOARCH=arm64 go build -o /tmp/ratchet-windows-arm64.exe ./cmd/ratchet
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+GOOS=windows GOARCH=amd64 go build -o "$tmpdir/ratchet-windows-amd64.exe" ./cmd/ratchet
+GOOS=windows GOARCH=arm64 go build -o "$tmpdir/ratchet-windows-arm64.exe" ./cmd/ratchet
 go test ./internal/releaseguard -run 'DraftAssets|TapPostcheck|WindowsArchive' -count=1
 go test ./internal/releaseguard -run TestGoReleaserReleaseDraftConfig -count=1
 go test ./internal/harnessredact ./internal/releaseguard -run 'Redact|ReleaseGuardRedaction|WorkflowCommandRedaction' -count=1
@@ -697,7 +699,7 @@ scripts/check-release-artifacts.sh --manifest-only dist
 go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/ci.yml .github/workflows/release.yml
 ```
 
-Expected: PASS; draft config test proves `release.draft: true` before publish; redaction tests prove draft/tap/workflow/Windows failure payloads use the shared helper; Windows binaries are written only under `/tmp`; wrapper regenerates fresh `dist`; pinned workflow lint is clean; `tap-preflight` uses `RATCHET_RELEASE_GUARD_MODE=tap-preflight`, `RATCHET_RELEASE_GUARD_TAP`, and `go test -count=1`; workflow diff contains no `windows-latest` or new runner class; `release-check` proves Windows amd64/arm64 archives/checksums/member scans; release workflow clones the tap with `HOMEBREW_TAP_TOKEN`; release workflow sets `RATCHET_RELEASE_GUARD_TAP`, `RATCHET_RELEASE_GUARD_TAP_NAMES`, `RATCHET_RELEASE_GUARD_TAP_COMMITS`, and `RATCHET_RELEASE_GUARD_VERSION` for tap-postcheck.
+Expected: PASS; draft config test proves `release.draft: true` before publish; redaction tests prove draft/tap/workflow/Windows failure payloads use the shared helper; Windows binaries are written only under the unique `mktemp -d` directory; wrapper regenerates fresh `dist`; pinned workflow lint is clean; `tap-preflight` uses `RATCHET_RELEASE_GUARD_MODE=tap-preflight`, `RATCHET_RELEASE_GUARD_TAP`, and `go test -count=1`; workflow diff contains no `windows-latest`, no new runner class, and no `ratchet.exe` execution step; `release-check` proves Windows amd64/arm64 archives/checksums/member-name/executable-byte scans while packaged docs are handled by docs guard; release workflow clones the tap with `HOMEBREW_TAP_TOKEN`; release workflow sets `RATCHET_RELEASE_GUARD_TAP`, `RATCHET_RELEASE_GUARD_TAP_NAMES`, `RATCHET_RELEASE_GUARD_TAP_COMMITS`, and `RATCHET_RELEASE_GUARD_VERSION` for tap-postcheck.
 
 **Step 5: Commit**
 
@@ -762,8 +764,10 @@ go test ./internal/client ./internal/daemon ./cmd/ratchet ./internal/tui/command
 go test -tags tui_smoke ./internal/client -run 'ConnectSmokeUnix' -count=1
 go test -tags tui_smoke ./internal/daemon -run 'SmokeService|ListJobs' -count=1
 go test ./internal/tui -run TestTUIBinarySmoke -count=1 -timeout=8m
-GOOS=windows GOARCH=amd64 go build -o /tmp/ratchet-windows-amd64.exe ./cmd/ratchet
-GOOS=windows GOARCH=arm64 go build -o /tmp/ratchet-windows-arm64.exe ./cmd/ratchet
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+GOOS=windows GOARCH=amd64 go build -o "$tmpdir/ratchet-windows-amd64.exe" ./cmd/ratchet
+GOOS=windows GOARCH=arm64 go build -o "$tmpdir/ratchet-windows-arm64.exe" ./cmd/ratchet
 go test -race ./... 
 go vet ./...
 goreleaser check
@@ -772,7 +776,7 @@ scripts/check-release-artifacts.sh --manifest-only dist
 go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/ci.yml .github/workflows/release.yml
 ```
 
-Expected: PASS for all commands from current `master`; `-race` may skip smoke-specific PTY test with explicit race-disabled message; Windows binaries are written only under `/tmp`; release wrapper regenerates fresh `dist` before manifest-only inspection.
+Expected: PASS for all commands from current `master`; `-race` may skip smoke-specific PTY test with explicit race-disabled message; Windows binaries are written only under a unique temp directory; release wrapper regenerates fresh `dist` before manifest-only inspection.
 
 **Step 2: PR and monitor**
 
@@ -808,5 +812,11 @@ Use `autodev:post-merge-retrospective` and add retro with:
 git add docs/plans/2026-07-03-ratchet-cli-tui-binary-verification.md docs/retros/2026-07-03-ratchet-cli-tui-binary-verification-retro.md
 git commit -m "docs: close tui binary verification"
 ```
+
+**Step 6: PR6 and merge closeout**
+
+Open the PR6 closeout branch `docs/tui-verification-closeout` after the state commit, monitor required GitHub checks and review requirements, and admin merge PR6 only after required checks are green. After merge, verify `master` contains the retro and closeout plan update.
+
+Expected: PR6 is merged green; no closeout state remains only on an unmerged branch.
 
 Rollback: if release fails before undraft, leave draft private and fix assets/tap before publishing; if release publishes but tap postcheck fails, cut corrective patch release and path-specific tap corrective commit using reported SHA/path list.
