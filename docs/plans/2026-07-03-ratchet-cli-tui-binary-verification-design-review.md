@@ -1264,3 +1264,47 @@ None.
 2. Generate expected release artifacts from `.goreleaser.yaml` and scan the complete OS/arch matrix.
 
 **Verdict reasoning:** FAIL. The smoke-source guard conflicts with planned verification/helper code, and release artifact completeness is weaker than the configured GoReleaser matrix.
+
+## Cycle 30
+
+### Adversarial Review Report
+
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `D116` [Existence/runtime-validity / Repo-precedent conflicts] [design:326-331,366-369]: The shared "test-owned typed command-spec table" is under-specified for Go. A pure `_test.go` helper package cannot be imported by both `internal/tui/commands` and `cmd/ratchet`; a normal internal package would become non-test source. Recommendation: choose an executable shape now: shared `testdata` fixture read by both packages, duplicated package-local tables with a generator/check, or a normal internal package explicitly accepted as non-production-dispatch source.
+- `D117` [Security/privacy / Missing failure modes] [design:446-453; `internal/daemon/daemon.go`:128-141; `internal/daemon/pidfile.go`:65-72]: The startup smoke runs `ratchet daemon stop` before proving the pidfile PID still belongs to the smoke daemon; identity proof is only required for fallback termination. A crashed temp daemon plus PID reuse can make the first stop signal an unrelated process. Recommendation: verify PID identity before any `daemon stop`, or shut down through a smoke-owned process handle/RPC and reserve signal fallback for already-verified PIDs.
+- `D118` [Infrastructure impact / Rollback story] [design:537-545,563-579; `GoCodeAlone/homebrew-tap:ratchet-cli.rb`:8; `GoCodeAlone/homebrew-tap:Formula/ratchet-cli.rb`:4]: The new tap preflight will fail against current tap state: legacy root and Formula ratchet files are stale while the GoReleaser-managed cask is current. The design says to fail before publish but does not include cleanup/remediation or accepted-risk path. Recommendation: add a prerequisite tap cleanup task, or make preflight classify legacy stale paths as must-remediate versus accepted ignored legacy surface.
+
+**Findings (Minor):**
+- None.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Clean | No repo-local guidance; reviewed workspace guide, README/RATCHET, and referenced docs. |
+| Assumptions under attack | Finding | Shared test-only Go spec import and tap drift failure need executable paths. |
+| Repo-precedent conflicts | Finding | Existing CLI help lives under `cmd/ratchet`; shared test fixture shape was not concrete. |
+| Artifact-class precedent | Finding | Cross-package Go test fixtures and tap install-file guards need concrete artifact placement. |
+| YAGNI violations | Clean | Guards are tied to concrete prior overclaim, release, and smoke-leak risks. |
+| Missing failure modes | Finding | PID reuse before daemon stop and pre-existing tap drift are unhandled. |
+| Security/privacy at architecture level | Finding | D117 can signal an unrelated process before identity checks. |
+| Infrastructure impact | Finding | D118 can make release workflow fail before publishing due to known external tap drift. |
+| Multi-component validation | Finding | Command-surface validation spans two packages without compile-valid shared data mechanism. |
+| Declared integration proof | Finding | Homebrew/tap integration is not executable against current tap state without cleanup. |
+| Contributed UI rendering proof | Clean | No plugin-contributed host-shell UI is involved. |
+| Rollback story | Finding | Tap preflight drift remediation is absent. |
+| Simpler alternative not considered | Finding | Shared `testdata` command spec and preflight tap-cleanup prerequisite. |
+| User-intent drift | Clean | Slice still targets TUI binary verification and release honesty. |
+| Existence/runtime-validity | Finding | D116 and D118 are executable-contract gaps. |
+
+**Options the author may not have considered:**
+1. Shared command spec as `testdata` loaded by both packages with repo-root discovery.
+2. Tap guard rollout phase: first clean or retire stale root/Formula ratchet tap files, then enable fail-closed tap preflight.
+
+**Verdict reasoning:** FAIL. The design still had three executable gaps: shared command spec artifact shape, daemon stop before PID identity proof, and tap preflight blocking on known external drift without remediation.

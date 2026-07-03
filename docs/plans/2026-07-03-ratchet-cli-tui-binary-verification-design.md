@@ -326,11 +326,13 @@ Mechanical fail-closed check:
 - Add `internal/tui/commands/command_surface_test.go` for TUI parser/help and
   autocomplete surfaces, plus a `cmd/ratchet` CLI-help guard test for
   `printUsage`/built `ratchet help`.
-- Put the shared test-owned typed command-spec table in a test helper package or
-  internal test fixture importable by both packages; do not make production
-  dispatch depend on it.
-- Use the test-owned typed command-spec table, not production dispatch metadata.
-  Each row contains: top-level command, proof class (`pty-proven`,
+- Put the shared test-owned typed command spec in
+  `internal/tui/commands/testdata/command_surface_spec.json`, not in a Go helper
+  package. Both `internal/tui/commands` tests and `cmd/ratchet` tests load this
+  JSON fixture by walking up from `t.TempDir()`/package cwd to the repo root and
+  failing if the fixture is missing. Production dispatch does not import or
+  depend on the fixture.
+- The JSON fixture rows contain: top-level command, proof class (`pty-proven`,
   `focused-proven`, `deferred-runtime`), whether autocomplete should list it,
   required in-TUI help surface, required public CLI help surface, and optional
   subcommands/modes. Examples are a separate field and are never treated as
@@ -365,8 +367,8 @@ Mechanical fail-closed check:
   - examples in help descriptions are never command discovery inputs.
 - Compare top-level parser cases, in-TUI help rows, and autocomplete entries in
   `internal/tui/commands`; compare public `printUsage` slash rows and built
-  `ratchet help` output in `cmd/ratchet`. Both packages read the same typed
-  spec fixture. Compare source-derived mode/trust/provider subcommand sets
+  `ratchet help` output in `cmd/ratchet`. Both packages read the same JSON
+  `testdata` spec fixture. Compare source-derived mode/trust/provider subcommand sets
   against the matching spec fields. Fail on unclassified parser commands,
   help-only commands, CLI-help-only commands, unclassified source-derived
   subcommands/modes, missing required in-TUI help rows, missing required public
@@ -443,14 +445,17 @@ Mechanical fail-closed check:
   - launch in PTY;
   - assert splash/onboarding or provider-setup boundary appears;
   - exit cleanly;
-  - run `ratchet daemon stop` with the same temp env if a temp pid/socket exists,
-    then wait boundedly for pid/socket cleanup; if either remains after the
-    wait, read the temp pid file and verify the PID still belongs to the
-    ratchet daemon launched by this smoke test before terminating it;
-  - fallback termination must prove process identity by matching at least the
-    built `ratchet` executable path or command line plus temp `HOME`/state
-    directory and daemon socket path; if identity cannot be proven, fail with
-    redacted diagnostics instead of killing the PID;
+  - if a temp pid/socket exists, first verify the pidfile PID still belongs to
+    the ratchet daemon launched by this smoke test by matching the built
+    `ratchet` executable path or command line plus temp `HOME`/state directory
+    and daemon socket path; if identity cannot be proven, fail with redacted
+    diagnostics before sending any signal;
+  - after identity is proven, prefer graceful shutdown through the smoke-owned
+    process handle/RPC or `ratchet daemon stop` with the same temp env, then
+    wait boundedly for pid/socket cleanup;
+  - fallback terminate/wait is allowed only for already-verified PIDs from this
+    smoke test; PID reuse or stale pidfile ambiguity is a hard test failure, not
+    a kill path;
   - assert temp `.ratchet/daemon.pid` and `.ratchet/daemon.sock` are gone after
     cleanup.
 - Docs distinguish:
@@ -534,15 +539,23 @@ Mechanical fail-closed check:
   - run `goreleaser/goreleaser-action@v7` with `version: "~> v2"` and
     `args: release --snapshot --clean --skip=publish`;
   - run `scripts/check-release-artifacts.sh --manifest-only dist`;
-  - clone `GoCodeAlone/homebrew-tap` before publishing and run a pre-publish
-    tap drift audit with
+  - before enabling fail-closed tap preflight, perform a prerequisite tap
+    cleanup/retirement check: clone `GoCodeAlone/homebrew-tap`, discover
+    relevant `ratchet` root/Formula/Casks install files, and require stale
+    legacy root/formula surfaces to be either updated to the current supported
+    release context or removed/retired in the tap repo; this remediation is a
+    tracked implementation task and must land before the release workflow starts
+    failing closed on tap drift;
+  - clone `GoCodeAlone/homebrew-tap` before publishing and run a pre-publish tap
+    drift audit with
     `RATCHET_RELEASE_GUARD_MODE=tap-preflight
     RATCHET_RELEASE_GUARD_TAP=<tap-checkout>
     RATCHET_RELEASE_GUARD_VERSION=<tag-or-version>
     go test -count=1 ./internal/releaseguard -run TestTapPreflight`; this
     discovers every relevant `ratchet` root/Formula/Casks install file and
-    fails before publish if any stale legacy tap surface would make the
-    post-publish audit fail for reasons unrelated to the current release;
+    fails before publish if any stale legacy tap surface remains after the
+    cleanup prerequisite or would make the post-publish audit fail for reasons
+    unrelated to the current release;
   - only then run the existing publishing `goreleaser release --clean` step.
 - After the publishing step creates a draft GitHub release and before the
   existing publish/undraft script flips `draft: false`, inspect the draft
@@ -766,7 +779,7 @@ Mechanical fail-closed check:
 | Shortcut hint drifts from handlers. | Treat app/page/component key handling plus README/statusbar hints as a checked contract; classify each shortcut as `pty-proven` or `focused-proven`, and reject docs that collapse focused shortcut proof into PTY proof. |
 | Slash-command proof overclaims broad coverage. | Maintain a command-surface classification table from `commands.Parse`/`helpCmd`; docs may claim PTY proof only for `pty-proven` rows. |
 | Sensitive prompts/log paths in logs. | Use harmless deterministic prompts and route every test failure payload through one redaction helper that removes real home/workspace/temp/socket/executable/artifact paths plus trust/prompt bodies; runtime outputs reject instruction surfaces from `internal/agent/instructions.go` and hook config surfaces from `internal/hooks/hooks.go`, release manifests allowlist expected `RATCHET.md`. |
-| Release-shaped startup leaks daemon process. | Cleanup runs `ratchet daemon stop`, waits boundedly for temp pid/socket removal, proves PID identity before any fallback terminate/wait, and asserts pid/socket files are gone. |
+| Release-shaped startup leaks daemon process. | Cleanup proves PID identity before any stop signal, prefers smoke-owned process/RPC or `ratchet daemon stop` only after identity proof, waits boundedly for temp pid/socket removal, and asserts pid/socket files are gone. |
 | Binary smoke skipped under race. | Add package-local `internal/tui` race helper files; `TestTUIBinarySmoke` skips under `-race`, and a focused non-race CI smoke job for `cmd/ratchet` and `internal/tui` smoke tests runs alongside the existing race suite. |
 | Non-race smoke CI cannot fetch private modules. | Make the smoke job setup-equivalent to existing CI: checkout, setup-go `1.26`, `GOPRIVATE`/`GONOSUMCHECK`, and private-module Git rewrite before `go test`. |
 | Release artifact guard only runs manually. | Add the publish-free `release-check` CI job; CI uses GoReleaser action for snapshot generation and the same manifest guard script local runs use. |
@@ -785,6 +798,7 @@ The existing tag release workflow already publishes GitHub release assets and a
 Homebrew cask/tap update through GoReleaser. This slice adds publish-free
 GoReleaser preflight jobs on PR/push and before tag publishing, a GitHub draft
 asset postcheck before undrafting, packaged-binary inspection, an executable
+Homebrew/tap cleanup prerequisite for stale legacy root/Formula/Casks surfaces,
 Homebrew/tap preflight that clones `GoCodeAlone/homebrew-tap` before publish,
 an after-the-fact Homebrew/tap postcheck that scans every relevant `ratchet`
 root/Formula/Casks tap install file at its exact path-changing commit for the
@@ -812,7 +826,7 @@ smoke entrypoint is build-tagged out.
 | Shortcuts | PTY sends `pty-proven` shortcut rows and asserts branch tree/pane transitions with fixed-size full-frame checks matching current behavior; focused tests prove conditional `ctrl+h`, advertised branch-tree navigation, and App-level branch switch into child chat history. Docs cannot claim PTY proof for focused shortcut rows. |
 | Docs to tests | Docs guard fails if automated TUI smoke evidence is removed. |
 | Binary smoke to CI | Non-race CI smoke job runs the built-binary/startup/TUI smoke tests that the race suite skips; `internal/tui` owns its race skip helper so package-local tests compile in both race and non-race suites. |
-| Release preflight to CI/release | `release-check` and tag release workflow both run `goreleaser check`, snapshot generation, and the same artifact-manifest guard before publish; guard extracts and byte-scans every packaged `ratchet` binary from every archive, runs executable help/version checks where practical, and release postcheck downloads uploaded GitHub draft release assets and repeats the same checks before undrafting; Homebrew/tap preflight catches stale tap drift before publish, while postcheck remains after-the-fact with rollback for the current GoReleaser tap push. |
+| Release preflight to CI/release | `release-check` and tag release workflow both run `goreleaser check`, snapshot generation, and the same artifact-manifest guard before publish; guard extracts and byte-scans every packaged `ratchet` binary from every archive, runs executable help/version checks where practical, and release postcheck downloads uploaded GitHub draft release assets and repeats the same checks before undrafting; Homebrew/tap cleanup remediates known stale legacy surfaces before fail-closed preflight, preflight catches new stale tap drift before publish, and postcheck remains after-the-fact with rollback for the current GoReleaser tap push. |
 | Windows build/smoke | Cross-build commands prove release-shaped `ratchet` still compiles for Windows; `windows-safe-command-smoke` on x64 `windows-latest` declares `needs: release-check`, builds source `ratchet.exe`, downloads the `release-check` snapshot `dist/` artifact, requires both Windows zips, byte-scans amd64 and arm64 archives, extracts `ratchet_windows_amd64.zip`, then executes packaged `ratchet.exe version`, `ratchet.exe help`, and `ratchet.exe daemon status` with temp Windows home/state env; `ratchet-tui-smoke` interactive PTY remains Unix-only. |
 
 ## Integration Matrix
@@ -831,7 +845,7 @@ smoke entrypoint is build-tagged out.
 | Non-race binary smoke CI | config-only | `.github/workflows/ci.yml` runs a focused non-race smoke job for subprocess/startup tests that are intentionally skipped under `-race`, with explicit test names for release startup and TUI binary smoke. |
 | Docs guard | config-only | `cmd/ratchet/harness_docs_test.go` checks public docs mention exact evidence boundaries. |
 | GoReleaser snapshot and GitHub draft assets | runtime-integrated | Publish-free `release-check` CI job, tag release preflight, local script, and release draft postcheck run `goreleaser check`/snapshot generation plus full `.goreleaser.yaml`-derived OS/arch archive matrix inspection, checksum-entry checks, all-archive packaged-binary byte scans, host/Windows packaged-binary help/version checks, and deterministic `.goreleaser.yaml` fallback. The postcheck downloads draft GitHub release assets and repeats the same checks before undraft, proving uploaded archives/checksums do not contain `ratchet-tui-smoke`. |
-| Homebrew/tap install files | config-only + preflight + post-publish audit | Snapshot/config precheck proves Homebrew ids/binaries do not reference smoke artifacts; before publish, tap preflight discovers root/Formula/Casks drift that would make postcheck fail; after publish, the guard discovers and scans every relevant tap file at its exact path-changing commit. Current GoReleaser workflow can still push the tap before postcheck, so current-release tap safety is after-the-fact audit plus rollback, not pre-public gating. Split-publish pre-public gating is deferred. |
+| Homebrew/tap install files | config-only + cleanup + preflight + post-publish audit | Snapshot/config precheck proves Homebrew ids/binaries do not reference smoke artifacts; a prerequisite tap cleanup task updates/removes stale legacy root/Formula/Casks surfaces before enabling fail-closed preflight; before publish, tap preflight discovers drift that would make postcheck fail; after publish, the guard discovers and scans every relevant tap file at its exact path-changing commit. Current GoReleaser workflow can still push the tap before postcheck, so current-release tap safety is after-the-fact audit plus rollback, not pre-public gating. Split-publish pre-public gating is deferred. |
 | Windows safe-command smoke | runtime-integrated | `windows-safe-command-smoke` on x64 `windows-latest` declares `needs: release-check`, builds source `ratchet.exe`, downloads `ratchet-snapshot-dist` from `release-check`, requires `ratchet_windows_amd64.zip` and `ratchet_windows_arm64.zip`, byte-scans both, extracts amd64 only for execution, and runs packaged `ratchet.exe version`, `ratchet.exe help`, and `ratchet.exe daemon status` with temp Windows home/state env to prove non-PTY Windows CLI startup/help/daemon-status behavior and packaged-archive absence of smoke surfaces. |
 | Windows smoke package boundary | config-only | `GOOS=windows GOARCH=amd64/arm64 go list` and `go build -tags tui_smoke ./cmd/ratchet-tui-smoke` fail with the expected Unix-only no-buildable-files class. |
 | Windows interactive PTY | deferred | No ConPTY runner in this slice; Windows coverage is build/noninteractive only. |
@@ -1012,3 +1026,6 @@ preflight PR.
 | D113 | Split smoke-source scanning into a smoke runtime manifest and verification-tooling exact-token allowlist so `internal/releaseguard` can hold forbidden artifact tokens without becoming a smoke runtime path. |
 | D114 | Added the smoke-only daemon helper file to the smoke-source manifest with exact build-tag/exported-token constraints. |
 | D115 | Required releaseguard to derive and require every expected GoReleaser OS/arch archive and checksum entry from `.goreleaser.yaml`, including Linux/Darwin/Windows amd64 and arm64. |
+| D116 | Chose a concrete shared command-spec artifact: `internal/tui/commands/testdata/command_surface_spec.json`, loaded by both TUI and CLI package tests. |
+| D117 | Required PID identity proof before any `daemon stop` or signal, preferring smoke-owned process/RPC shutdown after identity is proven. |
+| D118 | Added a prerequisite Homebrew tap cleanup/retirement task for known stale root/Formula/Casks surfaces before enabling fail-closed tap preflight. |
