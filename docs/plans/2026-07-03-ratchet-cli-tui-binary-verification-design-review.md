@@ -564,3 +564,47 @@ None.
 3. Verify archived release binaries directly: extract GoReleaser snapshot artifacts and run or inspect the packaged `ratchet` binaries, not just the locally built binary and artifact names.
 
 **Verdict reasoning:** The current design is close on the original TUI smoke gap, but it still has unresolved Important issues where the text can either prove a narrower shortcut surface than advertised or claim release safety stronger than the Homebrew workflow actually provides. Status remains FAIL until the Homebrew release-safety wording or workflow is corrected, shortcut source-of-truth/proof includes current page and tree behavior, and release artifact checks verify the actual packaged binaries.
+
+## Cycle 14
+
+### Adversarial Review Report
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `D56` [Existence/runtime-validity / Windows honesty] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:121,288]: The design relies on `internal/tui/tui_binary_smoke_unix_test.go` and says Unix PTY tests can remain build-tagged by filename suffix, but Go does not treat `_unix.go` as a GOOS filename suffix. `unix` is a build constraint term, not a filename target; `go tool dist list | rg '^unix/'` has no such GOOS. A Windows `go test ./internal/tui` can still try to compile the PTY smoke test unless the file has an explicit build constraint. Recommendation: require `//go:build !windows` or `//go:build unix` on the PTY smoke test and any PTY-only helper, and keep the filename as documentation only.
+- `D57` [Infrastructure impact / Missing failure modes] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:247-249,463,478; cmd/ratchet/race_enabled_test.go:1-5]: The design says the new non-race CI job exercises smoke tests that skip under `-race`, but the new `TestTUIBinarySmoke` lives in `internal/tui`, and only `cmd/ratchet` currently defines the `raceEnabled` build-tag helper. Without an explicit skip mechanism in `internal/tui`, the existing `go test -race ./...` job will run the expensive PTY binary smoke anyway, or an implementation that copies `raceEnabled` will not compile in package `tui`. Recommendation: add a concrete `internal/tui` race skip contract, such as package-local `race_enabled_test.go` / `race_disabled_test.go` files plus `if raceEnabled { t.Skip(...) }`, and require the focused non-race job to be the only CI path that executes the PTY smoke.
+- `D58` [Infrastructure impact / Declared integration proof / Multi-component validation] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:300-308,341-349,480,482]: The release guard says `windows-latest` extracts the snapshot Windows zip and runs packaged `ratchet.exe version/help`, but the CI design only says the Windows smoke job builds `ratchet.exe`; it does not say how the GoReleaser-generated `dist/` from the Ubuntu `release-check` job reaches the Windows runner, nor that Windows regenerates the same snapshot locally. That makes the packaged Windows-zip proof non-executable as written. Recommendation: specify either upload/download of the `dist/` artifact from `release-check` into the `windows-latest` job, or run the GoReleaser snapshot step on `windows-latest` before extracting the Windows zip; then run the packaged executable from that archive.
+
+**Findings (Minor):**
+- `D59` [Missing failure modes / Rollback story] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:264-267; internal/daemon/daemon.go:128-139]: The release-shaped startup smoke can call `ratchet daemon stop`, but current `daemon.Stop` only signals the process and returns; it does not wait for pid/socket cleanup. An immediate "pid/socket gone" assertion can flake or leave a daemon alive if shutdown is slow. Recommendation: require a bounded wait loop after `ratchet daemon stop`, with fallback terminate/wait by pid if the pid file or socket remains.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | The design follows the workspace mandate for real and Windows-honest proof, but D56/D58 leave Windows proof mechanics inaccurate. |
+| Assumptions under attack | Finding | The design assumes `_unix_test.go` gates Windows, assumes `internal/tui` smoke tests already have a race-skip mechanism, and assumes Windows can run snapshot zip contents without artifact transfer. |
+| Repo-precedent conflicts | Finding | Existing race skip precedent exists only in `cmd/ratchet`, while the planned PTY smoke is in `internal/tui`. |
+| Artifact-class precedent | Finding | Existing PTY helpers use explicit build tags for integration-only tests; the new untagged PTY artifact needs explicit platform and race gating. |
+| YAGNI violations | Clean | The design still avoids ConPTY, visual snapshot frameworks, external provider CI, new runtime commands, and broader policy work. |
+| Missing failure modes | Finding | Windows compilation of a supposed Unix-only test, race-suite execution of expensive PTY smoke, missing Windows artifact transfer, and non-waiting daemon stop are not handled. |
+| Security/privacy at architecture level | Clean | Build-tagged smoke entrypoint, temp state/workdir, Unix-socket containment, and redaction boundaries are adequate at design level. |
+| Infrastructure impact | Finding | CI job topology is underspecified for both race-suite exclusion and Windows packaged-artifact execution. |
+| Multi-component validation | Finding | The design proves many real boundaries, but the packaged Windows zip proof is not wired across CI components. |
+| Declared integration proof | Finding | Windows release archive execution is declared runtime-integrated, but the design omits the concrete consumer path that supplies the snapshot archive to Windows. |
+| Contributed UI rendering proof | Clean | No plugin-contributed host-shell UI is claimed; direct Bubble Tea rendering remains the relevant UI surface. |
+| Rollback story | Finding | Source rollback is adequate, but startup smoke cleanup needs wait/fallback mechanics to avoid lingering daemon state in CI. |
+| Simpler alternative not considered | Finding | A simpler platform gate is explicit `//go:build !windows` on the PTY test, and a simpler Windows packaged proof is artifact upload/download from the existing release-check job. |
+| User-intent drift | Finding | The user asked for Windows-honest and release-safe proof; current text still has Windows gating and packaged-artifact proof gaps. |
+| Existence/runtime-validity | Finding | `go tool dist list` has no `unix` GOOS, `internal/tui` has no `raceEnabled` helper, and existing release-check/windows jobs are separate without artifact sharing. |
+
+**Options the author may not have considered:**
+1. Explicit platform tag plus boring filename: name the test `tui_binary_smoke_test.go` and put `//go:build !windows` at the top. That removes the false signal that `_unix` is mechanically meaningful.
+2. Artifact-passing release proof: have `release-check` upload `dist/` as a short-lived workflow artifact and make `windows-latest` download/extract the Windows zip. This proves the exact archive generated by the release guard without rerunning GoReleaser on Windows.
+3. Package-local smoke skip helper: add `internal/tui/race_enabled_test.go` and `internal/tui/race_disabled_test.go` mirroring `cmd/ratchet`, so the untagged PTY smoke is discoverable but intentionally skipped in the race suite.
+
+**Verdict reasoning:** The current design resolves prior major concerns around hidden release paths, docs overclaiming, shortcut coverage, Homebrew honesty, and packaged binary inspection. It still has open Important mechanical issues: the Unix-only PTY test is not actually Unix-only by filename, the new internal/tui smoke test lacks race-suite skip wiring, and the Windows packaged-zip proof has no CI artifact path. Status is FAIL until those mechanics are made explicit in the design.
