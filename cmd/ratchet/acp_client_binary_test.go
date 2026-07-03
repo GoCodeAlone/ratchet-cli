@@ -506,10 +506,37 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 	if !strings.Contains(secondOutput.Text, "fixture-session: second fixture: fixture-session: first binary flow after ratchet ") {
 		t.Fatalf("second output = %#v", secondOutput)
 	}
-	for _, rel := range []string{"flow.json", "input.json", "state.json", filepath.Join("steps", "prepare.json"), filepath.Join("steps", "second.json")} {
+	for _, rel := range []string{
+		"flow.json",
+		"input.json",
+		"state.json",
+		"manifest.json",
+		"trace.ndjson",
+		filepath.Join("projections", "run.json"),
+		filepath.Join("projections", "live.json"),
+		filepath.Join("projections", "steps.json"),
+		filepath.Join("steps", "prepare.json"),
+		filepath.Join("steps", "second.json"),
+		filepath.Join("sessions", "main", "events.ndjson"),
+	} {
 		if _, err := os.Stat(filepath.Join(flowResult.RunDir, rel)); err != nil {
 			t.Fatalf("flow bundle missing %s: %v", rel, err)
 		}
+	}
+	replay := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "flow", "replay", flowResult.RunDir, "--json")
+	replay.Dir = repoRoot
+	replay.Env = env
+	replayOut, err := replay.Output()
+	if err != nil {
+		t.Fatalf("flow replay: %v\n%s", err, replayOut)
+	}
+	var replaySummary acpclient.FlowReplaySummary
+	if err := json.Unmarshal(replayOut, &replaySummary); err != nil {
+		t.Fatalf("flow replay json output: %v\n%s", err, replayOut)
+	}
+	if replaySummary.RunID != flowResult.RunID || replaySummary.Status != acpclient.FlowRunStatusCompleted ||
+		replaySummary.StepCount != 3 || replaySummary.TraceCount != 3 || replaySummary.SessionCount != 1 {
+		t.Fatalf("flow replay summary = %#v", replaySummary)
 	}
 }
 

@@ -181,11 +181,26 @@ func TestParseACPClientFlowRunCommand(t *testing.T) {
 	}
 }
 
+func TestParseACPClientFlowReplayCommand(t *testing.T) {
+	cmd, err := parseACPClientCommand([]string{"flow", "replay", "/tmp/flow-run", "--json"})
+	if err != nil {
+		t.Fatalf("parseACPClientCommand: %v", err)
+	}
+	if cmd.kind != acpClientCommandFlowReplay {
+		t.Fatalf("kind = %q, want flow replay", cmd.kind)
+	}
+	if cmd.flow.Path != "/tmp/flow-run" || !cmd.flow.JSON {
+		t.Fatalf("flow options = %#v", cmd.flow)
+	}
+}
+
 func TestParseACPClientFlowRunRejectsInvalidArgs(t *testing.T) {
 	tests := [][]string{
 		{"flow", "run"},
 		{"flow", "run", "flow.json", "--input-json", "{}", "--input-file", "input.json"},
 		{"flow", "run", "flow.json", "--allow", ""},
+		{"flow", "replay"},
+		{"flow", "replay", "run-dir", "extra"},
 		{"flow", "show", "flow.json"},
 	}
 	for _, args := range tests {
@@ -1435,6 +1450,56 @@ func TestExecuteACPClientFlowRunTextAndJSON(t *testing.T) {
 	}
 	if result.RunID != "run-json" || result.Status != acpclient.FlowRunStatusCompleted || len(result.Outputs) != 1 {
 		t.Fatalf("flow result = %#v", result)
+	}
+}
+
+func TestExecuteACPClientFlowReplayTextAndJSON(t *testing.T) {
+	runDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(runDir, "trace.ndjson"), []byte("{}\n{}\n"), 0o600); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(runDir, "projections"), 0o700); err != nil {
+		t.Fatalf("mkdir projections: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "projections", "steps.json"), []byte(`[{"node_id":"a"},{"node_id":"b"}]`), 0o600); err != nil {
+		t.Fatalf("write steps: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(runDir, "sessions", "main"), 0o700); err != nil {
+		t.Fatalf("mkdir sessions: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "sessions", "main", "events.ndjson"), nil, 0o600); err != nil {
+		t.Fatalf("write events: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "manifest.json"), []byte(`{
+		"schema":"acpx.flow-run-bundle.v1",
+		"run_id":"run-replay",
+		"status":"completed",
+		"trace":"trace.ndjson",
+		"projections":{"steps":"projections/steps.json"},
+		"sessions":[{"handle":"main","events":"sessions/main/events.ndjson"}]
+	}`), 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	var textOut bytes.Buffer
+	if err := executeACPClientFlowReplay(acpClientFlowOptions{Path: runDir}, &textOut); err != nil {
+		t.Fatalf("executeACPClientFlowReplay text: %v", err)
+	}
+	if got := textOut.String(); !strings.Contains(got, "flow run-replay completed") ||
+		!strings.Contains(got, "steps: 2") || !strings.Contains(got, "trace events: 2") ||
+		!strings.Contains(got, "sessions: 1") {
+		t.Fatalf("flow replay text = %q", got)
+	}
+	var jsonOut bytes.Buffer
+	if err := executeACPClientFlowReplay(acpClientFlowOptions{Path: runDir, JSON: true}, &jsonOut); err != nil {
+		t.Fatalf("executeACPClientFlowReplay json: %v", err)
+	}
+	var summary acpclient.FlowReplaySummary
+	if err := json.Unmarshal(jsonOut.Bytes(), &summary); err != nil {
+		t.Fatalf("flow replay json: %v\n%s", err, jsonOut.String())
+	}
+	if summary.RunID != "run-replay" || summary.Status != acpclient.FlowRunStatusCompleted ||
+		summary.StepCount != 2 || summary.TraceCount != 2 || summary.SessionCount != 1 {
+		t.Fatalf("summary = %#v", summary)
 	}
 }
 
