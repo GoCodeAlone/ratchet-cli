@@ -78,3 +78,43 @@
 2. Split Task 9 into named external prerequisite accounting outside ratchet-cli PR grouping.
 
 **Verdict reasoning:** FAIL. P1-P5 were addressed, but the plan still had an ambiguous Windows packaged executable path and undercounted the external tap prerequisite.
+
+## Cycle 3
+
+### Adversarial Review Report
+
+**Phase:** plan
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `P9` [Verification-class mismatch / executable gap] [plan:131-162,709; design:85-90]: Smoke daemon tests target `service_tui_smoke.go`, planned behind `tui_smoke && !windows`, but Task 2 and final verification run untagged `go test`. This can fail to compile if tests reference tagged symbols, or pass while skipping smoke-mode proof. Recommendation: add explicit `go test -tags tui_smoke ./internal/daemon ...` commands and keep separate untagged checks proving release builds do not expose the helper.
+- `P10` [Missing task / security proof gap] [design:155-173; plan:87-113]: Design requires concrete `ConnectSmokeUnix(ctx, tempRoot, socketPath)` contract with symlink-aware containment, final `Lstat`, `ModeSocket`, `0600`, and Unix-only dialing. Task 1 implements constructor but lacks focused socket security tests. Recommendation: add tagged `internal/client` tests for valid socket, outside-temp path, symlink final component, wrong mode, wrong permissions, unresolved parent, and TCP/non-`unix://` rejection.
+- `P11` [Manifest/interface drift / release proof] [plan:528-533,600,607-625; design:689-702]: Releaseguard mode table says `draft-assets` consumes `RATCHET_RELEASE_GUARD_ASSETS` and `RATCHET_RELEASE_GUARD_VERSION`, but Task 11 adds `github_assets.go` and says postcheck runs against release id. Recommendation: choose one interface and update mode table/env/workflow/tests consistently.
+
+**Findings (Minor):**
+- `P12` [External prerequisite bookkeeping] [plan:535-546,565,603]: Task 9's backport-note template records only tap cleanup SHA, while Tasks 10 and 11 require both tap cleanup SHA and Task 8 ratchet-cli formula automation commit SHA. Recommendation: include both required SHA fields in template.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | P9/P10 weaken real-boundary proof. |
+| Assumptions under attack | Finding | Plan assumed untagged tests can prove tagged smoke helpers. |
+| Missing failure modes | Finding | P10 omits negative socket/path/permission cases. |
+| Security/privacy at architecture level | Finding | P10 leaves arbitrary Unix socket constructor contract under-tested. |
+| Multi-component validation | Finding | P9/P11 can leave smoke-service and uploaded-asset boundaries unproven. |
+| Declared integration proof | Finding | P9/P11 affect daemon and draft-asset proof. |
+| Existence/runtime-validity | Finding | P9 has untagged commands for tagged surfaces; P11 has releaseguard interface drift. |
+| Verification-class mismatch | Finding | P9/P10 use insufficient verification for tagged/security-sensitive code. |
+| Hidden serial dependencies | Finding | P12 leaves prerequisite evidence slightly under-specified. |
+| Missing integration proof | Finding | P9/P11 can skip required smoke-service and draft-asset proof. |
+| Identifier/naming convention | Finding | P11 inconsistent draft-asset env/interface naming. |
+
+**Options the author may not have considered:**
+1. Keep `draft-assets` file-system based: workflow downloads draft assets by release id into `$RUNNER_TEMP/release-assets`, then releaseguard reads `RATCHET_RELEASE_GUARD_ASSETS`.
+2. Split tagged helper verification explicitly: `go test -tags tui_smoke` for smoke-only constructors/wiring plus untagged guards for release-surface absence.
+
+**Verdict reasoning:** FAIL. P1-P8 were addressed, but tagged smoke helper tests, smoke-client socket security, and draft asset interface consistency needed concrete plan steps.

@@ -82,6 +82,7 @@ Source: no repo-local `docs/design-guidance.md`, `AGENTS.md`, or `CLAUDE.md` fou
 - Create: `internal/tui/race_disabled_test.go`
 - Modify: `internal/client/client.go`
 - Create: `internal/client/client_tui_smoke.go`
+- Create: `internal/client/client_tui_smoke_unix_test.go`
 - Test: `cmd/ratchet-tui-smoke/*`, `internal/tui/*_test.go`, `internal/client/*_test.go`
 
 **Step 1: Write failing boundary tests**
@@ -92,11 +93,13 @@ Add tests that assert:
 - `go list ./cmd/ratchet-tui-smoke` and `go build ./cmd/ratchet-tui-smoke` fail without tags on Unix;
 - `go build -tags tui_smoke -o <tmp>/ratchet-tui-smoke ./cmd/ratchet-tui-smoke` succeeds on Unix;
 - `GOOS=windows GOARCH=amd64/arm64 go list/build -tags tui_smoke ./cmd/ratchet-tui-smoke` fails with the expected Unix-only no-buildable-files class.
+- tagged `internal/client` tests prove `ConnectSmokeUnix(ctx, tempRoot, socketPath)` accepts only a valid Unix socket inside `tempRoot` and rejects outside-temp paths, symlink final components, wrong file mode, non-`0600` permissions, unresolved parent paths, and TCP/non-`unix://` addresses.
 
 **Step 2: Run red checks**
 
 ```bash
 go test ./internal/tui ./cmd/ratchet-tui-smoke -run 'SmokeSource|SmokeBinaryBuildTags' -count=1
+go test -tags tui_smoke ./internal/client -run 'ConnectSmokeUnix' -count=1
 ```
 
 Expected: FAIL with missing package/manifest/client constructor.
@@ -110,9 +113,10 @@ Add Unix-only smoke main that launches the TUI using an injected smoke client/se
 ```bash
 gofmt -w cmd/ratchet-tui-smoke internal/client internal/tui
 go test ./internal/tui ./cmd/ratchet-tui-smoke -run 'SmokeSource|SmokeBinaryBuildTags' -count=1
+go test -tags tui_smoke ./internal/client -run 'ConnectSmokeUnix' -count=1
 ```
 
-Expected: PASS; no repo-root binary output.
+Expected: PASS; `ConnectSmokeUnix` rejects the negative socket/path/permission cases; no repo-root binary output.
 
 **Step 5: Commit**
 
@@ -146,7 +150,8 @@ Add tests that assert:
 **Step 2: Run red checks**
 
 ```bash
-go test ./internal/daemon ./internal/tui/components -run 'SmokeService|ListJobs|JobPanel.*Error' -count=1
+go test -tags tui_smoke ./internal/daemon -run 'SmokeService|ListJobs' -count=1
+go test ./internal/tui/components -run 'JobPanel.*Error' -count=1
 ```
 
 Expected: FAIL with missing smoke constructor and hidden job-panel error.
@@ -159,10 +164,12 @@ Add private smoke option/constructor under `tui_smoke && !windows`. Initialize s
 
 ```bash
 gofmt -w internal/daemon internal/tui/components internal/tui/pages
-go test ./internal/daemon ./internal/tui/components -run 'SmokeService|ListJobs|JobPanel.*Error' -count=1
+go test -tags tui_smoke ./internal/daemon -run 'SmokeService|ListJobs' -count=1
+go test ./internal/daemon -run 'SmokeService|ListJobs' -count=1
+go test ./internal/tui/components -run 'JobPanel.*Error' -count=1
 ```
 
-Expected: PASS.
+Expected: PASS; tagged daemon test proves smoke helper behavior, and untagged daemon test proves the helper is not exposed in release builds.
 
 **Step 5: Commit**
 
@@ -540,6 +547,7 @@ Append a compact backport note to this plan:
 ### Backport YYYY-MM-DD: Homebrew tap cleanup prerequisite
 
 Evidence: GoCodeAlone/homebrew-tap@<sha> removed stale root `ratchet-cli.rb`; `Formula/ratchet-cli.rb` and `Casks/ratchet-cli.rb` remain; `TestTapPreflight` PASS.
+Ratchet formula automation: GoCodeAlone/ratchet-cli@<sha> added GoReleaser `brews`; `scripts/check-release-artifacts.sh` PASS.
 Scope: no manifest change.
 ```
 
@@ -597,7 +605,6 @@ Rollback: revert CI commit; runtime code remains independently tested.
 - Modify: `.github/workflows/ci.yml`
 - Modify: `internal/releaseguard/guard.go`
 - Modify: `internal/releaseguard/tap.go`
-- Create: `internal/releaseguard/github_assets.go`
 - Test: `.github/workflows/*`, `internal/releaseguard/*_test.go`
 
 **Precondition:** Task 9 backport note records a merged tap cleanup SHA and Task 8 formula automation commit SHA.
@@ -605,7 +612,7 @@ Rollback: revert CI commit; runtime code remains independently tested.
 **Step 1: Write failing releaseguard tests**
 
 Add tests for:
-- draft release assets mode downloads/reads archive/checksum fixtures by release id and requires draft state before undraft;
+- draft release assets mode reads an already-downloaded asset directory from `RATCHET_RELEASE_GUARD_ASSETS` plus `RATCHET_RELEASE_GUARD_VERSION`; it fails if expected archives/checksums are missing, if forbidden smoke tokens appear, or if fixture metadata says the release is not draft;
 - tap postcheck resolves exact path-changing commit per tap file, scans content/metadata, groups rollback targets by SHA, and warns on mixed commits;
 - Windows archive fixture requires both amd64 and arm64 zips; executes only amd64 in Windows job contract.
 
@@ -620,7 +627,7 @@ Before publish:
 
 After publish and before undraft:
 - resolve draft release id by listing releases with retries;
-- run draft asset postcheck against release id;
+- use GitHub Script/API to verify the resolved release is still draft, download all assets for that release id into `$RUNNER_TEMP/release-assets`, write a small metadata file in that directory containing the release id/tag/draft state, then run draft asset postcheck with `RATCHET_RELEASE_GUARD_MODE=draft-assets`, `RATCHET_RELEASE_GUARD_ASSETS=$RUNNER_TEMP/release-assets`, and `RATCHET_RELEASE_GUARD_VERSION=<tag-or-version>`;
 - clone tap and derive exact path-changing commits;
 - run tap postcheck with `RATCHET_RELEASE_GUARD_TAP_NAMES`, `RATCHET_RELEASE_GUARD_TAP_COMMITS`, and current tag/version;
 - only then undraft.
@@ -707,6 +714,8 @@ Rollback: revert docs commit.
 ```bash
 go test ./internal/releaseguard -count=1
 go test ./internal/daemon ./cmd/ratchet ./internal/tui/commands ./internal/tui/components ./internal/tui -run 'Shutdown|StartupSmoke|CommandSurface|CLIHelp|Shortcut|Docs|SmokeService|ListJobs|JobPanel|TUIBinarySmoke' -count=1 -timeout=12m
+go test -tags tui_smoke ./internal/client -run 'ConnectSmokeUnix' -count=1
+go test -tags tui_smoke ./internal/daemon -run 'SmokeService|ListJobs' -count=1
 go test ./internal/tui -run TestTUIBinarySmoke -count=1 -timeout=8m
 GOOS=windows GOARCH=amd64 go build -o /tmp/ratchet-windows-amd64.exe ./cmd/ratchet
 GOOS=windows GOARCH=arm64 go build -o /tmp/ratchet-windows-arm64.exe ./cmd/ratchet
