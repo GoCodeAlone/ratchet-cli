@@ -433,3 +433,47 @@ None.
 2. Windows runtime smoke: add a `windows-latest` job that builds and runs `ratchet.exe version` and `ratchet.exe help`, while keeping TUI PTY proof Unix-only.
 
 **Verdict reasoning:** The design is strong on TUI isolation and prior slash/shortcut gaps, but it still has unresolved Important release and Windows-honesty issues. The biggest mechanical problem is that the proposed CI path can skip GoReleaser config validation and the actual tag release path can bypass the new artifact guard entirely. Status is FAIL.
+
+## Cycle 11
+
+### Adversarial Review Report
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `D44` [Existence/runtime-validity / Multi-component validation] [design:139-142,166-172; `internal/tui/app.go`:439-450]: The shortcut matrix says `ctrl+j` and `ctrl+t` keep chat input visible and usable, but current app rendering replaces the chat body with the job panel or team panel. That evidence is mechanically false unless the implementation changes existing TUI behavior, which the design does not explicitly scope. Recommendation: either assert the current behavior honestly, e.g. panel opens, `esc`/toggle returns to chat/input, or explicitly design the layout change and treat it as user-facing behavior.
+- `D45` [User-intent drift / Existence-runtime-validity] [design:346-364; `docs/harness-emulation.md`:58-64; `README.md`:90-104]: The docs negative guard is too broad and too easy to evade. A valid product statement like "ratchet-cli supports trust slash commands" can match `ratchet` + `slash commands`, while a contradictory row can pass by adding "not claimed" anywhere in the same unit. Recommendation: make the predicate target evidence claims only: exact command token `ratchet` plus automation/proof/smoke/coverage tokens plus interactive/slash/shortcut terms, with exceptions that negate the exact same predicate.
+- `D46` [Infrastructure impact / Repo-precedent conflicts] [design:281-297; `.github/workflows/ci.yml`:14-15,28,42,59,78,94; `.github/workflows/release.yml`:17-23; `go.mod`:9-10]: New release workflow preflight steps are not specified with the private-module environment and Git rewrite used by existing CI jobs. The repo's CI treats `GoCodeAlone/*` modules as private, and GoReleaser builds the same module graph. Recommendation: require `GOPRIVATE`/`GONOSUMCHECK` and the Git rewrite before both release preflight and publish steps; mirror this setup for any new `windows-latest` smoke job.
+
+**Findings (Minor):**
+- `D47` [Rollback story / Declared integration proof] [design:290-297,406,422]: The release workflow guard inspects snapshot artifacts, then the publishing step runs `goreleaser release --clean`, which rebuilds and publishes a fresh `dist`. This is probably acceptable for detecting config-level smoke-binary inclusion, but it is not proof of the exact uploaded asset set. Recommendation: either state this limitation, add a draft-release post-publish asset check before undrafting, or use a publish path that inspects the same generated artifacts later uploaded.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | Release-safe/current proof is weakened by missing release-workflow private-module setup. |
+| Assumptions under attack | Finding | The design assumes `ctrl+j`/`ctrl+t` preserve input visibility, which current rendering contradicts. |
+| Repo-precedent conflicts | Finding | Existing CI jobs configure private module access; planned release preflight text does not carry that into release workflow steps. |
+| Artifact-class precedent | Finding | Release preflight follows GoReleaser artifact precedent, but snapshot inspection is not identical to final publish artifacts. |
+| YAGNI violations | Clean | No new ConPTY, external provider CI, broad SDK, or new command surface is required. |
+| Missing failure modes | Finding | Panel shortcuts can hide input while tests claim input visibility; release builds can fail from missing private-module setup. |
+| Security/privacy at architecture level | Clean | Build-tag isolation, temp state, socket containment, and redaction boundaries are adequately specified at design level. |
+| Infrastructure impact | Finding | CI/release workflow changes need private-module setup and exact release-asset caveat. |
+| Multi-component validation | Finding | TUI shortcut proof does not match current app rendering for team/job panels. |
+| Declared integration proof | Finding | GoReleaser proof is strong but snapshot-only relative to final publish artifacts. |
+| Contributed UI rendering proof | Clean | No plugin-contributed host UI is claimed; direct Bubble Tea rendering is the relevant UI surface. |
+| Rollback story | Finding | Rollback is adequate, but final release artifact verification is weaker than claimed. |
+| Simpler alternative not considered | Finding | Simpler shortcut proof would assert current panel open/return behavior instead of requiring input visibility under every panel. |
+| User-intent drift | Finding | Docs guard can both block valid product docs and allow contradictory overclaim phrasing. |
+| Existence/runtime-validity | Finding | Current code contradicts planned `ctrl+j`/`ctrl+t` visible-input evidence; docs guard predicates are mechanically imprecise. |
+
+**Options the author may not have considered:**
+1. Current-behavior shortcut contract: prove `ctrl+s` preserves split chat/input, while `ctrl+j` and `ctrl+t` intentionally switch to panel views and must return cleanly to chat/input. This avoids smuggling a layout redesign into a verification slice.
+2. Evidence-row docs guard: scan only harness/evidence/status rows for release-binary automation claims, not every public product sentence mentioning ratchet and slash commands.
+3. Draft-release postcheck: after GoReleaser creates the draft release, inspect uploaded asset names/checksums before the existing publish script undrafts it.
+
+**Verdict reasoning:** The design is close, but it still has unresolved Important issues where implementation could either fail mechanically or pass while proving something different from the claim. Status is FAIL until the shortcut evidence matches actual rendering, the docs guard is made precise, and release workflow setup mirrors the repo's private-module CI requirements.
