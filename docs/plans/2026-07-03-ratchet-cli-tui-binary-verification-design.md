@@ -236,7 +236,13 @@ smoke include it or the public docs mark it out of scope.
   `daemon status`.
 - Add a non-race CI smoke job in `.github/workflows/ci.yml` so binary/startup
   smoke tests that skip under `-race` are actually exercised:
-  `go test ./cmd/ratchet ./internal/tui -run 'HarnessSmoke|TUIBinarySmoke' -count=1`.
+  `go test ./cmd/ratchet ./internal/tui -run 'HarnessSmoke|TUIBinarySmoke|StartupSmoke' -count=1`.
+- Required test names:
+  - release-shaped startup/onboarding smoke:
+    `TestHarnessSmokeReleaseStartupOnboardingBoundary`;
+  - smoke TUI binary PTY proof: `TestTUIBinarySmoke`;
+  - existing version/help/daemon smoke remains
+    `TestHarnessSmokeVersionHelpAndDaemonStatus`.
 - Add one untagged temp-home smoke for default `ratchet` startup only up to the
   expected provider setup/onboarding boundary, not chat:
   - build release-shaped binary without tags;
@@ -282,7 +288,7 @@ smoke include it or the public docs mark it out of scope.
     --clean --skip=publish`, then the artifact-manifest guard;
   - `--manifest-only dist` mode inspects an already-generated `dist/` tree.
 - Wire a PR/push CI job named `release-check` in `.github/workflows/ci.yml`:
-  - checkout and setup Go `1.26`;
+  - checkout with `fetch-depth: 0` and setup Go `1.26`;
   - configure private-module Git rewrite like the existing jobs;
   - run `goreleaser/goreleaser-action@v7` with `version: "~> v2"` and
     `args: check`;
@@ -301,11 +307,18 @@ smoke include it or the public docs mark it out of scope.
     `args: release --snapshot --clean --skip=publish`;
   - run `scripts/check-release-artifacts.sh --manifest-only dist`;
   - only then run the existing publishing `goreleaser release --clean` step.
-- After the publishing step creates a draft release and before the existing
-  publish/undraft script flips `draft: false`, inspect the draft release assets,
-  uploaded checksum file, and generated tap/cask references for the same
-  forbidden names. This postcheck proves the uploaded draft asset set did not
-  diverge from the snapshot guard.
+- After the publishing step creates a draft GitHub release and before the
+  existing publish/undraft script flips `draft: false`, inspect the draft
+  release assets and uploaded checksum file for the same forbidden names. This
+  postcheck proves the uploaded GitHub asset set did not diverge from the
+  snapshot guard.
+- Homebrew/tap limitation: the current GoReleaser release step can push
+  `homebrew_casks.repository` changes before any postcheck can run. This slice
+  prechecks cask/tap config and snapshot material before publishing, then
+  performs an after-the-fact tap/cask reference check after publishing. If the
+  tap contains forbidden smoke names, rollback is deleting/reverting the bad tap
+  commit and cutting a corrected patch release. Fully pre-public tap blocking
+  requires a future split-publish workflow and is out of scope for this slice.
 - Local verification can run the script when GoReleaser is installed; ordinary
   `go test ./...` must not silently claim release-artifact coverage if
   GoReleaser is absent.
@@ -397,7 +410,7 @@ smoke include it or the public docs mark it out of scope.
 | Release artifact guard only runs manually. | Add the publish-free `release-check` CI job; CI uses GoReleaser action for snapshot generation and the same manifest guard script local runs use. |
 | Tag release bypasses artifact guard. | Add the same publish-free `goreleaser check` + snapshot + manifest guard to `.github/workflows/release.yml` before the publishing step. |
 | Release jobs cannot fetch private modules. | Mirror CI's `GOPRIVATE`/`GONOSUMCHECK` and private-module Git rewrite in release preflight/publish and Windows safe-command smoke jobs. |
-| Snapshot guard differs from uploaded release. | Add a draft-release postcheck before undrafting that inspects uploaded assets/checksums/tap references for forbidden smoke names. |
+| Snapshot guard differs from uploaded release. | Add a draft-release postcheck before undrafting that inspects uploaded GitHub assets/checksums for forbidden smoke names; explicitly treat Homebrew/tap postcheck as after-the-fact rollback under the current GoReleaser workflow. |
 | Platform mismatch. | Unix PTY proof is explicitly Unix-only; Windows claim is limited to build/noninteractive smoke. |
 
 ## Infrastructure Impact
@@ -405,11 +418,12 @@ smoke include it or the public docs mark it out of scope.
 No cloud resources, secrets, migrations, registry entries, Homebrew publishing,
 or production deploy. Infrastructure changes are limited to publish-free
 GoReleaser preflight jobs on PR/push and before tag publishing, a draft-release
-asset postcheck before undrafting, plus a `windows-latest` safe-command smoke
-job. These workflow paths must mirror existing private-module environment and
-Git rewrite setup. Local test-only process and temp files only. Runtime behavior
-does not change in release builds because the smoke entrypoint is build-tagged
-out.
+GitHub asset postcheck before undrafting, an after-the-fact Homebrew/tap
+postcheck with rollback instructions, plus a `windows-latest` safe-command
+smoke job. These workflow paths must mirror existing private-module environment
+and Git rewrite setup. Local test-only process and temp files only. Runtime
+behavior does not change in release builds because the smoke entrypoint is
+build-tagged out.
 
 ## Multi-Component Validation
 
@@ -424,7 +438,7 @@ out.
 | Shortcuts | PTY sends control keys and asserts branch tree/pane transitions with fixed-size full-frame checks matching current behavior; focused tests reject advertised-but-unimplemented shortcuts. |
 | Docs to tests | Docs guard fails if automated TUI smoke evidence is removed. |
 | Binary smoke to CI | Non-race CI smoke job runs the built-binary/startup/TUI smoke tests that the race suite skips. |
-| Release preflight to CI/release | `release-check` and tag release workflow both run `goreleaser check`, snapshot generation, and the same artifact-manifest guard before publish; release postcheck inspects uploaded draft assets before undrafting. |
+| Release preflight to CI/release | `release-check` and tag release workflow both run `goreleaser check`, snapshot generation, and the same artifact-manifest guard before publish; release postcheck inspects uploaded GitHub draft assets before undrafting; Homebrew/tap postcheck is after-the-fact with rollback. |
 | Windows build/smoke | Cross-build commands prove release-shaped `ratchet` still compiles for Windows; `windows-latest` executes `ratchet.exe version` and `ratchet.exe help`; `ratchet-tui-smoke` interactive PTY remains Unix-only. |
 
 ## Integration Matrix
@@ -438,9 +452,9 @@ out.
 | Built-in mock provider | runtime-integrated | Chat prompt streams deterministic mock response. |
 | Slash commands and shortcuts | runtime-integrated | PTY sends input/control keys and asserts resulting UI states, including the full documented TUI mode/trust slash-command matrix, every advertised core shortcut, and fixed-size representative frames. |
 | Slash help/autocomplete/CLI help | runtime-integrated | Focused tests invoke in-TUI `/help`, autocomplete models, and built `ratchet help` to prove submitted command support and discoverability stay aligned. |
-| Non-race binary smoke CI | config-only | `.github/workflows/ci.yml` runs a focused non-race smoke job for subprocess/startup tests that are intentionally skipped under `-race`. |
+| Non-race binary smoke CI | config-only | `.github/workflows/ci.yml` runs a focused non-race smoke job for subprocess/startup tests that are intentionally skipped under `-race`, with explicit test names for release startup and TUI binary smoke. |
 | Docs guard | config-only | `cmd/ratchet/harness_docs_test.go` checks public docs mention exact evidence boundaries. |
-| GoReleaser snapshot and uploaded draft artifacts | runtime-integrated | Publish-free `release-check` CI job, tag release preflight, local script, and release draft postcheck run `goreleaser check`/snapshot generation plus archive/upload inspection with deterministic `.goreleaser.yaml` fallback to prove `ratchet-tui-smoke` is absent from archives/checksums/Homebrew artifacts/release assets before public release. |
+| GoReleaser snapshot, GitHub draft assets, and Homebrew/tap | runtime-integrated | Publish-free `release-check` CI job, tag release preflight, local script, and release draft postcheck run `goreleaser check`/snapshot generation plus archive/upload inspection with deterministic `.goreleaser.yaml` fallback to prove `ratchet-tui-smoke` is absent from GitHub archives/checksums before undraft. Homebrew/tap is prechecked by snapshot/config and postchecked after publish, with rollback if the tap diverges. |
 | Windows safe-command smoke | runtime-integrated | `windows-latest` builds `ratchet.exe` and runs `version` and `help` to prove non-PTY Windows CLI startup/help behavior. |
 | Windows smoke package boundary | config-only | `GOOS=windows GOARCH=amd64/arm64 go list` and `go build -tags tui_smoke ./cmd/ratchet-tui-smoke` fail with the expected Unix-only no-buildable-files class. |
 | Windows interactive PTY | deferred | No ConPTY runner in this slice; Windows coverage is build/noninteractive only. |
@@ -452,10 +466,12 @@ helper, PTY test, help/autocomplete/CLI-help alignment, shortcut hint fix,
 non-race smoke CI job, Windows safe-command smoke job, `release-check` CI job,
 release-workflow preflight/postcheck, release-artifact script, and docs updates.
 No data migration exists. Release binaries are unaffected because `cmd/ratchet`
-does not contain a smoke command/flag. If a future release accidentally includes
-`ratchet-tui-smoke`, remove it from the release config, delete the bad
-artifact/checksum/tap reference where possible, and cut a patch release. If the
-CI or release preflight/postcheck itself is bad, revert that job/script while
+does not contain a smoke command/flag. If a future GitHub release accidentally
+includes `ratchet-tui-smoke`, keep the release draft, delete the bad
+artifact/checksum where possible, fix the release config, and rerun/cut a patch
+release. If a Homebrew tap commit includes a bad smoke reference, revert or
+delete that tap commit/reference and cut a corrected patch release. If the CI
+or release preflight/postcheck itself is bad, revert that job/script while
 keeping the existing tag-only release workflow's publish step, then cut a
 corrected preflight PR.
 
@@ -544,3 +560,6 @@ corrected preflight PR.
 | D45 | Narrowed docs negative guard to evidence claims only and tightened exceptions so product support statements are allowed and generic `not claimed` cannot mask contradictory release-binary proof claims. |
 | D46 | Required `GOPRIVATE`/`GONOSUMCHECK` plus private-module Git rewrite in release preflight/publish and Windows safe-command smoke jobs. |
 | D47 | Added draft-release postcheck before undrafting so uploaded assets/checksums/tap references are inspected, not only snapshot artifacts. |
+| D48 | Reframed Homebrew/tap safety honestly: snapshot/config precheck plus after-the-fact tap postcheck/rollback under the current GoReleaser workflow; full pre-public tap blocking is deferred to a split-publish workflow. |
+| D49 | Required `fetch-depth: 0` for GoReleaser preflight checkout so PR/push preflight has release-equivalent git tag/changelog state. |
+| D50 | Broadened non-race smoke CI regex to include `StartupSmoke` and named the required startup/TUI smoke tests explicitly. |
