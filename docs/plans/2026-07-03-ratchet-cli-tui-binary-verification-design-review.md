@@ -1308,3 +1308,47 @@ None.
 2. Tap guard rollout phase: first clean or retire stale root/Formula ratchet tap files, then enable fail-closed tap preflight.
 
 **Verdict reasoning:** FAIL. The design still had three executable gaps: shared command spec artifact shape, daemon stop before PID identity proof, and tap preflight blocking on known external drift without remediation.
+
+## Cycle 31
+
+### Adversarial Review Report
+
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `D119` [Multi-component validation / Missing failure modes] [design:65-74,235-236; `internal/daemon/service.go`:99,155-158,815-816; `internal/tui/components/jobpanel.go`:107-116]: Smoke mode disables cron/background work but still claims PTY proof for `ctrl+j` job panel. Current `ListJobs` dereferences `s.jobs`; if the smoke constructor omits or partially wires the job registry while disabling cron, the PTY shortcut can show no jobs or panic instead of proving the panel boundary. Recommendation: define smoke job wiring explicitly: initialize `JobRegistry`, register safe non-background providers needed by `ListJobs`, omit only cron provider or replace it with a no-op provider, and add a focused smoke-service `ListJobs` RPC test plus PTY assertion that no job-panel RPC error occurred.
+- `D120` [Security/privacy / Existence-runtime-validity] [design:448-455; `internal/daemon/daemon.go`:128-141; `internal/daemon/pidfile.go`:65-72]: PID identity proof is required before `daemon stop`, but the design does not specify an executable, portable proof mechanism. The normal background daemon command line is just `ratchet daemon start`; temp home/socket identity is not reliably visible from standard Go APIs. Recommendation: prefer daemon RPC shutdown over the temp socket after verifying socket path ownership/permissions, then wait for pid/socket removal; if signal fallback remains, specify exact platform-limited identity probe and make unsupported probes fail without signaling.
+- `D121` [Infrastructure impact / Rollback story / Declared integration proof] [design:542-548,561-579,847; `.goreleaser.yaml`:44-56; `GoCodeAlone/homebrew-tap`: `ratchet-cli.rb`, `Formula/ratchet-cli.rb`, `Casks/ratchet-cli.rb`]: Tap cleanup is still not durable. GoReleaser config only manages `homebrew_casks`, while the tap has root and Formula install files too. Updating those once will make them stale on the next release unless the design either retires them permanently or adds formula automation. Recommendation: choose the durable path: remove/retire legacy root and Formula surfaces with compatibility note, or add `brews`/formula publishing and guard generated formula output every release.
+
+**Findings (Minor):**
+- `D122` [Artifact quality / Missing failure modes] [design:180-181]: The PTY smoke section has duplicate `Drive:` bullets. Recommendation: delete the duplicate heading before plan writing so task extraction is unambiguous.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | README/RATCHET support install continuity, and D121 leaves tap install surfaces ambiguous. |
+| Assumptions under attack | Finding | Smoke daemon inertness, PID identity proof, and tap cleanup durability remain load-bearing. |
+| Repo-precedent conflicts | Finding | Existing `NewService` wires `JobRegistry` before job RPCs. |
+| Artifact-class precedent | Finding | Tap has root, Formula, and Casks files; GoReleaser config currently manages only casks. |
+| YAGNI violations | Clean | Guards target prior concrete release, docs, and smoke-leak failures. |
+| Missing failure modes | Finding | Job-panel RPC wiring and PID reuse/signal identity remain under-specified. |
+| Security/privacy at architecture level | Finding | D120 can signal unrelated local process if identity proof is improvised. |
+| Infrastructure impact | Finding | D121 changes release/tap behavior and can break Homebrew users or future releases. |
+| Multi-component validation | Finding | D119 leaves TUI job-panel proof dependent on unspecified daemon job wiring. |
+| Declared integration proof | Finding | D121 does not classify future root/Formula tap handling as retired, automated, or accepted risk. |
+| Contributed UI rendering proof | Clean | No plugin-contributed host-shell UI is involved. |
+| Rollback story | Finding | Tap rollback exists for contamination, but not retiring or maintaining legacy surfaces. |
+| Simpler alternative not considered | Finding | RPC shutdown and retiring unmanaged tap formula files. |
+| User-intent drift | Clean | Slice still targets TUI binary verification and release honesty. |
+| Existence/runtime-validity | Finding | D119/D120 are executable-contract gaps. |
+
+**Options the author may not have considered:**
+1. RPC-only daemon cleanup with leftover pid diagnostics rather than signals.
+2. Tap surface retirement: remove root and Formula files, documenting `Casks/ratchet-cli.rb` as the only managed Homebrew surface until formula publishing is added.
+
+**Verdict reasoning:** FAIL. Three executable design gaps remain: job registry wiring for job-panel proof, nonportable PID identity/signal cleanup, and no durable model for unmanaged formula/root tap surfaces.
