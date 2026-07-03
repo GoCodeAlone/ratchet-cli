@@ -114,9 +114,9 @@ func validJSONRPCID(raw json.RawMessage) bool {
 
 func validateJSONRPCError(raw json.RawMessage) error {
 	var rpcErr struct {
-		Code    *int    `json:"code"`
-		Message string  `json:"message"`
-		Data    unknown `json:"data,omitempty"`
+		Code    *int            `json:"code"`
+		Message string          `json:"message"`
+		Data    json.RawMessage `json:"data,omitempty"`
 	}
 	if err := json.Unmarshal(raw, &rpcErr); err != nil {
 		return fmt.Errorf("%w: invalid error object", ErrInvalidJSONRPCMessage)
@@ -127,9 +127,7 @@ func validateJSONRPCError(raw json.RawMessage) error {
 	return nil
 }
 
-type unknown struct{}
-
-func (s *Store) AppendEventLog(id string, events []EventLogLine) error {
+func (s *Store) AppendEventLog(id string, events []EventLogLine) (err error) {
 	if s == nil {
 		return errors.New("acp client store is required")
 	}
@@ -154,7 +152,11 @@ func (s *Store) AppendEventLog(id string, events []EventLogLine) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close() //nolint:errcheck
+	defer func() {
+		if cerr := f.Close(); err == nil && cerr != nil {
+			err = cerr
+		}
+	}()
 	for _, event := range events {
 		if err := ValidateJSONRPCMessage(event.Message); err != nil {
 			return err
@@ -228,12 +230,11 @@ func (s *Store) ReadEventLog(id string) ([]EventLogLine, error) {
 	return events, nil
 }
 
-func (s *Store) CopyEventLog(id, outputPath string) error {
+func (s *Store) CopyEventLog(id, outputPath string) (err error) {
 	if outputPath == "" {
 		return errors.New("event log output path is required")
 	}
-	events, err := s.ReadEventLog(id)
-	if err != nil {
+	if _, err := s.ReadEventLog(id); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
@@ -248,11 +249,14 @@ func (s *Store) CopyEventLog(id, outputPath string) error {
 	if err != nil {
 		return err
 	}
-	defer dst.Close() //nolint:errcheck
+	defer func() {
+		if cerr := dst.Close(); err == nil && cerr != nil {
+			err = cerr
+		}
+	}()
 	if _, err := io.Copy(dst, src); err != nil {
 		return err
 	}
-	_ = events
 	if err := dst.Chmod(0o600); err != nil {
 		return err
 	}

@@ -862,7 +862,7 @@ func parseACPClientSessions(args []string) (acpClientCommand, error) {
 
 func parseACPClientSessionsExport(args []string) (string, acpClientArchiveOptions, bool, error) {
 	if len(args) == 0 || strings.TrimSpace(args[0]) == "" {
-		return "", acpClientArchiveOptions{}, false, errors.New("usage: ratchet acp client sessions export <session-id> --output <path> [--json]")
+		return "", acpClientArchiveOptions{}, false, errors.New("usage: ratchet acp client sessions export <session-id> --output <path> [--history summary|raw|both] [--json]")
 	}
 	id := args[0]
 	var opts acpClientArchiveOptions
@@ -876,7 +876,7 @@ func parseACPClientSessionsExport(args []string) (string, acpClientArchiveOption
 		return "", acpClientArchiveOptions{}, false, err
 	}
 	if len(fs.Args()) > 0 || opts.Output == "" {
-		return "", acpClientArchiveOptions{}, false, errors.New("usage: ratchet acp client sessions export <session-id> --output <path> [--json]")
+		return "", acpClientArchiveOptions{}, false, errors.New("usage: ratchet acp client sessions export <session-id> --output <path> [--history summary|raw|both] [--json]")
 	}
 	if _, err := parseArchiveHistoryMode(opts.HistoryMode); err != nil {
 		return "", acpClientArchiveOptions{}, false, err

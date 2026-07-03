@@ -17,6 +17,8 @@ func TestValidateJSONRPCMessageAcceptsACPXShapes(t *testing.T) {
 		json.RawMessage(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s"}}`),
 		json.RawMessage(`{"jsonrpc":"2.0","id":"req-1","result":{"stopReason":"end_turn"}}`),
 		json.RawMessage(`{"jsonrpc":"2.0","id":"req-1","error":{"code":-32000,"message":"failed"}}`),
+		json.RawMessage(`{"jsonrpc":"2.0","id":"req-1","error":{"code":-32000,"message":"failed","data":"detail"}}`),
+		json.RawMessage(`{"jsonrpc":"2.0","id":"req-1","error":{"code":-32000,"message":"failed","data":["detail"]}}`),
 	}
 	for _, msg := range valid {
 		if err := ValidateJSONRPCMessage(msg); err != nil {
