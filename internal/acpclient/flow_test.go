@@ -2,8 +2,10 @@ package acpclient
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -110,6 +112,166 @@ func TestFlowRunStoreWritesBundleFiles(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(root, "run-fixed", rel)); err != nil {
 			t.Fatalf("stat %s: %v", rel, err)
 		}
+	}
+}
+
+func TestRunFlowWritesReplayBundleFiles(t *testing.T) {
+	root := t.TempDir()
+	base := filepath.Join(root, "base")
+	if err := os.MkdirAll(base, 0o700); err != nil {
+		t.Fatalf("mkdir base: %v", err)
+	}
+	at := time.Date(2026, 7, 3, 10, 20, 0, 0, time.UTC)
+	events := []EventLogLine{{
+		Seq:       1,
+		At:        at,
+		Direction: EventDirectionOutbound,
+		Message:   json.RawMessage(`{"jsonrpc":"2.0","id":"prompt-1","method":"session/prompt","params":{"sessionId":"flow-session"}}`),
+	}}
+	runner := &fakeFlowPromptRunner{sessionID: "flow-session", events: events}
+	action := &fakeActionRunner{result: ActionResult{
+		ExitCode: 0,
+		Stdout:   "prepared stdout",
+		Stderr:   "prepared stderr",
+		Duration: 25 * time.Millisecond,
+	}}
+	def := FlowDefinition{
+		FormatVersion: 1,
+		StartAt:       "prepare",
+		Nodes: []FlowNode{
+			{ID: "prepare", Type: FlowNodeTypeAction, Command: "ratchet"},
+			{ID: "ask", Type: FlowNodeTypeACP, Session: "main", Prompt: "use {{.Outputs.prepare.stdout}}", Command: "fixture"},
+		},
+		Edges: []FlowEdge{{From: "prepare", To: "ask"}},
+	}
+
+	result, err := RunFlow(t.Context(), def, map[string]any{"task": "x"}, FlowRunOptions{
+		RunID:              "run-replay",
+		RunRoot:            root,
+		Cwd:                base,
+		AllowedPermissions: []string{"shell"},
+		ActionRunner:       action,
+		StartRunner: func(context.Context, AgentSpec, RunOptions, string) (FlowPromptRunner, func() error, error) {
+			return runner, func() error { return nil }, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunFlow: %v", err)
+	}
+	runDir := result.RunDir
+	for _, rel := range []string{
+		"manifest.json",
+		"trace.ndjson",
+		filepath.Join("projections", "run.json"),
+		filepath.Join("projections", "live.json"),
+		filepath.Join("projections", "steps.json"),
+		filepath.Join("sessions", "main", "events.ndjson"),
+	} {
+		if _, err := os.Stat(filepath.Join(runDir, rel)); err != nil {
+			t.Fatalf("replay bundle missing %s: %v", rel, err)
+		}
+	}
+	assertFlowArtifact(t, runDir, "prepared stdout")
+	assertFlowArtifact(t, runDir, "prepared stderr")
+	assertFlowArtifact(t, runDir, string(result.Outputs["prepare"]))
+	var manifest struct {
+		Schema string `json:"schema"`
+		RunID  string `json:"run_id"`
+		Status string `json:"status"`
+		Trace  string `json:"trace"`
+		Steps  []struct {
+			NodeID string `json:"node_id"`
+			Type   string `json:"type"`
+		} `json:"steps"`
+		Sessions []struct {
+			Handle string `json:"handle"`
+			Events string `json:"events"`
+		} `json:"sessions"`
+	}
+	readFlowJSONFile(t, filepath.Join(runDir, "manifest.json"), &manifest)
+	if manifest.Schema != "acpx.flow-run-bundle.v1" || manifest.RunID != "run-replay" ||
+		manifest.Status != FlowRunStatusCompleted || manifest.Trace != "trace.ndjson" ||
+		len(manifest.Steps) != 2 || manifest.Steps[1].NodeID != "ask" ||
+		len(manifest.Sessions) != 1 || manifest.Sessions[0].Handle != "main" {
+		t.Fatalf("manifest = %#v", manifest)
+	}
+	traceBytes, err := os.ReadFile(filepath.Join(runDir, "trace.ndjson"))
+	if err != nil {
+		t.Fatalf("read trace: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(traceBytes)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("trace lines = %d, want 2\n%s", len(lines), traceBytes)
+	}
+	for i, line := range lines {
+		var event struct {
+			Seq    int    `json:"seq"`
+			NodeID string `json:"node_id"`
+			Status string `json:"status"`
+		}
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("trace line %d json: %v\n%s", i, err, line)
+		}
+		if event.Seq != i+1 || event.NodeID == "" || event.Status != FlowStepStatusCompleted {
+			t.Fatalf("trace event %d = %#v", i, event)
+		}
+	}
+	summary, err := LoadFlowReplaySummary(runDir)
+	if err != nil {
+		t.Fatalf("LoadFlowReplaySummary: %v", err)
+	}
+	if summary.RunID != "run-replay" || summary.Status != FlowRunStatusCompleted ||
+		summary.ManifestPath != "manifest.json" || summary.StepCount != 2 || summary.TraceCount != 2 || summary.SessionCount != 1 {
+		t.Fatalf("summary = %#v", summary)
+	}
+	var runProjection FlowReplaySummary
+	readFlowJSONFile(t, filepath.Join(runDir, "projections", "run.json"), &runProjection)
+	if runProjection.ManifestPath != "manifest.json" {
+		t.Fatalf("run projection manifest path = %q, want relative manifest.json", runProjection.ManifestPath)
+	}
+}
+
+func TestLoadFlowReplaySummaryRejectsManifestPathsOutsideRunDir(t *testing.T) {
+	runDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(runDir, "trace.ndjson"), nil, 0o600); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+	if err := writeJSONFileAtomic(filepath.Join(runDir, "manifest.json"), map[string]any{
+		"schema": "acpx.flow-run-bundle.v1",
+		"run_id": "escape",
+		"status": FlowRunStatusCompleted,
+		"trace":  "../trace.ndjson",
+	}, 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	if _, err := LoadFlowReplaySummary(runDir); err == nil || !strings.Contains(err.Error(), "outside run dir") {
+		t.Fatalf("LoadFlowReplaySummary error = %v, want outside run dir", err)
+	}
+}
+
+func TestLoadFlowReplaySummaryRejectsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	runDir := filepath.Join(root, "run")
+	outside := filepath.Join(root, "outside.ndjson")
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		t.Fatalf("mkdir run: %v", err)
+	}
+	if err := os.WriteFile(outside, []byte("{}\n"), 0o600); err != nil {
+		t.Fatalf("write outside: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(runDir, "trace.ndjson")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if err := writeJSONFileAtomic(filepath.Join(runDir, "manifest.json"), map[string]any{
+		"schema": "acpx.flow-run-bundle.v1",
+		"run_id": "escape",
+		"status": FlowRunStatusCompleted,
+		"trace":  "trace.ndjson",
+	}, 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	if _, err := LoadFlowReplaySummary(runDir); err == nil || !strings.Contains(err.Error(), "outside run dir") {
+		t.Fatalf("LoadFlowReplaySummary error = %v, want symlink outside run dir", err)
 	}
 }
 
@@ -542,6 +704,70 @@ func TestRunFlowActionStartFailurePersistsNonZeroExitCode(t *testing.T) {
 	}
 }
 
+func TestRunFlowActionNonZeroExitWritesReplayFailedStep(t *testing.T) {
+	root := t.TempDir()
+	runner := &fakeActionRunner{result: ActionResult{ExitCode: 2, Stdout: "bad"}}
+	def := FlowDefinition{
+		FormatVersion: 1,
+		StartAt:       "fail",
+		Nodes:         []FlowNode{{ID: "fail", Type: FlowNodeTypeAction, Command: "ratchet"}},
+	}
+
+	_, err := RunFlow(t.Context(), def, map[string]any{}, FlowRunOptions{
+		RunID:              "run-action-replay-failed",
+		RunRoot:            root,
+		AllowedPermissions: []string{"shell"},
+		ActionRunner:       runner,
+	})
+	if err == nil || !strings.Contains(err.Error(), "action fail exited with 2") {
+		t.Fatalf("RunFlow error = %v, want non-zero action exit", err)
+	}
+	runDir := filepath.Join(root, "run-action-replay-failed")
+	for _, rel := range []string{
+		filepath.Join("steps", "fail.json"),
+		"trace.ndjson",
+		"manifest.json",
+		filepath.Join("projections", "steps.json"),
+	} {
+		if _, err := os.Stat(filepath.Join(runDir, rel)); err != nil {
+			t.Fatalf("failed replay bundle missing %s: %v", rel, err)
+		}
+	}
+	summary, err := LoadFlowReplaySummary(runDir)
+	if err != nil {
+		t.Fatalf("LoadFlowReplaySummary: %v", err)
+	}
+	if summary.Status != FlowRunStatusFailed || summary.StepCount != 1 || summary.TraceCount != 1 {
+		t.Fatalf("summary = %#v", summary)
+	}
+}
+
+func TestRunFlowACPFailureWritesNullReplayStep(t *testing.T) {
+	root := t.TempDir()
+	def := FlowDefinition{
+		FormatVersion: 1,
+		StartAt:       "fail",
+		Nodes:         []FlowNode{{ID: "fail", Type: FlowNodeTypeACP, Prompt: "fail", Command: "fixture"}},
+	}
+	_, err := RunFlow(t.Context(), def, map[string]any{}, FlowRunOptions{
+		RunID:   "run-acp-replay-failed",
+		RunRoot: root,
+		StartRunner: func(context.Context, AgentSpec, RunOptions, string) (FlowPromptRunner, func() error, error) {
+			return &fakeFlowPromptRunner{err: errors.New("agent failed")}, func() error { return nil }, nil
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "agent failed") {
+		t.Fatalf("RunFlow error = %v, want agent failed", err)
+	}
+	stepBytes, err := os.ReadFile(filepath.Join(root, "run-acp-replay-failed", "steps", "fail.json"))
+	if err != nil {
+		t.Fatalf("read failed step: %v", err)
+	}
+	if strings.TrimSpace(string(stepBytes)) != "null" {
+		t.Fatalf("failed ACP step = %s, want null", stepBytes)
+	}
+}
+
 func TestRunFlowActionOutputIsTruncated(t *testing.T) {
 	runner := &fakeActionRunner{
 		result: ActionResult{
@@ -584,6 +810,7 @@ type fakeFlowPromptRunner struct {
 	prompts   []string
 	closed    bool
 	err       error
+	events    []EventLogLine
 }
 
 func (r *fakeFlowPromptRunner) SessionID() acpsdk.SessionId {
@@ -600,6 +827,10 @@ func (r *fakeFlowPromptRunner) Prompt(_ context.Context, prompt string) (Result,
 		StopReason: acpsdk.StopReasonEndTurn,
 		Text:       "flow: " + prompt,
 	}, nil
+}
+
+func (r *fakeFlowPromptRunner) LastEvents() []EventLogLine {
+	return r.events
 }
 
 type fakeActionRunner struct {
@@ -625,4 +856,28 @@ func writeFlowDefinitionFixture(t *testing.T, raw string) string {
 		t.Fatalf("write flow fixture: %v", err)
 	}
 	return path
+}
+
+func assertFlowArtifact(t *testing.T, runDir, content string) {
+	t.Helper()
+	sum := sha256.Sum256([]byte(content))
+	path := filepath.Join(runDir, "artifacts", "sha256", fmt.Sprintf("%x", sum[:]))
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read artifact %s: %v", path, err)
+	}
+	if string(b) != content {
+		t.Fatalf("artifact %s = %q, want %q", path, b, content)
+	}
+}
+
+func readFlowJSONFile(t *testing.T, path string, v any) {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if err := json.Unmarshal(b, v); err != nil {
+		t.Fatalf("decode %s: %v\n%s", path, err, b)
+	}
 }

@@ -27,6 +27,7 @@ const (
 	acpClientCommandExec           acpClientCommandKind = "exec"
 	acpClientCommandCompare        acpClientCommandKind = "compare"
 	acpClientCommandFlowRun        acpClientCommandKind = "flow-run"
+	acpClientCommandFlowReplay     acpClientCommandKind = "flow-replay"
 	acpClientCommandSessionsList   acpClientCommandKind = "sessions-list"
 	acpClientCommandSessionsShow   acpClientCommandKind = "sessions-show"
 	acpClientCommandSessionsExport acpClientCommandKind = "sessions-export"
@@ -186,6 +187,8 @@ func handleACPClient(args []string) error {
 	case acpClientCommandFlowRun:
 		cmd.flow.RunRoot = filepath.Join(filepath.Dir(store.Path()), "flows")
 		return executeACPClientFlowRun(context.Background(), cmd.flow, os.Stdout)
+	case acpClientCommandFlowReplay:
+		return executeACPClientFlowReplay(cmd.flow, os.Stdout)
 	case acpClientCommandSessionsList:
 		return executeACPClientSessionsList(store, cmd.json, os.Stdout)
 	case acpClientCommandSessionsShow:
@@ -682,7 +685,7 @@ func parseACPClientCompare(args []string, output io.Writer) (acpClientCompareOpt
 
 func parseACPClientFlow(args []string, output io.Writer) (acpClientCommand, error) {
 	if len(args) == 0 {
-		return acpClientCommand{}, errors.New("usage: ratchet acp client flow run <flow.json> [flags]")
+		return acpClientCommand{}, errors.New("usage: ratchet acp client flow <run|replay>")
 	}
 	switch args[0] {
 	case "run":
@@ -694,9 +697,35 @@ func parseACPClientFlow(args []string, output io.Writer) (acpClientCommand, erro
 			return acpClientCommand{}, err
 		}
 		return acpClientCommand{kind: acpClientCommandFlowRun, flow: opts}, nil
+	case "replay":
+		opts, err := parseACPClientFlowReplay(args[1:], output)
+		if errors.Is(err, flag.ErrHelp) {
+			return acpClientCommand{kind: acpClientCommandHandled}, nil
+		}
+		if err != nil {
+			return acpClientCommand{}, err
+		}
+		return acpClientCommand{kind: acpClientCommandFlowReplay, flow: opts}, nil
 	default:
 		return acpClientCommand{}, fmt.Errorf("unknown acp client flow command: %s", args[0])
 	}
+}
+
+func parseACPClientFlowReplay(args []string, output io.Writer) (acpClientFlowOptions, error) {
+	if len(args) == 0 || strings.TrimSpace(args[0]) == "" {
+		return acpClientFlowOptions{}, errors.New("usage: ratchet acp client flow replay <run-dir> [--json]")
+	}
+	opts := acpClientFlowOptions{Path: args[0]}
+	fs := flag.NewFlagSet("ratchet acp client flow replay", flag.ContinueOnError)
+	fs.SetOutput(output)
+	fs.BoolVar(&opts.JSON, "json", false, "emit JSON")
+	if err := fs.Parse(args[1:]); err != nil {
+		return acpClientFlowOptions{}, err
+	}
+	if len(fs.Args()) > 0 {
+		return acpClientFlowOptions{}, errors.New("usage: ratchet acp client flow replay <run-dir> [--json]")
+	}
+	return opts, nil
 }
 
 func parseACPClientFlowRun(args []string, output io.Writer) (acpClientFlowOptions, error) {
@@ -1446,6 +1475,21 @@ func executeACPClientFlowRun(ctx context.Context, opts acpClientFlowOptions, w i
 	if result.RunDir != "" {
 		fmt.Fprintf(w, "run dir: %s\n", result.RunDir)
 	}
+	return nil
+}
+
+func executeACPClientFlowReplay(opts acpClientFlowOptions, w io.Writer) error {
+	summary, err := acpclient.LoadFlowReplaySummary(opts.Path)
+	if err != nil {
+		return err
+	}
+	if opts.JSON {
+		return json.NewEncoder(w).Encode(summary)
+	}
+	fmt.Fprintf(w, "flow %s %s\n", summary.RunID, summary.Status)
+	fmt.Fprintf(w, "steps: %d\n", summary.StepCount)
+	fmt.Fprintf(w, "trace events: %d\n", summary.TraceCount)
+	fmt.Fprintf(w, "sessions: %d\n", summary.SessionCount)
 	return nil
 }
 

@@ -81,6 +81,7 @@ func RunFlow(ctx context.Context, def FlowDefinition, input map[string]any, opts
 		Outputs: map[string]json.RawMessage{},
 	}
 	var store *FlowRunStore
+	var replay *flowReplayRecorder
 	if opts.RunRoot != "" {
 		var err error
 		store, err = NewFlowRunStore(opts.RunRoot, runID)
@@ -94,6 +95,7 @@ func RunFlow(ctx context.Context, def FlowDefinition, input map[string]any, opts
 		if err := store.WriteInput(input); err != nil {
 			return result, err
 		}
+		replay = newFlowReplayRecorder(store, runID)
 	}
 
 	nodes := flowNodeMap(def.Nodes)
@@ -108,14 +110,27 @@ func RunFlow(ctx context.Context, def FlowDefinition, input map[string]any, opts
 
 	for _, nodeID := range flowExecutionOrder(def) {
 		node := nodes[nodeID]
-		output, err := runFlowNode(ctx, node, input, outputValues, runners, &closers, opts)
+		output, err := runFlowNode(ctx, node, input, outputValues, runners, &closers, opts, replay)
 		step := FlowStepRecord{NodeID: node.ID, Type: node.Type, Output: output}
 		if err != nil {
 			step.Status = FlowStepStatusFailed
 			step.Error = err.Error()
 			result.Status = FlowRunStatusFailed
 			result.Steps = append(result.Steps, step)
-			_ = persistFlowState(store, result)
+			if store != nil {
+				if writeErr := store.WriteStep(node.ID, output); writeErr != nil {
+					return result, writeErr
+				}
+				if recErr := replay.RecordStep(node, step); recErr != nil {
+					return result, recErr
+				}
+			}
+			if stateErr := persistFlowState(store, result); stateErr != nil {
+				return result, stateErr
+			}
+			if finalizeErr := replay.Finalize(result); finalizeErr != nil {
+				return result, finalizeErr
+			}
 			return result, err
 		}
 		step.Status = FlowStepStatusCompleted
@@ -129,6 +144,9 @@ func RunFlow(ctx context.Context, def FlowDefinition, input map[string]any, opts
 			if err := store.WriteStep(node.ID, output); err != nil {
 				return result, err
 			}
+			if err := replay.RecordStep(node, step); err != nil {
+				return result, err
+			}
 			if err := persistFlowState(store, result); err != nil {
 				return result, err
 			}
@@ -138,23 +156,26 @@ func RunFlow(ctx context.Context, def FlowDefinition, input map[string]any, opts
 	if err := persistFlowState(store, result); err != nil {
 		return result, err
 	}
+	if err := replay.Finalize(result); err != nil {
+		return result, err
+	}
 	return result, nil
 }
 
-func runFlowNode(ctx context.Context, node FlowNode, input map[string]any, outputs map[string]any, runners map[string]FlowPromptRunner, closers *[]func() error, opts FlowRunOptions) (json.RawMessage, error) {
+func runFlowNode(ctx context.Context, node FlowNode, input map[string]any, outputs map[string]any, runners map[string]FlowPromptRunner, closers *[]func() error, opts FlowRunOptions, replay *flowReplayRecorder) (json.RawMessage, error) {
 	switch node.Type {
 	case FlowNodeTypeCompute:
 		return runComputeFlowNode(node, outputs)
 	case FlowNodeTypeAction:
 		return runActionFlowNode(ctx, node, opts)
 	case FlowNodeTypeACP:
-		return runACPFlowNode(ctx, node, input, outputs, runners, closers, opts)
+		return runACPFlowNode(ctx, node, input, outputs, runners, closers, opts, replay)
 	default:
 		return nil, fmt.Errorf("%w: unknown node type %s", ErrInvalidFlowDefinition, node.Type)
 	}
 }
 
-func runACPFlowNode(ctx context.Context, node FlowNode, input map[string]any, outputs map[string]any, runners map[string]FlowPromptRunner, closers *[]func() error, opts FlowRunOptions) (json.RawMessage, error) {
+func runACPFlowNode(ctx context.Context, node FlowNode, input map[string]any, outputs map[string]any, runners map[string]FlowPromptRunner, closers *[]func() error, opts FlowRunOptions, replay *flowReplayRecorder) (json.RawMessage, error) {
 	prompt, err := renderFlowPrompt(node, input, outputs)
 	if err != nil {
 		return nil, err
@@ -186,6 +207,11 @@ func runACPFlowNode(ctx context.Context, node FlowNode, input map[string]any, ou
 	result, err := runner.Prompt(ctx, prompt)
 	if err != nil {
 		return nil, err
+	}
+	if events, ok := runner.(interface{ LastEvents() []EventLogLine }); ok {
+		if err := replay.RecordACPPrompt(handle, string(result.SessionID), prompt, events.LastEvents()); err != nil {
+			return nil, err
+		}
 	}
 	return marshalFlowOutput(map[string]any{
 		"text":        result.Text,
