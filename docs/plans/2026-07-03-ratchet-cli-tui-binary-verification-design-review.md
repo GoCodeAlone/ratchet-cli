@@ -1443,3 +1443,47 @@ None.
 3. Formula automation instead of retirement: add GoReleaser formula support and guard Cask plus Formula outputs.
 
 **Verdict reasoning:** FAIL. The design needed concrete temp-env daemon cleanup, a complete releaseguard mode contract, non-false-failing tap preflight, and active Formula preservation through automation.
+
+## Cycle 34
+
+### Adversarial Review Report
+
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `D130` [Existence/runtime-validity / Declared integration proof] [design:583,704-726,892]: The design requires preserving `Formula/ratchet-cli.rb` by adding GoReleaser formula automation, but the strict releaseguard taxonomy still treats `brews` as a future section and only asserts `homebrew_casks[].ids` / `homebrew_casks[].binaries`. Once formula automation is added, the guard can either fail on the new top-level `brews` key or miss formula ids/binaries entirely. Local GoReleaser v2.16.0 schema includes `brews`, and the current snapshot only generated `dist/homebrew/Casks/ratchet-cli.rb` with today’s config. Recommendation: make `brews` a current artifact/publish key in this design, specify exact formula automation fields, and require releaseguard id/binary/scalar scans plus snapshot/generated-formula checks for both `homebrew_casks` and `brews`.
+- `D131` [CI/runtime-validity / Missing failure modes] [design:519-525,534,649-651; `.github/workflows/ci.yml`:60-61]: `internal/releaseguard` is to be implemented as Go tests, but the design does not define what those tests do during ordinary `go test ./...` / `go test -race ./...` when `RATCHET_RELEASE_GUARD_MODE` and artifact env vars are absent. If missing env fails unconditionally, existing CI breaks; if tests silently skip/pass, ordinary test output can be misread as release-artifact coverage. Recommendation: define default package-test behavior explicitly: helper/unit tests run normally, artifact-reading tests only activate under an explicit mode, and missing env fails only after a mode-specific artifact test is selected.
+
+**Findings (Minor):**
+- `D132` [User-intent drift / Artifact consistency] [design:923]: Assumption `A3` still says "Unix PTY proof plus Windows compile proof" is sufficient, but the current design now requires Windows packaged non-PTY smoke for `version`, `help`, and `daemon status`. Recommendation: update `A3` to match the current contract: Unix PTY plus Windows cross-build and packaged safe-command smoke; Windows interactive ConPTY remains deferred.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Clean | No repo-local guidance conflicts found. |
+| Assumptions under attack | Finding | Formula automation and releaseguard test execution semantics remain load-bearing assumptions. |
+| Repo-precedent conflicts | Finding | Existing CI runs broad Go tests; new releaseguard Go tests need explicit no-env behavior. |
+| Artifact-class precedent | Finding | GoReleaser formula automation is a `brews` artifact class, but the design's strict taxonomy still omits it. |
+| YAGNI violations | Clean | The added guards target concrete release, tap, docs, and smoke-leak risks. |
+| Missing failure modes | Finding | Missing-env releaseguard test behavior and formula automation guard coverage are not specified. |
+| Security/privacy at architecture level | Clean | Build-tag isolation, temp state/workdir, socket containment, redaction, and hook/instruction controls are explicit. |
+| Infrastructure impact | Finding | Release/tap CI behavior can fail or under-verify once formula automation is added. |
+| Multi-component validation | Finding | Homebrew Formula is declared preserved, but its GoReleaser output is not included in the artifact proof contract. |
+| Declared integration proof | Finding | `brews` is not classified as a current declared integration despite being required by the design. |
+| Contributed UI rendering proof | Clean | No plugin-contributed host UI is involved. |
+| Rollback story | Clean | Rollback text is adequate once detection is reliable. |
+| Simpler alternative not considered | Finding | Use GoReleaser schema-derived taxonomy including `brews`, and split releaseguard package unit tests from explicit artifact-mode tests. |
+| User-intent drift | Finding | A stale Windows assumption understates the now-required packaged Windows safe-command proof. |
+| Existence/runtime-validity | Finding | Current `.goreleaser.yaml`/schema and CI shape expose D130-D131 as executable gaps. |
+
+**Options the author may not have considered:**
+1. Schema-backed releaseguard taxonomy: derive top-level artifact sections from GoReleaser's schema and explicitly classify `brews` now, since formula automation is no longer hypothetical.
+2. Mode-gated releaseguard tests: keep normal `go test ./...` limited to helper invariants, and require `RATCHET_RELEASE_GUARD_MODE` plus env vars only for explicit artifact guard invocations.
+3. If formula automation is not ready, narrow the design: keep Formula preservation out of fail-closed release enforcement and record it as accepted risk/deferred work.
+
+**Verdict reasoning:** FAIL. Formula automation is now required while the releaseguard taxonomy still omits `brews`, and releaseguard's Go-test execution model is ambiguous under ordinary CI.

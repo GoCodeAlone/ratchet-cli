@@ -144,8 +144,9 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
     no archive member, checksum entry, Homebrew artifact, or release asset named
     `ratchet-tui-smoke`;
   - the GoReleaser fallback parser rejects unrecognized publishable top-level
-    sections and fails unless all recognized publishable ids/binaries resolve to
-    `ratchet`;
+    sections and fails unless all recognized publishable ids/binaries/install
+    surfaces resolve to `ratchet`, including both `homebrew_casks` and current
+    `brews` formula automation;
   - captured PTY frames/logs do not contain the developer workspace path or
     real home path.
 
@@ -531,7 +532,16 @@ Mechanical fail-closed check:
     | `tap-preflight` | `RATCHET_RELEASE_GUARD_TAP` | Before publish, verify unmanaged stale root tap files are absent, active Formula/Cask surfaces contain no smoke tokens, and GoReleaser config contains automation for every active Formula/Cask surface; do not require current release version/checksum in the live tap. |
     | `tap-postcheck` | `RATCHET_RELEASE_GUARD_TAP`, `RATCHET_RELEASE_GUARD_TAP_NAMES`, `RATCHET_RELEASE_GUARD_TAP_COMMITS`, `RATCHET_RELEASE_GUARD_VERSION` | After publish, verify exact path-changing commits for active Formula/Cask surfaces contain the current release version/checksum context and no smoke tokens. |
 
-    Unknown modes or missing required env fail before any artifact scan;
+    For explicit artifact-mode invocations, unknown modes or missing required
+    env fail before any artifact scan;
+  - ordinary package tests are explicitly mode-gated: `go test ./...` and
+    `go test -race ./...` run parser/unit fixture tests in
+    `internal/releaseguard`, while artifact-reading tests skip with the exact
+    message `releaseguard artifact mode not requested` when
+    `RATCHET_RELEASE_GUARD_MODE` is empty; if a caller selects an artifact test
+    or sets a mode, missing/unknown mode-specific env fails. The skip message is
+    not release evidence, and docs/CI evidence must cite the wrapper or explicit
+    mode invocation output;
   - the Go helper uses existing Go module dependencies, including
     `gopkg.in/yaml.v3`, to parse `.goreleaser.yaml` and inspect generated
     artifact directories; do not implement YAML parsing in shell or add an
@@ -581,9 +591,12 @@ Mechanical fail-closed check:
       root/Formula/Casks install files, and remove only unmanaged stale root tap
       files such as root `ratchet-cli.rb`;
     - preserve `Formula/ratchet-cli.rb` as an active install surface by adding
-      GoReleaser formula automation (`brews`/formula equivalent for v2) in
-      `.goreleaser.yaml`, with releaseguard coverage for generated formula ids,
-      binaries, version/checksum, and forbidden smoke tokens;
+      GoReleaser v2 `brews` automation in `.goreleaser.yaml`, targeting the same
+      `GoCodeAlone/homebrew-tap` repository/branch as `homebrew_casks`, with
+      formula `name: ratchet-cli`, `ids: [ratchet]`, and `install` content that
+      installs only the release `ratchet` binary. Releaseguard covers generated
+      formula ids/name/install content, version/checksum, and forbidden smoke
+      tokens;
     - record the tap cleanup commit/PR SHA and the ratchet-cli formula-automation
       commit/PR SHA in the implementation plan before merging fail-closed
       release workflow enforcement;
@@ -612,8 +625,8 @@ Mechanical fail-closed check:
     `.goreleaser.yaml` `homebrew_casks[].repository` (currently
     `GoCodeAlone/homebrew-tap`, branch `main`) with `HOMEBREW_TAP_TOKEN`;
   - parse `.goreleaser.yaml` to derive expected tap names from every
-    Homebrew-related release surface (`homebrew_casks` and the new formula
-    automation);
+    Homebrew-related release surface (`homebrew_casks` and current `brews`
+    formula automation);
   - discover all relevant tap install files in the checkout instead of assuming
     a cask-only layout: candidates include root `ratchet*.rb`,
     `Casks/ratchet*.rb`, `Formula/ratchet*.rb`, and any path changed by the
@@ -701,27 +714,30 @@ Mechanical fail-closed check:
     per OS is not enough;
   - `checksums.txt` must be present and must not contain unexpected smoke
     artifact names;
-  - if `.goreleaser.yaml` has `homebrew_casks`, snapshot output must either
-    contain generated cask/tap material or the guard must parse `.goreleaser.yaml`
-    as deterministic fallback proof;
+  - if `.goreleaser.yaml` has `homebrew_casks` or `brews`, snapshot output must
+    either contain generated cask/formula/tap material or the guard must parse
+    `.goreleaser.yaml` as deterministic fallback proof;
   - fallback proof parses `.goreleaser.yaml` and fails unless every build
     `id`, archive `ids` entry, `homebrew_casks[].ids` entry,
-    `homebrew_casks[].binaries` entry, and release-publish build surface is
-    exactly `ratchet`.
+    `homebrew_casks[].binaries` entry, `brews[].ids` entry,
+    `brews[].name` formula name, `brews[].install` binary install surface, and
+    release-publish build surface is exactly the expected release surface
+    (`ratchet` for binary/build ids and `ratchet-cli` only for formula/cask file
+    names).
 - In fallback mode, recursively scan every scalar string under artifact/publish
-  sections (`builds`, `archives`, `checksum`, `homebrew_casks`, `release`, and
-  any future artifact/publish taxonomy entry) for forbidden smoke tokens before
-  applying the id/binary assertions. This catches nested hooks/templates/custom
-  blocks/signing/publisher fields that reference smoke artifacts without
-  changing ids.
+  sections (`builds`, `archives`, `checksum`, `homebrew_casks`, `brews`,
+  `release`, and any future artifact/publish taxonomy entry) for forbidden smoke
+  tokens before applying the id/binary assertions. This catches nested
+  hooks/templates/custom blocks/signing/publisher fields that reference smoke
+  artifacts without changing ids.
 - The fallback parser is intentionally strict:
   - it parses `.goreleaser.yaml` top-level keys into an explicit taxonomy;
   - current nonpublishable metadata keys are `version` and `changelog`;
   - current artifact/publish keys are `builds`, `archives`, `checksum`,
-    `homebrew_casks`, and `release`;
+    `homebrew_casks`, `brews`, and `release`;
   - any unknown top-level key fails until classified;
   - any future artifact-producing or publishing section, including examples
-    like `publishers`, `nfpms`, `sboms`, `dockers`, `brews`, `scoops`, `nix`,
+    like `publishers`, `nfpms`, `sboms`, `dockers`, `scoops`, `nix`,
     `aurs`, `winget`, or `signs`, must be added to the taxonomy with explicit
     id/binary/artifact assertions before the guard can pass.
 - Assert the manifest contains `ratchet` and never contains
@@ -920,7 +936,7 @@ preflight PR.
 |---|---|---|---|
 | A1 | A dedicated build-tagged smoke binary is acceptable evidence for credential-free TUI proof. | It is not byte-for-byte the release binary. | Keep release-shaped startup smoke separate and document the boundary precisely. |
 | A2 | Built-in mock provider response is stable enough for PTY assertions. | Mock wording may change. | Assert broad substrings plus stream completion markers, not exact full transcript. |
-| A3 | Unix PTY proof plus Windows compile proof is sufficient cross-platform honesty. | User may require Windows interactive proof. | Add a separate Windows ConPTY design if a Windows runner is available. |
+| A3 | Unix PTY proof plus Windows cross-build and packaged safe-command smoke is sufficient cross-platform honesty. | User may require Windows interactive proof. | Add a separate Windows ConPTY design if a Windows runner is available. |
 | A4 | Extracting daemon mock service construction is lower risk than seeding production DB state. | Helper extraction may touch daemon internals. | Keep helper private/internal and covered by existing daemon tests. |
 
 ## Self-Challenge
@@ -1083,4 +1099,7 @@ preflight PR.
 | D126 | Startup cleanup now sets parent `HOME`/`USERPROFILE`/`XDG_STATE_HOME` to the temp daemon env before normal `client.Connect`, so untagged cleanup targets the temp socket. |
 | D127 | Replaced releaseguard mode prose with a typed mode table for `manifest`, `draft-assets`, `tap-preflight`, and `tap-postcheck`, including required env and fail-closed behavior. |
 | D128 | Split tap checks into prepublish shape/smoke/automation checks and postpublish current version/checksum checks; preflight no longer requires live tap current-version content. |
-| D129 | Preserved the active Homebrew Formula by requiring GoReleaser formula automation and releaseguard coverage, retiring only unmanaged stale root tap files. |
+| D129 | Preserved the active Homebrew Formula by requiring GoReleaser formula automation and releaseguard coverage, removing only unmanaged stale root tap files. |
+| D130 | Made GoReleaser v2 `brews` a current guarded artifact/publish surface with explicit Formula fields and releaseguard checks for generated/fallback formula material. |
+| D131 | Defined releaseguard ordinary-test behavior: broad `go test` runs unit fixtures, artifact tests skip with an explicit no-mode message, and mode-selected artifact tests fail on missing env. |
+| D132 | Updated the Windows assumption to include packaged non-PTY safe-command smoke, leaving only interactive ConPTY proof deferred. |
