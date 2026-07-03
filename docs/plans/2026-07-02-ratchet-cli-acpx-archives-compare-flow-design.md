@@ -95,7 +95,7 @@ Source: workspace `AGENTS.md`, repo `README.md`, `docs/harness-emulation.md`, `d
   - `trace.ndjson` append-only events for run/node/action/acp outcomes.
   - `projections/run.json`, `projections/live.json`, `projections/steps.json`.
   - `artifacts/sha256-*.json|txt` for prompt text, action stdout/stderr, node outputs.
-  - `sessions/<handle>/binding.json` and `sessions/<handle>/events.ndjson` for ACP node runs when event data is available.
+  - `sessions/<handle>/events.ndjson` for ACP node runs when event data is available, with handle/session metadata retained in the manifest.
 - Extend `FlowPromptRunner` with optional event access:
   - existing fake runners keep compiling through a small adapter/default method path;
   - real `SessionRunner` exposes `LastEvents()` after each prompt;
@@ -186,3 +186,16 @@ Revert feature PRs and release tag if needed. Old archives/flow bundles remain r
 | D1 | Added `EventLogProvider`, `Result.Events`, `SessionRunner.LastEvents()`, compare bundle event copy, and flow per-handle event bundle requirements. |
 | D2 | Raw export now fails when sidecar raw history is unavailable; no empty raw archive is emitted by default. |
 | D3 | Multi-component validation now requires an upstream-shaped `exported_by:"acpx"` archive fixture round-trip. |
+
+## Implementation Backport
+
+PR review tightened the shipped flow replay bundle behavior beyond the original
+design sketch:
+
+- Failed flow nodes always write `steps/<node>.json`; a nil node result is
+  persisted as JSON `null` so replay summaries do not lose failed-step shape.
+- Replay manifest validation resolves symlinks before checking bundle-relative
+  containment.
+- `flow replay --json` reports a run-relative `manifest_path` instead of a
+  machine-local absolute path.
+- Trace file close errors are surfaced during recorder close.

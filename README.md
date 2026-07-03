@@ -55,12 +55,18 @@ ratchet acp client sessions show ID
                             # Show persisted ACP client session metadata
 ratchet acp client sessions export ID --output session.archive.json
                             # Export a portable ratchet-cli archive v1 JSON file
+ratchet acp client sessions export ID --history raw --output session.acpx.json
+                            # Export raw ACPX-compatible JSON-RPC history when available
 ratchet acp client sessions import session.archive.json --session imported
                             # Import an archive as a new local ACP client session
-ratchet acp client compare --command ./agent --command ./other-agent "prompt"
-                            # Run one prompt serially across multiple ACP agents
+ratchet acp client sessions events ID --output events.ndjson
+                            # Inspect or copy raw ACPX event logs for a session
+ratchet acp client compare --save --command ./agent --command ./other-agent "prompt"
+                            # Run one prompt serially and persist a compare bundle
 ratchet acp client flow run flow.json --input-json '{"task":"x"}' --command ./agent
                             # Run a JSON v1 ACP/compute flow
+ratchet acp client flow replay RUN_DIR --json
+                            # Summarize a persisted flow replay bundle without execution
 ratchet acp client profiles list
                             # List local ACP launch profiles and plugin templates
 ratchet acp client profiles add local --command ./agent --trust
@@ -136,29 +142,35 @@ ACP client archives are explicit JSON exports and can contain prompt text,
 responses, summaries, and queue history. Treat exported archives as sensitive
 conversation data.
 
-The v0.24.0 release line adds reviewable hook trust controls and ACP launch
-profiles on top of ACP client archive import/export, serial compare, and JSON
-v1 flow commands, while continuing to publish Windows amd64/arm64 zip artifacts
+The v0.25.0 release line adds raw ACPX event-log import/export, `sessions
+events`, saved compare bundles, and flow replay bundles on top of reviewable
+hook trust controls, ACP launch profiles, and Windows amd64/arm64 zip artifacts
 alongside Linux and macOS archives.
 
-ACP client archive v1 JSON is a ratchet-cli portable format with ACPX-shaped
-metadata, not a raw ACPX JSON-RPC event log. JSON v1 flows support `acp` and
-`compute` nodes, template prompts, shared session handles, and persisted run
-bundles. JSON v1 flows also support action nodes for runtime-owned local
-commands; action nodes require `--allow shell`, and node working directories
-outside the flow base require `--allow outside-cwd`. Action stdout/stderr in
-run bundles is sensitive local command output. ACPX TypeScript flow runtime
-compatibility remains deferred.
+ACP client archive v1 JSON remains the backward-compatible summary format by
+default. Use `sessions export --history raw|summary|both` for raw
+ACPX-compatible JSON-RPC history, summary history, or both. Raw ACPX event logs,
+compare bundles, flow replay bundles, prompts, responses, and action outputs
+are sensitive local conversation artifacts. JSON v1 flows support `acp`,
+`compute`, and `action` nodes, template prompts, shared session handles, and
+persisted run bundles; `flow replay` reads those bundles without contacting
+agents or executing actions. Action nodes require `--allow shell`, and node
+working directories outside the flow base require `--allow outside-cwd`. Action
+stdout/stderr in run bundles is sensitive local command output. ACPX TypeScript
+flow runtime compatibility remains deferred.
 
 ## ACP Client Examples
 
 ```sh
 # Export and import an ACP client session archive.
 ratchet acp client sessions export work --output work.archive.json
+ratchet acp client sessions export work --history raw --output work.acpx.json
+ratchet acp client sessions events work --output work.events.ndjson
 ratchet acp client sessions import work.archive.json --session work-copy
 
-# Compare two external ACP agents with one prompt.
+# Compare two external ACP agents with one prompt and save a bundle.
 ratchet acp client compare \
+  --save \
   --command ./agent-a \
   --command ./agent-b \
   "Summarize the current project risks"
@@ -195,6 +207,7 @@ ratchet acp client flow run flow.json \
   --command ./agent \
   --allow shell \
   --json
+ratchet acp client flow replay .ratchet/acp-client/flows/RUN_ID --json
 
 # Explicitly drain queued prompts while this foreground command is running.
 ratchet acp client watch work \
@@ -211,7 +224,7 @@ ratchet acp client watch work \
 | One-shot | `ratchet -p "prompt"` | Uses the configured default provider. |
 | Daemon | `HOME="$(mktemp -d)" ratchet daemon status` | Runs credential-free when pointed at a temp home. |
 | ACP | `ratchet acp` | Exposes the agent over ACP stdio JSON-RPC; prompt smoke is covered by `TestACPStdioPromptSmoke`. |
-| ACP client | `ratchet acp client exec --command ./agent "prompt"` | Drives an external ACP agent over stdio; binary smoke covers exec, persisted sessions, FIFO `--no-wait` queue, queue inspection, explicit watch/drain, status, cancel, archive export/import, serial compare, JSON v1 flows, and trusted ACP launch profiles. |
+| ACP client | `ratchet acp client exec --command ./agent "prompt"` | Drives an external ACP agent over stdio; binary smoke covers exec, persisted sessions, FIFO `--no-wait` queue, queue inspection, explicit watch/drain, status, cancel, archive export/import with raw ACPX event logs, saved compare bundles, JSON v1 flow replay bundles, and trusted ACP launch profiles. |
 | MCP | `ratchet mcp blackboard` / `ratchet mcp daemon` | Exposes standalone blackboard or daemon-backed session/project/blackboard/team MCP tools over stdio, including active-team `team_message`. |
 | Team | `ratchet team start "task"` | Uses daemon team orchestration with configured providers. |
 
