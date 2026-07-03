@@ -142,12 +142,21 @@ func newTUISmokeService(ctx context.Context, tempRoot string) (*Service, error) 
 		trustDefaultMode: "conservative",
 		trustEngine:      policy.NewTrustEngine("conservative", nil, nil),
 	}
+	trustStore, err := policy.NewPermissionStore(engine.DB)
+	if err != nil {
+		engine.Close()
+		return nil, fmt.Errorf("init smoke trust store: %w", err)
+	}
+	svc.trustStore = trustStore
+	svc.trustEngine.SetPermissionStore(trustStore)
 	svc.fleet = NewFleetManager(engine.ModelRouting, engine, engine.Hooks)
 	svc.teams = NewTeamManager(engine, engine.Hooks)
-	svc.jobs.Register("session", NewSessionJobProvider(svc.sessions))
-	svc.jobs.Register("fleet_worker", NewFleetJobProvider(svc.fleet))
-	svc.jobs.Register("team_agent", NewTeamJobProvider(svc.teams))
-	svc.jobs.Register("smoke", smokeJobProvider{root: tempRoot})
+	if os.Getenv("RATCHET_TUI_SMOKE_EMPTY_JOBS") != "1" {
+		svc.jobs.Register("session", NewSessionJobProvider(svc.sessions))
+		svc.jobs.Register("fleet_worker", NewFleetJobProvider(svc.fleet))
+		svc.jobs.Register("team_agent", NewTeamJobProvider(svc.teams))
+		svc.jobs.Register("smoke", smokeJobProvider{root: tempRoot})
+	}
 	return svc, nil
 }
 
