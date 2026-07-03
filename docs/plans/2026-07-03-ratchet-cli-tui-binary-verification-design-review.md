@@ -260,3 +260,46 @@ None.
 2. Narrowed claim path: keep the PTY smoke small and explicitly document "selected representative slash commands and core shortcuts." This is cheaper, but the harness gap remains for policy-sensitive trust mutation commands.
 
 **Verdict reasoning:** Cycle 6 resolves the exact D20-D24 wording much better than Cycle 5: docs guards are bidirectional in intent, GoReleaser fallback now checks publishable ids/binaries, artifact manifests allow `RATCHET.md`, Windows negative checks cover amd64/arm64 list/build, and the Windows smoke boundary is no longer runtime-integrated. The revised design still has unresolved Important issues: it can overclaim slash-command proof, leaves docs-guard forbidden phrases too subjective, and uses an incomplete instruction-source list for privacy assertions. Status remains FAIL.
+
+## Cycle 7
+
+### Adversarial Review Report
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+None.
+
+**Findings (Important):**
+- `D29` [Multi-component validation / User-intent drift] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:156-173; docs/harness-emulation.md:173; README.md:90-91; internal/tui/commands/trust.go:21-35]: D25 is only partially resolved. The matrix now covers every documented `/trust` subcommand, but it still does not cover the full documented TUI trust slash surface because `/mode <mode>` is documented and implemented for five modes (`conservative`, `permissive`, `locked`, `sandbox`, `custom`) while the PTY matrix only drives `conservative` and `locked`. Recommendation: either drive every documented `/mode` value through the PTY smoke or narrow the docs claim to "representative `/mode` values plus full `/trust` matrix."
+- `D30` [Existence/runtime-validity / User-intent drift] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:255-270]: D26 is improved but still mechanically weak. The design names scanned docs and forbidden regexes, but the regexes are phrase-fragile: they catch `slash/shortcut proof` but not "slash commands and shortcuts are proven," catch `interactive chat proof` but not "interactive TUI chat," and most regexes do not encode the stated "unless the same row/sentence names `ratchet-tui-smoke`" exception. Recommendation: define normalized claim predicates rather than a few literal phrases, or add explicit regexes for common wording variants and a deterministic same-line/same-row `ratchet-tui-smoke` exception.
+- `D31` [Artifact-class precedent / Infrastructure impact] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:211-235; .goreleaser.yaml:36-68]: D28 is not actually strict enough. The fallback parser's recognized top-level list omits current nonpublishable `changelog`, so a naive whitelist would fail this repo today, but "unrecognized publishable section" is undefined, leaving implementers to guess which unknown sections publish artifacts. GoReleaser also supports additional artifact/publish surfaces such as `publishers`, `nfpms`, and `sboms` in official docs, so a hand-picked list can miss future release outputs while still claiming fail-closed behavior. Recommendation: parse with GoReleaser's JSON schema/config loader if available, or maintain an explicit allowlist of all top-level sections classified as `publishable`, `artifact-producing`, or `nonpublishable`, failing unknown top-level keys until classified.
+
+**Findings (Minor):**
+- `D32` [Security/privacy at architecture level / Missing failure modes] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:277-279; internal/agent/instructions.go:31-77; internal/hooks/hooks.go:105-132]: The security review says the temp workdir contains no "instruction or hook files from `internal/agent/instructions.go`," but hook discovery lives in `internal/hooks/hooks.go`, not `instructions.go`. Temp home/workdir reduces practical risk, but the design conflates two discovery surfaces and could leave hook-path leak assertions out of the shared redaction helper. Recommendation: derive instruction deny patterns from `internal/agent/instructions.go` and hook deny patterns from `internal/hooks/hooks.go`, or explicitly state hooks are out of this test's runtime output assertions.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | The design follows Windows honesty and real-boundary proof, but D29/D30 still allow broader "verified slash commands" claims than the actual matrix proves. |
+| Assumptions under attack | Finding | A1 remains load-bearing: a build-tagged smoke binary is acceptable only if docs and guards cannot overstate release-binary or full slash-surface proof. |
+| Repo-precedent conflicts | Finding | Hook discovery precedent is in `internal/hooks/hooks.go`, while the design incorrectly ties hook-file isolation to `internal/agent/instructions.go`. |
+| Artifact-class precedent | Finding | Release guard shape follows existing GoReleaser artifacts, but fallback parser strictness is under-specified against GoReleaser's broader artifact/publish section model. |
+| YAGNI violations | Clean | No ConPTY, external provider CI, visual snapshots, new runtime commands, or broader policy work is added. |
+| Missing failure modes | Finding | Missing `/mode` values and hook discovery redaction are not covered by current matrix/assertion language. |
+| Security/privacy at architecture level | Finding | Instruction discovery is now source-derived, but hook discovery is conflated with instructions and should be separated. |
+| Infrastructure impact | Finding | No cloud impact, but local release artifact confidence still depends on an ambiguous GoReleaser fallback parser. |
+| Multi-component validation | Finding | PTY proof crosses TUI/daemon/mock boundaries, but not every documented trust mode path it can still imply. |
+| Declared integration proof | Finding | GoReleaser snapshot artifacts are classified, but fallback parser semantics are not tied to all artifact-producing/publishing surfaces. |
+| Contributed UI rendering proof | Clean | No plugin-contributed host-shell UI is claimed; this is direct Bubble Tea TUI rendering. |
+| Rollback story | Clean | Source revert plus artifact/tap removal and patch release remains adequate if the release guard is made deterministic. |
+| Simpler alternative not considered | Finding | The design does not consider deriving the PTY trust matrix directly from docs/code command tables to prevent missing `/mode` values. |
+| User-intent drift | Finding | User asked for shortcuts/slash commands broadly; the design can still over-report partial mode coverage as full trust slash coverage. |
+| Existence/runtime-validity | Finding | Docs paths and instruction source exist, but docs regexes and GoReleaser fallback parsing are not behaviorally precise enough. |
+
+**Options the author may not have considered:**
+1. Source-derived trust matrix: generate the smoke command matrix from `internal/tui/commands/trust.go` valid modes plus documented `/trust` rows, then compare it to public docs. This adds a small maintenance helper but prevents future mode/subcommand drift.
+2. GoReleaser schema-backed guard: use GoReleaser's own config validation or published schema as the fallback parser source of truth, then layer ratchet-specific assertions on resolved artifact IDs/binaries. This avoids maintaining a partial top-level section taxonomy by hand.
+
+**Verdict reasoning:** Cycle 7 resolves the obvious Cycle 6 text gaps for D25-D28 better than prior revisions, but not all of them are mechanically closed. The trust matrix still misses documented `/mode` values, the forbidden docs regexes remain easy to evade with ordinary wording, and the GoReleaser fallback parser is not strict in a well-defined way against real artifact/publish surfaces. These are Important design issues because they can let the implementation pass while still overclaiming TUI/slash proof or missing release artifact contamination. Status remains FAIL.

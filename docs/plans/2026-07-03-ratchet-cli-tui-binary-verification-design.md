@@ -131,7 +131,7 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
   - normal chat prompt with deterministic mock response;
   - `/help` renders "Available commands:";
   - `/provider list` renders `e2e-mock`;
-  - documented trust slash-command matrix listed below;
+  - documented mode/trust slash-command matrix listed below;
   - `/tree` opens branch tree and `esc` returns to chat;
   - `ctrl+b` opens branch tree and `esc` returns;
   - `ctrl+s` and `ctrl+j` toggle panes without swallowing text input;
@@ -147,21 +147,25 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
   temp roots, socket path, executable path, generated artifact paths, trust
   output body, and deterministic prompt frames down to bounded excerpts.
 - Runtime PTY/TUI/daemon failure assertions reject output containing the repo
-  workspace path, real home path, or instruction surfaces derived from
-  `internal/agent/instructions.go`.
+  workspace path, real home path, instruction surfaces derived from
+  `internal/agent/instructions.go`, or hook config surfaces derived from
+  `internal/hooks/hooks.go`.
 - Release artifact manifests use an allowlist policy instead: `RATCHET.md` is
   expected because `.goreleaser.yaml` archives it, while `ratchet-tui-smoke`
   remains forbidden.
 
-### Trust Slash Command Matrix
+### Mode And Trust Slash Command Matrix
 
-The PTY smoke drives every publicly documented TUI trust slash command with
-temp-only patterns/scopes:
+The PTY smoke drives every publicly documented TUI mode/trust slash command
+with temp-only patterns/scopes:
 
 | command | expected PTY evidence |
 |---|---|
 | `/mode conservative` | Renders `Mode switched to conservative` or equivalent daemon mode output. |
+| `/mode permissive` | Renders `Mode switched to permissive`. |
 | `/mode locked` | Renders `Mode switched to locked`. |
+| `/mode sandbox` | Renders `Mode switched to sandbox`. |
+| `/mode custom` | Renders `Mode switched to custom`. |
 | `/trust list` | Renders `Mode:` and effective rules without real workspace/home paths. |
 | `/trust allow "bash:go test ./..." --scope smoke` | Renders added allow rule and smoke scope. |
 | `/trust deny "bash:rm -rf /" --scope smoke` | Renders added deny rule and smoke scope. |
@@ -171,8 +175,9 @@ temp-only patterns/scopes:
 | `/trust revoke "bash:go vet ./..." --scope smoke` | Renders revoked persistent grant. |
 | `/trust reset` | Renders reset to config defaults. |
 
-If public docs add a new TUI trust slash command, the docs guard fails until
-this matrix and PTY smoke include it or the public docs mark it out of scope.
+If public docs or `internal/tui/commands/trust.go` add a new TUI mode/trust
+slash command or mode value, the docs guard fails until this matrix and PTY
+smoke include it or the public docs mark it out of scope.
 
 ### Normal Launch Smoke
 
@@ -229,10 +234,15 @@ this matrix and PTY smoke include it or the public docs mark it out of scope.
     `homebrew_casks[].binaries` entry, and release-publish build surface is
     exactly `ratchet`.
 - The fallback parser is intentionally strict:
-  - recognized publishable top-level sections are `builds`, `archives`,
-    `checksum`, `homebrew_casks`, and `release`;
-  - any future publishable section must either be added to the parser with
-    explicit allowed ids/binaries or the guard fails.
+  - it parses `.goreleaser.yaml` top-level keys into an explicit taxonomy;
+  - current nonpublishable metadata keys are `version` and `changelog`;
+  - current artifact/publish keys are `builds`, `archives`, `checksum`,
+    `homebrew_casks`, and `release`;
+  - any unknown top-level key fails until classified;
+  - any future artifact-producing or publishing section, including examples
+    like `publishers`, `nfpms`, `sboms`, `dockers`, `brews`, `scoops`, `nix`,
+    `aurs`, `winget`, or `signs`, must be added to the taxonomy with explicit
+    id/binary/artifact assertions before the guard can pass.
 - Assert the manifest contains `ratchet` and never contains
   `ratchet-tui-smoke`.
 - Assert archive manifests may contain allowlisted `RATCHET.md` but no smoke
@@ -258,25 +268,30 @@ this matrix and PTY smoke include it or the public docs mark it out of scope.
     `docs/policy-matrix.md`;
   - positive assertions require the split `ratchet` startup/onboarding proof
     and `ratchet-tui-smoke` interactive proof;
-  - negative assertions reject public-doc phrases that imply release-shaped
-    `ratchet` has credential-free chat, full interactive TUI automation, or
-    slash/shortcut proof without naming `ratchet-tui-smoke`.
-- Forbidden line regexes for docs guard:
-  - `(?i)ratchet(?!-tui-smoke).*credential-free chat`
-  - `(?i)ratchet(?!-tui-smoke).*full TUI automated`
-  - `(?i)ratchet(?!-tui-smoke).*slash/shortcut proof`
-  - `(?i)ratchet(?!-tui-smoke).*interactive chat proof`
-  - any line containing `full TUI` and `ratchet` but not `ratchet-tui-smoke`
-    unless it explicitly says `not claimed`.
+  - negative assertions scan each Markdown line and each table row as the
+    deterministic claim unit;
+  - each claim unit is normalized by lowercasing, collapsing whitespace, and
+    treating punctuation separators (`/`, `-`, `:`, `;`, comma) as spaces;
+  - a claim unit fails if it contains a release-target token (`ratchet`,
+    `` `ratchet` ``, `release-shaped`, `release binary`, or `untagged`) and
+    any proof token (`credential free chat`, `interactive chat`,
+    `interactive tui chat`, `full tui`, `full interactive`, `slash command`,
+    `slash commands`, `shortcut`, `shortcuts`, `slash shortcut`,
+    `slash and shortcut`, `commands and shortcuts are proven`, or
+    `automated interactive`);
+  - same-line/same-row exceptions: the claim unit also contains
+    `ratchet-tui-smoke`, `not claimed`, or `does not claim`;
+  - the guard reports the normalized claim unit and original file/line through
+    the redaction helper.
 
 ## Security Review
 
 | risk | control |
 |---|---|
 | Smoke mode becomes a user-facing bypass. | Compile it only with `tui_smoke`; release binaries do not contain the path. |
-| Test leaks real home/provider/project state. | Set temp `HOME`/`XDG_STATE_HOME`/`cmd.Dir`/session `WorkingDir`; temp workdir contains no instruction or hook files from `internal/agent/instructions.go`; assert captured output excludes real workspace/home paths. |
+| Test leaks real home/provider/project state. | Set temp `HOME`/`XDG_STATE_HOME`/`cmd.Dir`/session `WorkingDir`; temp workdir contains no instruction files/dirs from `internal/agent/instructions.go` and no hook configs from `internal/hooks/hooks.go` (`~/.ratchet/hooks.yaml`, `.ratchet/hooks.yaml`); assert captured output excludes real workspace/home paths. |
 | PTY test hangs in CI. | Per-read deadline, process kill cleanup, bounded waits, and no external network/provider dependency. |
-| Sensitive prompts/log paths in logs. | Use harmless deterministic prompts and route every test failure payload through one redaction helper that removes real home/workspace/temp/socket/executable/artifact paths plus trust/prompt bodies; runtime outputs reject instruction surfaces from `internal/agent/instructions.go`, release manifests allowlist expected `RATCHET.md`. |
+| Sensitive prompts/log paths in logs. | Use harmless deterministic prompts and route every test failure payload through one redaction helper that removes real home/workspace/temp/socket/executable/artifact paths plus trust/prompt bodies; runtime outputs reject instruction surfaces from `internal/agent/instructions.go` and hook config surfaces from `internal/hooks/hooks.go`, release manifests allowlist expected `RATCHET.md`. |
 | Release-shaped startup leaks daemon process. | Cleanup stops or kills the temp-home daemon and asserts pid/socket files are gone. |
 | Platform mismatch. | Unix PTY proof is explicitly Unix-only; Windows claim is limited to build/noninteractive smoke. |
 
@@ -295,7 +310,7 @@ out.
 | Smoke built binary to TUI | `-tags tui_smoke` PTY test launches compiled `ratchet-tui-smoke` and reads rendered frames. |
 | TUI to daemon gRPC | Smoke service uses real daemon service/client RPCs for provider list, session tree, trust mode/rules, and chat send; docs do not claim auto-daemon socket proof from this row. |
 | TUI to mock provider | Chat prompt reaches built-in mock provider and streams a response. |
-| Slash commands | PTY submits slash commands through the input widget and asserts rendered system output/navigation, including the full documented TUI trust slash-command matrix. |
+| Slash commands | PTY submits slash commands through the input widget and asserts rendered system output/navigation, including the full documented TUI mode/trust slash-command matrix. |
 | Shortcuts | PTY sends control keys and asserts branch tree/pane transitions. |
 | Docs to tests | Docs guard fails if automated TUI smoke evidence is removed. |
 | Windows build | Cross-build commands prove release-shaped `ratchet` still compiles for Windows; `ratchet-tui-smoke` interactive PTY remains Unix-only. |
@@ -309,7 +324,7 @@ out.
 | TUI Bubble Tea event loop | runtime-integrated | PTY frames prove splash, chat prompt, transcript, navigation, and exit. |
 | Daemon gRPC service/client | runtime-integrated | Smoke service/client RPCs over a temp Unix socket execute provider list, trust commands, session tree, and chat send. |
 | Built-in mock provider | runtime-integrated | Chat prompt streams deterministic mock response. |
-| Slash commands and shortcuts | runtime-integrated | PTY sends input/control keys and asserts resulting UI states, including the full documented TUI trust slash-command matrix. |
+| Slash commands and shortcuts | runtime-integrated | PTY sends input/control keys and asserts resulting UI states, including the full documented TUI mode/trust slash-command matrix. |
 | Docs guard | config-only | `cmd/ratchet/harness_docs_test.go` checks public docs mention exact evidence boundaries. |
 | GoReleaser snapshot artifacts | runtime-integrated | `goreleaser check` plus snapshot/archive inspection and deterministic `.goreleaser.yaml` fallback prove `ratchet-tui-smoke` is absent from archives/checksums/Homebrew artifacts/release assets. |
 | Windows smoke package boundary | config-only | `GOOS=windows GOARCH=amd64/arm64 go list` and `go build -tags tui_smoke ./cmd/ratchet-tui-smoke` fail with the expected Unix-only no-buildable-files class. |
@@ -388,3 +403,7 @@ and cut a patch release.
 | D26 | Docs guard now names scanned public docs and concrete forbidden line regexes for release-shaped credential-free/full-interactive/slash-shortcut claims. |
 | D27 | Runtime leak assertions derive instruction surfaces from `internal/agent/instructions.go`, including global/project/model-specific files and instruction directories. |
 | D28 | GoReleaser fallback parser is strict and fails on unrecognized publishable sections until allowed ids/binaries are explicitly checked. |
+| D29 | Expanded the matrix from selected `/mode` values plus all `/trust` subcommands to every documented `/mode` value (`conservative`, `permissive`, `locked`, `sandbox`, `custom`) and tied drift checks to `internal/tui/commands/trust.go`. |
+| D30 | Replaced phrase-fragile forbidden docs regexes with normalized line/table-row claim predicates and deterministic same-unit exceptions for `ratchet-tui-smoke`, `not claimed`, and `does not claim`. |
+| D31 | Replaced ambiguous "publishable section" language with an explicit GoReleaser top-level taxonomy: current nonpublishable metadata, current artifact/publish keys, fail-unknown behavior, and examples of future artifact/publish sections that require explicit checks. |
+| D32 | Split instruction and hook leak handling: instruction deny patterns derive from `internal/agent/instructions.go`; hook config deny patterns derive from `internal/hooks/hooks.go`. |
