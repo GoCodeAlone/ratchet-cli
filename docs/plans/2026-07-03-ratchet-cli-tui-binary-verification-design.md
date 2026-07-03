@@ -78,6 +78,14 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
 - Add negative assertions:
   - `go build ./cmd/ratchet` succeeds without `tui_smoke` and exposes no
     smoke command/flag/help text;
+  - on Unix hosts, no-tag `go list ./cmd/ratchet-tui-smoke` and
+    `go build ./cmd/ratchet-tui-smoke` fail with no buildable Go files or an
+    equivalent build-constraint class;
+  - on Unix hosts, `go build -tags tui_smoke ./cmd/ratchet-tui-smoke` succeeds
+    to prove the smoke package is intentionally buildable only under the tag;
+  - source guard asserts every smoke-only Go file under
+    `cmd/ratchet-tui-smoke`, `internal/client/*tui_smoke*`, and smoke helper
+    files begins with exact `//go:build tui_smoke && !windows`;
   - both `GOOS=windows GOARCH=amd64 go list -tags tui_smoke ./cmd/ratchet-tui-smoke`
     and `GOOS=windows GOARCH=arm64 go list -tags tui_smoke ./cmd/ratchet-tui-smoke`
     fail with no buildable Go files or an equivalent expected Unix-only
@@ -144,7 +152,9 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
 - Add separate short PTY subprocess subtests for `ctrl+c` and `ctrl+d` so every
   terminal exit mechanism is proven independently; one process cannot prove
   more than one exit path after it terminates.
-- Assertions strip ANSI and bound line width for representative frames.
+- Assertions strip ANSI and bound display-cell width for representative frames
+  with `lipgloss.Width` or `runewidth`, matching the TUI rendering width model
+  rather than byte or rune count.
 - Frame assertions require header/status/input anchors to be simultaneously
   visible in normal chat and sidebar states; branch tree, team panel, and job
   panel states assert their panel-specific anchors plus status framing, then
@@ -549,8 +559,10 @@ Mechanical fail-closed check:
     starts making TUI binary-smoke evidence claims;
   - positive assertions require the split `ratchet` startup/onboarding proof
     and `ratchet-tui-smoke` interactive proof;
-  - negative assertions scan each Markdown line and each table row as the
-    deterministic claim unit;
+  - negative assertions scan each table row as one deterministic claim unit and
+    each Markdown paragraph as one deterministic claim unit by joining adjacent
+    nonblank non-table lines; this catches hard-wrapped prose where surface and
+    evidence tokens appear on different physical lines;
   - each claim unit is normalized by lowercasing, collapsing whitespace, and
     treating punctuation separators (`/`, `-`, `:`, `;`, comma) as spaces;
   - a claim unit fails only when it is an evidence claim: it contains an exact
@@ -580,6 +592,7 @@ Mechanical fail-closed check:
 | risk | control |
 |---|---|
 | Smoke mode becomes a user-facing bypass. | Compile it only with `tui_smoke`; release binaries do not contain the path. |
+| Smoke package accidentally becomes default-buildable. | Unix no-tag `go list`/`go build ./cmd/ratchet-tui-smoke` fail; tagged Unix build succeeds; source guard requires exact `//go:build tui_smoke && !windows` on smoke-only files. |
 | Test leaks real home/provider/project state. | Set temp `HOME`/`XDG_STATE_HOME`/`cmd.Dir`/session `WorkingDir`; temp workdir contains no instruction files/dirs from `internal/agent/instructions.go` and no hook configs from `internal/hooks/hooks.go` (`~/.ratchet/hooks.yaml`, `.ratchet/hooks.yaml`); assert captured output excludes real workspace/home paths. |
 | PTY test hangs or flakes in CI. | Per-read deadline, process kill cleanup, bounded waits, synchronized PTY output snapshots, and no external network/provider dependency. |
 | PTY exit path is only partly tested. | Use one long interaction PTY run ending with `/exit`, plus separate short PTY subprocess subtests for `ctrl+c` and `ctrl+d`. |
@@ -791,3 +804,6 @@ corrected preflight PR.
 | D81 | Split PTY exit proof into one long `/exit` interaction run plus separate short `ctrl+c` and `ctrl+d` subprocess subtests. |
 | D82 | Made docs overclaim guard context-aware: interactive-surface evidence claims fail even without a release-target token unless assigned to `ratchet-tui-smoke` or explicitly deferred for release-shaped `ratchet`. |
 | D83 | Added per-command help/autocomplete requirements so commands such as `/mcp` can be parser/autocomplete-covered while intentionally help-omitted. |
+| D84 | Added Unix no-tag `go list`/`go build` negative checks, tagged Unix positive build, and exact smoke-file build-tag source guard. |
+| D85 | Changed docs overclaim scanner to use paragraph claim units plus table rows, not physical lines only. |
+| D86 | Required display-cell width assertions with `lipgloss.Width` or `runewidth` for ANSI-stripped PTY frames. |

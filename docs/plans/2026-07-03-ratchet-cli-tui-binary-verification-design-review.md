@@ -869,3 +869,45 @@ None.
 3. Context-aware docs guard keyed by TUI/interactive evidence claims even without `ratchet` token.
 
 **Verdict reasoning:** D72-D79 appear resolved, but release-guard parser validity, exit-path separation, and docs-overclaim false negatives remain Important blockers.
+
+## Cycle 21
+
+### Adversarial Review Report
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `D84` [Existence/runtime-validity / Security/privacy at architecture level] [design:58-90; `.github/workflows/ci.yml`:29-30]: Design proves release artifacts omit smoke command and Windows cannot build it, but lacks no-tag Unix `go list`/`go build ./cmd/ratchet-tui-smoke` failure and source guard for exact `//go:build tui_smoke && !windows` on smoke files. Recommendation: add Linux/Darwin no-tag negative checks, source assertions for smoke build tags, and positive Unix `-tags tui_smoke` build.
+- `D85` [Missing failure modes / User-intent drift] [design:552-566; `README.md`:84-88; `docs/harness-emulation.md`:3-6]: Docs overclaim guard uses line/table-row claim units; hard-wrapped prose can split evidence and TUI tokens across lines and evade. Recommendation: join adjacent nonblank non-table lines into paragraph claim units, keep table rows as units, and apply same predicate.
+
+**Findings (Minor):**
+- `D86` [Multi-component validation / Artifact-class precedent] [design:147-152; `internal/tui/components/statusbar.go`:60-66]: Frame width assertion does not specify display-cell width. Recommendation: use `lipgloss.Width` or `runewidth` on ANSI-stripped lines.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | D85 weakens honest harness evidence wording. |
+| Assumptions under attack | Finding | Release-artifact absence alone does not prevent default-buildable smoke command; line-level docs scan misses wrapped claims. |
+| Repo-precedent conflicts | Finding | Docs are hard-wrapped; TUI layout uses Lip Gloss display width. |
+| Artifact-class precedent | Finding | Build-tag-only command package needs explicit no-tag boundary proof. |
+| YAGNI violations | Clean | Heavy gates tied to concrete release/doc drift findings. |
+| Missing failure modes | Finding | Wrapped overclaim prose and default-buildable smoke command remain plausible. |
+| Security/privacy at architecture level | Finding | Default-buildable smoke command exposes mock-backed smoke behavior as installable. |
+| Infrastructure impact | Clean | CI/release/Homebrew impacts declared. |
+| Multi-component validation | Finding | Frame proof needs terminal display-width semantics. |
+| Declared integration proof | Clean | D76-D78 and D80 materially resolved. |
+| Contributed UI rendering proof | Clean | No plugin UI. |
+| Rollback story | Clean | Source revert, draft retention, asset deletion/patch release, and tap rollback described. |
+| Simpler alternative not considered | Finding | Source/build-tag guard tests and paragraph-level docs scanning. |
+| User-intent drift | Finding | D85 can still let docs overstate automation. |
+| Existence/runtime-validity | Finding | D84 leaves no-tag runtime boundary unproven. |
+
+**Options the author may not have considered:**
+1. Smoke-source boundary test for exact build tags and no-tag Unix failure.
+2. Paragraph/table-row docs scanner.
+
+**Verdict reasoning:** D80-D83 are resolved in shape, but smoke package no-tag boundary and docs line-wrap false negatives remain Important blockers.
