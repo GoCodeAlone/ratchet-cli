@@ -23,12 +23,13 @@ type CompareOptions struct {
 }
 
 type CompareRow struct {
-	Agent      string `json:"agent"`
-	Status     string `json:"status"`
-	WallMS     int64  `json:"wall_ms"`
-	StopReason string `json:"stop_reason,omitempty"`
-	Final      string `json:"final,omitempty"`
-	Error      string `json:"error,omitempty"`
+	Agent      string         `json:"agent"`
+	Status     string         `json:"status"`
+	WallMS     int64          `json:"wall_ms"`
+	StopReason string         `json:"stop_reason,omitempty"`
+	Final      string         `json:"final,omitempty"`
+	Error      string         `json:"error,omitempty"`
+	Events     []EventLogLine `json:"-"`
 }
 
 type CompareRunner interface {
@@ -71,6 +72,7 @@ func Compare(ctx context.Context, agents []CompareAgent, prompt string, opts Com
 		row.Status = compareStatus(result.StopReason)
 		row.StopReason = string(result.StopReason)
 		row.Final = comparePreview(result.Text)
+		row.Events = cloneEvents(result.Events)
 		rows = append(rows, row)
 	}
 	return rows, nil

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -96,6 +97,9 @@ type acpClientCompareOptions struct {
 	JSON     bool
 	File     string
 	Prompt   string
+	Save     bool
+	RunID    string
+	RunRoot  string
 }
 
 type acpClientFlowOptions struct {
@@ -175,6 +179,9 @@ func handleACPClient(args []string) error {
 	case acpClientCommandExec:
 		return executeACPClientExecWithStore(context.Background(), cmd.exec, defaultACPClientExecRunner{}, store, os.Stdout)
 	case acpClientCommandCompare:
+		if cmd.compare.RunRoot == "" {
+			cmd.compare.RunRoot = filepath.Join(filepath.Dir(store.Path()), "compare")
+		}
 		return executeACPClientCompare(context.Background(), cmd.compare, nil, os.Stdout)
 	case acpClientCommandFlowRun:
 		cmd.flow.RunRoot = filepath.Join(filepath.Dir(store.Path()), "flows")
@@ -637,6 +644,12 @@ func parseACPClientCompare(args []string, output io.Writer) (acpClientCompareOpt
 		fmt.Fprintln(output, "    emit JSON")
 		fmt.Fprintln(output, "  --file string")
 		fmt.Fprintln(output, "    prompt file")
+		fmt.Fprintln(output, "  --save")
+		fmt.Fprintln(output, "    persist compare run bundle")
+		fmt.Fprintln(output, "  --run-id string")
+		fmt.Fprintln(output, "    saved compare run id")
+		fmt.Fprintln(output, "  --run-root string")
+		fmt.Fprintln(output, "    saved compare run root")
 	}
 	fs.Var((*repeatedStringFlag)(&opts.Agents), "agent", "agent template")
 	fs.Var((*repeatedStringFlag)(&opts.Commands), "command", "agent command")
@@ -645,6 +658,9 @@ func parseACPClientCompare(args []string, output io.Writer) (acpClientCompareOpt
 	fs.DurationVar(&opts.Timeout, "timeout", opts.Timeout, "per-agent timeout")
 	fs.BoolVar(&opts.JSON, "json", false, "emit JSON")
 	fs.StringVar(&opts.File, "file", "", "prompt file")
+	fs.BoolVar(&opts.Save, "save", false, "persist compare run bundle")
+	fs.StringVar(&opts.RunID, "run-id", "", "saved compare run id")
+	fs.StringVar(&opts.RunRoot, "run-root", "", "saved compare run root")
 	if err := fs.Parse(args); err != nil {
 		return acpClientCompareOptions{}, err
 	}
@@ -1296,6 +1312,7 @@ func executeACPClientSessionImport(store *acpclient.Store, opts acpClientArchive
 }
 
 func executeACPClientCompare(ctx context.Context, opts acpClientCompareOptions, runner acpclient.CompareRunner, w io.Writer) error {
+	started := time.Now().UTC()
 	prompt := opts.Prompt
 	if opts.File != "" {
 		b, err := os.ReadFile(opts.File)
@@ -1323,7 +1340,28 @@ func executeACPClientCompare(ctx context.Context, opts acpClientCompareOptions, 
 	if err != nil {
 		return err
 	}
+	var bundle acpclient.CompareRunBundle
+	if opts.Save {
+		root := opts.RunRoot
+		if root == "" {
+			root = filepath.Join(".", "compare")
+		}
+		bundle, err = acpclient.NewCompareRunStore(root).Save(acpclient.CompareRun{
+			RunID:        opts.RunID,
+			PromptDigest: comparePromptDigest(prompt),
+			StartedAt:    started,
+			FinishedAt:   time.Now().UTC(),
+			Status:       "completed",
+			Rows:         rows,
+		})
+		if err != nil {
+			return err
+		}
+	}
 	if opts.JSON {
+		if opts.Save {
+			return json.NewEncoder(w).Encode(bundle.CompareRun)
+		}
 		return json.NewEncoder(w).Encode(rows)
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
@@ -1331,7 +1369,18 @@ func executeACPClientCompare(ctx context.Context, opts acpClientCompareOptions, 
 	for _, row := range rows {
 		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\t%s\n", row.Agent, row.Status, row.WallMS, row.StopReason, row.Final, row.Error)
 	}
-	return tw.Flush()
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	if opts.Save {
+		fmt.Fprintf(w, "run dir: %s\n", bundle.RunDir)
+	}
+	return nil
+}
+
+func comparePromptDigest(prompt string) string {
+	sum := sha256.Sum256([]byte(prompt))
+	return fmt.Sprintf("sha256:%x", sum[:])
 }
 
 func resolveACPClientCompareAgents(opts acpClientCompareOptions) ([]acpclient.CompareAgent, error) {

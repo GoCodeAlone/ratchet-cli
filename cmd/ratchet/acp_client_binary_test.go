@@ -407,6 +407,46 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 		}
 	}
 
+	compareRunRoot := filepath.Join(t.TempDir(), "compare-runs")
+	compareSave := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "compare",
+		"--command", fixtureBin,
+		"--command", fixtureBin,
+		"--arg", "--echo-session",
+		"--cwd", cwd,
+		"--save",
+		"--run-id", "binary-compare",
+		"--run-root", compareRunRoot,
+		"--json",
+		"binary compare saved")
+	compareSave.Dir = repoRoot
+	compareSave.Env = env
+	compareSaveOut, err := compareSave.Output()
+	if err != nil {
+		t.Fatalf("compare save: %v\n%s", err, compareSaveOut)
+	}
+	var compareSavePayload struct {
+		RunID  string                 `json:"run_id"`
+		RunDir string                 `json:"run_dir"`
+		Status string                 `json:"status"`
+		Rows   []acpclient.CompareRow `json:"rows"`
+	}
+	if err := json.Unmarshal(compareSaveOut, &compareSavePayload); err != nil {
+		t.Fatalf("compare save json output: %v\n%s", err, compareSaveOut)
+	}
+	if compareSavePayload.RunID != "binary-compare" || compareSavePayload.Status != "completed" || len(compareSavePayload.Rows) != 2 {
+		t.Fatalf("compare save payload = %#v", compareSavePayload)
+	}
+	if _, err := os.Stat(filepath.Join(compareSavePayload.RunDir, "compare.json")); err != nil {
+		t.Fatalf("compare bundle missing compare.json: %v", err)
+	}
+	compareEvents, err := filepath.Glob(filepath.Join(compareSavePayload.RunDir, "agents", "*", "events.ndjson"))
+	if err != nil {
+		t.Fatalf("glob compare events: %v", err)
+	}
+	if len(compareEvents) != 2 {
+		t.Fatalf("compare event files = %#v, want 2", compareEvents)
+	}
+
 	flowPath := filepath.Join(t.TempDir(), "flow.json")
 	flowDef := map[string]any{
 		"format_version": 1,

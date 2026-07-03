@@ -2,6 +2,7 @@ package acpclient
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -70,6 +71,37 @@ func TestCompareCapturesErrorsAndContinuesLaterRows(t *testing.T) {
 	}
 	if rows[1].Status != "ok" || rows[1].Final != "later final" {
 		t.Fatalf("later row = %#v", rows[1])
+	}
+}
+
+func TestCompareCapturesResultEventsForSavedBundles(t *testing.T) {
+	events := []EventLogLine{{
+		Seq:       1,
+		At:        time.Date(2026, 7, 3, 9, 30, 0, 0, time.UTC),
+		Direction: EventDirectionOutbound,
+		Message:   json.RawMessage(`{"jsonrpc":"2.0","id":"prompt-1","method":"session/prompt","params":{"sessionId":"first"}}`),
+	}}
+	runner := &fakeCompareRunner{
+		results: map[string]Result{
+			"first": {StopReason: acpsdk.StopReasonEndTurn, Text: "first final", Events: events},
+		},
+	}
+
+	rows, err := Compare(t.Context(), []CompareAgent{
+		{Name: "first", Spec: AgentSpec{Name: "first", Command: "first"}},
+		{Name: "second", Spec: AgentSpec{Name: "second", Command: "second"}},
+	}, "shared prompt", CompareOptions{Runner: runner})
+	if err != nil {
+		t.Fatalf("Compare: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %#v, want 2 rows", rows)
+	}
+	if len(rows[0].Events) != 1 || rows[0].Events[0].Direction != EventDirectionOutbound {
+		t.Fatalf("first row events = %#v, want captured outbound event", rows[0].Events)
+	}
+	if len(rows[1].Events) != 0 {
+		t.Fatalf("second row events = %#v, want none", rows[1].Events)
 	}
 }
 
