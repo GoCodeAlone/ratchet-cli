@@ -28,7 +28,7 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
 |---|---|
 | Build for Windows. | Keep production code portable. PTY proof is Unix-only because it depends on pseudo-terminal behavior; add Windows compile proof and non-PTY CLI smoke so Windows remains covered honestly. |
 | Prefer existing helpers and avoid duplicated plumbing. | Reuse daemon/client/TUI packages and built-in mock provider; do not add a parallel TUI runner or provider SDK. |
-| Verify real boundaries, not demos. | Build the real `ratchet` binary for normal CLI/daemon smoke, and build a non-release `tui_smoke` binary for credential-free PTY proof of the same Bubble Tea TUI event loop. |
+| Verify real boundaries, not demos. | Build the release-shaped `ratchet` binary for normal CLI/daemon/startup smoke, and build a dedicated non-release `ratchet-tui-smoke` binary for credential-free PTY proof of the same Bubble Tea TUI event loop. |
 | Keep sensitive data local. | Use temp `HOME`/`XDG_STATE_HOME`; prompts are deterministic test strings; no credentials or real provider state. |
 | Do not expand deferred policy work. | No managed hooks, TypeScript extension SDK, daemon background drain, local-first gateway, or self-mutation in this slice. |
 
@@ -46,42 +46,67 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
 
 | option | summary | trade-off | decision |
 |---|---|---|---|
-| A. Build-tagged credential-free TUI smoke binary | Add a `tui_smoke` build-tag entrypoint compiled only by tests. It starts a real in-process daemon with the mock provider, then runs the normal TUI event loop against it. The smoke binary is driven by PTY. | Strong proof without credentials and no hidden behavior in release binaries. Docs must not overclaim untagged release-binary TUI proof. | Choose. |
+| A. Dedicated credential-free TUI smoke binary | Add `cmd/ratchet-tui-smoke` compiled only with `tui_smoke`. It starts a real in-process daemon with the mock provider, then runs the normal TUI event loop against it. The smoke binary is driven by PTY. | Strong proof without credentials and no hidden command/flag surface in `cmd/ratchet`. Docs must not overclaim release-binary chat proof. | Choose. |
 | B. Seed production daemon state then launch normal `ratchet` | Use temp home and direct DB/config writes so the normal auto-daemon finds a mock provider. | Fewer hidden hooks, but brittle because tests depend on on-disk daemon internals and background process lifecycle. | Reject. |
 | C. Keep in-process model tests only | Expand `internal/tui` unit tests for commands and shortcuts. | Portable and cheap, but does not satisfy binary execution proof. | Reject as insufficient. |
 
 ## Design
 
-### Build-Tagged Smoke Entrypoint
+### Build-Tagged Smoke Binary
 
-- Add files compiled only with `//go:build tui_smoke`; release builds and
-  normal tests do not include the smoke entrypoint.
-- PTY tests build `./cmd/ratchet` with `-tags tui_smoke`; the resulting test
-  binary starts the smoke path by an explicit smoke-only command or flag that
-  does not exist without the tag.
+- Add `cmd/ratchet-tui-smoke/main.go` compiled only with
+  `//go:build tui_smoke`; release workflows and normal `go build ./cmd/ratchet`
+  do not build this package.
+- PTY tests build `./cmd/ratchet-tui-smoke` with `-tags tui_smoke`; there is no
+  conditional command, flag, or environment gate added to `cmd/ratchet`.
 - Smoke path constructs a real daemon `Service` with temp local state and a
-  default mock provider, starts gRPC on `127.0.0.1:0` or a temp Unix socket,
-  builds a `client.Client` through an exported constructor seam against that
-  listener, creates a session, and calls `tui.Run`.
+  default mock provider, starts gRPC on a temp Unix socket, builds a
+  `client.Client` through a `tui_smoke`-only constructor against that socket,
+  creates a session whose `WorkingDir` is an empty temp directory, and calls
+  `tui.Run`.
 - Helper contract:
   - no `testing.T` in non-test code;
   - explicit `context.Context` and `cleanup func()`;
-  - listener bound to local-only address;
+  - listener bound to a temp Unix socket with `0600` permissions;
   - direct mock provider seeding is named smoke-only and never called from
     normal daemon startup;
-  - normal release binary has no env/flag path into this helper.
-- Add a negative compile/test assertion: building without `-tags tui_smoke`
-  does not include the smoke command/flag.
+  - `cmd.Dir`, session `WorkingDir`, `HOME`, and `XDG_STATE_HOME` are all
+    temp directories with no `.ratchet`, `AGENTS.md`, `CLAUDE.md`, `RATCHET.md`,
+    `.cursorrules`, or `.windsurfrules`;
+  - normal release binary has no path into this helper.
+- Add negative assertions:
+  - `go build ./cmd/ratchet` succeeds without `tui_smoke` and exposes no
+    smoke command/flag/help text;
+  - release-shaped GoReleaser target/package list does not include
+    `cmd/ratchet-tui-smoke`;
+  - captured PTY frames/logs do not contain the developer workspace path or
+    real home path.
+
+### Smoke Client Contract
+
+- Add `internal/client/client_tui_smoke.go` with `//go:build tui_smoke`.
+- API:
+  `func ConnectSmokeUnix(ctx context.Context, socketPath string) (*Client, error)`.
+- Contract:
+  - `socketPath` must be absolute and under the caller-provided temp root;
+  - dial target is `unix://` only; no TCP target is accepted;
+  - uses `grpc.WithTransportCredentials(insecure.NewCredentials())` because the
+    socket is process-local, temp-owned, and permissioned `0600`;
+  - returned `*Client` owns and closes the `grpc.ClientConn` via existing
+    `Client.Close`;
+  - file is absent from release builds, so no general arbitrary-target
+    constructor is added to production client API.
 
 ### PTY Binary Smoke
 
 - Add `internal/tui/tui_binary_smoke_unix_test.go` without the `integration`
   tag.
-- Test builds `./cmd/ratchet` with `-tags tui_smoke`, sets temp `HOME`,
-  `XDG_STATE_HOME`, and `TERM=xterm-256color`, then starts the smoke binary in
-  a PTY. This proves the TUI event loop, daemon RPCs, mock provider, slash
-  commands, and shortcuts; it does not claim the untagged release binary can run
-  credential-free chat without configured providers.
+- Test builds `./cmd/ratchet-tui-smoke` with `-tags tui_smoke`, sets temp
+  `HOME`, `XDG_STATE_HOME`, `TERM=xterm-256color`, and `cmd.Dir` to an empty
+  temp workdir, then starts the smoke binary in a PTY. This proves the TUI event
+  loop, daemon RPCs, mock provider, slash commands, and shortcuts; it does not
+  claim the untagged release binary can run credential-free chat without
+  configured providers.
 - Drive:
   - splash dismissal;
   - normal chat prompt with deterministic mock response;
@@ -96,6 +121,8 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
 - Test has timeouts and cleanup that kills the child process if it hangs.
 - Failure logs redact `/trust list` bodies and deterministic prompt frames down
   to bounded excerpts; no real grants, credentials, or home state are loaded.
+- Failure assertions reject output containing the repo workspace path, real home
+  path, or known instruction filenames from the source checkout.
 
 ### Normal Launch Smoke
 
@@ -110,8 +137,8 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
   - exit cleanly.
 - Docs distinguish:
   - release-shaped binary: startup/help/daemon/onboarding boundary;
-  - `tui_smoke` binary: credential-free interactive TUI chat/commands/shortcuts
-    against mock daemon.
+  - `ratchet-tui-smoke` binary: credential-free interactive TUI
+    chat/commands/shortcuts against mock daemon.
 
 ### Portable Compile And CLI Proof
 
@@ -126,18 +153,23 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
 ### Documentation
 
 - Update `docs/harness-emulation.md` TUI row from manual to automated Unix PTY
-  smoke plus Windows compile proof.
-- Update `README.md` harness table with the same wording.
+  coverage split into two rows/phrases:
+  - `ratchet`: release-shaped startup/onboarding boundary, no credential-free
+    chat claim;
+  - `ratchet-tui-smoke`: non-release Unix PTY proof for interactive
+    chat/slash/shortcut behavior.
+- Update `README.md` harness table with the same split wording.
 - Extend `cmd/ratchet/harness_docs_test.go` so docs must mention TUI binary
-  smoke, slash commands, shortcuts, temp home, mock provider, and Windows
-  compile proof.
+  smoke, slash commands, shortcuts, temp home/workdir, mock provider, Windows
+  compile proof, and the fact that release-shaped `ratchet` proof does not
+  claim credential-free chat.
 
 ## Security Review
 
 | risk | control |
 |---|---|
 | Smoke mode becomes a user-facing bypass. | Compile it only with `tui_smoke`; release binaries do not contain the path. |
-| Test leaks real home/provider state. | Set temp `HOME`/`XDG_STATE_HOME`; no live daemon socket or real provider config is used. |
+| Test leaks real home/provider/project state. | Set temp `HOME`/`XDG_STATE_HOME`/`cmd.Dir`/session `WorkingDir`; temp workdir contains no instruction or hook files; assert captured output excludes real workspace/home paths. |
 | PTY test hangs in CI. | Per-read deadline, process kill cleanup, bounded waits, and no external network/provider dependency. |
 | Sensitive prompts in logs. | Use harmless deterministic prompts; failure output is local test output only. |
 | Platform mismatch. | Unix PTY proof is explicitly Unix-only; Windows claim is limited to build/noninteractive smoke. |
@@ -153,23 +185,23 @@ out.
 
 | boundary | proof |
 |---|---|
-| Release-shaped built binary to startup | Untagged PTY or subprocess smoke launches compiled `ratchet` with temp home and reaches help/daemon/onboarding boundary. |
-| Smoke built binary to TUI | `-tags tui_smoke` PTY test launches compiled `ratchet` and reads rendered frames. |
+| Release-shaped built binary to startup | Untagged PTY or subprocess smoke launches compiled `ratchet` with temp home/workdir and reaches help/daemon/onboarding boundary. |
+| Smoke built binary to TUI | `-tags tui_smoke` PTY test launches compiled `ratchet-tui-smoke` and reads rendered frames. |
 | TUI to daemon gRPC | Smoke service uses real daemon service/client RPCs for provider list, session tree, trust mode/rules, and chat send; docs do not claim auto-daemon socket proof from this row. |
 | TUI to mock provider | Chat prompt reaches built-in mock provider and streams a response. |
 | Slash commands | PTY submits slash commands through the input widget and asserts rendered system output/navigation. |
 | Shortcuts | PTY sends control keys and asserts branch tree/pane transitions. |
 | Docs to tests | Docs guard fails if automated TUI smoke evidence is removed. |
-| Windows build | Cross-build commands prove the hidden harness changes compile for Windows. |
+| Windows build | Cross-build commands prove release-shaped `ratchet` still compiles for Windows; `ratchet-tui-smoke` interactive PTY remains Unix-only. |
 
 ## Integration Matrix
 
 | integration | classification | proof |
 |---|---|---|
 | Release-shaped `ratchet` binary | runtime-integrated | Existing and expanded smoke builds without tags and runs `version`, `help`, `daemon status`, plus startup/onboarding boundary. |
-| `tui_smoke` binary entrypoint | runtime-integrated | Unix PTY test builds with `-tags tui_smoke`, launches binary, and drives TUI. |
+| `ratchet-tui-smoke` binary | runtime-integrated | Unix PTY test builds `./cmd/ratchet-tui-smoke` with `-tags tui_smoke`, launches binary, and drives TUI. |
 | TUI Bubble Tea event loop | runtime-integrated | PTY frames prove splash, chat prompt, transcript, navigation, and exit. |
-| Daemon gRPC service/client | runtime-integrated | Smoke service/client RPCs execute provider list, trust commands, session tree, and chat send. |
+| Daemon gRPC service/client | runtime-integrated | Smoke service/client RPCs over a temp Unix socket execute provider list, trust commands, session tree, and chat send. |
 | Built-in mock provider | runtime-integrated | Chat prompt streams deterministic mock response. |
 | Slash commands and shortcuts | runtime-integrated | PTY sends input/control keys and asserts resulting UI states. |
 | Docs guard | config-only | `cmd/ratchet/harness_docs_test.go` checks public docs mention exact evidence boundaries. |
@@ -177,16 +209,17 @@ out.
 
 ## Rollback
 
-Revert the `tui_smoke` entrypoint, smoke helper, PTY test, and docs updates. No
-data migration exists. Release binaries are unaffected by the smoke path unless
-a future release accidentally includes the build tag; rollback is a normal
-source revert and patch release if needed.
+Revert `cmd/ratchet-tui-smoke`, the `tui_smoke` client constructor, smoke
+helper, PTY test, and docs updates. No data migration exists. Release binaries
+are unaffected because `cmd/ratchet` does not contain a smoke command/flag. If a
+future release accidentally includes `ratchet-tui-smoke`, remove it from the
+release config and cut a patch release.
 
 ## Assumptions
 
 | id | assumption | challenge | fallback |
 |---|---|---|---|
-| A1 | A build-tagged smoke binary is acceptable evidence for credential-free TUI proof. | It is not byte-for-byte the release binary. | Keep release-shaped startup smoke separate and document the boundary precisely. |
+| A1 | A dedicated build-tagged smoke binary is acceptable evidence for credential-free TUI proof. | It is not byte-for-byte the release binary. | Keep release-shaped startup smoke separate and document the boundary precisely. |
 | A2 | Built-in mock provider response is stable enough for PTY assertions. | Mock wording may change. | Assert broad substrings plus stream completion markers, not exact full transcript. |
 | A3 | Unix PTY proof plus Windows compile proof is sufficient cross-platform honesty. | User may require Windows interactive proof. | Add a separate Windows ConPTY design if a Windows runner is available. |
 | A4 | Extracting daemon mock service construction is lower risk than seeding production DB state. | Helper extraction may touch daemon internals. | Keep helper private/internal and covered by existing daemon tests. |
@@ -223,3 +256,7 @@ source revert and patch release if needed.
 | D3 | Added explicit smoke helper contract: no `testing.T`, explicit context/cleanup, local-only listener, smoke-only mock seeding, unreachable from normal startup. |
 | D4 | Added real-state isolation and redacted bounded failure-output requirements. |
 | D5 | Added declared integration matrix with `runtime-integrated`, `config-only`, and `deferred` classifications. |
+| D6 | Public docs must split release-shaped `ratchet` startup/onboarding proof from non-release `ratchet-tui-smoke` interactive proof, and docs guard must reject credential-free release chat wording. |
+| D7 | Smoke binary must run with temp `HOME`, `XDG_STATE_HOME`, `cmd.Dir`, and session `WorkingDir`; daemon listens on a temp Unix socket only; output must exclude real workspace/home paths. |
+| D8 | Added exact `tui_smoke`-only `client.ConnectSmokeUnix(ctx, socketPath)` contract; no general arbitrary-target constructor ships in release builds. |
+| D9 | Added release-shaped guard that no smoke command/flag/help text is present and release config does not include `cmd/ratchet-tui-smoke`. |
