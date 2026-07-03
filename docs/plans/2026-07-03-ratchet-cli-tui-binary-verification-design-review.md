@@ -1043,3 +1043,47 @@ None.
 2. Docs-claim allowlist: instead of scanning for forbidden phrasing, require every TUI evidence sentence/table row to match one of a few allowed claim templates for `ratchet` or `ratchet-tui-smoke`.
 
 **Verdict reasoning:** The design is much tighter than earlier cycles, but two unresolved Important gaps remain: policy-sensitive reset behavior is not state-proven, and the docs guard can still miss realistic overclaim wording.
+
+## Cycle 25
+
+### Adversarial Review Report
+
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `D98` [Missing failure modes / Security/privacy] [design:249-261; `internal/daemon/trust.go`:62-70]: D95 added reset checks for runtime rules and persistent grants, but still does not explicitly require proving `/trust reset` restores the daemon mode to the config default after the PTY sequence has changed mode through `permissive`, `locked`, `sandbox`, and `custom`. `ResetTrust` resets both mode and rules, and mode is policy-sensitive. Recommendation: after `/trust reset`, require `/trust list` to assert `Mode:` equals the expected config-default mode, not just that runtime allow/deny rules are gone and grants remain.
+- `D99` [Infrastructure impact / Rollback story] [design:494-500,660,672-675,727-728]: The design acknowledges Homebrew/tap safety is post-publish audit plus rollback, but never specifies the actual tap postcheck mechanics. The release workflow section defines draft GitHub asset postcheck in detail, while tap/cask checking remains "after-the-fact tap/cask reference check." That can degrade into a non-executable rollback story after GoReleaser has already pushed the tap. Recommendation: specify the release workflow step: fetch/clone `GoCodeAlone/homebrew-tap` after publish, identify the generated cask file and commit/branch, scan it for forbidden smoke names, fail the workflow on contamination, and print the exact rollback instruction or revert target.
+
+**Findings (Minor):**
+- `D100` [User-intent drift / Existence-runtime-validity] [design:610-617]: D96 expanded the docs overclaim evidence vocabulary, but common evidence words like `validated`, `validation`, `guarded`, and `e2e` still evade the predicate. A sentence such as "full TUI slash-command validation is in the binary harness" can still overclaim. Recommendation: invert to an allowlist for TUI evidence claim templates, or add these remaining evidence terms.
+- `D101` [Declared integration proof] [design:707-708]: The integration matrix classifies "Slash help/autocomplete/CLI help" as `runtime-integrated`, but the proof is mixed: built `ratchet help` is runtime, while autocomplete and most command-surface alignment are focused model/AST tests, not host runtime proof. Recommendation: split the row into runtime CLI help and config/focused command-surface guard, or mark the row as mixed with exact subproof classifications.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Clean | No repo-local `AGENTS.md`, `CLAUDE.md`, or `docs/design-guidance.md` exists; reviewed `README.md`, `RATCHET.md`, and referenced docs. |
+| Assumptions under attack | Finding | Trust reset proof assumes rules/grants are the full reset contract, but daemon mode is also reset state. |
+| Repo-precedent conflicts | Clean | Smoke tests, PTY integration tests, `printUsage`, command help/autocomplete, job panel shortcuts, and release workflows were spot-checked against the design. |
+| Artifact-class precedent | Clean | The proposed artifact classes match existing locations: `cmd/ratchet` binary smoke, `internal/tui` PTY tests, docs guard tests, and GoReleaser config. |
+| YAGNI violations | Finding | The docs overclaim guard remains token-list heavy; a claim-template allowlist may be simpler and less porous. |
+| Missing failure modes | Finding | Reset mode-state proof and executable Homebrew/tap postcheck mechanics are missing. |
+| Security/privacy at architecture level | Finding | Trust mode/rules/grants are sensitive local policy state; reset evidence should prove all affected state. |
+| Infrastructure impact | Finding | Release asset gating is detailed, but Homebrew/tap post-publish audit is under-specified. |
+| Multi-component validation | Finding | Trust reset still needs proof across TUI command, daemon mode/rule state, and persistent grant store. |
+| Declared integration proof | Finding | The slash help/autocomplete/CLI help integration row mixes runtime and focused/static proof under one classification. |
+| Contributed UI rendering proof | Clean | No plugin-contributed host UI is involved; this design covers the primary Bubble Tea TUI. |
+| Rollback story | Finding | Homebrew/tap rollback is named, but the detection step that would trigger it is not concrete. |
+| Simpler alternative not considered | Finding | Docs evidence allowlisting would be simpler than continuing to patch a growing forbidden-token predicate. |
+| User-intent drift | Finding | Overclaim wording can still imply broader TUI/slash validation than the selected PTY matrix proves. |
+| Existence/runtime-validity | Finding | Tap/cask postcheck and docs-overclaim detection remain insufficiently mechanical. |
+
+**Options the author may not have considered:**
+1. Claim-template docs guard: replace the negative token predicate with a small allowlist of permitted TUI evidence statements for `ratchet` and `ratchet-tui-smoke`.
+2. Dedicated tap postcheck helper: add a `releaseguard` mode that takes a checked-out Homebrew tap path and cask name, then scans the actual generated cask after GoReleaser pushes it.
+
+**Verdict reasoning:** The latest commit resolves D95-D97 in text, but the design still leaves two Important gaps: `/trust reset` does not explicitly prove mode reset after mode mutations, and the Homebrew/tap audit is not specified enough to be an executable release safety check.

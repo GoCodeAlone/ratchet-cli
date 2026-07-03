@@ -258,7 +258,7 @@ with temp-only patterns/scopes:
 | `/trust persist deny "smoke:persist-deny-network" --scope smoke` | Renders `Persisted deny grant: smoke:persist-deny-network`; a follow-up `/trust grants` proves pattern/action/scope through persisted daemon state. |
 | `/trust grants` | Renders persistent grants including smoke-scope entries; failure logs redact grant bodies. |
 | `/trust revoke "smoke:persist-allow-vet" --scope smoke` | Renders `Revoked persistent trust grant: smoke:persist-allow-vet`; a follow-up `/trust grants` proves the revoked smoke grant is absent while unrelated grants remain. |
-| `/trust reset` | Renders reset to config defaults; a follow-up `/trust list` proves runtime smoke allow/deny rules are gone and effective rules are rebuilt from config defaults, and a follow-up `/trust grants` proves persisted smoke grants that were not explicitly revoked remain unchanged. |
+| `/trust reset` | Renders reset to config defaults; a follow-up `/trust list` proves `Mode: conservative` matches the smoke config default after prior `/mode` mutations, runtime smoke allow/deny rules are gone, and effective rules are rebuilt from config defaults; a follow-up `/trust grants` proves persisted smoke grants that were not explicitly revoked remain unchanged. |
 
 If public docs or `internal/tui/commands/trust.go` add a new TUI mode/trust
 slash command or mode value, the docs guard fails until this matrix and PTY
@@ -494,10 +494,27 @@ Mechanical fail-closed check:
 - Homebrew/tap limitation: the current GoReleaser release step can push
   `homebrew_casks.repository` changes before any postcheck can run. This slice
   prechecks cask/tap config and snapshot material before publishing, then
-  performs an after-the-fact tap/cask reference check after publishing. If the
-  tap contains forbidden smoke names, rollback is deleting/reverting the bad tap
-  commit and cutting a corrected patch release. Fully pre-public tap blocking
-  requires a future split-publish workflow and is out of scope for this slice.
+  performs an executable after-the-fact tap/cask reference check after
+  publishing:
+  - after `goreleaser release --clean`, clone the tap identified by
+    `.goreleaser.yaml` `homebrew_casks[].repository` (currently
+    `GoCodeAlone/homebrew-tap`, branch `main`) with `HOMEBREW_TAP_TOKEN`;
+  - parse `.goreleaser.yaml` to derive the expected cask name
+    (`ratchet-cli`) and candidate Ruby cask paths such as
+    `Casks/ratchet-cli.rb`, then fail if no matching cask file exists;
+  - run `RATCHET_RELEASE_GUARD_MODE=tap-postcheck
+    RATCHET_RELEASE_GUARD_TAP=<tap-checkout>
+    RATCHET_RELEASE_GUARD_CASK=ratchet-cli
+    go test -count=1 ./internal/releaseguard -run TestTapPostcheck`;
+  - the helper scans the candidate cask files, the tap HEAD commit metadata, and
+    the tap HEAD changed-file list for forbidden smoke tokens
+    (`ratchet-tui-smoke`, `tui_smoke`, smoke command/flag/help markers);
+  - on contamination, fail the release workflow and print the exact tap owner,
+    branch, HEAD SHA, candidate cask path, and rollback command shape
+    (`git revert <tap-sha>` on the tap branch, then cut a corrected patch
+    release).
+  Fully pre-public tap blocking requires a future split-publish workflow and is
+  out of scope for this slice.
 - Local verification can run the script when GoReleaser is installed; ordinary
   `go test ./...` must not silently claim release-artifact coverage if
   GoReleaser is absent.
@@ -611,7 +628,8 @@ Mechanical fail-closed check:
     evidence token (`proof`, `proves`, `proven`, `covered`, `coverage`,
     `smoke`, `automated`, `automation`, `verified`, `binary smoke`, `CI`,
     `test`, `tests`, `tested`, `testing`, `exercised`, `exercise`,
-    `asserted`, or `asserts`)
+    `asserted`, `asserts`, `validated`, `validation`, `guarded`, `guard`,
+    `e2e`, `end to end`, or `end-to-end`)
     and an interactive-surface token (`credential free chat`,
     `interactive chat`, `interactive tui`, `full tui`, `slash command`,
     `slash commands`, `shortcut`, `shortcuts`, or `slash shortcut`);
@@ -629,6 +647,12 @@ Mechanical fail-closed check:
     `/provider list`, `/tree`, `/mode`, `/trust`, and `/exit`, or link to the
     command-surface classification table; broad claims such as "slash commands
     are smoke-proven" fail even when assigned to `ratchet-tui-smoke`;
+  - positive TUI evidence statements in `README.md` and
+    `docs/harness-emulation.md` must match one of the allowed claim templates:
+    release-shaped `ratchet` startup/onboarding proof with no credential-free
+    chat claim, or `ratchet-tui-smoke` Unix PTY proof for interactive chat,
+    core shortcuts, and selected/PTY-proven slash commands; any other TUI
+    evidence wording must link to the command-surface classification table;
   - same-line/same-row exceptions must negate the same release-target evidence
     claim (`not claimed for ratchet`, `does not claim release-shaped`, or
     equivalent), assign the evidence claim to `ratchet-tui-smoke` within the
@@ -657,7 +681,7 @@ Mechanical fail-closed check:
 | Shell release guard misparses GoReleaser YAML. | Implement the artifact/config guard under `internal/releaseguard` in Go with `gopkg.in/yaml.v3`; shell wrapper only orchestrates GoReleaser and invokes Go tests/helper logic without adding a product `cmd/*` package. |
 | Tag release bypasses artifact guard. | Add the same publish-free `goreleaser check` + snapshot + manifest guard to `.github/workflows/release.yml` before the publishing step. |
 | Release jobs cannot fetch private modules. | Mirror CI's `GOPRIVATE`/`GONOSUMCHECK` and private-module Git rewrite in release preflight/publish and Windows safe-command smoke jobs. |
-| Snapshot guard differs from uploaded release. | Add a draft-release postcheck before undrafting that downloads uploaded GitHub release archives/checksums and runs the same archive manifest plus all-packaged-binary byte-scan guard against actual uploaded assets; explicitly treat Homebrew/tap postcheck as after-the-fact rollback under the current GoReleaser workflow. |
+| Snapshot guard differs from uploaded release. | Add a draft-release postcheck before undrafting that downloads uploaded GitHub release archives/checksums and runs the same archive manifest plus all-packaged-binary byte-scan guard against actual uploaded assets; add an executable Homebrew tap postcheck that clones the configured tap after publish, scans the generated cask and tap HEAD metadata, and prints the exact rollback target on contamination. |
 | Draft release lookup flakes or misses assets. | Reuse the existing `listReleases` retry-by-tag workflow, pass the resolved release id to postcheck and undraft, and download assets by release id. |
 | Release is public before postcheck. | Preflight fails unless `.goreleaser.yaml` keeps `release.draft: true`; postcheck fails if the resolved release is not draft before inspection. |
 | Platform mismatch. | Unix PTY proof is explicitly Unix-only; Windows claim is limited to build/noninteractive smoke. |
@@ -668,10 +692,11 @@ No cloud resources, secrets, migrations, new registries, or production deploy.
 The existing tag release workflow already publishes GitHub release assets and a
 Homebrew cask/tap update through GoReleaser. This slice adds publish-free
 GoReleaser preflight jobs on PR/push and before tag publishing, a GitHub draft
-asset postcheck before undrafting, packaged-binary inspection, an
-after-the-fact Homebrew/tap postcheck with rollback instructions, plus a
-`windows-safe-command-smoke` job on `windows-latest`. GitHub release artifacts are
-pre-public gated; Homebrew/tap remains prechecked plus postchecked/rollback
+asset postcheck before undrafting, packaged-binary inspection, an executable
+after-the-fact Homebrew/tap postcheck that clones `GoCodeAlone/homebrew-tap`
+and scans the generated `ratchet-cli` cask plus tap HEAD metadata, plus a
+`windows-safe-command-smoke` job on `windows-latest`. GitHub release artifacts
+are pre-public gated; Homebrew/tap remains prechecked plus postchecked/rollback
 under the current GoReleaser workflow. Fully pre-public Homebrew/tap gating is
 deferred to a split-publish workflow. These workflow paths must mirror existing
 private-module environment and Git rewrite setup. Local test-only process and
@@ -705,7 +730,8 @@ smoke entrypoint is build-tagged out.
 | Daemon gRPC service/client | runtime-integrated | Smoke service/client RPCs over a temp Unix socket execute provider list, trust commands, session tree, and chat send. |
 | Built-in mock provider | runtime-integrated | Chat prompt streams deterministic mock response. |
 | Slash commands and shortcuts | runtime-integrated | PTY sends input/control keys and asserts resulting UI states for representative `pty-proven` slash commands, the full documented TUI mode/trust matrix, every advertised core shortcut, and fixed-size representative frames. Focused tests prove App-level branch switch and classify the rest of the slash surface. |
-| Slash help/autocomplete/CLI help | runtime-integrated | Focused tests invoke in-TUI `/help`, autocomplete models, extract public `printUsage` slash rows, and run built `ratchet help` to prove submitted command support and discoverability stay aligned with the command-surface classification table. |
+| Public CLI slash help | runtime-integrated | Built `ratchet help` is executed from the release-shaped binary, and the `printUsage` extractor ties its slash rows to the command-surface classification table. |
+| TUI help/autocomplete command-surface guard | config-only + focused proof | Focused tests invoke in-TUI `/help`, inspect autocomplete models, parse command surfaces, and compare them to the typed command spec; this prevents discoverability drift but is not claimed as host-runtime proof for every non-`pty-proven` command. |
 | Non-race binary smoke CI | config-only | `.github/workflows/ci.yml` runs a focused non-race smoke job for subprocess/startup tests that are intentionally skipped under `-race`, with explicit test names for release startup and TUI binary smoke. |
 | Docs guard | config-only | `cmd/ratchet/harness_docs_test.go` checks public docs mention exact evidence boundaries. |
 | GoReleaser snapshot and GitHub draft assets | runtime-integrated | Publish-free `release-check` CI job, tag release preflight, local script, and release draft postcheck run `goreleaser check`/snapshot generation plus archive/upload inspection, all-archive packaged-binary byte scans, host/Windows packaged-binary help/version checks, and deterministic `.goreleaser.yaml` fallback. The postcheck downloads draft GitHub release assets and repeats the same checks before undraft, proving uploaded archives/checksums do not contain `ratchet-tui-smoke`. |
@@ -724,11 +750,12 @@ No data migration exists. Release binaries are unaffected because `cmd/ratchet`
 does not contain a smoke command/flag. If a future GitHub release accidentally
 includes `ratchet-tui-smoke`, keep the release draft, delete the bad
 artifact/checksum where possible, fix the release config, and rerun/cut a patch
-release. If a Homebrew tap commit includes a bad smoke reference, revert or
-delete that tap commit/reference and cut a corrected patch release. If the CI
-or release preflight/postcheck itself is bad, revert that job/script while
-keeping the existing tag-only release workflow's publish step, then cut a
-corrected preflight PR.
+release. If the Homebrew tap postcheck fails, use the reported
+`GoCodeAlone/homebrew-tap` branch, HEAD SHA, and cask path to revert the exact
+tap commit (`git revert <tap-sha>` on `main`) or delete the bad reference, then
+cut a corrected patch release. If the CI or release preflight/postcheck itself
+is bad, revert that job/script while keeping the existing tag-only release
+workflow's publish step, then cut a corrected preflight PR.
 
 ## Assumptions
 
@@ -868,3 +895,7 @@ corrected preflight PR.
 | D95 | Added post-reset `/trust list` and `/trust grants` assertions proving runtime rules reset to config defaults while unreverted persisted grants remain unchanged. |
 | D96 | Expanded docs evidence tokens to include test/tested/tests/testing/exercised/exercise/asserted/asserts so common overclaim wording cannot evade the guard. |
 | D97 | Added advertised job-panel `Esc` close behavior to the shortcut matrix. |
+| D98 | Required `/trust reset` follow-up proof that `Mode: conservative` matches the smoke config default after prior mode mutations. |
+| D99 | Specified executable Homebrew tap postcheck mechanics: clone configured tap, find generated cask, scan cask plus tap HEAD metadata, fail with rollback target. |
+| D100 | Added validated/validation/guarded/guard/e2e/end-to-end evidence terms and allowed TUI evidence claim templates. |
+| D101 | Split the integration matrix row into runtime public CLI help and focused/static TUI help/autocomplete command-surface proof. |
