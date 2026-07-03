@@ -17,6 +17,7 @@
 **PR Count:** 5
 **Tasks:** 13
 **Estimated Lines of Change:** ~2600
+**External prerequisites:** 1 Homebrew tap PR/direct commit recorded by Task 9 before Tasks 10-11 start.
 
 **Out of scope:**
 - Windows interactive ConPTY proof.
@@ -35,6 +36,12 @@
 | 3 | `chore: guard release artifacts` | Task 7, Task 8 | `feat/release-artifact-guard` |
 | 4 | `chore: gate tap and windows release smoke` | Task 9, Task 10, Task 11 | `feat/release-tap-windows-smoke` |
 | 5 | `docs: publish harness evidence` | Task 12, Task 13 | `docs/tui-binary-verification-release` |
+
+**External prerequisite:**
+
+| Repo | Work | Evidence | Gate |
+|---|---|---|---|
+| `GoCodeAlone/homebrew-tap` | Remove stale unmanaged root `ratchet-cli.rb`; preserve active `Formula/ratchet-cli.rb` and `Casks/ratchet-cli.rb`. | Merged PR/direct commit SHA recorded in Task 9 backport note. | Tasks 10-11 must not enable fail-closed tap/release enforcement until evidence is recorded. |
 
 **Status:** Draft
 
@@ -391,6 +398,7 @@ Add tests for:
 - explicit mode with missing env fails before scanning;
 - GoReleaser YAML parsing via `gopkg.in/yaml.v3`, no shell YAML parsing;
 - strict top-level taxonomy: current publish keys `builds`, `archives`, `checksum`, `homebrew_casks`, `brews`, `release`; unknown publishable key fails;
+- strict top-level taxonomy: current nonpublishable metadata keys `version` and `changelog` are allowed but not scanned as publishable artifact surfaces;
 - fallback scalar scan under artifact/publish sections rejects smoke tokens;
 - archive matrix derives linux/darwin/windows amd64/arm64 and checks all archives/checksums/members/packaged binaries;
 - generated/fallback cask and formula material only references release `ratchet` binary and formula/cask file name `ratchet-cli`.
@@ -619,15 +627,15 @@ After publish and before undraft:
 
 **Step 3: Add Windows packaged safe-command smoke**
 
-In CI, add `windows-safe-command-smoke` on `windows-latest` with `needs: release-check`; build source `ratchet.exe`, download `ratchet-snapshot-dist`, require amd64/arm64 Windows zips, byte-scan both, extract amd64, run:
+In CI, add `windows-safe-command-smoke` on `windows-latest` with `needs: release-check`; build source `ratchet.exe` to `$env:RUNNER_TEMP\\source\\ratchet.exe` only for source cross-build proof, download `ratchet-snapshot-dist`, require amd64/arm64 Windows zips, byte-scan both, extract `ratchet_windows_amd64.zip` into `$env:RUNNER_TEMP\\package-amd64`, assert `$env:RUNNER_TEMP\\package-amd64\\ratchet.exe` exists, and run that extracted package path explicitly:
 
 ```powershell
-.\ratchet.exe version
-.\ratchet.exe help
-.\ratchet.exe daemon status
+& "$env:RUNNER_TEMP\\package-amd64\\ratchet.exe" version
+& "$env:RUNNER_TEMP\\package-amd64\\ratchet.exe" help
+& "$env:RUNNER_TEMP\\package-amd64\\ratchet.exe" daemon status
 ```
 
-Expected daemon status output contains `daemon is not running` under temp Windows home/state env.
+Expected: executed path is under `package-amd64` extracted from `ratchet_windows_amd64.zip`; daemon status output contains `daemon is not running` under temp Windows home/state env.
 
 **Step 4: Verify local Windows cross-build and releaseguard**
 
