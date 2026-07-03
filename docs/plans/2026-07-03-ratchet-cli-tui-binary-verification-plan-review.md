@@ -118,3 +118,43 @@
 2. Split tagged helper verification explicitly: `go test -tags tui_smoke` for smoke-only constructors/wiring plus untagged guards for release-surface absence.
 
 **Verdict reasoning:** FAIL. P1-P8 were addressed, but tagged smoke helper tests, smoke-client socket security, and draft asset interface consistency needed concrete plan steps.
+
+## Cycle 4
+
+### Adversarial Review Report
+
+**Phase:** plan
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `P13` [Manifest drift / Verification-class mismatch / Security] [plan:90-96,115,132-140,166-169,390-411,428-430; design:118-130]: Plan defines the smoke-source manifest in Task 1, but later adds `internal/daemon/service_tui_smoke.go` and `internal/releaseguard/*` without explicit manifest/tooling-allowlist updates or rerunning the `SmokeSource` guard. Recommendation: add manifest/allowlist update steps and `go test ./internal/tui -run SmokeSource -count=1` to each task that adds smoke-tagged runtime files or releaseguard forbidden-token constants.
+- `P14` [Tap postcheck interface / Missing integration proof / Identifier drift] [plan:614-617,628-632,652-655; design:528-533,643-648]: Task 11 release workflow prose omits `RATCHET_RELEASE_GUARD_TAP` from tap-postcheck invocation even though design marks it required. Recommendation: spell out full workflow command/env and add workflow assertion that `release.yml` sets all required tap-postcheck env vars.
+
+**Findings (Minor):**
+- `P15` [Executable command robustness] [plan:511-518]: Task 9 uses `test -f <tap-checkout>/ratchet-cli.rb` while expected result allows that file to be absent if cleanup already landed. Recommendation: replace with conditional branch recording either stale file present or cleanup already landed.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Assumptions under attack | Finding | P13 assumes early source-manifest tests stay valid as later smoke/releaseguard files are added. |
+| Artifact-class precedent | Finding | P13 misses manifest/guard artifact update when adding later source artifacts. |
+| Missing failure modes | Finding | P15 leaves already-clean tap prerequisite path non-executable. |
+| Security/privacy at architecture level | Finding | P13 can weaken smoke-source leak prevention. |
+| Infrastructure impact | Finding | P14 affects release/tap workflow enforcement. |
+| Multi-component validation | Finding | P14 does not prove real release workflow passes full tap-postcheck interface. |
+| Declared integration proof | Finding | P14 leaves one declared releaseguard env unbound in workflow prose. |
+| Existence/runtime-validity | Finding | P14 is executable env-interface gap. |
+| Verification-class mismatch | Finding | P13/P14 focused checks can pass without proving changed surface. |
+| Missing integration proof | Finding | P14 lacks workflow-level tap-postcheck proof. |
+| Infrastructure verification mismatch | Finding | P14 leaves release workflow env wiring under-verified. |
+| Identifier/naming convention | Finding | P14 drops required `RATCHET_RELEASE_GUARD_TAP` identifier. |
+
+**Options the author may not have considered:**
+1. Centralize releaseguard invocation in `scripts/check-release-artifacts.sh` for all modes.
+2. Move smoke-source manifest ownership into one table-driven testdata file updated by every task adding smoke/runtime/tooling token surfaces.
+
+**Verdict reasoning:** FAIL. P1-P12 were addressed, but plan could still pass focused task checks while missing source-manifest drift and tap-postcheck workflow interface proof.

@@ -158,7 +158,7 @@ Expected: FAIL with missing smoke constructor and hidden job-panel error.
 
 **Step 3: Implement smoke service and observable errors**
 
-Add private smoke option/constructor under `tui_smoke && !windows`. Initialize safe daemon service pieces needed by provider/session/trust/chat/jobs. Add job panel error field/render anchor and success marker/empty-state assertion.
+Add private smoke option/constructor under `tui_smoke && !windows`. Update the Task 1 smoke-source manifest to include `internal/daemon/service_tui_smoke.go` as an allowed smoke runtime file with exact build-tag/exported-token constraints. Initialize safe daemon service pieces needed by provider/session/trust/chat/jobs. Add job panel error field/render anchor and success marker/empty-state assertion.
 
 **Step 4: Verify**
 
@@ -167,6 +167,7 @@ gofmt -w internal/daemon internal/tui/components internal/tui/pages
 go test -tags tui_smoke ./internal/daemon -run 'SmokeService|ListJobs' -count=1
 go test ./internal/daemon -run 'SmokeService|ListJobs' -count=1
 go test ./internal/tui/components -run 'JobPanel.*Error' -count=1
+go test ./internal/tui -run SmokeSource -count=1
 ```
 
 Expected: PASS; tagged daemon test proves smoke helper behavior, and untagged daemon test proves the helper is not exposed in release builds.
@@ -404,6 +405,7 @@ Add tests for:
 - ordinary `go test ./internal/releaseguard` runs unit fixtures and artifact tests skip with `releaseguard artifact mode not requested`;
 - explicit mode with missing env fails before scanning;
 - GoReleaser YAML parsing via `gopkg.in/yaml.v3`, no shell YAML parsing;
+- smoke-source guard tooling allowlist includes `internal/releaseguard` files that hold forbidden artifact tokens, while keeping them out of the smoke runtime manifest;
 - strict top-level taxonomy: current publish keys `builds`, `archives`, `checksum`, `homebrew_casks`, `brews`, `release`; unknown publishable key fails;
 - strict top-level taxonomy: current nonpublishable metadata keys `version` and `changelog` are allowed but not scanned as publishable artifact surfaces;
 - fallback scalar scan under artifact/publish sections rejects smoke tokens;
@@ -420,7 +422,7 @@ Expected: FAIL with missing package.
 
 **Step 3: Implement releaseguard**
 
-Implement Go helpers and shell wrapper. Wrapper defaults to `goreleaser check`, `goreleaser release --snapshot --clean --skip=publish`, then `--manifest-only dist`; `--manifest-only <dir>` skips generation and runs explicit manifest mode.
+Implement Go helpers and shell wrapper. Update the smoke-source tooling allowlist for `internal/releaseguard` exact forbidden-token constants without adding releaseguard files to the smoke runtime manifest. Wrapper defaults to `goreleaser check`, `goreleaser release --snapshot --clean --skip=publish`, then `--manifest-only dist`; `--manifest-only <dir>` skips generation and runs explicit manifest mode.
 
 **Step 4: Verify unit/fallback behavior**
 
@@ -428,6 +430,7 @@ Implement Go helpers and shell wrapper. Wrapper defaults to `goreleaser check`, 
 gofmt -w internal/releaseguard
 go test ./internal/releaseguard -count=1
 RATCHET_RELEASE_GUARD_MODE=manifest go test ./internal/releaseguard -run TestManifestGuard -count=1
+go test ./internal/tui -run SmokeSource -count=1
 ```
 
 Expected: first command PASS with artifact-mode skip message; second command FAIL before scan with missing `RATCHET_RELEASE_GUARD_DIST`.
@@ -512,10 +515,14 @@ Rollback: revert ratchet-cli commit if fail-closed checks have not merged.
 gh repo clone GoCodeAlone/homebrew-tap <tap-checkout>
 test -f <tap-checkout>/Formula/ratchet-cli.rb
 test -f <tap-checkout>/Casks/ratchet-cli.rb
-test -f <tap-checkout>/ratchet-cli.rb
+if test -f <tap-checkout>/ratchet-cli.rb; then
+  echo "stale root present"
+else
+  echo "stale root already absent"
+fi
 ```
 
-Expected before cleanup: active Formula and Cask exist; stale unmanaged root `ratchet-cli.rb` exists or the command exits non-zero if a prior cleanup already landed.
+Expected before cleanup: active Formula and Cask exist; output records either `stale root present` or `stale root already absent`.
 
 **Step 2: Run preflight before cleanup**
 
@@ -629,7 +636,12 @@ After publish and before undraft:
 - resolve draft release id by listing releases with retries;
 - use GitHub Script/API to verify the resolved release is still draft, download all assets for that release id into `$RUNNER_TEMP/release-assets`, write a small metadata file in that directory containing the release id/tag/draft state, then run draft asset postcheck with `RATCHET_RELEASE_GUARD_MODE=draft-assets`, `RATCHET_RELEASE_GUARD_ASSETS=$RUNNER_TEMP/release-assets`, and `RATCHET_RELEASE_GUARD_VERSION=<tag-or-version>`;
 - clone tap and derive exact path-changing commits;
-- run tap postcheck with `RATCHET_RELEASE_GUARD_TAP_NAMES`, `RATCHET_RELEASE_GUARD_TAP_COMMITS`, and current tag/version;
+- run tap postcheck with the full required env:
+  `RATCHET_RELEASE_GUARD_MODE=tap-postcheck`,
+  `RATCHET_RELEASE_GUARD_TAP=<tap-checkout>`,
+  `RATCHET_RELEASE_GUARD_TAP_NAMES=<tap-names>`,
+  `RATCHET_RELEASE_GUARD_TAP_COMMITS=<path=sha,...>`, and
+  `RATCHET_RELEASE_GUARD_VERSION=<tag-or-version>`;
 - only then undraft.
 
 **Step 3: Add Windows packaged safe-command smoke**
@@ -655,7 +667,7 @@ scripts/check-release-artifacts.sh --manifest-only dist
 actionlint .github/workflows/ci.yml .github/workflows/release.yml
 ```
 
-Expected: PASS; Windows binaries are written only under `/tmp`; wrapper regenerates fresh `dist`; workflow lint is clean.
+Expected: PASS; Windows binaries are written only under `/tmp`; wrapper regenerates fresh `dist`; workflow lint is clean and release workflow sets `RATCHET_RELEASE_GUARD_TAP`, `RATCHET_RELEASE_GUARD_TAP_NAMES`, `RATCHET_RELEASE_GUARD_TAP_COMMITS`, and `RATCHET_RELEASE_GUARD_VERSION` for tap-postcheck.
 
 **Step 5: Commit**
 
