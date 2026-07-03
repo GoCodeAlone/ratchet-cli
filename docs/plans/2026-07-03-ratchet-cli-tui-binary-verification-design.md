@@ -129,9 +129,10 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
   `HOME`, `XDG_STATE_HOME`, `TERM=xterm-256color`, and `cmd.Dir` to an empty
   temp workdir, then starts the smoke binary in a fixed-size PTY
   (`40x120`). This proves the TUI event loop, daemon RPCs, mock provider, slash
-  commands, shortcuts, and representative rendered frames; it does not claim the
-  untagged release binary can run credential-free chat without configured
-  providers.
+  representative slash commands, shortcuts, and representative rendered frames;
+  it does not claim the untagged release binary can run credential-free chat
+  without configured providers, and it does not claim PTY runtime coverage for
+  every slash command in `internal/tui/commands/commands.go`.
 - Drive:
   - splash dismissal;
   - normal chat prompt with deterministic mock response;
@@ -151,6 +152,9 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
   focused non-race smoke CI job as the execution path.
 - Test includes an untagged repo-root discovery/build helper rather than
   reusing `internal/tui/pty_test.go`, which is behind the `integration` tag.
+- Test uses a new untagged PTY capture helper with synchronized output
+  snapshots (mutex/channel/single-reader API). It must not copy the existing
+  integration helper's unsynchronized `bytes.Buffer` read/write pattern.
 - All runtime/test failure payloads pass through one redaction helper before
   `t.Log`/`t.Fatalf`: PTY frames, stdout/stderr, build output, GoReleaser
   snapshot output, daemon cleanup output, docs-guard output, artifact-manifest
@@ -197,6 +201,16 @@ tree containing at least one root and one child branch:
 | `r` | Reloads the session tree through the page client. |
 | `Esc` | PTY/app proof returns from tree page to chat with input visible. |
 
+Add one App-level branch-switch proof above the component/page tests:
+
+- open the branch tree with a fixture containing root and child sessions;
+- select the child and press `Enter`;
+- assert the App consumes `SessionTreeSelectedMsg`, updates the selected
+  session, transitions back to chat, and rebuilds chat history for the child;
+- wait for the history reload completion path, not only command emission;
+- submit a deterministic chat prompt after the switch and assert it is sent
+  against the selected child session.
+
 ### Mode And Trust Slash Command Matrix
 
 The PTY smoke drives every publicly documented TUI mode/trust slash command
@@ -222,6 +236,34 @@ If public docs or `internal/tui/commands/trust.go` add a new TUI mode/trust
 slash command or mode value, the docs guard fails until this matrix and PTY
 smoke include it or the public docs mark it out of scope.
 
+### TUI Slash Command Coverage Contract
+
+The design intentionally proves selected representative slash commands through
+PTY and keeps all other TUI commands honest through classification and focused
+parse/help/autocomplete tests. Public docs and harness docs may claim automated
+PTY proof only for the `pty-proven` rows below.
+
+Source of truth: `internal/tui/commands/commands.go` (`Parse`, `helpCmd`) plus
+autocomplete command models.
+
+| command family | classification | required evidence |
+|---|---|---|
+| `/help` | `pty-proven` | PTY submits command and sees `Available commands:`. |
+| `/provider list` | `pty-proven` | PTY submits command and sees `e2e-mock`; other `/provider` subcommands are classified separately. |
+| `/tree` | `pty-proven` | PTY opens branch tree and returns to chat; App-level branch-switch proof covers `Enter`. |
+| `/mode <all documented modes>` | `pty-proven` | PTY matrix covers every documented mode value. |
+| `/trust <documented subcommands>` | `pty-proven` | PTY matrix covers list, allow, deny, persist allow, persist deny, grants, revoke, and reset. |
+| `/exit` | `pty-proven` | PTY exits cleanly. |
+| `/clear`, `/plan` | `focused-proven` | Focused command tests assert parse result/help text only; no PTY runtime claim. |
+| `/model`, `/cost`, `/agents`, `/sessions`, `/compact`, `/review`, `/jobs`, `/login` | `focused-proven` | Focused command tests with fake/stub clients assert parse behavior, help/autocomplete presence, and no docs overclaim of PTY proof. |
+| `/provider add`, `/provider remove`, `/provider default`, `/provider test` | `focused-proven` | Focused command tests assert usage/dispatch behavior; provider setup wizard/runtime side effects are not PTY-proven in this slice. |
+| `/loop`, `/cron`, `/fleet`, `/mcp`, `/team`, `/approve`, `/reject` | `deferred-runtime` | Help/autocomplete/parse entries remain covered by focused tests; full runtime orchestration is out of scope for this TUI binary-proof slice and must not be documented as PTY-proven here. |
+
+The docs guard scans public harness evidence claims and fails if a
+`focused-proven` or `deferred-runtime` row is described as PTY/binary-smoke
+runtime proof. If `commands.Parse` or `helpCmd` gains a new slash command, the
+focused coverage table/test must classify it before CI passes.
+
 ### Help And Autocomplete Alignment
 
 - Update `/help` output so the documented command surface includes:
@@ -244,8 +286,12 @@ smoke include it or the public docs mark it out of scope.
 - Add focused tests proving submitted-command support, `/help`, and
   autocomplete do not drift for the mode/trust/tree slash surface; add a
   built-binary help assertion for `ratchet help`.
+- Add focused tests that enumerate every slash command returned by
+  `commands.Parse`/`helpCmd` and the autocomplete model, compare that list to
+  the coverage contract above, and fail closed on unclassified additions.
 - This aligns existing discoverability surfaces only; it does not add new
-  commands or change command semantics.
+  commands or change command semantics, and it does not turn
+  `focused-proven`/`deferred-runtime` commands into PTY runtime claims.
 
 ### Normal Launch Smoke
 
@@ -285,9 +331,11 @@ smoke include it or the public docs mark it out of scope.
 - Add Windows cross-build verification to the plan, not PTY execution:
   `GOOS=windows GOARCH=amd64 go build ./cmd/ratchet` and
   `GOOS=windows GOARCH=arm64 go build ./cmd/ratchet`.
-- Add a `windows-latest` CI smoke job that builds `ratchet.exe`, downloads the
-  `ratchet-snapshot-dist` workflow artifact from `release-check`, and executes
-  safe non-PTY commands:
+- Add a `windows-safe-command-smoke` job on `windows-latest` that declares
+  `needs: release-check`, builds source `ratchet.exe`, downloads the
+  `ratchet-snapshot-dist` workflow artifact from `release-check`, fails if no
+  Windows zip is present, extracts that zip, and executes safe non-PTY commands
+  from the packaged executable:
   - `ratchet.exe version`;
   - `ratchet.exe help`;
   - output must include `ratchet`, `Commands:`, and the aligned slash-command
@@ -357,10 +405,11 @@ smoke include it or the public docs mark it out of scope.
   - fail if packaged help/version output contains `ratchet-tui-smoke`,
     `tui_smoke`, a smoke command, a smoke flag, or smoke help text;
   - inspect every archive member list and binary filename for smoke names;
-  - for Windows, the `windows-latest` safe-command smoke job downloads
-    `ratchet-snapshot-dist` with `actions/download-artifact@v4`, extracts the
-    snapshot Windows zip produced by `release-check`, and runs packaged
-    `ratchet.exe version` and `ratchet.exe help` with the same
+  - for Windows, the `windows-safe-command-smoke` job on `windows-latest`
+    declares `needs: release-check`, downloads `ratchet-snapshot-dist` with
+    `actions/download-artifact@v4`, fails if no Windows zip is present,
+    extracts the snapshot Windows zip produced by `release-check`, and runs
+    packaged `ratchet.exe version` and `ratchet.exe help` with the same
     forbidden-output checks.
 - Fail closed when expected artifact classes are missing:
   - at least one Linux archive, one Darwin archive, one Windows archive, and
@@ -435,9 +484,10 @@ smoke include it or the public docs mark it out of scope.
 |---|---|
 | Smoke mode becomes a user-facing bypass. | Compile it only with `tui_smoke`; release binaries do not contain the path. |
 | Test leaks real home/provider/project state. | Set temp `HOME`/`XDG_STATE_HOME`/`cmd.Dir`/session `WorkingDir`; temp workdir contains no instruction files/dirs from `internal/agent/instructions.go` and no hook configs from `internal/hooks/hooks.go` (`~/.ratchet/hooks.yaml`, `.ratchet/hooks.yaml`); assert captured output excludes real workspace/home paths. |
-| PTY test hangs in CI. | Per-read deadline, process kill cleanup, bounded waits, and no external network/provider dependency. |
+| PTY test hangs or flakes in CI. | Per-read deadline, process kill cleanup, bounded waits, synchronized PTY output snapshots, and no external network/provider dependency. |
 | Shortcut proof misses broken layout. | Use fixed PTY size and assert representative full frames for chat/sidebar input-visible states and branch-tree/team/job panel states, then return to chat and assert input usability. |
 | Shortcut hint drifts from handlers. | Treat app/page/component key handling plus README/statusbar hints as a checked contract; prove global shortcuts, conditional `ctrl+h`, and advertised branch-tree navigation. |
+| Slash-command proof overclaims broad coverage. | Maintain a command-surface classification table from `commands.Parse`/`helpCmd`; docs may claim PTY proof only for `pty-proven` rows. |
 | Sensitive prompts/log paths in logs. | Use harmless deterministic prompts and route every test failure payload through one redaction helper that removes real home/workspace/temp/socket/executable/artifact paths plus trust/prompt bodies; runtime outputs reject instruction surfaces from `internal/agent/instructions.go` and hook config surfaces from `internal/hooks/hooks.go`, release manifests allowlist expected `RATCHET.md`. |
 | Release-shaped startup leaks daemon process. | Cleanup runs `ratchet daemon stop`, waits boundedly for temp pid/socket removal, falls back to terminate/wait by temp pid, and asserts pid/socket files are gone. |
 | Binary smoke skipped under race. | Add package-local `internal/tui` race helper files; `TestTUIBinarySmoke` skips under `-race`, and a focused non-race CI smoke job for `cmd/ratchet` and `internal/tui` smoke tests runs alongside the existing race suite. |
@@ -455,7 +505,7 @@ Homebrew cask/tap update through GoReleaser. This slice adds publish-free
 GoReleaser preflight jobs on PR/push and before tag publishing, a GitHub draft
 asset postcheck before undrafting, packaged-binary inspection, an
 after-the-fact Homebrew/tap postcheck with rollback instructions, plus a
-`windows-latest` safe-command smoke job. GitHub release artifacts are
+`windows-safe-command-smoke` job on `windows-latest`. GitHub release artifacts are
 pre-public gated; Homebrew/tap remains prechecked plus postchecked/rollback
 under the current GoReleaser workflow. Fully pre-public Homebrew/tap gating is
 deferred to a split-publish workflow. These workflow paths must mirror existing
@@ -471,13 +521,13 @@ smoke entrypoint is build-tagged out.
 | Smoke built binary to TUI | `-tags tui_smoke` PTY test launches compiled `ratchet-tui-smoke` and reads rendered frames. |
 | TUI to daemon gRPC | Smoke service uses real daemon service/client RPCs for provider list, session tree, trust mode/rules, and chat send; docs do not claim auto-daemon socket proof from this row. |
 | TUI to mock provider | Chat prompt reaches built-in mock provider and streams a response. |
-| Slash commands | PTY submits slash commands through the input widget and asserts rendered system output/navigation, including the full documented TUI mode/trust slash-command matrix. |
-| Slash discoverability | Focused tests keep in-TUI `/help`, autocomplete, and public `ratchet help` aligned with submitted `/tree`, `/mode`, and `/trust` support. |
-| Shortcuts | PTY sends global control keys and asserts branch tree/pane transitions with fixed-size full-frame checks matching current behavior; focused tests prove conditional `ctrl+h` and advertised branch-tree navigation. |
+| Slash commands | PTY submits representative slash commands through the input widget and asserts rendered system output/navigation for `pty-proven` rows: `/help`, `/provider list`, `/tree`, `/mode`, `/trust`, and `/exit`. |
+| Slash discoverability | Focused tests keep in-TUI `/help`, autocomplete, public `ratchet help`, and the command-surface classification table aligned with `commands.Parse`/`helpCmd`; docs cannot claim PTY proof for `focused-proven` or `deferred-runtime` commands. |
+| Shortcuts | PTY sends global control keys and asserts branch tree/pane transitions with fixed-size full-frame checks matching current behavior; focused tests prove conditional `ctrl+h`, advertised branch-tree navigation, and App-level branch switch into child chat history. |
 | Docs to tests | Docs guard fails if automated TUI smoke evidence is removed. |
 | Binary smoke to CI | Non-race CI smoke job runs the built-binary/startup/TUI smoke tests that the race suite skips; `internal/tui` owns its race skip helper so package-local tests compile in both race and non-race suites. |
 | Release preflight to CI/release | `release-check` and tag release workflow both run `goreleaser check`, snapshot generation, and the same artifact-manifest guard before publish; release postcheck inspects uploaded GitHub draft assets before undrafting; Homebrew/tap postcheck is after-the-fact with rollback. |
-| Windows build/smoke | Cross-build commands prove release-shaped `ratchet` still compiles for Windows; `windows-latest` builds source `ratchet.exe`, downloads the `release-check` snapshot `dist/` artifact, extracts the packaged Windows zip, then executes `ratchet.exe version` and `ratchet.exe help`; `ratchet-tui-smoke` interactive PTY remains Unix-only. |
+| Windows build/smoke | Cross-build commands prove release-shaped `ratchet` still compiles for Windows; `windows-safe-command-smoke` on `windows-latest` declares `needs: release-check`, builds source `ratchet.exe`, downloads the `release-check` snapshot `dist/` artifact, fails if no Windows zip exists, extracts the packaged Windows zip, then executes packaged `ratchet.exe version` and `ratchet.exe help`; `ratchet-tui-smoke` interactive PTY remains Unix-only. |
 
 ## Integration Matrix
 
@@ -488,13 +538,13 @@ smoke entrypoint is build-tagged out.
 | TUI Bubble Tea event loop | runtime-integrated | PTY frames prove splash, chat prompt, transcript, navigation, and exit. |
 | Daemon gRPC service/client | runtime-integrated | Smoke service/client RPCs over a temp Unix socket execute provider list, trust commands, session tree, and chat send. |
 | Built-in mock provider | runtime-integrated | Chat prompt streams deterministic mock response. |
-| Slash commands and shortcuts | runtime-integrated | PTY sends input/control keys and asserts resulting UI states, including the full documented TUI mode/trust slash-command matrix, every advertised core shortcut, and fixed-size representative frames. |
-| Slash help/autocomplete/CLI help | runtime-integrated | Focused tests invoke in-TUI `/help`, autocomplete models, and built `ratchet help` to prove submitted command support and discoverability stay aligned. |
+| Slash commands and shortcuts | runtime-integrated | PTY sends input/control keys and asserts resulting UI states for representative `pty-proven` slash commands, the full documented TUI mode/trust matrix, every advertised core shortcut, and fixed-size representative frames. Focused tests prove App-level branch switch and classify the rest of the slash surface. |
+| Slash help/autocomplete/CLI help | runtime-integrated | Focused tests invoke in-TUI `/help`, autocomplete models, and built `ratchet help` to prove submitted command support and discoverability stay aligned with the command-surface classification table. |
 | Non-race binary smoke CI | config-only | `.github/workflows/ci.yml` runs a focused non-race smoke job for subprocess/startup tests that are intentionally skipped under `-race`, with explicit test names for release startup and TUI binary smoke. |
 | Docs guard | config-only | `cmd/ratchet/harness_docs_test.go` checks public docs mention exact evidence boundaries. |
 | GoReleaser snapshot and GitHub draft assets | runtime-integrated | Publish-free `release-check` CI job, tag release preflight, local script, and release draft postcheck run `goreleaser check`/snapshot generation plus archive/upload inspection, packaged-binary help/version checks, and deterministic `.goreleaser.yaml` fallback to prove `ratchet-tui-smoke` is absent from GitHub archives/checksums before undraft. |
 | Homebrew/tap cask | config-only + post-publish audit | Snapshot/config precheck proves cask ids/binaries do not reference smoke artifacts; current GoReleaser workflow can still push the tap before postcheck, so tap safety is after-the-fact audit plus rollback, not pre-public gating. Split-publish pre-public gating is deferred. |
-| Windows safe-command smoke | runtime-integrated | `windows-latest` builds source `ratchet.exe`, downloads `ratchet-snapshot-dist` from `release-check`, extracts the snapshot Windows zip, and runs packaged `ratchet.exe version` and `ratchet.exe help` to prove non-PTY Windows CLI startup/help behavior and packaged-archive absence of smoke surfaces. |
+| Windows safe-command smoke | runtime-integrated | `windows-safe-command-smoke` on `windows-latest` declares `needs: release-check`, builds source `ratchet.exe`, downloads `ratchet-snapshot-dist` from `release-check`, fails if no Windows zip exists, extracts the snapshot Windows zip, and runs packaged `ratchet.exe version` and `ratchet.exe help` to prove non-PTY Windows CLI startup/help behavior and packaged-archive absence of smoke surfaces. |
 | Windows smoke package boundary | config-only | `GOOS=windows GOARCH=amd64/arm64 go list` and `go build -tags tui_smoke ./cmd/ratchet-tui-smoke` fail with the expected Unix-only no-buildable-files class. |
 | Windows interactive PTY | deferred | No ConPTY runner in this slice; Windows coverage is build/noninteractive only. |
 
@@ -614,3 +664,7 @@ corrected preflight PR.
 | D57 | Added `internal/tui` package-local race helper files and required `TestTUIBinarySmoke` to skip under `-race`; the non-race CI job is the execution path. |
 | D58 | Added `release-check` upload of the snapshot `dist/` artifact and `windows-latest` download/extraction of that artifact before packaged `ratchet.exe` checks. |
 | D59 | Added bounded daemon cleanup wait plus terminate/wait fallback before asserting temp pid/socket removal. |
+| D60 | Added a command-surface coverage contract from `commands.Parse`/`helpCmd`, narrowed PTY claims to `pty-proven` rows, and required docs guard failure on overclaims. |
+| D61 | Made `windows-safe-command-smoke` explicitly depend on `release-check`, download `ratchet-snapshot-dist`, fail without a Windows zip, and run the packaged executable. |
+| D62 | Added App-level branch-switch proof through `SessionTreeSelectedMsg`, selected-session update, child chat-history reload, and post-switch chat submit. |
+| D63 | Required synchronized PTY capture helper output instead of copying the unsynchronized integration helper pattern. |

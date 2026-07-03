@@ -608,3 +608,47 @@ None.
 3. Package-local smoke skip helper: add `internal/tui/race_enabled_test.go` and `internal/tui/race_disabled_test.go` mirroring `cmd/ratchet`, so the untagged PTY smoke is discoverable but intentionally skipped in the race suite.
 
 **Verdict reasoning:** The current design resolves prior major concerns around hidden release paths, docs overclaiming, shortcut coverage, Homebrew honesty, and packaged binary inspection. It still has open Important mechanical issues: the Unix-only PTY test is not actually Unix-only by filename, the new internal/tui smoke test lacks race-suite skip wiring, and the Windows packaged-zip proof has no CI artifact path. Status is FAIL until those mechanics are made explicit in the design.
+
+## Cycle 15
+
+### Adversarial Review Report
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `D60` [User-intent drift / Multi-component validation / Existence-runtime-validity] [design:135-142,202-223,466-492; `internal/tui/commands/commands.go`:49-126,134-171]: The design still says PTY proof covers "slash commands" while the executable TUI command surface includes many commands outside the planned `/help`, `/provider list`, `/mode`, `/trust`, `/tree`, and exit set. Recommendation: narrow claims to representative slash commands plus full mode/trust/tree proof, or define a source-of-truth command matrix from `commands.Parse`/`helpCmd` classifying every command as PTY-proven, focused-proven, deferred, or out-of-scope.
+- `D61` [Infrastructure impact / Declared integration proof / Missing failure modes] [design:288-321,360-364; `.github/workflows/ci.yml`:48-51]: Windows packaged-zip proof depends on `ratchet-snapshot-dist`, but the design does not require the Windows job to `needs: release-check`. Recommendation: specify exact CI DAG: `windows-safe-command-smoke` needs `release-check`, downloads `ratchet-snapshot-dist`, fails if no Windows zip exists, and runs the extracted packaged executable.
+- `D62` [Multi-component validation / Artifact-class precedent] [design:187-198; `README.md`:84-88; `internal/tui/app.go`:219-225,365-401; `internal/tui/pages/session_tree.go`:85-98]: Branch-tree proof only requires `Enter` to emit a branch-switch command, but docs promise switching rebuilds chat for the selected branch. Recommendation: add App-level proof that opens tree, selects child, presses `Enter`, asserts selected session/chat view changed, waits for history reload, and verifies chat input can submit against the selected branch.
+
+**Findings (Minor):**
+- `D63` [Missing failure modes / Repo-precedent conflicts] [design:143-156; `internal/tui/pty_test.go`:63-75,107-119]: New CI PTY smoke skips under `-race`, but the design does not require a concurrency-safe PTY capture helper. Recommendation: serialize output with a mutex/channel or single-reader snapshot API rather than copying the existing unsynchronized buffer pattern.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | No repo-local guidance file exists; fallback guidance is captured, but slash-command proof is overclaimed. |
+| Assumptions under attack | Finding | Curated slash coverage, implicit artifact dependency, and component-level branch proof are load-bearing assumptions. |
+| Repo-precedent conflicts | Finding | Existing CI uses `needs` for dependent jobs; existing PTY helper is integration-only and unsynchronized. |
+| Artifact-class precedent | Finding | Binary smoke shape is mostly aligned, but Windows artifact transfer and branch-switch proof are weaker than their claimed artifact classes. |
+| YAGNI violations | Clean | No ConPTY, visual snapshots, external provider CI, new commands, or ACPX/import-export/flow work. |
+| Missing failure modes | Finding | Missing CI artifact dependency, partial slash proof, App-level branch-switch failure, and PTY capture flake modes. |
+| Security/privacy at architecture level | Clean | Build-tag isolation, temp state/workdir, Unix socket containment, and redaction are adequate. |
+| Infrastructure impact | Finding | Release-check to Windows packaged-smoke topology is underspecified. |
+| Multi-component validation | Finding | Branch-tree selection is not proven across component → App → chat reload, and slash coverage is broader in claims than proof. |
+| Declared integration proof | Finding | Windows packaged archive execution needs explicit workflow handoff to be executable. |
+| Contributed UI rendering proof | Clean | No plugin-contributed UI is claimed. |
+| Rollback story | Clean | Source revert plus release/tap rollback is adequate. |
+| Simpler alternative not considered | Finding | Command-surface classification table would keep claims honest without one huge PTY test. |
+| User-intent drift | Finding | User asked for TUI slash/shortcuts and Windows builds; current text can overclaim slash coverage and under-wire Windows packaged proof. |
+| Existence/runtime-validity | Finding | Extra commands, App branch-switch consumer, and CI artifact mechanics exist and must be accounted for. |
+
+**Options the author may not have considered:**
+1. Command-surface classification table from `internal/tui/commands/commands.go`.
+2. App-level branch-tree smoke proving `SessionTreeSelectedMsg` through chat reload.
+3. Explicit `release-check` → Windows packaged-smoke CI DAG.
+
+**Verdict reasoning:** D56-D59 are resolved, but new Important gaps remain: slash-command claims exceed the real proof surface, Windows packaged proof lacks an explicit artifact dependency, and branch switching is not proven through the App-level chat reload path. Status is FAIL.
