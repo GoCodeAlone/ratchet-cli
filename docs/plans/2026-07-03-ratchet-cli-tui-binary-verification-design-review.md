@@ -1000,3 +1000,46 @@ None.
 3. Tool entrypoint for releaseguard so artifact inspection never has test-cache ambiguity.
 
 **Verdict reasoning:** D87-D90 were addressed, but vague naming scans, broad docs claims, incomplete CLI-help drift checks, and cached artifact-guard execution remain Important blockers.
+
+## Cycle 24
+
+### Adversarial Review Report
+
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `D95` [Security/privacy / Missing failure modes] [design:253-260; `README.md`:90-99]: `/trust reset` is policy-sensitive, but the PTY evidence only requires reset text. README says reset clears runtime slash-command rules and does not delete persisted grants; the design does not require a follow-up `/trust list` and `/trust grants` check proving runtime smoke rules are gone while persisted grants remain as intended. Recommendation: after `/trust reset`, assert effective runtime allow/deny rules reset to config defaults and persistent grants are unchanged unless the design explicitly changes that contract.
+- `D96` [User-intent drift / Existence-runtime-validity] [design:607-628]: The docs overclaim predicate can still miss common evidence wording because its evidence-token list omits `test`, `tested`, `tests`, `exercised`, and `asserted`. A public claim like "full TUI slash commands are tested by the binary harness" can evade even though it overstates the selected `pty-proven` matrix. Recommendation: include those evidence terms, or invert the guard so any interactive TUI/slash/shortcut evidence claim must name `ratchet-tui-smoke` plus selected/PTY-proven scope.
+
+**Findings (Minor):**
+- `D97` [Repo-precedent conflicts / Artifact-class precedent] [design:207-216,172-175; `internal/tui/components/jobpanel.go`:181; `internal/tui/app.go`:301-303]: The shortcut matrix names `ctrl+j` as the job-panel return path, while the rendered job panel advertises `Esc: close` and App handles that path. The prose later says panels "toggle/escape back," but the matrix itself is the source-of-truth-looking table and omits the advertised `Esc` job-panel shortcut. Recommendation: add a job-panel `Esc` row or explicitly say the frame-return assertion covers both `ctrl+j` and `Esc`.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Clean | No repo-local `AGENTS.md`, `CLAUDE.md`, or `docs/design-guidance.md` exists; reviewed `RATCHET.md`, `README.md`, and referenced docs. |
+| Assumptions under attack | Finding | The docs guard assumes a narrow evidence vocabulary; trust reset assumes rendered text is enough proof. |
+| Repo-precedent conflicts | Finding | Job panel advertises `Esc: close`, but the matrix emphasizes only `ctrl+j` for that panel. |
+| Artifact-class precedent | Finding | Shortcut matrices should include advertised key hints from rendered component UI. |
+| YAGNI violations | Clean | Heavy release/docs guards are tied to prior concrete release-contamination and overclaim risks. |
+| Missing failure modes | Finding | `/trust reset` could delete persisted grants or fail to clear runtime rules while still rendering expected text. |
+| Security/privacy at architecture level | Finding | Trust rules/grants are sensitive local policy metadata; reset semantics need state proof, not only output proof. |
+| Infrastructure impact | Clean | CI/release impact is explicitly described; no new cloud/IAM/secrets/migrations are introduced beyond existing release publishing. |
+| Multi-component validation | Finding | Trust reset is not proven across TUI command, daemon state, and persisted grant store. |
+| Declared integration proof | Finding | Runtime-integrated trust-command proof is incomplete for reset state semantics. |
+| Contributed UI rendering proof | Clean | No plugin-contributed host UI is involved. |
+| Rollback story | Clean | Source revert plus draft retention/asset/tap correction remains adequate. |
+| Simpler alternative not considered | Finding | A state-after-reset assertion is cheaper than broadening the whole PTY suite. |
+| User-intent drift | Finding | Docs can still overclaim full TUI/slash proof using unlisted evidence verbs. |
+| Existence/runtime-validity | Finding | The negative docs predicate is not mechanically complete for likely public wording. |
+
+**Options the author may not have considered:**
+1. Trust-state invariant after each mutating slash command: after allow/deny/persist/revoke/reset, run the minimum follow-up state query needed to prove the daemon/store contract, not only command output.
+2. Docs-claim allowlist: instead of scanning for forbidden phrasing, require every TUI evidence sentence/table row to match one of a few allowed claim templates for `ratchet` or `ratchet-tui-smoke`.
+
+**Verdict reasoning:** The design is much tighter than earlier cycles, but two unresolved Important gaps remain: policy-sensitive reset behavior is not state-proven, and the docs guard can still miss realistic overclaim wording.

@@ -210,6 +210,7 @@ navigation docs, and `internal/tui/components/statusbar.go` hints.
 | `ctrl+b` | Opens branch tree; `esc` returns to chat; same frame checks as `/tree`. |
 | `ctrl+s` | Toggles sidebar; chat input remains visible and usable. |
 | `ctrl+j` | Opens job panel view; pressing `ctrl+j` again returns to chat with input visible and usable. |
+| `esc` in job panel | Closes job panel, matching the advertised `Esc: close` hint, and returns to chat with input visible and usable. |
 | `ctrl+t` | Opens team panel view; pressing `ctrl+t` again returns to chat with input visible and usable. |
 | `ctrl+h` | Focused `ChatModel` test seeds thinking-panel content and proves `ctrl+h` toggles collapse/expand; if no thinking content exists, it is a no-op and no docs claim PTY proof. |
 | `ctrl+c` | Exits cleanly. |
@@ -257,7 +258,7 @@ with temp-only patterns/scopes:
 | `/trust persist deny "smoke:persist-deny-network" --scope smoke` | Renders `Persisted deny grant: smoke:persist-deny-network`; a follow-up `/trust grants` proves pattern/action/scope through persisted daemon state. |
 | `/trust grants` | Renders persistent grants including smoke-scope entries; failure logs redact grant bodies. |
 | `/trust revoke "smoke:persist-allow-vet" --scope smoke` | Renders `Revoked persistent trust grant: smoke:persist-allow-vet`; a follow-up `/trust grants` proves the revoked smoke grant is absent while unrelated grants remain. |
-| `/trust reset` | Renders reset to config defaults. |
+| `/trust reset` | Renders reset to config defaults; a follow-up `/trust list` proves runtime smoke allow/deny rules are gone and effective rules are rebuilt from config defaults, and a follow-up `/trust grants` proves persisted smoke grants that were not explicitly revoked remain unchanged. |
 
 If public docs or `internal/tui/commands/trust.go` add a new TUI mode/trust
 slash command or mode value, the docs guard fails until this matrix and PTY
@@ -608,7 +609,9 @@ Mechanical fail-closed check:
     treating punctuation separators (`/`, `-`, `:`, `;`, comma) as spaces;
   - a claim unit fails only when it is an evidence claim: it contains an exact
     evidence token (`proof`, `proves`, `proven`, `covered`, `coverage`,
-    `smoke`, `automated`, `automation`, `verified`, `binary smoke`, or `CI`)
+    `smoke`, `automated`, `automation`, `verified`, `binary smoke`, `CI`,
+    `test`, `tests`, `tested`, `testing`, `exercised`, `exercise`,
+    `asserted`, or `asserts`)
     and an interactive-surface token (`credential free chat`,
     `interactive chat`, `interactive tui`, `full tui`, `slash command`,
     `slash commands`, `shortcut`, `shortcuts`, or `slash shortcut`);
@@ -862,3 +865,6 @@ corrected preflight PR.
 | D92 | Narrowed docs wording and guard behavior: `ratchet-tui-smoke` may claim chat, core shortcuts, and selected/PTY-proven slash matrix only. |
 | D93 | Added `printUsage` extraction and public CLI-help surface checks tied to the typed command spec. |
 | D94 | Required releaseguard wrapper paths to use non-cacheable `go test -count=1` with explicit env/dist path for artifact inspection. |
+| D95 | Added post-reset `/trust list` and `/trust grants` assertions proving runtime rules reset to config defaults while unreverted persisted grants remain unchanged. |
+| D96 | Expanded docs evidence tokens to include test/tested/tests/testing/exercised/exercise/asserted/asserts so common overclaim wording cannot evade the guard. |
+| D97 | Added advertised job-panel `Esc` close behavior to the shortcut matrix. |
