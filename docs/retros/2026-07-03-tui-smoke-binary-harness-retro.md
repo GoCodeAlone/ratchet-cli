@@ -31,15 +31,15 @@
 
 | Gate | Fired? | Notes |
 |---|---|---|
-| brainstorming | yes | Design existed before implementation resumed |
-| adversarial-design-review (design) | yes | Multiple cycles recorded in design review report |
-| writing-plans | yes | Locked implementation plan present |
-| adversarial-design-review (plan) | yes | Multiple cycles recorded in plan review report |
-| alignment-check | yes | Alignment artifact present |
-| scope-lock | yes | Scope lock verified before and during execution |
-| subagent-driven-development | yes | Sequential task reviews used; Task 3 adversarial review produced actionable fixes |
-| finishing-a-development-branch | yes | PR #72 created from locked PR1 row |
-| pr-monitoring | yes | CI/review threads monitored; Copilot comments addressed before admin merge |
+| brainstorming | unverified | Design artifacts exist, but activation log evidence is unavailable in this checkout |
+| adversarial-design-review (design) | unverified | Multiple cycles recorded in design review report; activation log unavailable |
+| writing-plans | unverified | Locked implementation plan exists; activation log unavailable |
+| adversarial-design-review (plan) | unverified | Multiple cycles recorded in plan review report; activation log unavailable |
+| alignment-check | unverified | Alignment artifact exists; activation log unavailable |
+| scope-lock | unverified | Scope lock artifact exists and was re-verified; activation log unavailable |
+| subagent-driven-development | unverified | Sequential task reviews were recorded in session/PR evidence; activation log unavailable |
+| finishing-a-development-branch | unverified | PR #72 was created from locked PR1 row; activation log unavailable |
+| pr-monitoring | unverified | CI/review threads were monitored and Copilot comments addressed; activation log unavailable |
 | post-merge-retrospective | yes | This file |
 | finishing Step 1e (doc-reconciliation) | yes | PR body recorded `Doc-reconciliation: clean` |
 
