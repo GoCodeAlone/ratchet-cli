@@ -133,10 +133,8 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
   - `/help` renders "Available commands:";
   - `/provider list` renders `e2e-mock`;
   - documented mode/trust slash-command matrix listed below;
-  - `/tree` opens branch tree and `esc` returns to chat;
-  - `ctrl+b` opens branch tree and `esc` returns;
-  - `ctrl+s` and `ctrl+j` toggle panes without swallowing text input;
-  - `/exit` or `ctrl+c` exits cleanly.
+  - shortcut matrix listed below;
+  - `/exit`, `ctrl+c`, and `ctrl+d` exit cleanly.
 - Assertions strip ANSI and bound line width for representative frames.
 - Frame assertions require header/status/input anchors to be simultaneously
   visible in normal chat, branch tree, sidebar, and job-panel states; each frame
@@ -158,6 +156,28 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
 - Release artifact manifests use an allowlist policy instead: `RATCHET.md` is
   expected because `.goreleaser.yaml` archives it, while `ratchet-tui-smoke`
   remains forbidden.
+
+### Shortcut Matrix
+
+The PTY smoke and focused view tests cover every implemented or advertised core
+TUI shortcut. The source of truth is `internal/tui/app.go` key handling plus
+`internal/tui/components/statusbar.go` hints.
+
+| shortcut | expected evidence |
+|---|---|
+| `/tree` | Opens branch tree; `esc` returns to chat; frame keeps status/input anchors bounded. |
+| `ctrl+b` | Opens branch tree; `esc` returns to chat; same frame checks as `/tree`. |
+| `ctrl+s` | Toggles sidebar; chat input remains visible and usable. |
+| `ctrl+j` | Toggles job panel; chat input remains visible and usable. |
+| `ctrl+t` | Toggles team panel; chat input remains visible and usable. |
+| `ctrl+c` | Exits cleanly. |
+| `ctrl+d` | Exits cleanly. |
+
+`ctrl+h` is currently advertised in the status bar but has no handler. The
+implementation plan must either wire a real thinking-panel toggle and prove it,
+or remove the stale status-bar hint and add a focused test that advertised
+shortcuts match implemented shortcuts. No docs may claim `ctrl+h` proof unless
+the handler exists.
 
 ### Mode And Trust Slash Command Matrix
 
@@ -199,8 +219,13 @@ smoke include it or the public docs mark it out of scope.
   - `/tree`.
 - Update autocomplete command entries to include `/tree`, `/mode`, and
   `/trust`.
+- Update public `ratchet help` / `printUsage` slash-command section to match
+  the same mode/trust/tree slash surface, or remove the stale partial slash
+  section entirely. If retained, binary smoke must assert the built CLI help
+  includes the aligned entries.
 - Add focused tests proving submitted-command support, `/help`, and
-  autocomplete do not drift for the mode/trust/tree slash surface.
+  autocomplete do not drift for the mode/trust/tree slash surface; add a
+  built-binary help assertion for `ratchet help`.
 - This aligns existing discoverability surfaces only; it does not add new
   commands or change command semantics.
 
@@ -208,6 +233,9 @@ smoke include it or the public docs mark it out of scope.
 
 - Keep the untagged built-binary smoke for `version`, `help`, and
   `daemon status`.
+- Add a non-race CI smoke job in `.github/workflows/ci.yml` so binary/startup
+  smoke tests that skip under `-race` are actually exercised:
+  `go test ./cmd/ratchet ./internal/tui -run 'HarnessSmoke|TUIBinarySmoke' -count=1`.
 - Add one untagged temp-home smoke for default `ratchet` startup only up to the
   expected provider setup/onboarding boundary, not chat:
   - build release-shaped binary without tags;
@@ -331,8 +359,10 @@ smoke include it or the public docs mark it out of scope.
 | Test leaks real home/provider/project state. | Set temp `HOME`/`XDG_STATE_HOME`/`cmd.Dir`/session `WorkingDir`; temp workdir contains no instruction files/dirs from `internal/agent/instructions.go` and no hook configs from `internal/hooks/hooks.go` (`~/.ratchet/hooks.yaml`, `.ratchet/hooks.yaml`); assert captured output excludes real workspace/home paths. |
 | PTY test hangs in CI. | Per-read deadline, process kill cleanup, bounded waits, and no external network/provider dependency. |
 | Shortcut proof misses broken layout. | Use fixed PTY size and assert representative full frames for chat, branch tree, sidebar, and job-panel states with header/status/input anchors visible and bounded line width. |
+| Shortcut hint drifts from handlers. | Treat `internal/tui/app.go` key handling plus `internal/tui/components/statusbar.go` hints as a checked contract; prove `ctrl+b`, `esc`, `ctrl+s`, `ctrl+j`, `ctrl+t`, `ctrl+c`, and `ctrl+d`, and fix/remove stale `ctrl+h`. |
 | Sensitive prompts/log paths in logs. | Use harmless deterministic prompts and route every test failure payload through one redaction helper that removes real home/workspace/temp/socket/executable/artifact paths plus trust/prompt bodies; runtime outputs reject instruction surfaces from `internal/agent/instructions.go` and hook config surfaces from `internal/hooks/hooks.go`, release manifests allowlist expected `RATCHET.md`. |
 | Release-shaped startup leaks daemon process. | Cleanup stops or kills the temp-home daemon and asserts pid/socket files are gone. |
+| Binary smoke skipped under race. | Add non-race CI smoke job for `cmd/ratchet` and `internal/tui` smoke tests alongside the existing race suite. |
 | Release artifact guard only runs manually. | Add the publish-free `release-check` CI job; CI uses GoReleaser action for snapshot generation and the same manifest guard script local runs use. |
 | Platform mismatch. | Unix PTY proof is explicitly Unix-only; Windows claim is limited to build/noninteractive smoke. |
 
@@ -353,9 +383,10 @@ not change in release builds because the smoke entrypoint is build-tagged out.
 | TUI to daemon gRPC | Smoke service uses real daemon service/client RPCs for provider list, session tree, trust mode/rules, and chat send; docs do not claim auto-daemon socket proof from this row. |
 | TUI to mock provider | Chat prompt reaches built-in mock provider and streams a response. |
 | Slash commands | PTY submits slash commands through the input widget and asserts rendered system output/navigation, including the full documented TUI mode/trust slash-command matrix. |
-| Slash discoverability | Focused tests keep `/help` and autocomplete aligned with submitted `/tree`, `/mode`, and `/trust` support. |
-| Shortcuts | PTY sends control keys and asserts branch tree/pane transitions with fixed-size full-frame checks. |
+| Slash discoverability | Focused tests keep in-TUI `/help`, autocomplete, and public `ratchet help` aligned with submitted `/tree`, `/mode`, and `/trust` support. |
+| Shortcuts | PTY sends control keys and asserts branch tree/pane transitions with fixed-size full-frame checks; focused tests reject advertised-but-unimplemented shortcuts. |
 | Docs to tests | Docs guard fails if automated TUI smoke evidence is removed. |
+| Binary smoke to CI | Non-race CI smoke job runs the built-binary/startup/TUI smoke tests that the race suite skips. |
 | Release preflight to CI | `release-check` job runs GoReleaser snapshot generation and the same artifact-manifest guard used locally. |
 | Windows build | Cross-build commands prove release-shaped `ratchet` still compiles for Windows; `ratchet-tui-smoke` interactive PTY remains Unix-only. |
 
@@ -368,8 +399,9 @@ not change in release builds because the smoke entrypoint is build-tagged out.
 | TUI Bubble Tea event loop | runtime-integrated | PTY frames prove splash, chat prompt, transcript, navigation, and exit. |
 | Daemon gRPC service/client | runtime-integrated | Smoke service/client RPCs over a temp Unix socket execute provider list, trust commands, session tree, and chat send. |
 | Built-in mock provider | runtime-integrated | Chat prompt streams deterministic mock response. |
-| Slash commands and shortcuts | runtime-integrated | PTY sends input/control keys and asserts resulting UI states, including the full documented TUI mode/trust slash-command matrix and fixed-size representative frames. |
-| Slash help/autocomplete | runtime-integrated | Focused tests invoke `/help` and autocomplete models to prove submitted command support and discoverability stay aligned. |
+| Slash commands and shortcuts | runtime-integrated | PTY sends input/control keys and asserts resulting UI states, including the full documented TUI mode/trust slash-command matrix, every advertised core shortcut, and fixed-size representative frames. |
+| Slash help/autocomplete/CLI help | runtime-integrated | Focused tests invoke in-TUI `/help`, autocomplete models, and built `ratchet help` to prove submitted command support and discoverability stay aligned. |
+| Non-race binary smoke CI | config-only | `.github/workflows/ci.yml` runs a focused non-race smoke job for subprocess/startup tests that are intentionally skipped under `-race`. |
 | Docs guard | config-only | `cmd/ratchet/harness_docs_test.go` checks public docs mention exact evidence boundaries. |
 | GoReleaser snapshot artifacts | runtime-integrated | Publish-free `release-check` CI job plus local script run `goreleaser check`/snapshot generation and archive inspection with deterministic `.goreleaser.yaml` fallback to prove `ratchet-tui-smoke` is absent from archives/checksums/Homebrew artifacts/release assets. |
 | Windows smoke package boundary | config-only | `GOOS=windows GOARCH=amd64/arm64 go list` and `go build -tags tui_smoke ./cmd/ratchet-tui-smoke` fail with the expected Unix-only no-buildable-files class. |
@@ -378,14 +410,14 @@ not change in release builds because the smoke entrypoint is build-tagged out.
 ## Rollback
 
 Revert `cmd/ratchet-tui-smoke`, the `tui_smoke` client constructor, smoke
-helper, PTY test, help/autocomplete alignment, `release-check` CI job,
-release-artifact script, and docs updates. No data migration exists. Release
-binaries are unaffected because `cmd/ratchet` does not contain a smoke
-command/flag. If a future release accidentally includes `ratchet-tui-smoke`,
-remove it from the release config, delete the bad artifact/checksum/tap
-reference where possible, and cut a patch release. If the CI preflight itself is
-bad, revert that job/script and rely on the existing tag-only release workflow
-while cutting a corrected preflight PR.
+helper, PTY test, help/autocomplete/CLI-help alignment, shortcut hint fix,
+non-race smoke CI job, `release-check` CI job, release-artifact script, and docs
+updates. No data migration exists. Release binaries are unaffected because
+`cmd/ratchet` does not contain a smoke command/flag. If a future release
+accidentally includes `ratchet-tui-smoke`, remove it from the release config,
+delete the bad artifact/checksum/tap reference where possible, and cut a patch
+release. If the CI preflight itself is bad, revert that job/script and rely on
+the existing tag-only release workflow while cutting a corrected preflight PR.
 
 ## Assumptions
 
@@ -461,3 +493,6 @@ while cutting a corrected preflight PR.
 | D34 | Added fixed PTY sizing and representative full-frame assertions for chat, branch tree, sidebar, and job-panel states after shortcuts. |
 | D35 | Added a publish-free release preflight: local `scripts/check-release-artifacts.sh` runs GoReleaser plus manifest guard, while CI uses `goreleaser/goreleaser-action@v7` for snapshot generation and the same script in `--manifest-only` mode. |
 | D36 | Brought `/help` and autocomplete alignment into scope for existing `/tree`, `/mode`, and `/trust` slash surfaces, with focused drift tests. |
+| D37 | Added shortcut source-of-truth matrix covering `/tree`, `ctrl+b`, `esc`, `ctrl+s`, `ctrl+j`, `ctrl+t`, `ctrl+c`, and `ctrl+d`; stale advertised `ctrl+h` must be implemented or removed with tests. |
+| D38 | Added non-race CI smoke job for subprocess/startup/TUI smoke tests skipped by the race suite. |
+| D39 | Added public `ratchet help` / `printUsage` to the slash discoverability contract and built-binary help assertions. |

@@ -347,3 +347,46 @@ None.
 3. Add a small TUI frame assertion helper that fixes PTY size and validates required regions rather than only searching stripped text.
 
 **Verdict reasoning:** The design is much stronger than earlier cycles, but it still has open Important issues that can let implementation pass while proving the wrong thing: impossible trust-output expectations, weak shortcut/pane rendering proof, and an unwired release artifact guard. Status is FAIL until those contracts are made mechanically executable.
+
+## Cycle 9
+
+### Adversarial Review Report
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `D37` [Multi-component validation / User-intent drift] [design:41,136-139; `internal/tui/app.go`:169-185; `internal/tui/components/statusbar.go`:59]: The design names `ctrl+c`/`ctrl+d` as an existing binary-proof gap, but the PTY drive list only proves `/exit` or `ctrl+c`. It also omits `ctrl+t`, which is implemented and advertised in the status bar, and does not address advertised `ctrl+h` at all. Recommendation: define the shortcut source of truth and either prove every advertised/core shortcut (`ctrl+b`, `esc`, `ctrl+s`, `ctrl+j`, `ctrl+t`, `ctrl+c`, `ctrl+d`, plus fix/remove/prove `ctrl+h`) or narrow docs to the exact shortcuts covered.
+- `D38` [Infrastructure impact / Artifact-class precedent] [design:207-222,247-253; `.github/workflows/ci.yml`:48-61; `cmd/ratchet/harness_smoke_test.go`:14-17]: The design relies on untagged built-binary startup smoke, but current CI runs `go test -race ./...` and existing binary smoke explicitly skips under race. The design adds `release-check`, but that only proves GoReleaser artifacts, not the release-shaped startup/onboarding PTY smoke. Recommendation: add a non-race focused CI step for the binary/TUI smoke tests or require the new startup smoke not to inherit the existing race skip.
+- `D39` [Repo-precedent conflicts / Existence-runtime-validity] [design:187-205; `cmd/ratchet/main.go`:168-174; `internal/tui/commands/commands.go`:134-170; `internal/tui/components/autocomplete.go`:37-60]: Help/autocomplete alignment covers in-TUI `/help` and autocomplete, but leaves the public `ratchet help` "Slash commands" section stale. Since the release-shaped smoke already runs `ratchet help`, the design can still ship documented slash proof while the built CLI's own help omits `/tree`, `/mode`, and `/trust`. Recommendation: include `printUsage`/`ratchet help` in the slash discoverability contract and assert it matches the supported TUI slash surface or intentionally remove that stale section.
+
+**Findings (Minor):**
+- None.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | Workspace/repo guidance wants real, documented, Windows-honest proof; D37/D38 leave shortcut and CI proof overclaimable. |
+| Assumptions under attack | Finding | The design assumes "core shortcuts" means the handpicked list, but current code/status UI advertises more. |
+| Repo-precedent conflicts | Finding | Existing binary smoke skips under race and public `ratchet help` has its own slash surface not covered by the design. |
+| Artifact-class precedent | Finding | Binary smoke precedent lives in CI's `go test -race` path but is skipped there; the design does not compensate. |
+| YAGNI violations | Clean | No new runtime feature, ConPTY runner, external provider CI, or broad extension work is introduced. |
+| Missing failure modes | Finding | Missing shortcut cases can pass while advertised keyboard paths remain broken or stale. |
+| Security/privacy at architecture level | Clean | Current text addresses build-tag isolation, temp state, Unix socket containment, and redaction boundaries. |
+| Infrastructure impact | Finding | New CI release preflight is specified, but CI execution for binary startup/TUI smoke remains ambiguous under race. |
+| Multi-component validation | Finding | TUI/daemon/mock proof is strong, but not complete for the claimed shortcut surface. |
+| Declared integration proof | Clean | Runtime/config/deferred classifications are present and mostly precise. |
+| Contributed UI rendering proof | Clean | No plugin-contributed host UI is claimed; direct TUI rendering proof is the relevant surface. |
+| Rollback story | Clean | Source revert plus artifact/tap removal and patch release is adequate for this slice. |
+| Simpler alternative not considered | Finding | A single source-derived shortcut/help matrix would be simpler than manually maintaining separate PTY, `/help`, autocomplete, and CLI-help expectations. |
+| User-intent drift | Finding | User asked for shortcut/slash proof broadly; current text can still prove only selected shortcuts while claiming "shortcuts." |
+| Existence/runtime-validity | Finding | `ctrl+d`, `ctrl+t`, and public `ratchet help` surfaces exist now but are not covered mechanically. |
+
+**Options the author may not have considered:**
+1. Source-derived UI contract: build a small test table from `commands.Parse`, `helpCmd`, autocomplete entries, `printUsage`, and status-bar shortcut hints, then require every advertised item to be either PTY-proven, unit-proven, or explicitly documented out of scope.
+2. Dedicated non-race smoke CI job: keep the main `go test -race ./...` job, but add `go test ./cmd/ratchet ./internal/tui -run 'HarnessSmoke|TUIBinarySmoke' -count=1` so binary subprocess tests are actually exercised in PR/push CI.
+
+**Verdict reasoning:** The current design is much stronger than the earlier cycles, but it still leaves Important gaps where implementation could pass while proving less than the user asked for: not all advertised/core shortcuts, no guaranteed CI execution for release-shaped startup smoke, and stale built CLI help. Status is FAIL until those are mechanically covered or the claims are narrowed.
