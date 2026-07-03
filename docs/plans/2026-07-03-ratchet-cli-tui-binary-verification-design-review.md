@@ -1132,3 +1132,47 @@ None.
 3. Temp-output build helper: one shared helper for positive build checks that always passes `-o <temp>` and never writes binaries into the checkout.
 
 **Verdict reasoning:** The design has converged on most prior issues, but D102 is still an unresolved Important release-safety gap: the Homebrew tap audit can inspect the wrong commit and produce an unusable rollback target.
+
+## Cycle 27
+
+### Adversarial Review Report
+
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `D106` [Infrastructure impact / Rollback story] [design:499-515; `.goreleaser.yaml`:44-56]: Homebrew postcheck is still cask-only, but the actual tap has formula surfaces. The design is framed around `homebrew_casks`, `RATCHET_RELEASE_GUARD_CASK`, `Casks/ratchet-cli.rb`, and a single cask-changing commit. A cask-only guard can pass while another user-visible install surface remains stale, or fail because the assumed cask path does not exist. Recommendation: discover all ratchet tap files from the tap checkout, verify each relevant install surface for version/checksum/forbidden smoke tokens, and record rollback SHA per changed path. If formula/root tap files are intentionally out of scope, mark that as accepted release risk.
+- `D107` [User-intent drift / Multi-component validation] [design:617-672, shortcut matrix]: Docs guard wording can overclaim PTY proof for shortcuts that are only focused-test proven. The design says docs may claim `ratchet-tui-smoke` provides Unix PTY proof for "interactive chat, core shortcuts, selected/PTY-proven slash commands," but conditional `ctrl+h` and branch tree navigation/App switch behavior are focused tests. Recommendation: split docs language and guard templates into `PTY-proven shortcuts` and `focused-test-proven shortcuts`; reject broad PTY shortcut wording unless every named shortcut is actually exercised through the PTY harness.
+
+**Findings (Minor):**
+- `D108` [Security/privacy / Missing failure modes] [design:415-418]: Daemon cleanup fallback can kill by stale PID without proving process identity. The release-shaped startup smoke design allows terminating a temp pidfile process if cleanup leaves pid/socket behind, but does not require checking the PID still belongs to the ratchet daemon launched from the temp home/binary. Recommendation: before fallback termination, verify process identity using executable path, command line, start time, or socket/home ownership; if identity cannot be proven, fail with diagnostics instead of killing the PID.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | D106 conflicts with prior repo release-retro guidance to verify all tap install surfaces when present. |
+| Assumptions under attack | Finding | The design assumes the tap artifact is cask-only and that shortcut evidence can be summarized as PTY-proven core shortcuts. |
+| Repo-precedent conflicts | Finding | Current Homebrew tap shape and TUI shortcut behavior do not match the simplified claims. |
+| Artifact-class precedent | Finding | Release artifact checks need to cover all generated install artifacts, not only the GoReleaser stanza name. |
+| YAGNI violations | Clean | The harness pieces remain tied to manual-gap closure. |
+| Missing failure modes | Finding | Stale PID/PID reuse and stale non-cask tap surfaces are not covered. |
+| Security/privacy at architecture level | Finding | D108 is a local runner safety issue. |
+| Infrastructure impact | Finding | D106 can break or under-verify release/tap automation. |
+| Multi-component validation | Finding | D107 blurs PTY runtime proof with focused component/App tests. |
+| Declared integration proof | Finding | D106 leaves Homebrew release integration proof incomplete. |
+| Contributed UI rendering proof | Clean | No plugin-contributed host-shell UI is claimed. |
+| Rollback story | Finding | D106 rollback is incomplete if only one cask-changing commit is tracked. |
+| Simpler alternative not considered | Finding | Discover tap files from checkout and verify each path; split PTY/focused docs claims instead of broad allowlists. |
+| User-intent drift | Finding | D107 can misrepresent the full TUI manual harness gap closure as broader than planned evidence. |
+| Existence/runtime-validity | Finding | The expected `Casks/ratchet-cli.rb` path may not exist while root/formula files do. |
+
+**Options the author may not have considered:**
+1. Discover tap files from checkout and verify every `ratchet` install surface by path.
+2. Shortcut evidence classification table parallel to slash-command proof classes.
+3. PID identity check before fallback daemon termination.
+
+**Verdict reasoning:** FAIL because D106 and D107 are unresolved Important issues: the tap audit can miss formula/root install surfaces, and docs can overclaim PTY proof for focused shortcut behavior.

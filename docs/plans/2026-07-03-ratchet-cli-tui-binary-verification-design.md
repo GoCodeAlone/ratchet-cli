@@ -8,8 +8,8 @@
 
 Close the ratchet-cli harness proof gap where `docs/harness-emulation.md` still
 marks the full TUI as manual by adding credential-free binary execution proof
-for interactive TUI launch, chat input, core shortcuts, and the selected
-PTY-proven slash-command matrix.
+for interactive TUI launch, chat input, PTY-proven shortcuts, focused shortcut
+coverage, and the selected PTY-proven slash-command matrix.
 
 ## User Intent
 
@@ -201,23 +201,24 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
 
 ### Shortcut Matrix
 
-The PTY smoke and focused view tests cover every implemented or advertised core
-TUI shortcut. The source of truth is `internal/tui/app.go` key handling,
+The PTY smoke and focused view tests cover every implemented or advertised TUI
+shortcut without collapsing the evidence class. The source of truth is
+`internal/tui/app.go` key handling,
 `internal/tui/pages/chat.go` page-level key handling,
 `internal/tui/components/sessiontree.go` branch-tree key handling, README TUI
 navigation docs, and `internal/tui/components/statusbar.go` hints.
 
-| shortcut | expected evidence |
-|---|---|
-| `/tree` | Opens branch tree; `esc` returns to chat; frame keeps status/input anchors bounded. |
-| `ctrl+b` | Opens branch tree; `esc` returns to chat; same frame checks as `/tree`. |
-| `ctrl+s` | Toggles sidebar; chat input remains visible and usable. |
-| `ctrl+j` | Opens job panel view; pressing `ctrl+j` again returns to chat with input visible and usable. |
-| `esc` in job panel | Closes job panel, matching the advertised `Esc: close` hint, and returns to chat with input visible and usable. |
-| `ctrl+t` | Opens team panel view; pressing `ctrl+t` again returns to chat with input visible and usable. |
-| `ctrl+h` | Focused `ChatModel` test seeds thinking-panel content and proves `ctrl+h` toggles collapse/expand; if no thinking content exists, it is a no-op and no docs claim PTY proof. |
-| `ctrl+c` | Exits cleanly. |
-| `ctrl+d` | Exits cleanly. |
+| shortcut | proof class | expected evidence |
+|---|---|---|
+| `/tree` | `pty-proven` | Opens branch tree; `esc` returns to chat; frame keeps status/input anchors bounded. |
+| `ctrl+b` | `pty-proven` | Opens branch tree; `esc` returns to chat; same frame checks as `/tree`. |
+| `ctrl+s` | `pty-proven` | Toggles sidebar; chat input remains visible and usable. |
+| `ctrl+j` | `pty-proven` | Opens job panel view; pressing `ctrl+j` again returns to chat with input visible and usable. |
+| `esc` in job panel | `pty-proven` | Closes job panel, matching the advertised `Esc: close` hint, and returns to chat with input visible and usable. |
+| `ctrl+t` | `pty-proven` | Opens team panel view; pressing `ctrl+t` again returns to chat with input visible and usable. |
+| `ctrl+h` | `focused-proven` | Focused `ChatModel` test seeds thinking-panel content and proves `ctrl+h` toggles collapse/expand; if no thinking content exists, it is a no-op and no docs claim PTY proof. |
+| `ctrl+c` | `pty-proven` | Exits cleanly. |
+| `ctrl+d` | `pty-proven` | Exits cleanly. |
 
 Branch-tree navigation proof uses focused component/page tests with a fixture
 tree containing at least one root and one child branch:
@@ -241,6 +242,11 @@ Add one App-level branch-switch proof above the component/page tests:
 - wait for the history reload completion path, not only command emission;
 - submit a deterministic chat prompt after the switch and assert it is sent
   against the selected child session.
+
+Docs may claim PTY proof only for shortcut rows classified `pty-proven`.
+Conditional `ctrl+h`, detailed branch-tree navigation (`j`/`k`, arrows, `h`/`l`,
+`Enter`, `r`), and App-level child-session switching are focused/App-level
+proof in this slice and must not be described as PTY-proven.
 
 ### Mode And Trust Slash Command Matrix
 
@@ -414,13 +420,20 @@ Mechanical fail-closed check:
   - exit cleanly;
   - run `ratchet daemon stop` with the same temp env if a temp pid/socket exists,
     then wait boundedly for pid/socket cleanup; if either remains after the
-    wait, read the temp pid file and terminate/wait on that process;
+    wait, read the temp pid file and verify the PID still belongs to the
+    ratchet daemon launched by this smoke test before terminating it;
+  - fallback termination must prove process identity by matching at least the
+    built `ratchet` executable path or command line plus temp `HOME`/state
+    directory and daemon socket path; if identity cannot be proven, fail with
+    redacted diagnostics instead of killing the PID;
   - assert temp `.ratchet/daemon.pid` and `.ratchet/daemon.sock` are gone after
     cleanup.
 - Docs distinguish:
   - release-shaped binary: startup/help/daemon/onboarding boundary;
-  - `ratchet-tui-smoke` binary: credential-free interactive TUI
-    chat/commands/shortcuts against mock daemon.
+  - `ratchet-tui-smoke` binary: credential-free interactive TUI chat, selected
+    PTY-proven commands, and PTY-proven shortcuts against mock daemon;
+  - focused TUI tests: conditional shortcut and branch-selection behavior that
+    is not claimed as PTY-proven.
 
 ### Portable Compile And CLI Proof
 
@@ -510,27 +523,34 @@ Mechanical fail-closed check:
   - after `goreleaser release --clean`, clone the tap identified by
     `.goreleaser.yaml` `homebrew_casks[].repository` (currently
     `GoCodeAlone/homebrew-tap`, branch `main`) with `HOMEBREW_TAP_TOKEN`;
-  - parse `.goreleaser.yaml` to derive the expected cask name
-    (`ratchet-cli`) and candidate Ruby cask paths such as
-    `Casks/ratchet-cli.rb`, then fail if no matching cask file exists;
-  - resolve the exact cask-changing commit for the current release with
-    `git log -1 -- <candidate-cask-path>` in the tap checkout, not raw branch
-    `HEAD`; verify the commit's cask content contains the expected release tag
-    or version/checksum context from the current tag before scanning;
+  - parse `.goreleaser.yaml` to derive expected tap names from every
+    Homebrew-related release surface (`homebrew_casks` today, plus any
+    `brews`/formula section added later);
+  - discover all relevant tap install files in the checkout instead of assuming
+    a cask-only layout: candidates include root `ratchet*.rb`,
+    `Casks/ratchet*.rb`, `Formula/ratchet*.rb`, and any path changed by the
+    current release commit whose basename contains `ratchet`;
+  - fail if no relevant tap file exists; verify each discovered install surface
+    for the current release's expected version/checksum context and forbidden
+    smoke tokens;
+  - resolve the exact path-changing commit for each relevant tap file with
+    `git log -1 -- <tap-file>` in the tap checkout, not raw branch `HEAD`;
+    verify each commit's file content contains the expected release tag or
+    version/checksum context before scanning;
   - run `RATCHET_RELEASE_GUARD_MODE=tap-postcheck
     RATCHET_RELEASE_GUARD_TAP=<tap-checkout>
-    RATCHET_RELEASE_GUARD_CASK=ratchet-cli
-    RATCHET_RELEASE_GUARD_TAP_COMMIT=<cask-changing-sha>
+    RATCHET_RELEASE_GUARD_TAP_NAMES=ratchet-cli,ratchet
+    RATCHET_RELEASE_GUARD_TAP_COMMITS=<path=sha,...>
     RATCHET_RELEASE_GUARD_VERSION=<tag-or-version>
     go test -count=1 ./internal/releaseguard -run TestTapPostcheck`;
-  - the helper scans `git show <cask-changing-sha>:<candidate-cask-path>`,
-    the cask-changing commit metadata, and that commit's changed-file list for
-    forbidden smoke tokens
+  - the helper scans `git show <path-changing-sha>:<tap-file>` for every
+    discovered install file, each path-changing commit's metadata, and each
+    commit's changed-file list for forbidden smoke tokens
     (`ratchet-tui-smoke`, `tui_smoke`, smoke command/flag/help markers);
   - on contamination, fail the release workflow and print the exact tap owner,
-    branch, cask-changing SHA, candidate cask path, and rollback command shape
-    (`git revert <tap-sha>` on the tap branch, then cut a corrected patch
-    release).
+    branch, per-path commit SHA, tap file path, and rollback command shape
+    (`git revert <tap-sha>` on the tap branch for each contaminated path, then
+    cut a corrected patch release).
   Fully pre-public tap blocking requires a future split-publish workflow and is
   out of scope for this slice.
 - Local verification can run the script when GoReleaser is installed; ordinary
@@ -615,13 +635,16 @@ Mechanical fail-closed check:
   - `ratchet`: release-shaped startup/onboarding boundary, no credential-free
     chat claim;
   - `ratchet-tui-smoke`: non-release Unix PTY proof for interactive
-    chat, core shortcuts, and selected/PTY-proven slash commands (`/help`,
-    `/provider list`, `/tree`, `/mode`, `/trust`, and `/exit`).
+    chat, selected/PTY-proven shortcuts, and selected/PTY-proven slash commands
+    (`/help`, `/provider list`, `/tree`, `/mode`, `/trust`, and `/exit`);
+  - focused TUI tests: conditional `ctrl+h`, detailed branch-tree navigation,
+    and App-level child-session switching.
 - Update `README.md` harness table with the same split wording.
 - Extend `cmd/ratchet/harness_docs_test.go` so docs must mention TUI binary
-  smoke, slash commands, shortcuts, temp home/workdir, mock provider, Windows
-  compile proof, and the fact that release-shaped `ratchet` proof does not
-  claim credential-free chat.
+  smoke, selected/PTY-proven slash commands, selected/PTY-proven shortcuts,
+  focused shortcut coverage, temp home/workdir, mock provider, Windows compile
+  proof, and the fact that release-shaped `ratchet` proof does not claim
+  credential-free chat.
 - Make the docs guard bidirectional:
   - exact positive evidence assertions scan `README.md` harness table and
     `docs/harness-emulation.md`;
@@ -669,8 +692,13 @@ Mechanical fail-closed check:
     `docs/harness-emulation.md` must match one of the allowed claim templates:
     release-shaped `ratchet` startup/onboarding proof with no credential-free
     chat claim, or `ratchet-tui-smoke` Unix PTY proof for interactive chat,
-    core shortcuts, and selected/PTY-proven slash commands; any other TUI
-    evidence wording must link to the command-surface classification table;
+    selected/PTY-proven shortcuts, and selected/PTY-proven slash commands; any
+    other TUI evidence wording must link to the command-surface or shortcut
+    classification table;
+  - broad claims such as "PTY proof for core shortcuts" or "binary smoke tests
+    all shortcuts" fail unless the claim enumerates only `pty-proven` shortcut
+    rows or points to the shortcut matrix and distinguishes focused shortcut
+    proof;
   - same-line/same-row exceptions must negate the same release-target evidence
     claim (`not claimed for ratchet`, `does not claim release-shaped`, or
     equivalent), assign the evidence claim to `ratchet-tui-smoke` within the
@@ -689,17 +717,17 @@ Mechanical fail-closed check:
 | PTY test hangs or flakes in CI. | Per-read deadline, process kill cleanup, bounded waits, synchronized PTY output snapshots, and no external network/provider dependency. |
 | PTY exit path is only partly tested. | Use one long interaction PTY run ending with `/exit`, plus separate short PTY subprocess subtests for `ctrl+c` and `ctrl+d`. |
 | Shortcut proof misses broken layout. | Use fixed PTY size and assert representative full frames for chat/sidebar input-visible states and branch-tree/team/job panel states, then return to chat and assert input usability. |
-| Shortcut hint drifts from handlers. | Treat app/page/component key handling plus README/statusbar hints as a checked contract; prove global shortcuts, conditional `ctrl+h`, and advertised branch-tree navigation. |
+| Shortcut hint drifts from handlers. | Treat app/page/component key handling plus README/statusbar hints as a checked contract; classify each shortcut as `pty-proven` or `focused-proven`, and reject docs that collapse focused shortcut proof into PTY proof. |
 | Slash-command proof overclaims broad coverage. | Maintain a command-surface classification table from `commands.Parse`/`helpCmd`; docs may claim PTY proof only for `pty-proven` rows. |
 | Sensitive prompts/log paths in logs. | Use harmless deterministic prompts and route every test failure payload through one redaction helper that removes real home/workspace/temp/socket/executable/artifact paths plus trust/prompt bodies; runtime outputs reject instruction surfaces from `internal/agent/instructions.go` and hook config surfaces from `internal/hooks/hooks.go`, release manifests allowlist expected `RATCHET.md`. |
-| Release-shaped startup leaks daemon process. | Cleanup runs `ratchet daemon stop`, waits boundedly for temp pid/socket removal, falls back to terminate/wait by temp pid, and asserts pid/socket files are gone. |
+| Release-shaped startup leaks daemon process. | Cleanup runs `ratchet daemon stop`, waits boundedly for temp pid/socket removal, proves PID identity before any fallback terminate/wait, and asserts pid/socket files are gone. |
 | Binary smoke skipped under race. | Add package-local `internal/tui` race helper files; `TestTUIBinarySmoke` skips under `-race`, and a focused non-race CI smoke job for `cmd/ratchet` and `internal/tui` smoke tests runs alongside the existing race suite. |
 | Non-race smoke CI cannot fetch private modules. | Make the smoke job setup-equivalent to existing CI: checkout, setup-go `1.26`, `GOPRIVATE`/`GONOSUMCHECK`, and private-module Git rewrite before `go test`. |
 | Release artifact guard only runs manually. | Add the publish-free `release-check` CI job; CI uses GoReleaser action for snapshot generation and the same manifest guard script local runs use. |
 | Shell release guard misparses GoReleaser YAML. | Implement the artifact/config guard under `internal/releaseguard` in Go with `gopkg.in/yaml.v3`; shell wrapper only orchestrates GoReleaser and invokes Go tests/helper logic without adding a product `cmd/*` package. |
 | Tag release bypasses artifact guard. | Add the same publish-free `goreleaser check` + snapshot + manifest guard to `.github/workflows/release.yml` before the publishing step. |
 | Release jobs cannot fetch private modules. | Mirror CI's `GOPRIVATE`/`GONOSUMCHECK` and private-module Git rewrite in release preflight/publish and Windows safe-command smoke jobs. |
-| Snapshot guard differs from uploaded release. | Add a draft-release postcheck before undrafting that downloads uploaded GitHub release archives/checksums and runs the same archive manifest plus all-packaged-binary byte-scan guard against actual uploaded assets; add an executable Homebrew tap postcheck that clones the configured tap after publish, resolves the exact cask-changing commit for the current release, scans that cask content and commit metadata, and prints the exact rollback target on contamination. |
+| Snapshot guard differs from uploaded release. | Add a draft-release postcheck before undrafting that downloads uploaded GitHub release archives/checksums and runs the same archive manifest plus all-packaged-binary byte-scan guard against actual uploaded assets; add an executable Homebrew tap postcheck that clones the configured tap after publish, discovers every relevant root/Formula/Casks tap install file, resolves each path-changing commit for the current release, scans each file content and commit metadata, and prints exact rollback targets on contamination. |
 | Draft release lookup flakes or misses assets. | Reuse the existing `listReleases` retry-by-tag workflow, pass the resolved release id to postcheck and undraft, and download assets by release id. |
 | Release is public before postcheck. | Preflight fails unless `.goreleaser.yaml` keeps `release.draft: true`; postcheck fails if the resolved release is not draft before inspection. |
 | Platform mismatch. | Unix PTY proof is explicitly Unix-only; Windows claim is limited to build/noninteractive smoke. |
@@ -712,12 +740,13 @@ Homebrew cask/tap update through GoReleaser. This slice adds publish-free
 GoReleaser preflight jobs on PR/push and before tag publishing, a GitHub draft
 asset postcheck before undrafting, packaged-binary inspection, an executable
 after-the-fact Homebrew/tap postcheck that clones `GoCodeAlone/homebrew-tap`
-and scans the generated `ratchet-cli` cask at the exact cask-changing commit
-for the current release, plus a `windows-safe-command-smoke` job on
-`windows-latest`. GitHub release artifacts are pre-public gated; Homebrew/tap
-remains prechecked plus postchecked/rollback under the current GoReleaser
-workflow. Fully pre-public Homebrew/tap gating is deferred to a split-publish
-workflow. These workflow paths must mirror existing
+and scans every relevant `ratchet` root/Formula/Casks tap install file at its
+exact path-changing commit for the current release, plus a
+`windows-safe-command-smoke` job on `windows-latest`. GitHub release artifacts
+are pre-public gated; Homebrew/tap remains prechecked plus
+postchecked/rollback under the current GoReleaser workflow. Fully pre-public
+Homebrew/tap gating is deferred to a split-publish workflow. These workflow
+paths must mirror existing
 private-module environment and Git rewrite setup. Local test-only process and
 temp files only. Runtime behavior does not change in release builds because the
 smoke entrypoint is build-tagged out.
@@ -733,7 +762,7 @@ smoke entrypoint is build-tagged out.
 | Slash commands | PTY submits representative slash commands through the input widget and asserts rendered system output/navigation for `pty-proven` rows: `/help`, `/provider list`, `/tree`, `/mode`, `/trust`, and `/exit`. |
 | TUI exit paths | `/exit`, `ctrl+c`, and `ctrl+d` each run in their own PTY subprocess/subtest; the long interaction run exits with `/exit`, while control-key runs prove clean termination independently. |
 | Slash discoverability | Focused tests keep in-TUI `/help`, autocomplete, public `ratchet help`/`printUsage`, and the command-surface classification table aligned with `commands.Parse`/`helpCmd`; docs cannot claim PTY proof for `focused-proven` or `deferred-runtime` commands. |
-| Shortcuts | PTY sends global control keys and asserts branch tree/pane transitions with fixed-size full-frame checks matching current behavior; focused tests prove conditional `ctrl+h`, advertised branch-tree navigation, and App-level branch switch into child chat history. |
+| Shortcuts | PTY sends `pty-proven` shortcut rows and asserts branch tree/pane transitions with fixed-size full-frame checks matching current behavior; focused tests prove conditional `ctrl+h`, advertised branch-tree navigation, and App-level branch switch into child chat history. Docs cannot claim PTY proof for focused shortcut rows. |
 | Docs to tests | Docs guard fails if automated TUI smoke evidence is removed. |
 | Binary smoke to CI | Non-race CI smoke job runs the built-binary/startup/TUI smoke tests that the race suite skips; `internal/tui` owns its race skip helper so package-local tests compile in both race and non-race suites. |
 | Release preflight to CI/release | `release-check` and tag release workflow both run `goreleaser check`, snapshot generation, and the same artifact-manifest guard before publish; guard extracts and byte-scans every packaged `ratchet` binary from every archive, runs executable help/version checks where practical, and release postcheck downloads uploaded GitHub draft release assets and repeats the same checks before undrafting; Homebrew/tap postcheck is after-the-fact with rollback. |
@@ -748,13 +777,14 @@ smoke entrypoint is build-tagged out.
 | TUI Bubble Tea event loop | runtime-integrated | PTY frames prove splash, chat prompt, transcript, navigation, and exit. |
 | Daemon gRPC service/client | runtime-integrated | Smoke service/client RPCs over a temp Unix socket execute provider list, trust commands, session tree, and chat send. |
 | Built-in mock provider | runtime-integrated | Chat prompt streams deterministic mock response. |
-| Slash commands and shortcuts | runtime-integrated | PTY sends input/control keys and asserts resulting UI states for representative `pty-proven` slash commands, the full documented TUI mode/trust matrix, every advertised core shortcut, and fixed-size representative frames. Focused tests prove App-level branch switch and classify the rest of the slash surface. |
+| Slash commands and PTY-proven shortcuts | runtime-integrated | PTY sends input/control keys and asserts resulting UI states for representative `pty-proven` slash commands, the full documented TUI mode/trust matrix, `pty-proven` shortcut rows, and fixed-size representative frames. |
+| Focused shortcut coverage | config-only + focused proof | Focused tests prove conditional `ctrl+h`, advertised branch-tree navigation, and App-level branch switch into child chat history; this is not claimed as PTY runtime proof. |
 | Public CLI slash help | runtime-integrated | Built `ratchet help` is executed from the release-shaped binary, and the `printUsage` extractor ties its slash rows to the command-surface classification table. |
 | TUI help/autocomplete command-surface guard | config-only + focused proof | Focused tests invoke in-TUI `/help`, inspect autocomplete models, parse command surfaces, and compare them to the typed command spec; this prevents discoverability drift but is not claimed as host-runtime proof for every non-`pty-proven` command. |
 | Non-race binary smoke CI | config-only | `.github/workflows/ci.yml` runs a focused non-race smoke job for subprocess/startup tests that are intentionally skipped under `-race`, with explicit test names for release startup and TUI binary smoke. |
 | Docs guard | config-only | `cmd/ratchet/harness_docs_test.go` checks public docs mention exact evidence boundaries. |
 | GoReleaser snapshot and GitHub draft assets | runtime-integrated | Publish-free `release-check` CI job, tag release preflight, local script, and release draft postcheck run `goreleaser check`/snapshot generation plus archive/upload inspection, all-archive packaged-binary byte scans, host/Windows packaged-binary help/version checks, and deterministic `.goreleaser.yaml` fallback. The postcheck downloads draft GitHub release assets and repeats the same checks before undraft, proving uploaded archives/checksums do not contain `ratchet-tui-smoke`. |
-| Homebrew/tap cask | config-only + post-publish audit | Snapshot/config precheck proves cask ids/binaries do not reference smoke artifacts; current GoReleaser workflow can still push the tap before postcheck, so tap safety is after-the-fact audit plus rollback, not pre-public gating. Split-publish pre-public gating is deferred. |
+| Homebrew/tap install files | config-only + post-publish audit | Snapshot/config precheck proves Homebrew ids/binaries do not reference smoke artifacts; after publish, the guard discovers and scans every relevant root/Formula/Casks tap file at its exact path-changing commit. Current GoReleaser workflow can still push the tap before postcheck, so tap safety is after-the-fact audit plus rollback, not pre-public gating. Split-publish pre-public gating is deferred. |
 | Windows safe-command smoke | runtime-integrated | `windows-safe-command-smoke` on x64 `windows-latest` declares `needs: release-check`, builds source `ratchet.exe`, downloads `ratchet-snapshot-dist` from `release-check`, requires `ratchet_windows_amd64.zip` and `ratchet_windows_arm64.zip`, byte-scans both, extracts amd64 only for execution, and runs packaged `ratchet.exe version`, `ratchet.exe help`, and `ratchet.exe daemon status` with temp Windows home/state env to prove non-PTY Windows CLI startup/help/daemon-status behavior and packaged-archive absence of smoke surfaces. |
 | Windows smoke package boundary | config-only | `GOOS=windows GOARCH=amd64/arm64 go list` and `go build -tags tui_smoke ./cmd/ratchet-tui-smoke` fail with the expected Unix-only no-buildable-files class. |
 | Windows interactive PTY | deferred | No ConPTY runner in this slice; Windows coverage is build/noninteractive only. |
@@ -770,9 +800,9 @@ does not contain a smoke command/flag. If a future GitHub release accidentally
 includes `ratchet-tui-smoke`, keep the release draft, delete the bad
 artifact/checksum where possible, fix the release config, and rerun/cut a patch
 release. If the Homebrew tap postcheck fails, use the reported
-`GoCodeAlone/homebrew-tap` branch, cask-changing SHA, and cask path to revert
-the exact tap commit (`git revert <tap-sha>` on `main`) or delete the bad
-reference, then cut a corrected patch release. If the CI or release
+`GoCodeAlone/homebrew-tap` branch, per-path tap SHA, and tap install file path
+to revert the exact tap commit (`git revert <tap-sha>` on `main`) or delete
+the bad reference, then cut a corrected patch release. If the CI or release
 preflight/postcheck itself is bad, revert that job/script while keeping the
 existing tag-only release workflow's publish step, then cut a corrected
 preflight PR.
@@ -909,17 +939,20 @@ preflight PR.
 | D89 | Added recursive forbidden-token scalar scanning under all GoReleaser artifact/publish sections in fallback mode before id/binary assertions. |
 | D90 | Moved release guard implementation shape from product `cmd/*` to `internal/releaseguard` plus tests/shell wrapper to avoid a public helper binary surface. |
 | D91 | Replaced broad smoke-source path/name scanning with a typed manifest schema, exact token/symbol scan, and allowlist for existing `*_smoke_test.go` precedent only. |
-| D92 | Narrowed docs wording and guard behavior: `ratchet-tui-smoke` may claim chat, core shortcuts, and selected/PTY-proven slash matrix only. |
+| D92 | Narrowed docs wording and guard behavior: `ratchet-tui-smoke` may claim chat, selected/PTY-proven shortcuts, and selected/PTY-proven slash matrix only; focused shortcut proof stays separately labeled. |
 | D93 | Added `printUsage` extraction and public CLI-help surface checks tied to the typed command spec. |
 | D94 | Required releaseguard wrapper paths to use non-cacheable `go test -count=1` with explicit env/dist path for artifact inspection. |
 | D95 | Added post-reset `/trust list` and `/trust grants` assertions proving runtime rules reset to config defaults while unreverted persisted grants remain unchanged. |
 | D96 | Expanded docs evidence tokens to include test/tested/tests/testing/exercised/exercise/asserted/asserts so common overclaim wording cannot evade the guard. |
 | D97 | Added advertised job-panel `Esc` close behavior to the shortcut matrix. |
 | D98 | Required `/trust reset` follow-up proof that `Mode: conservative` matches the smoke config default after prior mode mutations. |
-| D99 | Specified executable Homebrew tap postcheck mechanics: clone configured tap, find generated cask, scan exact cask-changing commit metadata/content, fail with rollback target. |
+| D99 | Specified executable Homebrew tap postcheck mechanics: clone configured tap, discover relevant root/Formula/Casks install files, scan exact path-changing commit metadata/content, fail with rollback targets. |
 | D100 | Added validated/validation/guarded/guard/e2e/end-to-end evidence terms and allowed TUI evidence claim templates. |
 | D101 | Split the integration matrix row into runtime public CLI help and focused/static TUI help/autocomplete command-surface proof. |
-| D102 | Changed Homebrew tap postcheck to resolve and scan the exact cask-changing commit for the current release, not branch HEAD. |
+| D102 | Changed Homebrew tap postcheck to resolve and scan the exact path-changing commit for every relevant tap install file for the current release, not branch HEAD. |
 | D103 | Required positive build assertions to write binaries to temp `-o` paths instead of the checkout. |
 | D104 | Replaced smoke-only direct DB mock-provider seeding with production `AddProvider` RPC setup through the smoke client. |
 | D105 | Made command-surface guards fail closed on nonliteral/generated command cases, help rows, or autocomplete entries unless explicitly spec-marked and runtime-tested. |
+| D106 | Expanded Homebrew tap postcheck from cask-only to discovery/scanning of every relevant root, Formula, and Casks install file with per-path rollback SHAs. |
+| D107 | Split shortcut docs/proof into `pty-proven` and `focused-proven` classifications and rejected broad PTY shortcut overclaims. |
+| D108 | Required daemon cleanup fallback to prove PID identity before termination, otherwise fail with redacted diagnostics. |
