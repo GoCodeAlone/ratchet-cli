@@ -1352,3 +1352,48 @@ None.
 2. Tap surface retirement: remove root and Formula files, documenting `Casks/ratchet-cli.rb` as the only managed Homebrew surface until formula publishing is added.
 
 **Verdict reasoning:** FAIL. Three executable design gaps remain: job registry wiring for job-panel proof, nonportable PID identity/signal cleanup, and no durable model for unmanaged formula/root tap surfaces.
+
+## Cycle 32
+
+### Adversarial Review Report
+
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `D123` [Multi-component validation / Missing failure modes] [design:89-92,242; `internal/tui/components/jobpanel.go`:107-116]: The design requires PTY `ctrl+j` proof to fail if the job panel hits a daemon RPC error, but current `JobPanel.fetchJobs` silently converts `ListJobs` errors into an empty job list. Recommendation: require job panel to surface refresh errors in test-observable state/UI, or add PTY/service instrumentation proving actual `ListJobs` call succeeded during the `ctrl+j` run.
+- `D124` [Existence/runtime-validity / Infrastructure impact] [design:455-463,828; `internal/daemon/service.go`:240-252; `internal/daemon/daemon.go`:94-125]: Release-shaped startup smoke relies on RPC/process-handle daemon cleanup, but production `daemon.Start` never calls `SetShutdownFunc`, and `StartBackground` detaches the daemon without returning a process handle. `Shutdown` RPC is therefore a no-op for the normal background daemon path. Recommendation: wire real shutdown callback in `daemon.Start` and prove `Shutdown` removes pid/socket files, or revise cleanup design to executable identity-safe mechanism.
+- `D125` [Infrastructure impact / Rollback story / Declared integration proof] [design:546-565,572-590; `.github/workflows/ci.yml`:17-61]: Tap cleanup is a required external prerequisite, but proposed PR/push `release-check` path does not run tap preflight, and design does not define a merge gate proving `GoCodeAlone/homebrew-tap` cleanup landed before ratchet-cli release workflow enforcement. Recommendation: add a PR/push read-only `tap-preflight` check, or require recorded tap cleanup SHA before enabling fail-closed release workflow checks.
+
+**Findings (Minor):**
+- None.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Clean | No repo-local guidance; reviewed README/RATCHET and referenced docs. |
+| Assumptions under attack | Finding | Job-panel RPC failures are hidden; normal daemon RPC shutdown is not wired; tap cleanup needs a PR gate. |
+| Repo-precedent conflicts | Finding | Existing job panel swallows `ListJobs` errors; existing daemon shutdown callback is test-injected only. |
+| Artifact-class precedent | Finding | Binary/startup smoke cleanup and tap-release gates need executable CI/release surfaces. |
+| YAGNI violations | Clean | Guards target concrete prior release/docs/smoke/TUI proof gaps. |
+| Missing failure modes | Finding | Hidden job RPC failure, daemon process leak, and tag-release-only tap drift failure remain. |
+| Security/privacy at architecture level | Clean | Build-tag isolation, temp state/workdir, socket containment, redaction, and hook/instruction leak controls are explicit. |
+| Infrastructure impact | Finding | D124/D125 affect CI runner process cleanup and release/tap reliability. |
+| Multi-component validation | Finding | `ctrl+j` does not prove TUI-to-daemon `ListJobs` success as written. |
+| Declared integration proof | Finding | Homebrew/tap cleanup is declared but not enforced before merge/tag release. |
+| Contributed UI rendering proof | Clean | No plugin-contributed host UI is involved. |
+| Rollback story | Finding | Daemon cleanup can leak process; tap cleanup precondition is not tied to rollout gate. |
+| Simpler alternative not considered | Finding | Surface job refresh errors, wire production Shutdown, run tap preflight in PR CI. |
+| User-intent drift | Clean | Scope remains aligned with TUI binary verification and release honesty. |
+| Existence/runtime-validity | Finding | Current code shows `Shutdown` lacks production wiring and job panel errors are not observable. |
+
+**Options the author may not have considered:**
+1. Observable job refresh contract: error field/message and bounded panel error anchor.
+2. Production daemon shutdown proof through `daemon.Start` callback and public RPC.
+3. Tap rollout gate through PR/push read-only `tap-preflight`.
+
+**Verdict reasoning:** FAIL. The TUI job-panel proof can pass through a swallowed RPC error, startup-smoke daemon cleanup depends on an unwired shutdown path, and tap cleanup is required but not merge-gated.
