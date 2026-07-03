@@ -303,3 +303,47 @@ None.
 2. GoReleaser schema-backed guard: use GoReleaser's own config validation or published schema as the fallback parser source of truth, then layer ratchet-specific assertions on resolved artifact IDs/binaries. This avoids maintaining a partial top-level section taxonomy by hand.
 
 **Verdict reasoning:** Cycle 7 resolves the obvious Cycle 6 text gaps for D25-D28 better than prior revisions, but not all of them are mechanically closed. The trust matrix still misses documented `/mode` values, the forbidden docs regexes remain easy to evade with ordinary wording, and the GoReleaser fallback parser is not strict in a well-defined way against real artifact/publish surfaces. These are Important design issues because they can let the implementation pass while still overclaiming TUI/slash proof or missing release artifact contamination. Status remains FAIL.
+
+## Cycle 8
+
+### Adversarial Review Report
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `D33` [Existence/runtime-validity] [design:157-177; `internal/tui/commands/trust.go`:82-129]: The trust slash-command matrix expects several mutation commands to render `smoke` scope, but current `/trust allow`, `/trust deny`, `/trust persist`, and `/trust revoke` responses only render the pattern, not the scope. The PTY assertions would either be impossible or would need an unstated follow-up `/trust list`/`/trust grants` after each mutation. Recommendation: change the matrix evidence to match current command output, or require a follow-up state-read assertion after each mutating command that proves the scope through daemon state.
+- `D34` [Missing failure modes / multi-component validation] [design:121-140; `internal/tui/app.go`:420-464]: The PTY proof never requires a deterministic terminal size or frame-level assertions for the alt-screen layout. Substring checks can pass while `ctrl+s`/`ctrl+j` panes render off-screen, overlap, or leave the input unusable. Recommendation: set the PTY rows/cols explicitly and assert representative full frames for chat, sidebar, job panel, and tree states with header/status/input visible and bounded.
+- `D35` [Infrastructure impact / rollback story] [design:216-250; `.github/workflows/ci.yml`:29-61; `.github/workflows/release.yml`:17-20]: The release artifact guard requires `goreleaser release --snapshot --clean --skip=publish`, but the design does not say where that guard runs or how GoReleaser is installed outside the tag-only release workflow. Current CI runs `go build`, Windows cross-build, and `go test -race ./...`, but no GoReleaser preflight. Recommendation: add an explicit CI/release-preflight job using `goreleaser/goreleaser-action`, or state that the guard is a required manual release gate and wire docs/tests so it cannot be mistaken for normal CI coverage.
+
+**Findings (Minor):**
+- `D36` [User-intent drift / artifact-class precedent] [design:129-180; `internal/tui/commands/commands.go`:134-170; `internal/tui/components/autocomplete.go`:37-60]: The design proves submitted slash commands but not TUI discoverability surfaces. `/help` omits persistent trust commands and `custom` mode, and autocomplete omits `/tree`, `/mode`, and `/trust`; the design's docs/code drift guard does not include those UI surfaces. Recommendation: either mark help/autocomplete out of scope, or add assertions that submitted-command support, `/help`, and autocomplete stay aligned.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | Release-safe/current proof is weakened because the GoReleaser guard has no declared CI or release-preflight execution surface. |
+| Assumptions under attack | Finding | The design assumes substring PTY evidence is enough for pane/shortcut rendering and assumes mutation commands expose scope text they do not currently print. |
+| Repo-precedent conflicts | Finding | Existing CI/Makefile default to `go test ./...` and do not install GoReleaser, while this design adds an unstated external-tool gate. |
+| Artifact-class precedent | Finding | Existing binary smoke tests are explicit about process commands and output contracts; the new trust matrix has expected output that does not match command handlers. |
+| YAGNI violations | Clean | The scope avoids ConPTY, new runtime features, external provider CI, and broader extension work. |
+| Missing failure modes | Finding | PTY size/layout failure and pane overlap are not guarded, so shortcut proof can pass without real usable rendering. |
+| Security/privacy at architecture level | Clean | Prior smoke-entrypoint, temp state, socket containment, and redaction concerns are addressed in the current design text. |
+| Infrastructure impact | Finding | GoReleaser snapshot inspection is a real toolchain/CI impact but is described as if it were just local test logic. |
+| Multi-component validation | Finding | TUI/daemon/mock proof is real, but visual state transitions are not proven beyond substrings. |
+| Declared integration proof | Finding | The integration matrix classifies GoReleaser artifacts, but the design does not define the runner/environment that proves that integration before release. |
+| Contributed UI rendering proof | Clean | No plugin-contributed host-shell UI is claimed; this is the primary Bubble Tea TUI. |
+| Rollback story | Finding | Rollback names bad release artifacts, but the missing pre-release guard wiring means detection may occur only after tag publish. |
+| Simpler alternative not considered | Finding | A smaller explicit `make release-check`/CI preflight using the existing GoReleaser action is not considered. |
+| User-intent drift | Finding | "Slash commands" can be overread as full TUI slash UX while help/autocomplete discoverability remains stale. |
+| Existence/runtime-validity | Finding | Several expected PTY strings do not exist in current trust command output. |
+
+**Options the author may not have considered:**
+1. Add a dedicated `release-check` CI job using `goreleaser/goreleaser-action` with `args: release --snapshot --clean --skip=publish`, then run the archive manifest guard as a script after it.
+2. Split trust PTY assertions into command-output checks and state-read checks: mutation commands assert "Added/Persisted/Revoked ...", then `/trust list` or `/trust grants` proves scope and persistence.
+3. Add a small TUI frame assertion helper that fixes PTY size and validates required regions rather than only searching stripped text.
+
+**Verdict reasoning:** The design is much stronger than earlier cycles, but it still has open Important issues that can let implementation pass while proving the wrong thing: impossible trust-output expectations, weak shortcut/pane rendering proof, and an unwired release artifact guard. Status is FAIL until those contracts are made mechanically executable.

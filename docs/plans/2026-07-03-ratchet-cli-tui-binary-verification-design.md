@@ -122,10 +122,11 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
   tag.
 - Test builds `./cmd/ratchet-tui-smoke` with `-tags tui_smoke`, sets temp
   `HOME`, `XDG_STATE_HOME`, `TERM=xterm-256color`, and `cmd.Dir` to an empty
-  temp workdir, then starts the smoke binary in a PTY. This proves the TUI event
-  loop, daemon RPCs, mock provider, slash commands, and shortcuts; it does not
-  claim the untagged release binary can run credential-free chat without
-  configured providers.
+  temp workdir, then starts the smoke binary in a fixed-size PTY
+  (`40x120`). This proves the TUI event loop, daemon RPCs, mock provider, slash
+  commands, shortcuts, and representative rendered frames; it does not claim the
+  untagged release binary can run credential-free chat without configured
+  providers.
 - Drive:
   - splash dismissal;
   - normal chat prompt with deterministic mock response;
@@ -137,6 +138,10 @@ Source: workspace `AGENTS.md`, repo `RATCHET.md`, `README.md`,
   - `ctrl+s` and `ctrl+j` toggle panes without swallowing text input;
   - `/exit` or `ctrl+c` exits cleanly.
 - Assertions strip ANSI and bound line width for representative frames.
+- Frame assertions require header/status/input anchors to be simultaneously
+  visible in normal chat, branch tree, sidebar, and job-panel states; each frame
+  must keep representative lines within the PTY width and must not hide the
+  message input after `ctrl+s`, `ctrl+j`, or `esc`.
 - Test has timeouts and cleanup that kills the child process if it hangs.
 - Test includes an untagged repo-root discovery/build helper rather than
   reusing `internal/tui/pty_test.go`, which is behind the `integration` tag.
@@ -167,17 +172,37 @@ with temp-only patterns/scopes:
 | `/mode sandbox` | Renders `Mode switched to sandbox`. |
 | `/mode custom` | Renders `Mode switched to custom`. |
 | `/trust list` | Renders `Mode:` and effective rules without real workspace/home paths. |
-| `/trust allow "bash:go test ./..." --scope smoke` | Renders added allow rule and smoke scope. |
-| `/trust deny "bash:rm -rf /" --scope smoke` | Renders added deny rule and smoke scope. |
-| `/trust persist allow "bash:go vet ./..." --scope smoke` | Renders persisted allow grant. |
-| `/trust persist deny "bash:curl *" --scope smoke` | Renders persisted deny grant. |
+| `/trust allow "bash:go test ./..." --scope smoke` | Renders `Added allow rule: bash:go test ./...`; a follow-up `/trust list` proves the `smoke` scope through daemon state. |
+| `/trust deny "bash:rm -rf /" --scope smoke` | Renders `Added deny rule: bash:rm -rf /`; a follow-up `/trust list` proves the `smoke` scope through daemon state. |
+| `/trust persist allow "bash:go vet ./..." --scope smoke` | Renders `Persisted allow grant: bash:go vet ./...`; a follow-up `/trust grants` proves pattern/action/scope through persisted daemon state. |
+| `/trust persist deny "bash:curl *" --scope smoke` | Renders `Persisted deny grant: bash:curl *`; a follow-up `/trust grants` proves pattern/action/scope through persisted daemon state. |
 | `/trust grants` | Renders persistent grants including smoke-scope entries; failure logs redact grant bodies. |
-| `/trust revoke "bash:go vet ./..." --scope smoke` | Renders revoked persistent grant. |
+| `/trust revoke "bash:go vet ./..." --scope smoke` | Renders `Revoked persistent trust grant: bash:go vet ./...`; a follow-up `/trust grants` proves the revoked smoke grant is absent while unrelated grants remain. |
 | `/trust reset` | Renders reset to config defaults. |
 
 If public docs or `internal/tui/commands/trust.go` add a new TUI mode/trust
 slash command or mode value, the docs guard fails until this matrix and PTY
 smoke include it or the public docs mark it out of scope.
+
+### Help And Autocomplete Alignment
+
+- Update `/help` output so the documented command surface includes:
+  - `/mode <mode>` with `conservative|permissive|locked|sandbox|custom`;
+  - `/trust list`;
+  - `/trust allow`;
+  - `/trust deny`;
+  - `/trust persist allow`;
+  - `/trust persist deny`;
+  - `/trust grants`;
+  - `/trust revoke`;
+  - `/trust reset`;
+  - `/tree`.
+- Update autocomplete command entries to include `/tree`, `/mode`, and
+  `/trust`.
+- Add focused tests proving submitted-command support, `/help`, and
+  autocomplete do not drift for the mode/trust/tree slash surface.
+- This aligns existing discoverability surfaces only; it does not add new
+  commands or change command semantics.
 
 ### Normal Launch Smoke
 
@@ -215,8 +240,22 @@ smoke include it or the public docs mark it out of scope.
 
 ### Release Artifact Guard
 
-- Run:
-  `goreleaser release --snapshot --clean --skip=publish`.
+- Add `scripts/check-release-artifacts.sh` as the executable release preflight:
+  - default mode runs `goreleaser check`, `goreleaser release --snapshot
+    --clean --skip=publish`, then the artifact-manifest guard;
+  - `--manifest-only dist` mode inspects an already-generated `dist/` tree.
+- Wire a PR/push CI job named `release-check` in `.github/workflows/ci.yml`:
+  - checkout and setup Go `1.26`;
+  - configure private-module Git rewrite like the existing jobs;
+  - run `goreleaser/goreleaser-action@v7` with `args: release --snapshot
+    --clean --skip=publish` and no publish tokens beyond the normal
+    `GITHUB_TOKEN`;
+  - run `scripts/check-release-artifacts.sh --manifest-only dist`.
+- Keep `.github/workflows/release.yml` using the tag-only publishing command
+  `goreleaser release --clean`; the preflight script must stay publish-free.
+- Local verification can run the script when GoReleaser is installed; ordinary
+  `go test ./...` must not silently claim release-artifact coverage if
+  GoReleaser is absent.
 - Build a normalized manifest from `dist/`:
   - every file path under `dist/`;
   - `checksums.txt` entries;
@@ -291,16 +330,19 @@ smoke include it or the public docs mark it out of scope.
 | Smoke mode becomes a user-facing bypass. | Compile it only with `tui_smoke`; release binaries do not contain the path. |
 | Test leaks real home/provider/project state. | Set temp `HOME`/`XDG_STATE_HOME`/`cmd.Dir`/session `WorkingDir`; temp workdir contains no instruction files/dirs from `internal/agent/instructions.go` and no hook configs from `internal/hooks/hooks.go` (`~/.ratchet/hooks.yaml`, `.ratchet/hooks.yaml`); assert captured output excludes real workspace/home paths. |
 | PTY test hangs in CI. | Per-read deadline, process kill cleanup, bounded waits, and no external network/provider dependency. |
+| Shortcut proof misses broken layout. | Use fixed PTY size and assert representative full frames for chat, branch tree, sidebar, and job-panel states with header/status/input anchors visible and bounded line width. |
 | Sensitive prompts/log paths in logs. | Use harmless deterministic prompts and route every test failure payload through one redaction helper that removes real home/workspace/temp/socket/executable/artifact paths plus trust/prompt bodies; runtime outputs reject instruction surfaces from `internal/agent/instructions.go` and hook config surfaces from `internal/hooks/hooks.go`, release manifests allowlist expected `RATCHET.md`. |
 | Release-shaped startup leaks daemon process. | Cleanup stops or kills the temp-home daemon and asserts pid/socket files are gone. |
+| Release artifact guard only runs manually. | Add the publish-free `release-check` CI job; CI uses GoReleaser action for snapshot generation and the same manifest guard script local runs use. |
 | Platform mismatch. | Unix PTY proof is explicitly Unix-only; Windows claim is limited to build/noninteractive smoke. |
 
 ## Infrastructure Impact
 
-No cloud resources, secrets, migrations, registry entries, Homebrew changes, or
-production deploy. Local test-only process and temp files only. Runtime behavior
-does not change in release builds because the smoke entrypoint is build-tagged
-out.
+No cloud resources, secrets, migrations, registry entries, Homebrew publishing,
+or production deploy. The only infrastructure change is a publish-free CI
+release-preflight job that installs GoReleaser and inspects local snapshot
+artifacts. Local test-only process and temp files only. Runtime behavior does
+not change in release builds because the smoke entrypoint is build-tagged out.
 
 ## Multi-Component Validation
 
@@ -311,8 +353,10 @@ out.
 | TUI to daemon gRPC | Smoke service uses real daemon service/client RPCs for provider list, session tree, trust mode/rules, and chat send; docs do not claim auto-daemon socket proof from this row. |
 | TUI to mock provider | Chat prompt reaches built-in mock provider and streams a response. |
 | Slash commands | PTY submits slash commands through the input widget and asserts rendered system output/navigation, including the full documented TUI mode/trust slash-command matrix. |
-| Shortcuts | PTY sends control keys and asserts branch tree/pane transitions. |
+| Slash discoverability | Focused tests keep `/help` and autocomplete aligned with submitted `/tree`, `/mode`, and `/trust` support. |
+| Shortcuts | PTY sends control keys and asserts branch tree/pane transitions with fixed-size full-frame checks. |
 | Docs to tests | Docs guard fails if automated TUI smoke evidence is removed. |
+| Release preflight to CI | `release-check` job runs GoReleaser snapshot generation and the same artifact-manifest guard used locally. |
 | Windows build | Cross-build commands prove release-shaped `ratchet` still compiles for Windows; `ratchet-tui-smoke` interactive PTY remains Unix-only. |
 
 ## Integration Matrix
@@ -324,20 +368,24 @@ out.
 | TUI Bubble Tea event loop | runtime-integrated | PTY frames prove splash, chat prompt, transcript, navigation, and exit. |
 | Daemon gRPC service/client | runtime-integrated | Smoke service/client RPCs over a temp Unix socket execute provider list, trust commands, session tree, and chat send. |
 | Built-in mock provider | runtime-integrated | Chat prompt streams deterministic mock response. |
-| Slash commands and shortcuts | runtime-integrated | PTY sends input/control keys and asserts resulting UI states, including the full documented TUI mode/trust slash-command matrix. |
+| Slash commands and shortcuts | runtime-integrated | PTY sends input/control keys and asserts resulting UI states, including the full documented TUI mode/trust slash-command matrix and fixed-size representative frames. |
+| Slash help/autocomplete | runtime-integrated | Focused tests invoke `/help` and autocomplete models to prove submitted command support and discoverability stay aligned. |
 | Docs guard | config-only | `cmd/ratchet/harness_docs_test.go` checks public docs mention exact evidence boundaries. |
-| GoReleaser snapshot artifacts | runtime-integrated | `goreleaser check` plus snapshot/archive inspection and deterministic `.goreleaser.yaml` fallback prove `ratchet-tui-smoke` is absent from archives/checksums/Homebrew artifacts/release assets. |
+| GoReleaser snapshot artifacts | runtime-integrated | Publish-free `release-check` CI job plus local script run `goreleaser check`/snapshot generation and archive inspection with deterministic `.goreleaser.yaml` fallback to prove `ratchet-tui-smoke` is absent from archives/checksums/Homebrew artifacts/release assets. |
 | Windows smoke package boundary | config-only | `GOOS=windows GOARCH=amd64/arm64 go list` and `go build -tags tui_smoke ./cmd/ratchet-tui-smoke` fail with the expected Unix-only no-buildable-files class. |
 | Windows interactive PTY | deferred | No ConPTY runner in this slice; Windows coverage is build/noninteractive only. |
 
 ## Rollback
 
 Revert `cmd/ratchet-tui-smoke`, the `tui_smoke` client constructor, smoke
-helper, PTY test, and docs updates. No data migration exists. Release binaries
-are unaffected because `cmd/ratchet` does not contain a smoke command/flag. If a
-future release accidentally includes `ratchet-tui-smoke`, remove it from the
-release config, delete the bad artifact/checksum/tap reference where possible,
-and cut a patch release.
+helper, PTY test, help/autocomplete alignment, `release-check` CI job,
+release-artifact script, and docs updates. No data migration exists. Release
+binaries are unaffected because `cmd/ratchet` does not contain a smoke
+command/flag. If a future release accidentally includes `ratchet-tui-smoke`,
+remove it from the release config, delete the bad artifact/checksum/tap
+reference where possible, and cut a patch release. If the CI preflight itself is
+bad, revert that job/script and rely on the existing tag-only release workflow
+while cutting a corrected preflight PR.
 
 ## Assumptions
 
@@ -356,8 +404,9 @@ and cut a patch release.
    proof from build-tagged interactive proof.
 3. YAGNI sweep: no visual snapshot framework, no new TUI features, no Windows
    ConPTY, no provider setup automation, no external agent CI.
-4. First failure mode: PTY hang waiting for a frame. Design requires bounded
-   waits, cleanup kill, and deterministic mock daemon.
+4. First failure mode: PTY hang or off-screen pane after a shortcut. Design
+   requires bounded waits, cleanup kill, deterministic mock daemon, fixed PTY
+   size, and representative frame assertions.
 5. Repo fit: follows existing PTY helpers, `cmd/ratchet` binary smoke shape,
    daemon mock-provider harness, and docs guard tests.
 
@@ -369,7 +418,8 @@ and cut a patch release.
 - Local-first gateway/channels.
 - Credentialed third-party agent CI.
 - Windows interactive ConPTY proof.
-- New user-facing TUI commands or changed default runtime behavior.
+- New user-facing TUI commands or changed default runtime behavior; help and
+  autocomplete alignment for existing commands is in scope.
 
 ## Review Resolutions
 
@@ -407,3 +457,7 @@ and cut a patch release.
 | D30 | Replaced phrase-fragile forbidden docs regexes with normalized line/table-row claim predicates and deterministic same-unit exceptions for `ratchet-tui-smoke`, `not claimed`, and `does not claim`. |
 | D31 | Replaced ambiguous "publishable section" language with an explicit GoReleaser top-level taxonomy: current nonpublishable metadata, current artifact/publish keys, fail-unknown behavior, and examples of future artifact/publish sections that require explicit checks. |
 | D32 | Split instruction and hook leak handling: instruction deny patterns derive from `internal/agent/instructions.go`; hook config deny patterns derive from `internal/hooks/hooks.go`. |
+| D33 | Changed trust mutation evidence to match existing command output and require follow-up `/trust list` or `/trust grants` state-read assertions for scope/persistence/revoke proof. |
+| D34 | Added fixed PTY sizing and representative full-frame assertions for chat, branch tree, sidebar, and job-panel states after shortcuts. |
+| D35 | Added a publish-free release preflight: local `scripts/check-release-artifacts.sh` runs GoReleaser plus manifest guard, while CI uses `goreleaser/goreleaser-action@v7` for snapshot generation and the same script in `--manifest-only` mode. |
+| D36 | Brought `/help` and autocomplete alignment into scope for existing `/tree`, `/mode`, and `/trust` slash surfaces, with focused drift tests. |
