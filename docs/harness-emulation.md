@@ -14,7 +14,7 @@ possible.
 | daemon | `ratchet daemon status` | pid/socket state under `~/.ratchet` | Supported | `TestHarnessSmokeVersionHelpAndDaemonStatus`. |
 | session lineage | `ratchet sessions history`, `ratchet sessions clone`, `ratchet sessions fork`, `ratchet sessions tree`, `ratchet sessions browse`, `ratchet sessions summary`, `ratchet sessions compactions` | daemon gRPC session history/clone/fork/tree/summary/compaction APIs plus Bubble Tea session tree browser | Supported for separate fork/clone sessions, branch summaries, persisted compaction records, archive session links, and Pi-style in-place branch navigation through `ctrl+b`, `/tree`, and `sessions browse` | `TestSessionLineageHistoryCloneForkTreeRPC`; `TestCompactionRecordRPC`; `TestHandleSessionsHistoryCloneForkTree`; `TestAppCtrlBOpensSessionTreeBrowser`; `TestParseTreeRequestsSessionTreeNavigation`; `TestHandleSessionsBrowseRunsInjectedBrowser`. |
 | ACP | `ratchet acp` | ACP stdio JSON-RPC agent wrapping daemon service | Supported for initialize/new/load/prompt/cancel/model/mode | `TestACPStdioPromptSmoke`; `TestHarnessSmokeInitializeNewAndLoadSession`; `TestParityNewSessionIDCanBeLoaded`. |
-| ACP client | `ratchet acp client exec --command <agent> "prompt"` | typed `acp-go-sdk` client over child-process stdio plus local JSON state under XDG state | Supported for one-shot exec, persisted session metadata, sessions list/show/status, multi-prompt FIFO `--no-wait` queue, explicit queue inspection/drain, cooperative cancel requests, ratchet-cli archive v1 export/import, serial compare, JSON v1 ACP/compute flows, and trusted ACP launch profiles | `TestACPClientExecBinarySmoke`; `TestDrainQueueAgainstFixtureProcessReusesSession`; `TestClientRunPromptAgainstFixtureProcess`; `TestSessionStoreLoadsMissingFileAndPersistsRecords`; profile command and flow resolution tests. |
+| ACP client | `ratchet acp client exec --command <agent> "prompt"` | typed `acp-go-sdk` client over child-process stdio plus local JSON state under XDG state | Supported for one-shot exec, persisted session metadata, sessions list/show/status, multi-prompt FIFO `--no-wait` queue, explicit queue inspection/drain, cooperative cancel requests, ratchet-cli archive v1 export/import with raw ACPX event logs, `sessions events`, saved compare bundles, JSON v1 ACP/compute/action flow replay bundles, `flow replay`, and trusted ACP launch profiles | `TestACPClientExecBinarySmoke`; `TestDrainQueueAgainstFixtureProcessReusesSession`; `TestClientRunPromptAgainstFixtureProcess`; `TestSessionStoreLoadsMissingFileAndPersistsRecords`; profile command, archive, compare, and flow replay tests. |
 | MCP | `ratchet mcp blackboard` / `ratchet mcp daemon` | stdio JSON-RPC blackboard or daemon server | Supported for standalone blackboard plus daemon session/project/blackboard/team status tools | `TestHarnessSmokeJSONRPCInitializeToolsListAndCall`; `TestDaemonMCPToolCallsUseDaemonClient`. |
 | team | `ratchet team start "task"` | daemon team manager / mesh executor | Supported when provider configured | Existing team and mesh tests cover service behavior. |
 
@@ -63,15 +63,18 @@ daemon-backed MCP blackboard/session/project/team status/message tools, runtime
 trust slash commands, session lineage
 history/clone/fork/tree commands, branch summaries, compaction records with
 archive session links, Pi-style in-place branch navigation, and opt-in redacted
-retro evidence, ACP client session archive export/import, serial compare, and
-JSON v1 ACP/compute/action flows. ACP launch profiles let reviewed local or
+retro evidence, ACP client session archive export/import with raw ACPX event
+logs, saved compare bundles, and JSON v1 ACP/compute/action flow replay
+bundles. ACP launch profiles let reviewed local or
 plugin-distributed launch specs feed `--agent` for explicit foreground ACP
 client commands; built-ins win over profile names and untrusted profiles are
 refused at execution time. JSON v1 action nodes run local commands only with
 `--allow shell`; node cwd escapes require `--allow outside-cwd`, and run bundles
-may contain sensitive local command output. The v0.24.0 release line keeps
-Windows amd64/arm64 zip artifacts in the GoReleaser output while adding hook
-trust and profile distribution controls. The policy boundaries are tracked in
+may contain sensitive local command output. `flow replay` is read-only and does
+not contact agents or execute actions. The v0.25.0 release line keeps Windows
+amd64/arm64 zip artifacts in the GoReleaser output while adding raw event
+archives, compare artifacts, and replay-grade flow bundles. The policy
+boundaries are tracked in
 [docs/policy-matrix.md](policy-matrix.md): runtime trust rules, persistent
 trust grants, permission prompts, hook trust, ACP launch profiles, and explicit
 ACP client watch/drain are supported, while daemon background drain, managed
@@ -110,9 +113,9 @@ disk.
 | drain FIFO queue | Supported | `ratchet acp client drain <id> --command <agent> --max <n>` drains pending prompts through one ACP session; binary smoke verifies two queued prompts complete on the same fixture session. |
 | watch FIFO queue | Supported as explicit foreground worker | `ratchet acp client watch <id> --command <agent> --stop-when-empty` polls the local FIFO queue and delegates each cycle to the same drain path. It runs only while the operator-started foreground command is active; daemon background drain remains deferred. Binary smoke verifies queued prompts complete without printing prompt bodies in watch output. |
 | cancel | Supported as cooperative request | `ratchet acp client cancel <id>` marks pending queued prompts canceled or writes a cancel-request file for active owners; active clients poll and send ACP cancel. |
-| import/export archives | Supported | `ratchet acp client sessions export <id> --output <archive.json>` writes ratchet-cli archive v1 JSON with ACPX-shaped metadata; `sessions import <archive.json> --session <id>` imports a copy. Binary smoke proves export/import through the built CLI and fixture ACP agent. Archives may contain prompt/response content and are not raw ACPX JSON-RPC event logs. |
-| compare commands | Supported | `ratchet acp client compare --command <agent-a> --command <agent-b> "prompt"` runs agents serially and emits table or JSON rows. Binary smoke proves compare through the built CLI and fixture ACP agent. |
-| flow commands | Supported | `ratchet acp client flow run flow.json --input-json '{"task":"x"}' --command <agent> --allow shell` runs JSON v1 flows with `acp`, `compute`, and `action` nodes, template prompts, shared ACP session handles, JSON output, and persisted run bundles. Action nodes require `--allow shell`; cwd escapes require `--allow outside-cwd`; action stdout/stderr is sensitive local command output. ACPX TypeScript flow runtime compatibility remains deferred. |
+| import/export archives | Supported | `ratchet acp client sessions export <id> --history summary|raw|both --output <archive.json>` writes summary archives, raw ACPX-compatible JSON-RPC history, or both; `sessions import <archive.json> --session <id>` imports ratchet summary archives and `exported_by:"acpx"` raw history archives. `ratchet acp client sessions events <id>` reports or copies raw ACPX event logs. Raw export fails when no sidecar is available instead of inventing wire history. Archives and event logs may contain prompt/response content and are sensitive local conversation data. |
+| compare commands | Supported | `ratchet acp client compare --save --command <agent-a> --command <agent-b> "prompt"` runs agents serially, emits table or JSON rows, and persists `compare.json` plus per-agent `events.ndjson` files when `--save` is set. Binary smoke proves compare through the built CLI and fixture ACP agent. |
+| flow commands | Supported | `ratchet acp client flow run flow.json --input-json '{"task":"x"}' --command <agent> --allow shell` runs JSON v1 flows with `acp`, `compute`, and `action` nodes, template prompts, shared ACP session handles, JSON output, and persisted replay bundles. `ratchet acp client flow replay <run-dir> --json` validates and summarizes `manifest.json`, `trace.ndjson`, projections, artifacts, and session event links without contacting agents or executing actions. Action nodes require `--allow shell`; cwd escapes require `--allow outside-cwd`; action stdout/stderr is sensitive local command output. ACPX TypeScript flow runtime compatibility remains deferred. |
 | ACP launch profiles | Supported with local trust | `ratchet acp client profiles list`, `add`, `install`, `trust`, and `remove` manage reviewed launch specs under ratchet state. Profiles store command metadata and env key names only. Built-in ACP agents win over profile names, profile names cannot shadow built-ins, and only trusted profiles resolve through `--agent` for `exec`, `drain`, `watch`, `compare`, and `flow run`. Plugin `acpProfiles` templates are copied locally before use. |
 
 ### ACP client examples
@@ -123,15 +126,18 @@ ratchet acp client profiles add local-agent --command ./agent --arg --stdio --tr
 ratchet acp client exec --agent local-agent "Review this patch"
 
 ratchet acp client sessions export work --output work.archive.json
+ratchet acp client sessions export work --history raw --output work.acpx.json
+ratchet acp client sessions events work --output work.events.ndjson
 ratchet acp client sessions import work.archive.json --session work-copy
 
-ratchet acp client compare --command ./agent-a --command ./agent-b "Review this patch"
+ratchet acp client compare --save --command ./agent-a --command ./agent-b "Review this patch"
 
 ratchet acp client flow run flow.json \
   --input-json '{"task":"review release notes"}' \
   --command ./agent \
   --allow shell \
   --json
+ratchet acp client flow replay .ratchet/acp-client/flows/RUN_ID --json
 
 ratchet acp client watch work \
   --command ./agent \

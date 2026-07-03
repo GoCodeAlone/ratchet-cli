@@ -168,7 +168,7 @@ Rollback: revert commit; local sidecar files become inert and summary archives r
 **Step 1: Write failing CLI tests**
 
 Add parser/executor tests for:
-- `sessions export <id> --output a.json --history raw|summary|both`.
+- `sessions export <id> --output a.json --history summary|raw|both`.
 - invalid `--history` is rejected.
 - `sessions events <id> [--json] [--output events.ndjson]`.
 - raw export without sidecar surfaces raw-history-unavailable.
@@ -459,7 +459,7 @@ Rollback: revert PR3 guard commit with implementation commit if guard reveals in
 **Step 1: Update docs**
 
 Document:
-- `sessions export --history raw|summary|both`
+- `sessions export --history summary|raw|both`
 - `sessions events`
 - imported ACPX raw archive round-trip
 - compare `--save` bundles
@@ -492,7 +492,7 @@ Expected: PASS.
 Run:
 
 ```bash
-rg -n "raw ACPX JSON-RPC event-log archive compatibility remains deferred|raw JSON-RPC event-log archive compatibility remains intentionally deferred" README.md docs || true
+rg -n "raw ACPX JSON-RPC event-log archive compatibility remains deferred|raw JSON-RPC event-log archive compatibility remains intentionally deferred" README.md docs/harness-emulation.md docs/competitor-parity.md docs/policy-matrix.md || true
 pattern="$(printf '/%s/|/%s/|/var/%s' Users home folders)"
 rg -n "$pattern" docs/plans/2026-07-02-ratchet-cli-acpx-archives-compare-flow*.md README.md docs/harness-emulation.md docs/competitor-parity.md docs/policy-matrix.md || true
 git diff --check
@@ -503,7 +503,7 @@ Expected: no stale raw-event deferral matches, no machine paths, diff check clea
 **Step 4: Commit**
 
 ```bash
-git add README.md docs/harness-emulation.md docs/competitor-parity.md docs/policy-matrix.md docs/plans/2026-07-02-ratchet-cli-acpx-archives-compare-flow-design.md cmd/ratchet/harness_docs_test.go
+git add README.md docs/harness-emulation.md docs/competitor-parity.md docs/policy-matrix.md docs/plans/2026-07-02-ratchet-cli-acpx-archives-compare-flow.md docs/plans/2026-07-02-ratchet-cli-acpx-archives-compare-flow-design.md cmd/ratchet/harness_docs_test.go docs/retros/2026-07-03-acp-flow-replay-bundles-retro.md
 git commit -m "docs: document acpx replay parity"
 ```
 

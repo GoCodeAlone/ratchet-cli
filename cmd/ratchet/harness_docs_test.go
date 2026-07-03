@@ -45,6 +45,7 @@ func TestHarnessEmulationDocsCoverPolicyMatrixLayers(t *testing.T) {
 		"Persistent trust grants",
 		"Permission prompts",
 		"ACP client queue/drain",
+		"ACP archive/compare/replay artifacts",
 		"Sandbox/path/network controls",
 		"Hooks/extensions",
 		"Retro/self-improvement",
@@ -58,6 +59,7 @@ func TestHarnessEmulationDocsCoverPolicyMatrixLayers(t *testing.T) {
 		"--allow shell",
 		"outside-cwd",
 		"sensitive local command output",
+		"raw ACPX event logs",
 	} {
 		if !strings.Contains(matrix, required) {
 			t.Fatalf("policy matrix doc missing %q", required)
@@ -70,6 +72,11 @@ func TestHarnessEmulationDocsCoverPolicyMatrixLayers(t *testing.T) {
 		"ratchet hooks list",
 		"ratchet hooks trust",
 		"ratchet acp client profiles",
+		"ratchet acp client sessions events",
+		"--history raw",
+		"compare --save",
+		"flow replay",
+		"raw ACPX event logs",
 		"hook trust",
 		"ACP launch profiles",
 		"ratchet acp client watch",
