@@ -282,6 +282,11 @@ Mechanical fail-closed check:
     `modeCmd` valid mode map keys, `trustCmd` `switch args[0]` cases, and
     `providerCmd` `switch sub` cases must match the typed spec table and the
     PTY/focused classification rows;
+  - nested trust action coverage is behavior-derived: table tests execute every
+    typed `/trust` spec row against fake clients, including `/trust persist
+    allow`, `/trust persist deny`, and rejected nested actions such as
+    `/trust persist maybe`, proving accepted/rejected behavior matches the
+    spec;
   - examples in help descriptions are never command discovery inputs.
 - Compare top-level parser cases, help rows, and autocomplete entries against
   the matching spec fields. Compare source-derived mode/trust/provider
@@ -374,9 +379,11 @@ Mechanical fail-closed check:
   locally; CI uses `$RUNNER_TEMP` instead of `$TMPDIR`.
 - Add a `windows-safe-command-smoke` job on `windows-latest` that declares
   `needs: release-check`, builds source `ratchet.exe`, downloads the
-  `ratchet-snapshot-dist` workflow artifact from `release-check`, fails if no
-  Windows zip is present, extracts that zip, and executes safe non-PTY commands
-  from the packaged executable:
+  `ratchet-snapshot-dist` workflow artifact from `release-check`, fails unless
+  both `ratchet_windows_amd64.zip` and `ratchet_windows_arm64.zip` are present,
+  byte-scans both zips/binaries for forbidden smoke tokens, extracts the
+  runner-compatible `ratchet_windows_amd64.zip`, and executes safe non-PTY
+  commands from that packaged executable:
   - `ratchet.exe version`;
   - `ratchet.exe help`;
   - `ratchet.exe daemon status` with temp Windows `HOME`/`USERPROFILE` and
@@ -455,11 +462,13 @@ Mechanical fail-closed check:
     binary cannot execute on the current runner;
   - for Windows, the `windows-safe-command-smoke` job on `windows-latest`
     declares `needs: release-check`, downloads `ratchet-snapshot-dist` with
-    `actions/download-artifact@v4`, fails if no Windows zip is present,
-    extracts the snapshot Windows zip produced by `release-check`, and runs
-    packaged `ratchet.exe version` and `ratchet.exe help` with the same
-    forbidden-output checks.
+    `actions/download-artifact@v4`, requires `ratchet_windows_amd64.zip` and
+    `ratchet_windows_arm64.zip`, byte-scans both, extracts the snapshot
+    `ratchet_windows_amd64.zip` produced by `release-check`, and runs packaged
+    `ratchet.exe version`, `ratchet.exe help`, and `ratchet.exe daemon status`
+    with the same forbidden-output checks.
 - Add a release draft asset postcheck script path before undrafting:
+  - preflight fails unless `.goreleaser.yaml` has `release.draft: true`;
   - after `goreleaser release --clean` creates the draft release, reuse the
     existing release workflow's `listReleases` retry-by-tag behavior because
     `getReleaseByTag` can 404 for drafts;
@@ -467,6 +476,7 @@ Mechanical fail-closed check:
     (`RELEASES_TOKEN || GITHUB_TOKEN`), pass that release id to both the
     postcheck and undraft steps, and download assets by release id into a temp
     directory;
+  - fail immediately if the resolved release is not draft before inspection;
   - run the same archive manifest, all-packaged-binary byte scan, packaged
     help/version where executable, checksum-name, and forbidden-token checks
     used for snapshot `dist/`;
@@ -565,6 +575,7 @@ Mechanical fail-closed check:
 | Release jobs cannot fetch private modules. | Mirror CI's `GOPRIVATE`/`GONOSUMCHECK` and private-module Git rewrite in release preflight/publish and Windows safe-command smoke jobs. |
 | Snapshot guard differs from uploaded release. | Add a draft-release postcheck before undrafting that downloads uploaded GitHub release archives/checksums and runs the same archive manifest plus all-packaged-binary byte-scan guard against actual uploaded assets; explicitly treat Homebrew/tap postcheck as after-the-fact rollback under the current GoReleaser workflow. |
 | Draft release lookup flakes or misses assets. | Reuse the existing `listReleases` retry-by-tag workflow, pass the resolved release id to postcheck and undraft, and download assets by release id. |
+| Release is public before postcheck. | Preflight fails unless `.goreleaser.yaml` keeps `release.draft: true`; postcheck fails if the resolved release is not draft before inspection. |
 | Platform mismatch. | Unix PTY proof is explicitly Unix-only; Windows claim is limited to build/noninteractive smoke. |
 
 ## Infrastructure Impact
@@ -597,7 +608,7 @@ smoke entrypoint is build-tagged out.
 | Docs to tests | Docs guard fails if automated TUI smoke evidence is removed. |
 | Binary smoke to CI | Non-race CI smoke job runs the built-binary/startup/TUI smoke tests that the race suite skips; `internal/tui` owns its race skip helper so package-local tests compile in both race and non-race suites. |
 | Release preflight to CI/release | `release-check` and tag release workflow both run `goreleaser check`, snapshot generation, and the same artifact-manifest guard before publish; guard extracts and byte-scans every packaged `ratchet` binary from every archive, runs executable help/version checks where practical, and release postcheck downloads uploaded GitHub draft release assets and repeats the same checks before undrafting; Homebrew/tap postcheck is after-the-fact with rollback. |
-| Windows build/smoke | Cross-build commands prove release-shaped `ratchet` still compiles for Windows; `windows-safe-command-smoke` on `windows-latest` declares `needs: release-check`, builds source `ratchet.exe`, downloads the `release-check` snapshot `dist/` artifact, fails if no Windows zip exists, extracts the packaged Windows zip, then executes packaged `ratchet.exe version`, `ratchet.exe help`, and `ratchet.exe daemon status` with temp Windows home/state env; `ratchet-tui-smoke` interactive PTY remains Unix-only. |
+| Windows build/smoke | Cross-build commands prove release-shaped `ratchet` still compiles for Windows; `windows-safe-command-smoke` on x64 `windows-latest` declares `needs: release-check`, builds source `ratchet.exe`, downloads the `release-check` snapshot `dist/` artifact, requires both Windows zips, byte-scans amd64 and arm64 archives, extracts `ratchet_windows_amd64.zip`, then executes packaged `ratchet.exe version`, `ratchet.exe help`, and `ratchet.exe daemon status` with temp Windows home/state env; `ratchet-tui-smoke` interactive PTY remains Unix-only. |
 
 ## Integration Matrix
 
@@ -614,7 +625,7 @@ smoke entrypoint is build-tagged out.
 | Docs guard | config-only | `cmd/ratchet/harness_docs_test.go` checks public docs mention exact evidence boundaries. |
 | GoReleaser snapshot and GitHub draft assets | runtime-integrated | Publish-free `release-check` CI job, tag release preflight, local script, and release draft postcheck run `goreleaser check`/snapshot generation plus archive/upload inspection, all-archive packaged-binary byte scans, host/Windows packaged-binary help/version checks, and deterministic `.goreleaser.yaml` fallback. The postcheck downloads draft GitHub release assets and repeats the same checks before undraft, proving uploaded archives/checksums do not contain `ratchet-tui-smoke`. |
 | Homebrew/tap cask | config-only + post-publish audit | Snapshot/config precheck proves cask ids/binaries do not reference smoke artifacts; current GoReleaser workflow can still push the tap before postcheck, so tap safety is after-the-fact audit plus rollback, not pre-public gating. Split-publish pre-public gating is deferred. |
-| Windows safe-command smoke | runtime-integrated | `windows-safe-command-smoke` on `windows-latest` declares `needs: release-check`, builds source `ratchet.exe`, downloads `ratchet-snapshot-dist` from `release-check`, fails if no Windows zip exists, extracts the snapshot Windows zip, and runs packaged `ratchet.exe version`, `ratchet.exe help`, and `ratchet.exe daemon status` with temp Windows home/state env to prove non-PTY Windows CLI startup/help/daemon-status behavior and packaged-archive absence of smoke surfaces. |
+| Windows safe-command smoke | runtime-integrated | `windows-safe-command-smoke` on x64 `windows-latest` declares `needs: release-check`, builds source `ratchet.exe`, downloads `ratchet-snapshot-dist` from `release-check`, requires `ratchet_windows_amd64.zip` and `ratchet_windows_arm64.zip`, byte-scans both, extracts amd64 only for execution, and runs packaged `ratchet.exe version`, `ratchet.exe help`, and `ratchet.exe daemon status` with temp Windows home/state env to prove non-PTY Windows CLI startup/help/daemon-status behavior and packaged-archive absence of smoke surfaces. |
 | Windows smoke package boundary | config-only | `GOOS=windows GOARCH=amd64/arm64 go list` and `go build -tags tui_smoke ./cmd/ratchet-tui-smoke` fail with the expected Unix-only no-buildable-files class. |
 | Windows interactive PTY | deferred | No ConPTY runner in this slice; Windows coverage is build/noninteractive only. |
 
@@ -745,8 +756,12 @@ corrected preflight PR.
 | D68 | Replaced broad command regex extraction with a test-owned typed command-spec table plus separate top-level parser, help-row, autocomplete, and subcommand checks. |
 | D69 | Chose the retained public `ratchet help` slash-section contract and required CLI help alignment because Windows packaged-help smoke asserts it. |
 | D70 | Required draft-release postcheck to download actual uploaded GitHub release assets and run the same archive/all-binary byte-scan guard before undrafting. |
-| D71 | Split docs guard behavior: positive TUI smoke evidence required only in README/RATCHET/harness/parity docs; policy matrix gets negative overclaim scanning unless it starts claiming TUI binary evidence. |
+| D71 | Split docs guard behavior: exact positive TUI smoke evidence required only in README harness table and `docs/harness-emulation.md`; RATCHET/parity/policy get negative overclaim scanning unless they claim TUI binary evidence. |
 | D72 | Added source-derived AST checks for `modeCmd` mode keys, `trustCmd` subcommands, and `providerCmd` subcommands, compared to the typed command spec and proof classifications. |
 | D73 | Added packaged Windows `ratchet.exe daemon status` smoke with temp Windows home/state env and expected `daemon is not running` output. |
 | D74 | Required draft postcheck to reuse the existing `listReleases` retry-by-tag lookup, pass release id to postcheck/undraft, and download assets by release id. |
 | D75 | Narrowed exact positive docs assertions to README harness table and `docs/harness-emulation.md`; RATCHET/parity get links plus negative overclaim checks unless they claim TUI evidence. |
+| D76 | Added behavior-derived `/trust` table tests for nested persist allow/deny and rejected nested actions, tied to the typed command spec. |
+| D77 | Added hard draft-state gates: `.goreleaser.yaml` must keep `release.draft: true`, and postcheck fails if the resolved release is not draft. |
+| D78 | Made Windows archive handling architecture-aware: require amd64 and arm64 zips, byte-scan both, execute only `ratchet_windows_amd64.zip` on x64 `windows-latest`. |
+| D79 | Corrected stale D71 resolution wording to match the narrowed positive-docs guard scope. |

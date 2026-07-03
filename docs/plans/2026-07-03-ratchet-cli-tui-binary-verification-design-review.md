@@ -782,3 +782,46 @@ None.
 3. Harness-doc positive minimum with negative checks elsewhere.
 
 **Verdict reasoning:** D68-D71 are mostly addressed, but subcommand/mode drift, Windows daemon-status runtime, and draft-release lookup mechanics remain tangible design blockers.
+
+## Cycle 19
+
+### Adversarial Review Report
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `D76` [Existence/runtime-validity / Missing failure modes] [design:281-289; `internal/tui/commands/trust.go`:101-115]: Source-derived trust guard extracts only top-level `trustCmd` cases, but `/trust persist allow` and `/trust persist deny` are nested `args[1]` behavior, not switch cases. Recommendation: source-derive nested trust action sets or add executable table tests proving every spec row maps to accepted behavior and rejected nested actions stay rejected.
+- `D77` [Rollback story / Declared integration proof] [design:424-475; `.github/workflows/release.yml`:24-51; `.goreleaser.yaml`:68]: Draft postcheck assumes release remains draft, but no preflight checks `.goreleaser.yaml` `release.draft: true` and no post-publish assertion fails if resolved release is already public. Recommendation: fail preflight unless `release.draft` is true and fail postcheck if resolved release is not draft.
+- `D78` [Infrastructure impact / Multi-component validation] [design:375-385,456-461,476-478; `.goreleaser.yaml`:8-13]: Windows packaged smoke can select the wrong architecture zip because both `windows_amd64` and `windows_arm64` exist. Recommendation: byte-scan all Windows archives, execute only `windows_amd64` on x64 `windows-latest`, and make arm64 inspection-only unless an arm64 runner exists.
+
+**Findings (Minor):**
+- `D79` [Artifact-class precedent / Project-guidance conflicts] [design:516-524,748]: Review resolution D71 contradicts the main docs section by still saying positive evidence is required in README/RATCHET/harness/parity. Recommendation: fix stale resolution row.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | No repo-local guidance; stale D71 row contradicts docs-scope guidance. |
+| Assumptions under attack | Finding | Top-level extraction does not cover nested trust behavior, draft release state is assumed, and a generic Windows zip is assumed executable. |
+| Repo-precedent conflicts | Finding | Existing release flow treats draft lookup carefully but does not enforce draft state; GoReleaser emits two Windows archives. |
+| Artifact-class precedent | Finding | Release smoke should select architecture-specific artifacts; resolution rows must not contradict controlling sections. |
+| YAGNI violations | Clean | No ConPTY, production registry refactor, visual snapshots, or later import/export/flow scope. |
+| Missing failure modes | Finding | Nested trust drift and wrong Windows archive selection are plausible. |
+| Security/privacy at architecture level | Finding | Trust command coverage is policy-sensitive; nested action drift can hide persistent grant behavior changes. |
+| Infrastructure impact | Finding | Draft-state and artifact-selection mechanics affect release reliability. |
+| Multi-component validation | Finding | Windows packaged proof needs runner-compatible archive selection. |
+| Declared integration proof | Finding | GitHub release assets are pre-public gated only if draft state is asserted. |
+| Contributed UI rendering proof | Clean | No host-shell/plugin UI. |
+| Rollback story | Finding | If `release.draft` becomes false, rollback becomes after-publication. |
+| Simpler alternative not considered | Finding | Explicit `windows_amd64` execution + all-Windows inspection and hard draft-state gate. |
+| User-intent drift | Clean | Slice remains prerequisite TUI verification. |
+| Existence/runtime-validity | Finding | D76-D78 are executable-contract gaps. |
+
+**Options the author may not have considered:**
+1. Behavior-derived command matrix for typed spec rows and rejected nested actions.
+2. Architecture-aware release artifact contract: execute `windows_amd64`, inspect `windows_arm64`.
+
+**Verdict reasoning:** D68-D75 are directionally resolved, but nested trust action drift, pre-public draft-state enforcement, and Windows archive selection remain tangible blockers.
