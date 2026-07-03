@@ -955,3 +955,48 @@ None.
 3. `internal/releaseguard` package driven by tests and shell wrapper.
 
 **Verdict reasoning:** D80-D86 are materially resolved, but fail-closed smoke source isolation, docs claim modeling, and GoReleaser fallback scalar coverage remain Important blockers.
+
+## Cycle 23
+
+### Adversarial Review Report
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `D91` [Existence/runtime-validity / Repo-precedent conflicts] [design:86-93; existing `cmd/ratchet/harness_smoke_test.go`, `internal/acp/harness_smoke_test.go`, `internal/daemon/harness_smoke_test.go`, `internal/mcp/harness_smoke_test.go`]: Smoke-source guard still is not mechanically crisp: exact manifest is mixed with vague smoke helper constructor names and a broad unmanifested pathname rule. This can be noisy because existing smoke tests use smoke naming, or miss neutral-name smoke behavior. Recommendation: exact manifest schema and exact token/path scope: non-test Go files with `tui_smoke` build tags, exact exported helper names, explicit checked allowlist for existing `*_smoke_test.go`; remove vague constructor-name language.
+- `D92` [User-intent drift / Missing failure modes] [design:555-560,657-659,267-279]: Docs may overclaim because public wording says `ratchet-tui-smoke` proves interactive chat/slash/shortcut behavior, but design PTY-proves only `pty-proven` slash rows and focused/deferred-proves the rest. Docs guard allows claims assigned to `ratchet-tui-smoke`, so broad "slash commands are smoke-proven" can pass though `/model`, `/sessions`, `/provider add`, `/jobs`, `/team`, `/mcp`, and others are not PTY-proven. Recommendation: docs must say selected/PTY-proven slash commands or enumerate `/help`, `/provider list`, `/tree`, `/mode`, `/trust`, `/exit`; fail broad slash-command evidence claims unless referencing the classification table.
+- `D93` [Declared integration proof / Existence/runtime-validity] [design:335-345,676; `cmd/ratchet/main.go`:143-177]: Design includes public `ratchet help` / `printUsage`, but the mechanical guard only extracts `commands.Parse`, `helpCmd`, and autocomplete. Fixed built-binary help assertion proves current strings but can drift with command spec. Recommendation: add `printUsage` extractor tied to typed command spec, or narrow packaged-help contract to fixed mode/trust/tree entries.
+- `D94` [Infrastructure impact / Missing failure modes] [design:427-442]: `internal/releaseguard` may be invoked through `go test`, but design does not require `-count=1` or non-cacheable invocation for generated `dist`. Cached test can pass without rereading fresh artifacts. Recommendation: wrapper uses `go test -count=1` with explicit manifest path/env, or small `go run` tool entrypoint that always reads supplied dist.
+
+**Findings (Minor):**
+- None.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | D92 weakens the honest harness-evidence boundary by allowing broad slash-command wording. |
+| Assumptions under attack | Finding | Design assumes naming-based smoke scans, `ratchet-tui-smoke` docs assignment, and `go test`-driven guards are fail-closed. |
+| Repo-precedent conflicts | Finding | Existing smoke tests use smoke naming, so D91 path-name scan needs exact scope/allowlist. |
+| Artifact-class precedent | Finding | Release/artifact guard code is tool-like; cacheable tests are weaker than explicit smoke command execution. |
+| YAGNI violations | Finding | Broad repo-wide smoke path scanning and top-level CLI-help alignment risk more machinery than needed. |
+| Missing failure modes | Finding | D92 and D94 leave overclaim/stale-artifact-pass modes. |
+| Security/privacy at architecture level | Finding | D91 source isolation is partly naming-based; release scans mitigate. |
+| Infrastructure impact | Finding | D94 affects release guard reliability. |
+| Multi-component validation | Finding | D92/D93 validate docs/help without proving exact command-runtime boundary. |
+| Declared integration proof | Finding | D93 leaves `printUsage` outside the slash-command matrix. |
+| Contributed UI rendering proof | Clean | No plugin-contributed UI. |
+| Rollback story | Clean | Rollback story remains source revert plus draft retention/asset/tap correction. |
+| Simpler alternative not considered | Finding | Generated temp smoke main or narrower docs wording; tool entrypoint for releaseguard. |
+| User-intent drift | Finding | D92 can report broader slash-command proof than users get. |
+| Existence/runtime-validity | Finding | D91-D94 are executable-contract gaps. |
+
+**Options the author may not have considered:**
+1. Generated smoke main plus manifest-free tag guard to reduce command/source-manifest surface.
+2. Narrow docs language: "Unix PTY proof for chat, core shortcuts, and selected slash-command matrix."
+3. Tool entrypoint for releaseguard so artifact inspection never has test-cache ambiguity.
+
+**Verdict reasoning:** D87-D90 were addressed, but vague naming scans, broad docs claims, incomplete CLI-help drift checks, and cached artifact-guard execution remain Important blockers.
