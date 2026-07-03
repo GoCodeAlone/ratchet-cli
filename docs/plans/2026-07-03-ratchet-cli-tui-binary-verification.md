@@ -433,6 +433,7 @@ Add tests for:
 - strict top-level taxonomy: current nonpublishable metadata keys `version` and `changelog` are allowed but not scanned as publishable artifact surfaces;
 - fallback scalar scan under artifact/publish sections rejects smoke tokens;
 - archive matrix derives linux/darwin/windows amd64/arm64 and checks all archives/checksums/members/packaged binaries;
+- wrapper extracts the host-compatible GoReleaser archive from snapshot/draft assets, runs the packaged `ratchet version` and `ratchet help`, and fails if output contains `ratchet-tui-smoke`, `tui_smoke`, smoke command/flag/help markers, or missing expected release identity text;
 - generated/fallback cask and formula material only references release `ratchet` binary and formula/cask file name `ratchet-cli`.
 - releaseguard, wrapper, and manifest failure paths all use `internal/harnessredact` and tests cover representative GoReleaser snapshot output, artifact-manifest output, draft-assets output, tap-preflight/tap-postcheck output, workflow-command errors, docs-guard output, generic command errors, and generated artifact paths;
 - releaseguard redaction tests inject raw home/workspace/temp/socket/executable/artifact paths plus prompt and trust bodies into those representative failures and assert raw strings are absent while stable placeholders such as `<home>`, `<workspace>`, `<temp>`, `<socket>`, `<executable>`, `<artifact>`, `<prompt>`, and `<trust>` are present.
@@ -448,7 +449,7 @@ Expected: FAIL with missing package.
 
 **Step 3: Implement releaseguard**
 
-Implement Go helpers and shell wrapper. Route every releaseguard error, wrapper-captured GoReleaser stdout/stderr, manifest diff, draft-asset/tap diagnostic, workflow-command fixture, docs-guard fixture, and command-error fixture through `internal/harnessredact` before logging or failing. Update the smoke-source tooling allowlist for `internal/releaseguard` exact forbidden-token constants without adding releaseguard files to the smoke runtime manifest. Wrapper defaults to `goreleaser check`, `goreleaser release --snapshot --clean --skip=publish`, then `--manifest-only dist`; `--manifest-only <dir>` skips generation and runs explicit manifest mode.
+Implement Go helpers and shell wrapper. Route every releaseguard error, wrapper-captured GoReleaser stdout/stderr, manifest diff, packaged `ratchet version/help` output, draft-asset/tap diagnostic, workflow-command fixture, docs-guard fixture, and command-error fixture through `internal/harnessredact` before logging or failing. Update the smoke-source tooling allowlist for `internal/releaseguard` exact forbidden-token constants without adding releaseguard files to the smoke runtime manifest. Wrapper defaults to `goreleaser check`, `goreleaser release --snapshot --clean --skip=publish`, then `--manifest-only dist`; `--manifest-only <dir>` skips generation and runs explicit manifest mode. In both generated and manifest-only modes, the wrapper extracts the host-compatible packaged archive and executes the packaged `ratchet version` and `ratchet help` as part of the artifact proof.
 
 **Step 4: Verify unit/fallback behavior**
 
@@ -474,7 +475,7 @@ scripts/check-release-artifacts.sh
 scripts/check-release-artifacts.sh --manifest-only dist
 ```
 
-Expected: PASS; no manifest/checksum/archive member contains `ratchet-tui-smoke`.
+Expected: PASS; no manifest/checksum/archive member or packaged executable contains `ratchet-tui-smoke`; host-compatible packaged `ratchet version` and `ratchet help` execute from the extracted archive and their output contains release identity text with no smoke markers.
 
 **Step 6: Commit**
 
@@ -614,7 +615,7 @@ Rollback: if fail-closed checks have not merged, revert the ratchet-cli formula 
 **Step 1: Add workflow checks**
 
 Modify CI:
-- `release-check`: checkout `fetch-depth: 0`, setup Go `1.26`, private-module Git rewrite, GoReleaser action `check`, GoReleaser action `release --snapshot --clean --skip=publish`, `scripts/check-release-artifacts.sh --manifest-only dist`, upload `ratchet-snapshot-dist`.
+- `release-check`: checkout `fetch-depth: 0`, setup Go `1.26`, private-module Git rewrite, GoReleaser action `goreleaser/goreleaser-action@v7` with `version: "~> v2"` and `args: check`, GoReleaser action `goreleaser/goreleaser-action@v7` with `version: "~> v2"` and `args: release --snapshot --clean --skip=publish`, `scripts/check-release-artifacts.sh --manifest-only dist`, upload `ratchet-snapshot-dist`.
 - `tui-smoke`: setup equivalent to existing CI and run untagged smoke plus tagged helper contracts without `-race`:
   - `go test ./cmd/ratchet ./internal/tui -run 'HarnessSmoke|TUIBinarySmoke|StartupSmoke' -count=1 -timeout=10m`;
   - `go test -tags tui_smoke ./internal/client -run 'ConnectSmokeUnix' -count=1`;
@@ -631,7 +632,7 @@ scripts/check-release-artifacts.sh
 go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/ci.yml .github/workflows/release.yml
 ```
 
-Expected: PASS locally where GoReleaser is installed; pinned actionlint command succeeds; `scripts/check-release-artifacts.sh` regenerates fresh `dist`.
+Expected: PASS locally where GoReleaser is installed; pinned actionlint command succeeds; CI workflow uses `goreleaser/goreleaser-action@v7` with `version: "~> v2"` for every GoReleaser action step; `scripts/check-release-artifacts.sh` regenerates fresh `dist` and executes packaged host-compatible `ratchet version/help`.
 
 **Step 3: Commit**
 
@@ -660,14 +661,15 @@ Add tests for:
 - draft release assets mode reads an already-downloaded asset directory from `RATCHET_RELEASE_GUARD_ASSETS` plus `RATCHET_RELEASE_GUARD_VERSION`; it fails if expected archives/checksums are missing, if forbidden smoke tokens appear in artifact names, archive member names, packaged executable bytes, Homebrew generated material, or tap material, or if fixture metadata says the release is not draft;
 - tap postcheck resolves exact path-changing commit per tap file, scans content/metadata, groups rollback targets by SHA, and warns on mixed commits;
 - Windows archive fixture requires both amd64 and arm64 zips and proves no workflow step executes `ratchet.exe` or adds a Windows runner class in this slice.
+- mode-selected fixture tests provide testdata env for `draft-assets`, `tap-postcheck`, and Windows archive checks instead of relying on ordinary skip behavior;
 - draft-assets, tap-postcheck, Windows archive, workflow-command, GoReleaser release, and tap clone/auth failure fixtures prove they use `internal/harnessredact`; raw release asset directory, generated archive path, Windows executable path, workspace path, token-like prompt/trust body, and temp tap checkout path must be absent from failing output.
 
 **Step 2: Update release workflow**
 
 Before publish:
 - private-module env + Git rewrite;
-- GoReleaser `check`;
-- GoReleaser snapshot `release --snapshot --clean --skip=publish`;
+- GoReleaser action `goreleaser/goreleaser-action@v7` with `version: "~> v2"` and `args: check`;
+- GoReleaser action `goreleaser/goreleaser-action@v7` with `version: "~> v2"` and `args: release --snapshot --clean --skip=publish`;
 - manifest guard;
 - pre-publish draft config guard with `go test -count=1 ./internal/releaseguard -run TestGoReleaserReleaseDraftConfig` before `goreleaser release --clean`;
 - tap preflight with recorded cleanup/formula automation SHA evidence.
@@ -699,6 +701,9 @@ trap 'rm -rf "$tmpdir"' EXIT
 GOOS=windows GOARCH=amd64 go build -o "$tmpdir/ratchet-windows-amd64.exe" ./cmd/ratchet
 GOOS=windows GOARCH=arm64 go build -o "$tmpdir/ratchet-windows-arm64.exe" ./cmd/ratchet
 go test ./internal/releaseguard -run 'DraftAssets|TapPostcheck|WindowsArchive' -count=1
+RATCHET_RELEASE_GUARD_MODE=draft-assets RATCHET_RELEASE_GUARD_ASSETS=internal/releaseguard/testdata/draft-assets RATCHET_RELEASE_GUARD_VERSION=v0.0.0-test go test ./internal/releaseguard -run TestDraftAssets -count=1
+RATCHET_RELEASE_GUARD_MODE=tap-postcheck RATCHET_RELEASE_GUARD_TAP=internal/releaseguard/testdata/tap RATCHET_RELEASE_GUARD_TAP_NAMES=ratchet-cli,ratchet RATCHET_RELEASE_GUARD_TAP_COMMITS=Formula/ratchet-cli.rb=fixture-formula-sha,Casks/ratchet-cli.rb=fixture-cask-sha RATCHET_RELEASE_GUARD_VERSION=v0.0.0-test go test ./internal/releaseguard -run TestTapPostcheck -count=1
+RATCHET_RELEASE_GUARD_MODE=manifest RATCHET_RELEASE_GUARD_DIST=internal/releaseguard/testdata/windows-dist go test ./internal/releaseguard -run TestWindowsArchive -count=1
 go test ./internal/releaseguard -run TestGoReleaserReleaseDraftConfig -count=1
 go test ./internal/harnessredact ./internal/releaseguard -run 'Redact|ReleaseGuardRedaction|WorkflowCommandRedaction' -count=1
 scripts/check-release-artifacts.sh
@@ -706,7 +711,7 @@ scripts/check-release-artifacts.sh --manifest-only dist
 go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/ci.yml .github/workflows/release.yml
 ```
 
-Expected: PASS; draft config test proves `release.draft: true` before publish; redaction tests prove draft/tap/workflow/Windows failure payloads use the shared helper; Windows binaries are written only under the unique `mktemp -d` directory; wrapper regenerates fresh `dist`; pinned workflow lint is clean; `tap-preflight` uses `RATCHET_RELEASE_GUARD_MODE=tap-preflight`, `RATCHET_RELEASE_GUARD_TAP`, and `go test -count=1`; workflow diff contains no `windows-latest`, no new runner class, and no `ratchet.exe` execution step; `release-check` proves Windows amd64/arm64 archives/checksums/member-name/executable-byte scans while packaged docs are handled by docs guard; release workflow clones the tap with `HOMEBREW_TAP_TOKEN`; release workflow sets `RATCHET_RELEASE_GUARD_TAP`, `RATCHET_RELEASE_GUARD_TAP_NAMES`, `RATCHET_RELEASE_GUARD_TAP_COMMITS`, and `RATCHET_RELEASE_GUARD_VERSION` for tap-postcheck.
+Expected: PASS; draft config test proves `release.draft: true` before publish; explicit fixture-mode tests prove draft-assets/tap-postcheck/Windows archive behavior without skip-only false positives; redaction tests prove draft/tap/workflow/Windows failure payloads use the shared helper; Windows binaries are written only under the unique `mktemp -d` directory; wrapper regenerates fresh `dist` and executes packaged host-compatible `ratchet version/help`; pinned workflow lint is clean; every GoReleaser action step uses `goreleaser/goreleaser-action@v7` with `version: "~> v2"`; `tap-preflight` uses `RATCHET_RELEASE_GUARD_MODE=tap-preflight`, `RATCHET_RELEASE_GUARD_TAP`, and `go test -count=1`; workflow diff contains no `windows-latest`, no new runner class, and no `ratchet.exe` execution step; `release-check` proves Windows amd64/arm64 archives/checksums/member-name/executable-byte scans while packaged docs are handled by docs guard; release workflow clones the tap with `HOMEBREW_TAP_TOKEN`; release workflow sets `RATCHET_RELEASE_GUARD_TAP`, `RATCHET_RELEASE_GUARD_TAP_NAMES`, `RATCHET_RELEASE_GUARD_TAP_COMMITS`, and `RATCHET_RELEASE_GUARD_VERSION` for tap-postcheck.
 
 **Step 5: Commit**
 

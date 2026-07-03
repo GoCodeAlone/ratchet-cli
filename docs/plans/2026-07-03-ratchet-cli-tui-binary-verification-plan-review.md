@@ -652,3 +652,61 @@
 3. Remove all top-level direct commit wording for tap cleanup.
 
 **Verdict reasoning:** FAIL. P30-P40 are mostly fixed, but top-level tap prerequisite drift, missing release-tag HEAD safety, and tagged smoke helper tests not being merge-gated by CI remained.
+
+## Cycle 16
+
+### Adversarial Review Report
+
+**Phase:** plan
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `P45` [Missing integration proof / Verification-class mismatch] [design:669-672,697-699; plan:435,470-477,690-692,701-705]: The design requires extracting a host-compatible packaged archive and running packaged `ratchet version` and `ratchet help`, but the plan mostly specifies archive/member/checksum/binary byte scans; Task 4 only proves a source-built release-shaped binary, not the GoReleaser-packaged binary. Recommendation: add explicit releaseguard/wrapper tests and workflow steps that extract the host-compatible snapshot and draft-asset archive, run packaged `ratchet version`/`ratchet help`, and scan that output for smoke tokens.
+- `P46` [Infrastructure verification mismatch / Repo-precedent conflict] [design:556-559,581-584,1012,1015; plan:617,667-672; `.github/workflows/release.yml`:17-20]: The plan says CI/release preflight uses the GoReleaser action for `check` and snapshot release, but does not require `goreleaser/goreleaser-action@v7` with `version: "~> v2"` for those new steps. Existing release workflow and design both pin the action/tool major. Recommendation: spell out the action version input in Task 10 and Task 11 workflow edits, and add workflow assertions that every GoReleaser action step uses `version: "~> v2"`.
+- `P47` [Existence/runtime-validity / Verification-class mismatch] [plan:426-428,659-663,701]: Task 7 defines mode-gated releaseguard artifact tests where ordinary `go test` skips and explicit modes fail without required env, but Task 11 local verification runs `go test ./internal/releaseguard -run 'DraftAssets|TapPostcheck|WindowsArchive' -count=1` without `RATCHET_RELEASE_GUARD_MODE` or fixture/env paths. That command cannot reliably prove the declared mode behavior. Recommendation: split unit fixture tests from mode-selected integration commands, or provide testdata env vars for `draft-assets`, `tap-postcheck`, and Windows archive modes in the verification block.
+
+**Findings (Minor):**
+- None.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | P45 weakens real release-boundary proof. |
+| Assumptions under attack | Finding | P45 assumes byte scans substitute for packaged execution; P47 assumes mode-gated tests prove behavior without env. |
+| Repo-precedent conflicts | Finding | P46 diverges from existing release workflow GoReleaser action pinning. |
+| Artifact-class precedent | Finding | P45 misses source-built vs GoReleaser-packaged artifact distinction. |
+| YAGNI violations | Clean | No runner class, public releaseguard CLI, or broad registry added. |
+| Missing failure modes | Finding | P45 misses packaged command-output contamination; P46 leaves tool-version drift unguarded. |
+| Security/privacy at architecture level | Clean | Redaction wiring remains represented. |
+| Infrastructure impact | Finding | P46 affects release reproducibility. |
+| Multi-component validation | Finding | P45 leaves GoReleaser package-to-executable boundary partially unproven. |
+| Declared integration proof | Finding | P45/P47 undercut declared GoReleaser snapshot/draft-assets runtime proof. |
+| Contributed UI rendering proof | Clean | No contributed UI route in scope. |
+| Rollback story | Clean | Source, workflow, draft-asset, and tap rollback documented. |
+| Simpler alternative not considered | Finding | P45 could make `scripts/check-release-artifacts.sh` own packaged help/version execution. |
+| User-intent drift | Clean | No Windows runner or external-provider drift remains. |
+| Existence/runtime-validity | Finding | P47’s mode-gated command is not executable proof as written. |
+| Over-decomposition/under-decomposition | Clean | Thirteen tasks across six PRs remains proportional. |
+| Verification-class mismatch | Finding | P45/P47 use weaker verification than artifact class requires. |
+| Auth/authz chain composition | Clean | Trust proof remains daemon-backed. |
+| Hidden serial dependencies | Clean | Tap PR prerequisite and PR6 closeout are wired. |
+| Missing rollback wiring | Clean | Rollback wired. |
+| Missing integration proof | Finding | P45 leaves packaged binary execution proof missing. |
+| Missing declared integration matrix | Clean | Integrations listed. |
+| Missing contributed UI route proof | Clean | Not applicable. |
+| Infrastructure verification mismatch | Finding | P46/P47 under-specify workflow tool pinning and mode-selected releaseguard proof. |
+| Plugin-loader runtime layout | Clean | No external plugin loader. |
+| Config-validation schema rules | Clean | No new schema config. |
+| Identifier/naming-convention match | Clean | Env vars, commands, branches, paths match conventions. |
+| Planned-code compile-validity | Clean | No embedded Go compile issue found. |
+
+**Options the author may not have considered:**
+1. Make `scripts/check-release-artifacts.sh` the single owner of packaged archive extraction, host-compatible `version`/`help` execution, binary byte scans, and manifest checks.
+2. Add a workflow test that parses `.github/workflows/*.yml` and fails unless every GoReleaser action step is `goreleaser/goreleaser-action@v7` with `version: "~> v2"`.
+3. Split releaseguard tests into ordinary fixture tests and explicit mode-selected integration tests with testdata env.
+
+**Verdict reasoning:** FAIL. P30-P44 remain fixed, but packaged release-binary execution proof, GoReleaser action pinning, and mode-gated releaseguard verification remained blockers.
