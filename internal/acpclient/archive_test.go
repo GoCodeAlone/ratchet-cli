@@ -112,6 +112,176 @@ func TestExportSessionRefusesActiveOwner(t *testing.T) {
 	}
 }
 
+func TestImportSessionPreservesACPXRawHistoryAndExportsRaw(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "state", "sessions.json"))
+	now := time.Date(2026, 7, 2, 9, 0, 0, 0, time.UTC)
+	rawHistory := []json.RawMessage{
+		json.RawMessage(`{"jsonrpc":"2.0","id":"prompt-1","method":"session/prompt","params":{"sessionId":"provider-session","prompt":[]}}`),
+		json.RawMessage(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"provider-session","update":{"sessionUpdate":"agent_message_chunk"}}}`),
+		json.RawMessage(`{"jsonrpc":"2.0","id":"prompt-1","result":{"stopReason":"end_turn"}}`),
+	}
+	archivePath := writeRawArchiveFixture(t, map[string]any{
+		"format_version": 1,
+		"exported_at":    now.Format(time.RFC3339Nano),
+		"exported_by":    "acpx",
+		"session": map[string]any{
+			"record_id":    "acpx-record",
+			"agent":        "codex-acp",
+			"agent_name":   "codex",
+			"cwd_relative": "repo",
+			"cwd_original": "repo",
+			"created_at":   now.Format(time.RFC3339Nano),
+			"updated_at":   now.Format(time.RFC3339Nano),
+			"state": map[string]any{
+				"id":                 "acpx-record",
+				"acpSessionId":       "provider-session",
+				"agent":              "codex",
+				"commandFingerprint": "fp",
+				"cwd":                "/source/repo",
+				"status":             "completed",
+				"createdAt":          now.Format(time.RFC3339Nano),
+				"updatedAt":          now.Format(time.RFC3339Nano),
+			},
+		},
+		"history": rawHistory,
+	})
+
+	imported, err := ImportSession(store, archivePath, ImportOptions{
+		SessionID: "imported-raw",
+		Cwd:       filepath.Join(t.TempDir(), "repo"),
+	})
+	if err != nil {
+		t.Fatalf("ImportSession: %v", err)
+	}
+	events, err := store.ReadEventLog(imported.ID)
+	if err != nil {
+		t.Fatalf("ReadEventLog: %v", err)
+	}
+	if len(events) != len(rawHistory) {
+		t.Fatalf("events len = %d, want %d", len(events), len(rawHistory))
+	}
+	for i := range rawHistory {
+		if events[i].Seq != i+1 || events[i].Direction != EventDirectionInbound {
+			t.Fatalf("event %d = %#v, want inbound seq %d", i, events[i], i+1)
+		}
+		if !jsonMessagesEqual(events[i].Message, rawHistory[i]) {
+			t.Fatalf("event %d message = %s, want %s", i, events[i].Message, rawHistory[i])
+		}
+	}
+
+	exportPath := filepath.Join(t.TempDir(), "raw-export.json")
+	if err := ExportSession(store, imported.ID, exportPath, ExportOptions{
+		HistoryMode: ArchiveHistoryModeRaw,
+		Now:         fixedArchiveClock(now),
+	}); err != nil {
+		t.Fatalf("ExportSession raw: %v", err)
+	}
+	var exported struct {
+		History        []json.RawMessage     `json:"history"`
+		SummaryHistory []ArchiveHistoryEvent `json:"summary_history"`
+	}
+	b, err := os.ReadFile(exportPath)
+	if err != nil {
+		t.Fatalf("read exported archive: %v", err)
+	}
+	if err := json.Unmarshal(b, &exported); err != nil {
+		t.Fatalf("unmarshal exported raw archive: %v\n%s", err, b)
+	}
+	if len(exported.SummaryHistory) != 0 {
+		t.Fatalf("summary_history len = %d, want 0 for raw mode", len(exported.SummaryHistory))
+	}
+	if len(exported.History) != len(rawHistory) {
+		t.Fatalf("raw history len = %d, want %d", len(exported.History), len(rawHistory))
+	}
+	for i := range rawHistory {
+		if !jsonMessagesEqual(exported.History[i], rawHistory[i]) {
+			t.Fatalf("raw history %d = %s, want %s", i, exported.History[i], rawHistory[i])
+		}
+	}
+}
+
+func TestExportSessionRawHistoryRequiresSidecar(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 2, 9, 5, 0, 0, time.UTC)
+	if err := store.Upsert(SessionRecord{
+		ID:        "no-sidecar",
+		Agent:     "fixture",
+		Cwd:       t.TempDir(),
+		Status:    SessionStatusCompleted,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	err := ExportSession(store, "no-sidecar", filepath.Join(t.TempDir(), "archive.json"), ExportOptions{
+		HistoryMode: ArchiveHistoryModeRaw,
+		Now:         fixedArchiveClock(now),
+	})
+	if !errors.Is(err, ErrRawHistoryUnavailable) {
+		t.Fatalf("ExportSession raw error = %v, want ErrRawHistoryUnavailable", err)
+	}
+}
+
+func TestImportSessionRejectsInvalidRawHistory(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 2, 9, 10, 0, 0, time.UTC)
+	archivePath := writeRawArchiveFixture(t, map[string]any{
+		"format_version": 1,
+		"exported_at":    now.Format(time.RFC3339Nano),
+		"exported_by":    "acpx",
+		"session": map[string]any{
+			"record_id":    "bad-raw",
+			"agent":        "fixture",
+			"cwd_relative": ".",
+			"cwd_original": ".",
+			"created_at":   now.Format(time.RFC3339Nano),
+			"updated_at":   now.Format(time.RFC3339Nano),
+			"state": map[string]any{
+				"id":        "bad-raw",
+				"agent":     "fixture",
+				"cwd":       t.TempDir(),
+				"status":    "completed",
+				"createdAt": now.Format(time.RFC3339Nano),
+				"updatedAt": now.Format(time.RFC3339Nano),
+			},
+		},
+		"history": []json.RawMessage{json.RawMessage(`{"jsonrpc":"2.0"}`)},
+	})
+
+	_, err := ImportSession(store, archivePath, ImportOptions{})
+	if !errors.Is(err, ErrInvalidSessionArchive) {
+		t.Fatalf("ImportSession error = %v, want ErrInvalidSessionArchive", err)
+	}
+
+	archivePath = writeRawArchiveFixture(t, map[string]any{
+		"format_version": 1,
+		"exported_at":    now.Format(time.RFC3339Nano),
+		"exported_by":    "acpx",
+		"session": map[string]any{
+			"record_id":    "bad-summary",
+			"agent":        "fixture",
+			"cwd_relative": ".",
+			"cwd_original": ".",
+			"created_at":   now.Format(time.RFC3339Nano),
+			"updated_at":   now.Format(time.RFC3339Nano),
+			"state": map[string]any{
+				"id":        "bad-summary",
+				"agent":     "fixture",
+				"cwd":       t.TempDir(),
+				"status":    "completed",
+				"createdAt": now.Format(time.RFC3339Nano),
+				"updatedAt": now.Format(time.RFC3339Nano),
+			},
+		},
+		"history": []map[string]any{{"kind": "turn", "prompt": "not raw json-rpc"}},
+	})
+	_, err = ImportSession(store, archivePath, ImportOptions{})
+	if !errors.Is(err, ErrInvalidSessionArchive) {
+		t.Fatalf("ImportSession summary-shaped acpx history error = %v, want ErrInvalidSessionArchive", err)
+	}
+}
+
 func TestImportSessionValidatesVersionAndCollisions(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
 	now := time.Date(2026, 7, 2, 8, 45, 0, 0, time.UTC)
@@ -254,6 +424,43 @@ func writeArchiveFixture(t *testing.T, archive Archive) string {
 		t.Fatalf("write archive: %v", err)
 	}
 	return path
+}
+
+func writeRawArchiveFixture(t *testing.T, archive any) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "archive.json")
+	b, err := json.MarshalIndent(archive, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal archive: %v", err)
+	}
+	if err := os.WriteFile(path, append(b, '\n'), 0o600); err != nil {
+		t.Fatalf("write archive: %v", err)
+	}
+	return path
+}
+
+func jsonMessagesEqual(a, b json.RawMessage) bool {
+	var av any
+	var bv any
+	if err := json.Unmarshal(a, &av); err != nil {
+		return false
+	}
+	if err := json.Unmarshal(b, &bv); err != nil {
+		return false
+	}
+	return av == nil && bv == nil || jsonEqualValues(av, bv)
+}
+
+func jsonEqualValues(a, b any) bool {
+	ab, err := json.Marshal(a)
+	if err != nil {
+		return false
+	}
+	bb, err := json.Marshal(b)
+	if err != nil {
+		return false
+	}
+	return string(ab) == string(bb)
 }
 
 func fixedArchiveClock(t time.Time) func() time.Time {

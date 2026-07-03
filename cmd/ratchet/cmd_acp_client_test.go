@@ -367,12 +367,22 @@ func TestACPClientProfilesRejectBuiltinShadowing(t *testing.T) {
 }
 
 func TestParseACPClientArchiveSessionCommands(t *testing.T) {
-	exportCmd, err := parseACPClientCommand([]string{"sessions", "export", "s-export", "--output", "archive.json", "--json"})
+	exportCmd, err := parseACPClientCommand([]string{"sessions", "export", "s-export", "--output", "archive.json", "--history", "raw", "--json"})
 	if err != nil {
 		t.Fatalf("parse export: %v", err)
 	}
-	if exportCmd.kind != acpClientCommandSessionsExport || exportCmd.sessionID != "s-export" || exportCmd.archive.Output != "archive.json" || !exportCmd.json {
+	if exportCmd.kind != acpClientCommandSessionsExport || exportCmd.sessionID != "s-export" ||
+		exportCmd.archive.Output != "archive.json" || exportCmd.archive.HistoryMode != "raw" || !exportCmd.json {
 		t.Fatalf("export command = %#v", exportCmd)
+	}
+
+	eventsCmd, err := parseACPClientCommand([]string{"sessions", "events", "s-export", "--output", "events.ndjson", "--json"})
+	if err != nil {
+		t.Fatalf("parse events: %v", err)
+	}
+	if eventsCmd.kind != acpClientCommandSessionsEvents || eventsCmd.sessionID != "s-export" ||
+		eventsCmd.archive.Output != "events.ndjson" || !eventsCmd.json {
+		t.Fatalf("events command = %#v", eventsCmd)
 	}
 
 	importCmd, err := parseACPClientCommand([]string{
@@ -400,6 +410,10 @@ func TestParseACPClientArchiveSessionCommandsRejectInvalidArgs(t *testing.T) {
 		{"sessions", "export", "s1"},
 		{"sessions", "export", "s1", "--output"},
 		{"sessions", "export", "s1", "--output", "archive.json", "extra"},
+		{"sessions", "export", "s1", "--output", "archive.json", "--history", "bogus"},
+		{"sessions", "events"},
+		{"sessions", "events", "s1", "extra"},
+		{"sessions", "events", "s1", "--output"},
 		{"sessions", "import"},
 		{"sessions", "import", "archive.json", "--session"},
 	}
@@ -1101,6 +1115,135 @@ func TestExecuteACPClientArchiveExportAndImport(t *testing.T) {
 	}
 	if imported.Cwd != "/tmp/imported" || imported.Agent != "custom" || imported.CommandFingerprint == "" || imported.ACPSessionID != "provider-session" {
 		t.Fatalf("imported = %#v", imported)
+	}
+}
+
+func TestExecuteACPClientArchiveRawExportAndEvents(t *testing.T) {
+	store := acpclient.NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 2, 9, 15, 0, 0, time.UTC)
+	if err := store.Upsert(acpclient.SessionRecord{
+		ID:        "s-raw",
+		Agent:     "fixture",
+		Cwd:       "/tmp/source",
+		Status:    acpclient.SessionStatusCompleted,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	var out bytes.Buffer
+	err := executeACPClientSessionExport(store, "s-raw", acpClientArchiveOptions{
+		Output:      filepath.Join(t.TempDir(), "raw.json"),
+		HistoryMode: "raw",
+	}, false, &out)
+	if !errors.Is(err, acpclient.ErrRawHistoryUnavailable) {
+		t.Fatalf("raw export without sidecar error = %v, want ErrRawHistoryUnavailable", err)
+	}
+
+	events := []acpclient.EventLogLine{{
+		Seq:       1,
+		At:        now,
+		Direction: acpclient.EventDirectionOutbound,
+		Message:   json.RawMessage(`{"jsonrpc":"2.0","id":"prompt-1","method":"session/prompt","params":{"sessionId":"s-raw"}}`),
+	}, {
+		Seq:       2,
+		At:        now.Add(time.Second),
+		Direction: acpclient.EventDirectionInbound,
+		Message:   json.RawMessage(`{"jsonrpc":"2.0","id":"prompt-1","result":{"stopReason":"end_turn"}}`),
+	}}
+	if err := store.AppendEventLog("s-raw", events); err != nil {
+		t.Fatalf("AppendEventLog: %v", err)
+	}
+
+	rawPath := filepath.Join(t.TempDir(), "raw.json")
+	var rawOut bytes.Buffer
+	if err := executeACPClientSessionExport(store, "s-raw", acpClientArchiveOptions{
+		Output:      rawPath,
+		HistoryMode: "raw",
+	}, true, &rawOut); err != nil {
+		t.Fatalf("raw export with sidecar: %v", err)
+	}
+	var exportPayload struct {
+		SessionID   string `json:"session_id"`
+		Path        string `json:"path"`
+		Status      string `json:"status"`
+		HistoryMode string `json:"history_mode"`
+	}
+	if err := json.Unmarshal(rawOut.Bytes(), &exportPayload); err != nil {
+		t.Fatalf("raw export json: %v\n%s", err, rawOut.String())
+	}
+	if exportPayload.SessionID != "s-raw" || exportPayload.Path != rawPath || exportPayload.HistoryMode != "raw" {
+		t.Fatalf("raw export payload = %#v", exportPayload)
+	}
+
+	var rawArchive struct {
+		History []json.RawMessage `json:"history"`
+	}
+	rawBytes, err := os.ReadFile(rawPath)
+	if err != nil {
+		t.Fatalf("read raw archive: %v", err)
+	}
+	if err := json.Unmarshal(rawBytes, &rawArchive); err != nil {
+		t.Fatalf("raw archive json: %v\n%s", err, rawBytes)
+	}
+	if len(rawArchive.History) != 2 {
+		t.Fatalf("raw history len = %d, want 2", len(rawArchive.History))
+	}
+
+	eventsPath := filepath.Join(t.TempDir(), "events.ndjson")
+	var eventsOut bytes.Buffer
+	if err := executeACPClientSessionEvents(store, "s-raw", acpClientArchiveOptions{Output: eventsPath}, true, &eventsOut); err != nil {
+		t.Fatalf("events command: %v", err)
+	}
+	var eventsPayload struct {
+		SessionID string                   `json:"session_id"`
+		Path      string                   `json:"path"`
+		Output    string                   `json:"output,omitempty"`
+		Status    string                   `json:"status"`
+		Events    []acpclient.EventLogLine `json:"events"`
+	}
+	if err := json.Unmarshal(eventsOut.Bytes(), &eventsPayload); err != nil {
+		t.Fatalf("events json: %v\n%s", err, eventsOut.String())
+	}
+	if eventsPayload.SessionID != "s-raw" || eventsPayload.Status != "ok" || eventsPayload.Output != eventsPath || len(eventsPayload.Events) != 2 {
+		t.Fatalf("events payload = %#v", eventsPayload)
+	}
+	if _, err := os.Stat(eventsPath); err != nil {
+		t.Fatalf("stat copied events: %v", err)
+	}
+}
+
+func TestExecuteACPClientExecPersistsResultEvents(t *testing.T) {
+	store := acpclient.NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 2, 9, 20, 0, 0, time.UTC)
+	runner := &fakeACPClientExecRunner{result: acpclient.Result{
+		SessionID:  "exec-session",
+		StopReason: acpsdk.StopReasonEndTurn,
+		Text:       "done",
+		Events: []acpclient.EventLogLine{{
+			Seq:       1,
+			At:        now,
+			Direction: acpclient.EventDirectionOutbound,
+			Message:   json.RawMessage(`{"jsonrpc":"2.0","id":"prompt-1","method":"session/prompt","params":{"sessionId":"exec-session"}}`),
+		}},
+	}}
+	var out bytes.Buffer
+	if err := executeACPClientExecWithStore(t.Context(), acpClientExecOptions{
+		Agent:   "custom",
+		Command: "/bin/fixture-agent",
+		Cwd:     ".",
+		Prompt:  "secret prompt",
+		Timeout: time.Second,
+	}, runner, store, &out); err != nil {
+		t.Fatalf("executeACPClientExecWithStore: %v", err)
+	}
+	events, err := store.ReadEventLog("exec-session")
+	if err != nil {
+		t.Fatalf("ReadEventLog: %v", err)
+	}
+	if len(events) != 1 || events[0].Direction != acpclient.EventDirectionOutbound {
+		t.Fatalf("events = %#v, want one outbound event", events)
 	}
 }
 

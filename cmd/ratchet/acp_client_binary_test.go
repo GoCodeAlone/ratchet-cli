@@ -216,6 +216,125 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 		t.Fatalf("archive history empty: %#v", archive)
 	}
 
+	rawArchivePath := filepath.Join(t.TempDir(), "fixture-session.raw.archive.json")
+	rawExportCmd := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "sessions", "export", "fixture-session", "--output", rawArchivePath, "--history", "raw", "--json")
+	rawExportCmd.Dir = repoRoot
+	rawExportCmd.Env = env
+	rawExportOut, err := rawExportCmd.Output()
+	if err != nil {
+		t.Fatalf("sessions raw export: %v\n%s", err, rawExportOut)
+	}
+	var rawExportPayload struct {
+		SessionID   string `json:"session_id"`
+		Path        string `json:"path"`
+		HistoryMode string `json:"history_mode"`
+	}
+	if err := json.Unmarshal(rawExportOut, &rawExportPayload); err != nil {
+		t.Fatalf("raw export json output: %v\n%s", err, rawExportOut)
+	}
+	if rawExportPayload.SessionID != "fixture-session" || rawExportPayload.Path != rawArchivePath || rawExportPayload.HistoryMode != "raw" {
+		t.Fatalf("raw export payload = %#v", rawExportPayload)
+	}
+	var rawArchive struct {
+		History []json.RawMessage `json:"history"`
+	}
+	rawArchiveBytes, err := os.ReadFile(rawArchivePath)
+	if err != nil {
+		t.Fatalf("read raw archive: %v", err)
+	}
+	if err := json.Unmarshal(rawArchiveBytes, &rawArchive); err != nil {
+		t.Fatalf("raw archive json: %v\n%s", err, rawArchiveBytes)
+	}
+	if len(rawArchive.History) == 0 {
+		t.Fatalf("raw archive history empty: %s", rawArchiveBytes)
+	}
+	for i, msg := range rawArchive.History {
+		if err := acpclient.ValidateJSONRPCMessage(msg); err != nil {
+			t.Fatalf("raw archive history %d invalid: %v\n%s", i, err, msg)
+		}
+	}
+
+	eventsJSON := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "sessions", "events", "fixture-session", "--json")
+	eventsJSON.Dir = repoRoot
+	eventsJSON.Env = env
+	eventsOut, err := eventsJSON.Output()
+	if err != nil {
+		t.Fatalf("sessions events json: %v\n%s", err, eventsOut)
+	}
+	var eventsPayload struct {
+		SessionID string                   `json:"session_id"`
+		Status    string                   `json:"status"`
+		Events    []acpclient.EventLogLine `json:"events"`
+	}
+	if err := json.Unmarshal(eventsOut, &eventsPayload); err != nil {
+		t.Fatalf("events json output: %v\n%s", err, eventsOut)
+	}
+	if eventsPayload.SessionID != "fixture-session" || eventsPayload.Status != "ok" || len(eventsPayload.Events) == 0 {
+		t.Fatalf("events payload = %#v", eventsPayload)
+	}
+
+	acpxArchivePath := filepath.Join(t.TempDir(), "acpx.archive.json")
+	acpxArchive := map[string]any{
+		"format_version": 1,
+		"exported_at":    "2026-07-02T10:00:00Z",
+		"exported_by":    "acpx",
+		"session": map[string]any{
+			"record_id":    "acpx-binary-source",
+			"agent":        "fixture",
+			"cwd_relative": "project",
+			"cwd_original": "project",
+			"created_at":   "2026-07-02T10:00:00Z",
+			"updated_at":   "2026-07-02T10:00:00Z",
+			"state": map[string]any{
+				"id":           "acpx-binary-source",
+				"acpSessionId": "fixture-session",
+				"agent":        "fixture",
+				"cwd":          cwd,
+				"status":       "completed",
+				"createdAt":    "2026-07-02T10:00:00Z",
+				"updatedAt":    "2026-07-02T10:00:00Z",
+			},
+		},
+		"history": []json.RawMessage{
+			json.RawMessage(`{"jsonrpc":"2.0","id":"prompt-1","method":"session/prompt","params":{"sessionId":"fixture-session"}}`),
+			json.RawMessage(`{"jsonrpc":"2.0","id":"prompt-1","result":{"stopReason":"end_turn"}}`),
+		},
+	}
+	acpxBytes, err := json.Marshal(acpxArchive)
+	if err != nil {
+		t.Fatalf("marshal acpx archive: %v", err)
+	}
+	if err := os.WriteFile(acpxArchivePath, acpxBytes, 0o600); err != nil {
+		t.Fatalf("write acpx archive: %v", err)
+	}
+	importACPX := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "sessions", "import", acpxArchivePath, "--session", "imported-acpx-binary", "--cwd", cwd, "--json")
+	importACPX.Dir = repoRoot
+	importACPX.Env = env
+	importACPXOut, err := importACPX.Output()
+	if err != nil {
+		t.Fatalf("import acpx archive: %v\n%s", err, importACPXOut)
+	}
+	importedRawPath := filepath.Join(t.TempDir(), "imported-acpx.raw.archive.json")
+	exportImportedRaw := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "sessions", "export", "imported-acpx-binary", "--output", importedRawPath, "--history", "raw", "--json")
+	exportImportedRaw.Dir = repoRoot
+	exportImportedRaw.Env = env
+	if out, err := exportImportedRaw.CombinedOutput(); err != nil {
+		t.Fatalf("export imported acpx raw: %v\n%s", err, out)
+	}
+	importedRawBytes, err := os.ReadFile(importedRawPath)
+	if err != nil {
+		t.Fatalf("read imported raw archive: %v", err)
+	}
+	var importedRawArchive struct {
+		History []json.RawMessage `json:"history"`
+	}
+	if err := json.Unmarshal(importedRawBytes, &importedRawArchive); err != nil {
+		t.Fatalf("imported raw archive json: %v\n%s", err, importedRawBytes)
+	}
+	if len(importedRawArchive.History) != 2 {
+		t.Fatalf("imported raw history len = %d, want 2", len(importedRawArchive.History))
+	}
+
 	importedCWD := filepath.Join(home, "imported-project")
 	importCmd := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "sessions", "import", archivePath, "--session", "imported-binary", "--cwd", importedCWD, "--json")
 	importCmd.Dir = repoRoot
