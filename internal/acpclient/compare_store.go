@@ -52,17 +52,15 @@ func (s *CompareRunStore) Save(run CompareRun) (CompareRunBundle, error) {
 	usedDirs := map[string]int{}
 	for i := range run.Rows {
 		row := &run.Rows[i]
-		if len(row.Events) == 0 {
-			continue
-		}
 		dir := uniqueCompareAgentDir(row.Agent, usedDirs)
 		key := row.Agent
 		if _, exists := bundle.AgentDirs[key]; exists {
 			key = fmt.Sprintf("%s#%d", row.Agent, usedDirs[safeCompareSegment(row.Agent)])
 		}
 		bundle.AgentDirs[key] = dir
-		if err := writeCompareEventsFile(filepath.Join(run.RunDir, "agents", dir, "events.ndjson"), row.Events); err != nil {
-			return CompareRunBundle{}, err
+		path := filepath.Join(run.RunDir, "agents", dir, "events.ndjson")
+		if err := writeCompareEventsFile(path, row.Events); err != nil {
+			return CompareRunBundle{}, fmt.Errorf("write compare events for %q to %s: %w", row.Agent, path, err)
 		}
 	}
 	run.Rows = stripCompareRowEvents(run.Rows)
@@ -86,7 +84,7 @@ func newCompareRunID(t time.Time) string {
 	if t.IsZero() {
 		t = time.Now().UTC()
 	}
-	return "compare-" + t.UTC().Format("20060102T150405Z")
+	return "compare-" + t.UTC().Format("20060102T150405.000000000Z")
 }
 
 func safeCompareSegment(value string) string {
@@ -133,10 +131,10 @@ func writeCompareEventsFile(path string, events []EventLogLine) (err error) {
 	encoder := json.NewEncoder(f)
 	for _, event := range events {
 		if err := ValidateJSONRPCMessage(event.Message); err != nil {
-			return err
+			return fmt.Errorf("validate %s: %w", path, err)
 		}
 		if err := encoder.Encode(event); err != nil {
-			return err
+			return fmt.Errorf("write %s: %w", path, err)
 		}
 	}
 	if err := f.Chmod(0o600); err != nil {

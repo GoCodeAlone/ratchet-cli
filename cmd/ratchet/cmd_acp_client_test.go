@@ -1346,8 +1346,8 @@ func TestExecuteACPClientCompareSaveBundle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("glob events: %v", err)
 	}
-	if len(eventsFiles) != 1 {
-		t.Fatalf("events files = %#v, want one agent event file", eventsFiles)
+	if len(eventsFiles) != 2 {
+		t.Fatalf("events files = %#v, want per-agent event files", eventsFiles)
 	}
 }
 

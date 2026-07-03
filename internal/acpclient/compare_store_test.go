@@ -33,6 +33,12 @@ func TestCompareRunStoreWritesBundleAndAgentEvents(t *testing.T) {
 			StopReason: "end_turn",
 			Final:      "done",
 			Events:     events,
+		}, {
+			Agent:      "agent-two",
+			Status:     "ok",
+			WallMS:     12,
+			StopReason: "end_turn",
+			Final:      "done",
 		}},
 	})
 	if err != nil {
@@ -56,7 +62,7 @@ func TestCompareRunStoreWritesBundleAndAgentEvents(t *testing.T) {
 	if err := json.Unmarshal(b, &payload); err != nil {
 		t.Fatalf("compare.json: %v\n%s", err, b)
 	}
-	if payload.RunID != "fixed-run" || payload.Status != "completed" || payload.PromptDigest != "sha256:abc123" || len(payload.Rows) != 1 {
+	if payload.RunID != "fixed-run" || payload.Status != "completed" || payload.PromptDigest != "sha256:abc123" || len(payload.Rows) != 2 {
 		t.Fatalf("payload = %#v", payload)
 	}
 	eventPath := filepath.Join(bundle.RunDir, "agents", bundle.AgentDirs["agent/one"], "events.ndjson")
@@ -69,5 +75,22 @@ func TestCompareRunStoreWritesBundleAndAgentEvents(t *testing.T) {
 	}
 	if strings.Contains(bundle.AgentDirs["agent/one"], "/") || strings.Contains(bundle.AgentDirs["agent/one"], `\`) {
 		t.Fatalf("agent dir was not escaped: %q", bundle.AgentDirs["agent/one"])
+	}
+	emptyEventPath := filepath.Join(bundle.RunDir, "agents", bundle.AgentDirs["agent-two"], "events.ndjson")
+	emptyBytes, err := os.ReadFile(emptyEventPath)
+	if err != nil {
+		t.Fatalf("read empty events.ndjson: %v", err)
+	}
+	if len(emptyBytes) != 0 {
+		t.Fatalf("empty events.ndjson = %s, want empty file", emptyBytes)
+	}
+}
+
+func TestCompareRunIDIncludesSubsecondPrecision(t *testing.T) {
+	at := time.Date(2026, 7, 3, 9, 45, 0, 0, time.UTC)
+	first := newCompareRunID(at)
+	second := newCompareRunID(at.Add(time.Nanosecond))
+	if first == second {
+		t.Fatalf("run ids collided within one second: %q", first)
 	}
 }
