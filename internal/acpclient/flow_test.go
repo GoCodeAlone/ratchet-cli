@@ -673,6 +673,44 @@ func TestRunFlowActionStartFailurePersistsNonZeroExitCode(t *testing.T) {
 	}
 }
 
+func TestRunFlowActionNonZeroExitWritesReplayFailedStep(t *testing.T) {
+	root := t.TempDir()
+	runner := &fakeActionRunner{result: ActionResult{ExitCode: 2, Stdout: "bad"}}
+	def := FlowDefinition{
+		FormatVersion: 1,
+		StartAt:       "fail",
+		Nodes:         []FlowNode{{ID: "fail", Type: FlowNodeTypeAction, Command: "ratchet"}},
+	}
+
+	_, err := RunFlow(t.Context(), def, map[string]any{}, FlowRunOptions{
+		RunID:              "run-action-replay-failed",
+		RunRoot:            root,
+		AllowedPermissions: []string{"shell"},
+		ActionRunner:       runner,
+	})
+	if err == nil || !strings.Contains(err.Error(), "action fail exited with 2") {
+		t.Fatalf("RunFlow error = %v, want non-zero action exit", err)
+	}
+	runDir := filepath.Join(root, "run-action-replay-failed")
+	for _, rel := range []string{
+		filepath.Join("steps", "fail.json"),
+		"trace.ndjson",
+		"manifest.json",
+		filepath.Join("projections", "steps.json"),
+	} {
+		if _, err := os.Stat(filepath.Join(runDir, rel)); err != nil {
+			t.Fatalf("failed replay bundle missing %s: %v", rel, err)
+		}
+	}
+	summary, err := LoadFlowReplaySummary(runDir)
+	if err != nil {
+		t.Fatalf("LoadFlowReplaySummary: %v", err)
+	}
+	if summary.Status != FlowRunStatusFailed || summary.StepCount != 1 || summary.TraceCount != 1 {
+		t.Fatalf("summary = %#v", summary)
+	}
+}
+
 func TestRunFlowActionOutputIsTruncated(t *testing.T) {
 	runner := &fakeActionRunner{
 		result: ActionResult{
