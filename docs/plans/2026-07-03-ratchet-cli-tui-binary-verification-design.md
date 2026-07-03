@@ -462,9 +462,12 @@ Mechanical fail-closed check:
     focused daemon test proves public `Shutdown` over the normal background
     daemon path removes pid/socket files;
   - cleanup is RPC/process-handle only: connect to the temp daemon socket after
-    validating socket path containment, `ModeSocket`, and `0600`, request daemon
-    shutdown through the public RPC or smoke-owned process handle, then wait
-    boundedly for pid/socket cleanup;
+    setting the parent test process `HOME`/`USERPROFILE`/`XDG_STATE_HOME` to the
+    same temp directories used to launch `ratchet`, and validating socket path
+    containment, `ModeSocket`, and `0600`; normal untagged `client.Connect()`
+    must resolve the temp daemon socket from that env before requesting public
+    RPC shutdown or using the smoke-owned process handle, then wait boundedly
+    for pid/socket cleanup;
   - the startup smoke never calls `ratchet daemon stop` and never sends a signal
     to a pidfile PID; if pid/socket files remain after RPC/process-handle
     cleanup, fail with redacted diagnostics and leave the process untouched for
@@ -516,11 +519,19 @@ Mechanical fail-closed check:
   - the Go helper code lives under `internal/releaseguard` and is exercised by
     Go tests; the shell wrapper invokes it through explicit non-cacheable test
     commands, not a product `cmd/*` package;
-  - every artifact-reading invocation sets explicit environment such as
-    `RATCHET_RELEASE_GUARD_DIST=<dist>` and
-    `RATCHET_RELEASE_GUARD_MODE=<manifest|draft-assets>` and runs
+  - every artifact-reading invocation sets explicit environment and uses one
+    typed releaseguard mode from this table, then runs
     `go test -count=1 ./internal/releaseguard -run <guard-test>` so a cached Go
-    test result can never stand in for reading the supplied artifact tree;
+    test result can never stand in for reading supplied artifacts:
+
+    | mode | required env | purpose |
+    |---|---|---|
+    | `manifest` | `RATCHET_RELEASE_GUARD_DIST` | Inspect local snapshot `dist/`, GoReleaser config fallback, archives, checksums, packaged binaries, generated cask/formula material. |
+    | `draft-assets` | `RATCHET_RELEASE_GUARD_ASSETS`, `RATCHET_RELEASE_GUARD_VERSION` | Inspect downloaded draft GitHub release assets/checksums before undraft. |
+    | `tap-preflight` | `RATCHET_RELEASE_GUARD_TAP` | Before publish, verify unmanaged stale root tap files are absent, active Formula/Cask surfaces contain no smoke tokens, and GoReleaser config contains automation for every active Formula/Cask surface; do not require current release version/checksum in the live tap. |
+    | `tap-postcheck` | `RATCHET_RELEASE_GUARD_TAP`, `RATCHET_RELEASE_GUARD_TAP_NAMES`, `RATCHET_RELEASE_GUARD_TAP_COMMITS`, `RATCHET_RELEASE_GUARD_VERSION` | After publish, verify exact path-changing commits for active Formula/Cask surfaces contain the current release version/checksum context and no smoke tokens. |
+
+    Unknown modes or missing required env fail before any artifact scan;
   - the Go helper uses existing Go module dependencies, including
     `gopkg.in/yaml.v3`, to parse `.goreleaser.yaml` and inspect generated
     artifact directories; do not implement YAML parsing in shell or add an
@@ -550,9 +561,10 @@ Mechanical fail-closed check:
     RATCHET_RELEASE_GUARD_TAP=<tap-checkout>
     go test -count=1 ./internal/releaseguard -run TestTapPreflight`;
   - this job must be green before merging release workflow enforcement; the
-    implementation plan must include the tap cleanup commit/PR SHA that retires
-    root/Formula surfaces, or keep fail-closed release enforcement out of scope
-    until the tap cleanup lands.
+    implementation plan must include either the tap cleanup commit/PR SHA that
+    removes stale unmanaged root tap files and the ratchet-cli GoReleaser commit
+    that adds Formula automation, or keep fail-closed release enforcement out of
+    scope until both land.
 - Keep `.github/workflows/release.yml` using the tag-only publishing command
   `goreleaser release --clean`, but add a publish-free preflight before it:
   - set `GOPRIVATE` and `GONOSUMCHECK` to `github.com/GoCodeAlone/*`;
@@ -563,26 +575,28 @@ Mechanical fail-closed check:
   - run `goreleaser/goreleaser-action@v7` with `version: "~> v2"` and
     `args: release --snapshot --clean --skip=publish`;
   - run `scripts/check-release-artifacts.sh --manifest-only dist`;
-  - before enabling fail-closed tap preflight, perform a prerequisite tap
-    cleanup/retirement check: clone `GoCodeAlone/homebrew-tap`, discover
-    relevant `ratchet` root/Formula/Casks install files, and permanently retire
-    unmanaged legacy root/formula surfaces (`ratchet-cli.rb` and
-    `Formula/ratchet-cli.rb`) from the tap with a compatibility note that
-    `Casks/ratchet-cli.rb` is the only GoReleaser-managed Homebrew surface in
-    this slice. Adding formula publishing requires a future design that adds
-    GoReleaser `brews`/formula automation and releaseguard coverage. This
-    retirement remediation is a tracked implementation task and must land before
-    the release workflow starts failing closed on tap drift;
+  - before enabling fail-closed tap preflight, perform prerequisite tap cleanup
+    and formula automation:
+    - clone `GoCodeAlone/homebrew-tap`, discover relevant `ratchet`
+      root/Formula/Casks install files, and remove only unmanaged stale root tap
+      files such as root `ratchet-cli.rb`;
+    - preserve `Formula/ratchet-cli.rb` as an active install surface by adding
+      GoReleaser formula automation (`brews`/formula equivalent for v2) in
+      `.goreleaser.yaml`, with releaseguard coverage for generated formula ids,
+      binaries, version/checksum, and forbidden smoke tokens;
+    - record the tap cleanup commit/PR SHA and the ratchet-cli formula-automation
+      commit/PR SHA in the implementation plan before merging fail-closed
+      release workflow enforcement;
   - clone `GoCodeAlone/homebrew-tap` before publishing and run a pre-publish tap
     drift audit with
     `RATCHET_RELEASE_GUARD_MODE=tap-preflight
     RATCHET_RELEASE_GUARD_TAP=<tap-checkout>
-    RATCHET_RELEASE_GUARD_VERSION=<tag-or-version>
     go test -count=1 ./internal/releaseguard -run TestTapPreflight`; this
     discovers every relevant `ratchet` root/Formula/Casks install file and
-    fails before publish if any stale legacy tap surface remains after the
-    cleanup prerequisite or would make the post-publish audit fail for reasons
-    unrelated to the current release;
+    fails before publish if unmanaged stale root files remain, active
+    Formula/Cask surfaces lack matching GoReleaser automation, or any active tap
+    file contains forbidden smoke tokens. It does not require the live tap to
+    contain the current release version/checksum before GoReleaser publishes;
   - only then run the existing publishing `goreleaser release --clean` step.
 - After the publishing step creates a draft GitHub release and before the
   existing publish/undraft script flips `draft: false`, inspect the draft
@@ -598,16 +612,17 @@ Mechanical fail-closed check:
     `.goreleaser.yaml` `homebrew_casks[].repository` (currently
     `GoCodeAlone/homebrew-tap`, branch `main`) with `HOMEBREW_TAP_TOKEN`;
   - parse `.goreleaser.yaml` to derive expected tap names from every
-    Homebrew-related release surface (`homebrew_casks` today; any
-    `brews`/formula section added later must update this design and guard);
+    Homebrew-related release surface (`homebrew_casks` and the new formula
+    automation);
   - discover all relevant tap install files in the checkout instead of assuming
     a cask-only layout: candidates include root `ratchet*.rb`,
     `Casks/ratchet*.rb`, `Formula/ratchet*.rb`, and any path changed by the
     current release commit whose basename contains `ratchet`;
-  - fail if no relevant tap file exists; fail if retired root/formula surfaces
-    reappear without a corresponding GoReleaser formula automation design; verify
-    each discovered active install surface for the current release's expected
-    version/checksum context and forbidden smoke tokens;
+  - fail if no relevant tap file exists; fail if unmanaged stale root surfaces
+    reappear; fail if `Formula/ratchet-cli.rb` exists without matching
+    GoReleaser formula automation; verify each discovered active install surface
+    for the current release's expected version/checksum context and forbidden
+    smoke tokens;
   - resolve the exact path-changing commit for each relevant tap file with
     `git log -1 -- <tap-file>` in the tap checkout, not raw branch `HEAD`;
     verify each commit's file content contains the expected release tag or
@@ -826,12 +841,12 @@ The existing tag release workflow already publishes GitHub release assets and a
 Homebrew cask/tap update through GoReleaser. This slice adds publish-free
 GoReleaser preflight jobs on PR/push and before tag publishing, a GitHub draft
 asset postcheck before undrafting, packaged-binary inspection, an executable
-Homebrew/tap cleanup prerequisite that retires unmanaged legacy root/Formula
-surfaces and leaves the GoReleaser-managed cask as the active Homebrew surface,
+Homebrew/tap cleanup prerequisite that removes unmanaged stale root surfaces and
+adds GoReleaser automation for the active Formula plus existing Cask surfaces,
 Homebrew/tap preflight that clones `GoCodeAlone/homebrew-tap` before publish,
 an after-the-fact Homebrew/tap postcheck that scans every relevant `ratchet`
-root/Formula/Casks tap install file at its exact path-changing commit for the
-current release, plus a
+Formula/Casks tap install file at its exact path-changing commit for the current
+release, plus a
 `windows-safe-command-smoke` job on `windows-latest`. GitHub release artifacts
 are pre-public gated; Homebrew/tap remains prechecked plus
 postchecked/rollback under the current GoReleaser workflow. Fully pre-public
@@ -855,7 +870,7 @@ smoke entrypoint is build-tagged out.
 | Shortcuts | PTY sends `pty-proven` shortcut rows and asserts branch tree/pane transitions with fixed-size full-frame checks matching current behavior; focused tests prove conditional `ctrl+h`, advertised branch-tree navigation, and App-level branch switch into child chat history. Docs cannot claim PTY proof for focused shortcut rows. |
 | Docs to tests | Docs guard fails if automated TUI smoke evidence is removed. |
 | Binary smoke to CI | Non-race CI smoke job runs the built-binary/startup/TUI smoke tests that the race suite skips; `internal/tui` owns its race skip helper so package-local tests compile in both race and non-race suites. |
-| Release preflight to CI/release | `release-check` and tag release workflow both run `goreleaser check`, snapshot generation, and the same artifact-manifest guard before publish; guard extracts and byte-scans every packaged `ratchet` binary from every archive, runs executable help/version checks where practical, and release postcheck downloads uploaded GitHub draft release assets and repeats the same checks before undrafting; PR/push `tap-preflight` merge-gates tap cleanup, Homebrew/tap cleanup retires unmanaged root/Formula surfaces before fail-closed release preflight, preflight rejects any reintroduced unmanaged formula/root files or stale cask drift before publish, and postcheck remains after-the-fact with rollback for the current GoReleaser cask push. |
+| Release preflight to CI/release | `release-check` and tag release workflow both run `goreleaser check`, snapshot generation, and the same artifact-manifest guard before publish; guard extracts and byte-scans every packaged `ratchet` binary from every archive, runs executable help/version checks where practical, and release postcheck downloads uploaded GitHub draft release assets and repeats the same checks before undrafting; PR/push `tap-preflight` merge-gates tap cleanup and formula automation, Homebrew/tap cleanup removes unmanaged stale root files before fail-closed release preflight, preflight rejects unmanaged root files or active Formula/Cask surfaces without matching GoReleaser automation, and postcheck remains after-the-fact with rollback for the current GoReleaser Formula/Cask push. |
 | Windows build/smoke | Cross-build commands prove release-shaped `ratchet` still compiles for Windows; `windows-safe-command-smoke` on x64 `windows-latest` declares `needs: release-check`, builds source `ratchet.exe`, downloads the `release-check` snapshot `dist/` artifact, requires both Windows zips, byte-scans amd64 and arm64 archives, extracts `ratchet_windows_amd64.zip`, then executes packaged `ratchet.exe version`, `ratchet.exe help`, and `ratchet.exe daemon status` with temp Windows home/state env; `ratchet-tui-smoke` interactive PTY remains Unix-only. |
 
 ## Integration Matrix
@@ -874,7 +889,7 @@ smoke entrypoint is build-tagged out.
 | Non-race binary smoke CI | config-only | `.github/workflows/ci.yml` runs a focused non-race smoke job for subprocess/startup tests that are intentionally skipped under `-race`, with explicit test names for release startup and TUI binary smoke. |
 | Docs guard | config-only | `cmd/ratchet/harness_docs_test.go` checks public docs mention exact evidence boundaries. |
 | GoReleaser snapshot and GitHub draft assets | runtime-integrated | Publish-free `release-check` CI job, tag release preflight, local script, and release draft postcheck run `goreleaser check`/snapshot generation plus full `.goreleaser.yaml`-derived OS/arch archive matrix inspection, checksum-entry checks, all-archive packaged-binary byte scans, host/Windows packaged-binary help/version checks, and deterministic `.goreleaser.yaml` fallback. The postcheck downloads draft GitHub release assets and repeats the same checks before undraft, proving uploaded archives/checksums do not contain `ratchet-tui-smoke`. |
-| Homebrew/tap install files | config-only + cleanup + PR gate + preflight + post-publish audit | Snapshot/config precheck proves Homebrew ids/binaries do not reference smoke artifacts; a prerequisite tap cleanup task retires unmanaged root/Formula surfaces and documents `Casks/ratchet-cli.rb` as the only active GoReleaser-managed Homebrew surface for this slice; PR/push `tap-preflight` verifies cleanup before merge; before publish, release tap preflight rejects reintroduced unmanaged root/Formula files or cask drift that would make postcheck fail; after publish, the guard scans the active cask at its exact path-changing commit. Current GoReleaser workflow can still push the tap before postcheck, so current-release tap safety is after-the-fact audit plus rollback, not pre-public gating. Split-publish pre-public gating is deferred. |
+| Homebrew/tap install files | config-only + cleanup + PR gate + preflight + post-publish audit | Snapshot/config precheck proves Homebrew ids/binaries do not reference smoke artifacts; prerequisite tap cleanup removes stale unmanaged root files and adds GoReleaser automation for active `Formula/ratchet-cli.rb` while preserving existing `Casks/ratchet-cli.rb`; PR/push `tap-preflight` verifies cleanup and automation before merge; before publish, release tap preflight rejects unmanaged root files, active Formula/Cask surfaces without automation, or forbidden smoke tokens, but does not require the live tap to already contain the current version/checksum; after publish, the guard scans active Formula/Cask files at exact path-changing commits for current version/checksum context. Current GoReleaser workflow can still push the tap before postcheck, so current-release tap safety is after-the-fact audit plus rollback, not pre-public gating. Split-publish pre-public gating is deferred. |
 | Windows safe-command smoke | runtime-integrated | `windows-safe-command-smoke` on x64 `windows-latest` declares `needs: release-check`, builds source `ratchet.exe`, downloads `ratchet-snapshot-dist` from `release-check`, requires `ratchet_windows_amd64.zip` and `ratchet_windows_arm64.zip`, byte-scans both, extracts amd64 only for execution, and runs packaged `ratchet.exe version`, `ratchet.exe help`, and `ratchet.exe daemon status` with temp Windows home/state env to prove non-PTY Windows CLI startup/help/daemon-status behavior and packaged-archive absence of smoke surfaces. |
 | Windows smoke package boundary | config-only | `GOOS=windows GOARCH=amd64/arm64 go list` and `go build -tags tui_smoke ./cmd/ratchet-tui-smoke` fail with the expected Unix-only no-buildable-files class. |
 | Windows interactive PTY | deferred | No ConPTY runner in this slice; Windows coverage is build/noninteractive only. |
@@ -1057,11 +1072,15 @@ preflight PR.
 | D115 | Required releaseguard to derive and require every expected GoReleaser OS/arch archive and checksum entry from `.goreleaser.yaml`, including Linux/Darwin/Windows amd64 and arm64. |
 | D116 | Chose a concrete shared command-spec artifact: `internal/tui/commands/testdata/command_surface_spec.json`, loaded by both TUI and CLI package tests. |
 | D117 | Replaced pidfile signaling with RPC/process-handle-only cleanup through the verified temp socket; leftovers fail with diagnostics rather than killing a PID. |
-| D118 | Chose durable Homebrew tap surface handling: retire unmanaged root/Formula files, keep `Casks/ratchet-cli.rb` as the only managed surface, and require future formula automation/design before reintroducing formulas. |
+| D118 | Chose durable Homebrew tap surface handling: remove unmanaged stale root files and add GoReleaser formula automation for active `Formula/ratchet-cli.rb` alongside the existing cask. |
 | D119 | Required smoke service job wiring: initialize `JobRegistry`, keep safe non-background providers for `ListJobs`, no-op/omit cron scheduling, focused `ListJobs` RPC proof, and PTY no-RPC-error assertion for job panel. |
 | D120 | Reaffirmed RPC/process-handle-only daemon cleanup through verified socket with no `daemon stop`, pidfile signal, or fallback kill path. |
-| D121 | Made Homebrew tap cleanup durable by retiring unmanaged root/Formula surfaces rather than updating them once; formula reintroduction requires future GoReleaser automation/design. |
+| D121 | Made Homebrew tap cleanup durable by preserving the active Formula through GoReleaser formula automation and removing only unmanaged stale root tap files. |
 | D122 | Confirmed the PTY smoke section has a single `Drive:` anchor before plan extraction. |
 | D123 | Required observable job-panel refresh errors plus successful `ListJobs` marker/empty-state assertions so `ctrl+j` cannot pass through a swallowed RPC failure. |
 | D124 | Required production `daemon.Start` to wire `Shutdown` callback and prove public RPC shutdown removes pid/socket files before startup smoke relies on it. |
 | D125 | Added PR/push read-only `tap-preflight` merge gate and required a recorded tap cleanup commit/PR before enabling fail-closed release enforcement. |
+| D126 | Startup cleanup now sets parent `HOME`/`USERPROFILE`/`XDG_STATE_HOME` to the temp daemon env before normal `client.Connect`, so untagged cleanup targets the temp socket. |
+| D127 | Replaced releaseguard mode prose with a typed mode table for `manifest`, `draft-assets`, `tap-preflight`, and `tap-postcheck`, including required env and fail-closed behavior. |
+| D128 | Split tap checks into prepublish shape/smoke/automation checks and postpublish current version/checksum checks; preflight no longer requires live tap current-version content. |
+| D129 | Preserved the active Homebrew Formula by requiring GoReleaser formula automation and releaseguard coverage, retiring only unmanaged stale root tap files. |

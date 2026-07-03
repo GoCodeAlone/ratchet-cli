@@ -1397,3 +1397,49 @@ None.
 3. Tap rollout gate through PR/push read-only `tap-preflight`.
 
 **Verdict reasoning:** FAIL. The TUI job-panel proof can pass through a swallowed RPC error, startup-smoke daemon cleanup depends on an unwired shutdown path, and tap cleanup is required but not merge-gated.
+
+## Cycle 33
+
+### Adversarial Review Report
+
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `D126` [Existence/runtime-validity / Security/privacy] [design:464-467; `internal/client/client.go`:24-31; `internal/daemon/pidfile.go`:11-18]: Release-shaped startup cleanup says connect to temp daemon socket, but untagged code only has `client.Connect()` which hardcodes `daemon.SocketPath()` from current process home. Explicit socket constructor is `tui_smoke`-only, so startup smoke can accidentally connect to a real user daemon unless parent test env is switched to temp home. Recommendation: specify cleanup mechanism: set `HOME`/`USERPROFILE`/`XDG_STATE_HOME` to temp before `client.Connect`, or add test-only untagged cleanup dialer.
+- `D127` [Existence/runtime-validity / Infrastructure impact] [design:519-522,549-551,615-620]: `releaseguard` contract first defines `RATCHET_RELEASE_GUARD_MODE=<manifest|draft-assets>`, but later requires tap-preflight and tap-postcheck. Recommendation: define one typed mode enum/table covering `manifest`, `draft-assets`, `tap-preflight`, and `tap-postcheck`, with required env vars and failure behavior.
+- `D128` [Infrastructure impact / Rollback story] [design:576-585,607-614; `.goreleaser.yaml`:44-56]: Pre-publish tap audit passes `RATCHET_RELEASE_GUARD_VERSION` before GoReleaser publishes the new cask. If it verifies active cask current release version then it false-fails. Recommendation: preflight checks retired/legacy surfaces absent and active cask config has no smoke refs; only postcheck requires current version/checksum, or compare current tag against snapshot-generated cask.
+- `D129` [User-intent drift / Infrastructure impact] [design:566-575,877; `GoCodeAlone/homebrew-tap` Formula/Casks]: Design calls `Formula/ratchet-cli.rb` unmanaged legacy to retire, but current tap Formula is at `0.25.0` matching active cask; only root `ratchet-cli.rb` is stale. Retiring current Formula can break users unless migration is explicit. Recommendation: either automate formula publishing with GoReleaser, or add tap/README migration task.
+
+**Findings (Minor):**
+- None.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Clean | No repo-local guidance conflict found in this slice. |
+| Assumptions under attack | Finding | Startup cleanup, releaseguard tap modes, tap preflight timing, and Formula retirement were load-bearing. |
+| Repo-precedent conflicts | Finding | Existing untagged client connection is env-derived; smoke socket override is tagged. |
+| Artifact-class precedent | Finding | Tap has active Formula and Casks surfaces plus a stale root file. |
+| YAGNI violations | Clean | Checks target real release/tap failure modes. |
+| Missing failure modes | Finding | Real-user daemon socket and prepublish false-fail modes were underspecified. |
+| Security/privacy at architecture level | Finding | Cleanup could connect to a real user daemon if env is not temp-scoped. |
+| Infrastructure impact | Finding | Tap guard and Formula treatment affect release and install surfaces. |
+| Multi-component validation | Finding | Releaseguard mode contract did not cover all workflow call sites. |
+| Declared integration proof | Finding | Formula handling needed automation or migration proof. |
+| Contributed UI rendering proof | Clean | No plugin-contributed host UI involved. |
+| Rollback story | Finding | Prepublish version checks could block before GoReleaser creates current tap content. |
+| Simpler alternative not considered | Finding | Temp-env `client.Connect`, typed mode table, two-phase tap guard, and Formula automation. |
+| User-intent drift | Finding | Retiring current Formula conflicts with install continuity without migration. |
+| Existence/runtime-validity | Finding | D126-D128 are executable-contract gaps. |
+
+**Options the author may not have considered:**
+1. Temp-env cleanup path: set parent env before normal `client.Connect`.
+2. Two-phase tap guard: prepublish shape/smoke/automation checks; postpublish current version/checksum at exact path commit.
+3. Formula automation instead of retirement: add GoReleaser formula support and guard Cask plus Formula outputs.
+
+**Verdict reasoning:** FAIL. The design needed concrete temp-env daemon cleanup, a complete releaseguard mode contract, non-false-failing tap preflight, and active Formula preservation through automation.
