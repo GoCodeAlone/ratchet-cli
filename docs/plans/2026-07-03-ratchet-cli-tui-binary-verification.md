@@ -76,7 +76,7 @@ Source: no repo-local `docs/design-guidance.md`, `AGENTS.md`, or `CLAUDE.md` fou
 
 **Files:**
 - Create: `cmd/ratchet-tui-smoke/main.go`
-- Create: `cmd/ratchet-tui-smoke/main_unix_test.go`
+- Create: `cmd/ratchet-tui-smoke/main_test.go`
 - Create: `internal/tui/smoke_source_manifest_test.go`
 - Create: `internal/tui/race_enabled_test.go`
 - Create: `internal/tui/race_disabled_test.go`
@@ -134,6 +134,7 @@ Rollback: revert commit; no release binary behavior changes because smoke code i
 - Modify: `internal/daemon/service.go`
 - Create: `internal/daemon/service_tui_smoke.go`
 - Create: `internal/daemon/service_tui_smoke_test.go`
+- Modify: `internal/tui/smoke_source_manifest_test.go`
 - Modify: `internal/tui/components/jobpanel.go`
 - Modify: `internal/tui/components/jobpanel_test.go`
 - Modify: `internal/tui/pages/chat.go`
@@ -175,7 +176,7 @@ Expected: PASS; tagged daemon test proves smoke helper behavior, and untagged da
 **Step 5: Commit**
 
 ```bash
-git add internal/daemon internal/tui/components internal/tui/pages
+git add internal/daemon internal/tui/smoke_source_manifest_test.go internal/tui/components internal/tui/pages
 git commit -m "test: wire tui smoke daemon service"
 ```
 
@@ -198,8 +199,8 @@ Add `TestTUIBinarySmoke` in a Unix-only test file with `//go:build !windows`; do
 PTY run must assert:
 - splash/onboarding boundary, chat prompt, input visible;
 - mock provider response stream completion;
-- every `pty-proven` slash row from `internal/tui/commands/testdata/command_surface_spec.json`, including `/help`, `/provider list`, `/tree`, `/exit`, every documented mode value (`/mode conservative`, `/mode permissive`, `/mode locked`, `/mode sandbox`, `/mode custom`), and the trust matrix (`/trust list`, `/trust allow "smoke:allow"`, `/trust deny "smoke:deny"`, `/trust persist allow "smoke:persist-allow"`, `/trust persist deny "smoke:persist-deny"`, `/trust grants`, `/trust revoke "smoke:persist-allow"`, `/trust reset`);
-- post-`/trust reset` follow-up state assertions from the design: mode returns to smoke config default `conservative`, runtime allow/deny rules reset to config defaults, and unreverted persisted grants remain listed or are explicitly revoked by the tested command sequence;
+- every `pty-proven` slash row from `internal/tui/commands/testdata/command_surface_spec.json`, including `/help`, `/provider list`, `/tree`, `/exit`, every documented mode value (`/mode conservative`, `/mode permissive`, `/mode locked`, `/mode sandbox`, `/mode custom`), and the scoped trust matrix (`/trust list`, `/trust allow "smoke:allow" --scope smoke`, `/trust deny "smoke:deny" --scope smoke`, `/trust persist allow "smoke:persist-allow" --scope smoke`, `/trust persist deny "smoke:persist-deny" --scope smoke`, `/trust grants`, `/trust revoke "smoke:persist-allow" --scope smoke`, `/trust reset`);
+- follow-up state assertions after each mutating trust command: `/trust list` or `/trust grants` must show the expected pattern, action, and scope `smoke`; post-`/trust reset` assertions from the design must prove mode returns to smoke config default `conservative`, runtime allow/deny rules reset to config defaults, and unreverted persisted grants remain listed or are explicitly revoked by the tested command sequence;
 - `ctrl+b`, `ctrl+s`, `ctrl+t`, `ctrl+j`, and advertised branch-tree navigation where classified `pty-proven`;
 - job panel path has no RPC error and shows marker/empty state;
 - `/exit`, `ctrl+c`, and `ctrl+d` each terminate through bounded subprocess/subtests.
@@ -302,7 +303,7 @@ Rollback: revert commit; existing daemon start behavior returns. Check no temp d
 **Step 1: Write failing contract tests**
 
 Shared fixture rows classify slash commands as `pty-proven`, `focused-proven`, or `deferred-runtime`. Tests assert:
-- the fixture contains exact `pty-proven` rows for all five `/mode` values and each required `/trust` matrix command used by `TestTUIBinarySmoke`;
+- the fixture contains exact `pty-proven` rows for all five `/mode` values and each scoped `/trust` matrix command used by `TestTUIBinarySmoke`, including `--scope smoke` where applicable and required follow-up assertions for pattern/action/scope state;
 - parser switch cases, `/help`, autocomplete literals, `modeCmd`, `trustCmd`, and `providerCmd` surfaces are classified;
 - nonliteral/generated command cases fail unless fixture marks them runtime-tested;
 - `cmd/ratchet` public help slash section and extracted `printUsage` rows match fixture;
@@ -395,6 +396,7 @@ Rollback: revert docs/test commit.
 - Create: `internal/releaseguard/goreleaser.go`
 - Create: `internal/releaseguard/tap.go`
 - Create: `internal/releaseguard/testdata/*`
+- Modify: `internal/tui/smoke_source_manifest_test.go`
 - Create: `scripts/check-release-artifacts.sh`
 - Modify: `go.mod`
 - Modify: `go.sum`
@@ -454,7 +456,7 @@ Expected: PASS; no manifest/checksum/archive member contains `ratchet-tui-smoke`
 **Step 6: Commit**
 
 ```bash
-git add internal/releaseguard scripts/check-release-artifacts.sh go.mod go.sum
+git add internal/releaseguard internal/tui/smoke_source_manifest_test.go scripts/check-release-artifacts.sh go.mod go.sum
 git commit -m "test: guard release artifacts"
 ```
 

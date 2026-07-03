@@ -233,3 +233,45 @@
 2. Copy existing private-module setup into `windows-safe-command-smoke`.
 
 **Verdict reasoning:** FAIL. P1-P17 were addressed; remaining gaps were explicit PTY matrix proof and Windows private-module setup.
+
+## Cycle 7
+
+### Adversarial Review Report
+
+**Phase:** plan
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `P20` [Manifest drift / executable gap] [plan:132-140,161,170,178; plan:392-401,411,428,440,457]: Plan says Task 2 updates smoke-source manifest and Task 7 updates releaseguard tooling allowlist, but both tasks omit `internal/tui/smoke_source_manifest_test.go` from Files lists and `git add` commands. Recommendation: add manifest/allowlist file explicitly to Task 2 and Task 7 Files and commit commands.
+- `P21` [Missing integration proof / PTY trust matrix] [design:295-301; plan:198-202,304-305; `internal/tui/commands/trust.go`:86-129,143-170]: Design's trust matrix proves `--scope smoke` through follow-up `/trust list` and `/trust grants` state reads, but plan examples drop `--scope smoke` flags and only partially name reset follow-up assertions. Recommendation: make Task 3 and JSON spec use exact scoped commands and require follow-up assertions for pattern/action/scope after each mutating trust command.
+
+**Findings (Minor):**
+- `P22` [Identifier / build-constraint clarity] [plan:78-80; design:177-179]: Task 1 creates `cmd/ratchet-tui-smoke/main_unix_test.go` but does not require explicit `//go:build !windows`. Go has no generic `_unix` suffix. Recommendation: rename to `main_test.go` with `//go:build !windows`, or use real GOOS-specific files.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | P20/P21 weaken real-boundary proof and guarded claims. |
+| Assumptions under attack | Finding | Plan assumed prose manifest/allowlist and trust matrix updates were enough without staging mechanics/state proof. |
+| Artifact-class precedent | Finding | Guard manifests are source artifacts and must be listed/staged wherever changed. |
+| Missing failure modes | Finding | P20 can miss smoke-token guard drift; P21 can miss trust scope mutation regressions. |
+| Security/privacy at architecture level | Finding | Trust scope proof is security-relevant policy mutation boundary. |
+| Infrastructure impact | Finding | P20 affects releaseguard/smoke artifact enforcement. |
+| Multi-component validation | Finding | P21 can avoid proving TUI command input through daemon trust state. |
+| Declared integration proof | Finding | Releaseguard integration proof undermined if allowlist changes unstaged. |
+| User-intent drift | Finding | P21 can still overstate slash/trust command verification. |
+| Existence/runtime-validity | Finding | P20 commit commands incomplete; P22 relies on non-existent `_unix` build suffix. |
+| Verification-class mismatch | Finding | P21 lacks state-level verification required for scoped trust mutations. |
+| Missing integration proof | Finding | P21 leaves scoped trust behavior insufficiently proven. |
+| Infrastructure verification mismatch | Finding | P20 can leave releaseguard/smoke guard verification out of committed artifact. |
+| Identifier/naming convention | Finding | P22 uses misleading `_unix_test.go` naming without build tag. |
+
+**Options the author may not have considered:**
+1. Put smoke-source manifest/tooling allowlist in one testdata file and make every guarded-token task update it explicitly.
+2. Drive PTY trust matrix from JSON command spec with exact command strings including `--scope smoke`.
+
+**Verdict reasoning:** FAIL. P1-P19 mostly addressed; remaining blockers were incomplete guard manifest staging and insufficient scoped trust state proof.
