@@ -768,3 +768,56 @@
 3. Treat tap cleanup evidence as state proof: current tap HEAD plus preflight PASS is sufficient when stale root is already absent.
 
 **Verdict reasoning:** FAIL. P45-P47 are fixed and P30-P44 remain fixed, but existing CI Windows output paths, Task 5 PTY rerun, and already-clean tap evidence path remained executable gaps.
+
+## Cycle 18
+
+### Adversarial Review Report
+
+**Phase:** plan
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `P51` [Hidden serial dependency / External prerequisite executability] [plan:20,46,567,590,614,658]: Tasks 10 and 11 still required a merged tap cleanup SHA, excluding the allowed already-clean tap HEAD SHA plus `TestTapPreflight` PASS. Fix applied: both preconditions now accept tap state proof SHA, either merged cleanup PR SHA or existing tap HEAD SHA with `TestTapPreflight` PASS, plus the Task 8 cask-guard commit SHA.
+- `P52` [Config-validation schema rules / Infrastructure verification mismatch] [plan:9,499-525,619,674-677,788]: Task 8 required GoReleaser `brews`, but local GoReleaser v2.16 rejects deprecated `brews` while the plan also gates on `goreleaser check`. Fix applied: Task 8 now keeps supported `homebrew_casks`, rejects deprecated `brews`, and makes tap cleanup remove unmanaged legacy Formula surfaces instead of requiring Formula automation.
+- `P53` [Hidden serial dependency / Under-decomposition / Planned build order] [plan:80-88,95-98,109-112,132-164]: Task 1 required tagged smoke binary build success before Task 2 created the smoke daemon service. Fix applied: Task 1 now creates the minimal `internal/daemon/service_tui_smoke.go` constructor/stub needed for build success, and Task 2 expands its behavior.
+
+**Findings (Minor):**
+- None.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Clean | No new runner or release-publish pattern drift. |
+| Assumptions under attack | Finding | P51 assumed cleanup PR always exists; P52 assumed deprecated GoReleaser surface remained checkable; P53 assumed later service work was available to earlier build gate. |
+| Repo-precedent conflicts | Finding | P52 conflicted with local GoReleaser v2.16 validation behavior. |
+| Artifact-class precedent | Clean | Artifact guards remain explicit. |
+| YAGNI violations | Clean | No new release CLI or runner class. |
+| Missing failure modes | Finding | Deprecated `brews` would fail release-check before tests could prove artifacts. |
+| Security/privacy at architecture level | Clean | Redaction and temp-path requirements remain. |
+| Infrastructure impact | Finding | P52 would make CI release preflight non-executable. |
+| Multi-component validation | Finding | P53 left smoke main/service build order inconsistent. |
+| Declared integration proof | Finding | P51/P53 affected executable sequencing. |
+| Contributed UI rendering proof | Clean | No contributed UI route. |
+| Rollback story | Clean | Rollback adjusted to cask guard and legacy Formula cleanup. |
+| Simpler alternative not considered | Finding | Cask-only GoReleaser support avoids pinning an older deprecated Formula surface. |
+| User-intent drift | Finding | P51 could block autonomous continuation on no-op tap cleanup. |
+| Existence/runtime-validity | Finding | P52/P53 would fail concrete tool/build commands. |
+| Over-decomposition/under-decomposition | Finding | P53 split build prerequisite from its required service stub. |
+| Verification-class mismatch | Finding | P52 configured a release-check gate around a deprecated schema. |
+| Auth/authz chain composition | Clean | Trust proof unchanged. |
+| Hidden serial dependencies | Finding | P51/P53 exposed unstated sequencing gaps. |
+| Missing rollback wiring | Clean | Present after cask-only rewrite. |
+| Missing integration proof | Clean | No new omitted proof after fixes. |
+| Missing declared integration matrix | Clean | Matrix updated to cask-only tap proof. |
+| Missing contributed UI route proof | Clean | Not applicable. |
+| Infrastructure verification mismatch | Finding | P52 broke GoReleaser action/local parity. |
+| Plugin-loader runtime layout | Clean | No plugin-loader surface. |
+| Config-validation schema rules | Finding | P52 used deprecated `brews`. |
+| Identifier/naming-convention match | Clean | Env vars, task names, and paths remain consistent. |
+| Planned-code compile-validity | Finding | P53 made Task 1 build impossible until Task 2. |
+
+**Verdict reasoning:** FAIL. P48-P50 remain fixed, but tap evidence wording, deprecated GoReleaser Formula config, and Task 1 smoke build ordering required correction.
