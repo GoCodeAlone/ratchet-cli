@@ -17,7 +17,7 @@
 **PR Count:** 6
 **Tasks:** 13
 **Estimated Lines of Change:** ~2600
-**External prerequisites:** 1 Homebrew tap PR/direct commit recorded by Task 9 before Tasks 10-11 start.
+**External prerequisites:** 1 Homebrew tap PR recorded by Task 9 before Tasks 10-11 start. Direct tap commits are out of scope unless a fresh explicit plan amendment records that override.
 
 **Out of scope:**
 - Windows interactive ConPTY proof.
@@ -43,7 +43,7 @@
 
 | Repo | Work | Evidence | Gate |
 |---|---|---|---|
-| `GoCodeAlone/homebrew-tap` | Remove stale unmanaged root `ratchet-cli.rb`; preserve active `Formula/ratchet-cli.rb` and `Casks/ratchet-cli.rb`. | Merged PR/direct commit SHA recorded in Task 9 backport note. | Tasks 10-11 must not enable fail-closed tap/release enforcement until evidence is recorded. |
+| `GoCodeAlone/homebrew-tap` | Remove stale unmanaged root `ratchet-cli.rb`; preserve active `Formula/ratchet-cli.rb` and `Casks/ratchet-cli.rb`. | Merged PR SHA recorded in Task 9 backport note. Direct tap commit requires a fresh explicit plan amendment. | Tasks 10-11 must not enable fail-closed tap/release enforcement until evidence is recorded. |
 
 **Status:** Draft
 
@@ -453,7 +453,7 @@ Implement Go helpers and shell wrapper. Route every releaseguard error, wrapper-
 **Step 4: Verify unit/fallback behavior**
 
 ```bash
-gofmt -w internal/releaseguard
+gofmt -w internal/harnessredact internal/releaseguard
 go test ./internal/releaseguard -count=1
 go test ./internal/harnessredact ./internal/releaseguard -run 'Redact|ReleaseGuardRedaction' -count=1
 logfile="$(mktemp)"
@@ -615,13 +615,18 @@ Rollback: if fail-closed checks have not merged, revert the ratchet-cli formula 
 
 Modify CI:
 - `release-check`: checkout `fetch-depth: 0`, setup Go `1.26`, private-module Git rewrite, GoReleaser action `check`, GoReleaser action `release --snapshot --clean --skip=publish`, `scripts/check-release-artifacts.sh --manifest-only dist`, upload `ratchet-snapshot-dist`.
-- `tui-smoke`: setup equivalent to existing CI and run `go test ./cmd/ratchet ./internal/tui -run 'HarnessSmoke|TUIBinarySmoke|StartupSmoke' -count=1 -timeout=10m` without `-race`.
+- `tui-smoke`: setup equivalent to existing CI and run untagged smoke plus tagged helper contracts without `-race`:
+  - `go test ./cmd/ratchet ./internal/tui -run 'HarnessSmoke|TUIBinarySmoke|StartupSmoke' -count=1 -timeout=10m`;
+  - `go test -tags tui_smoke ./internal/client -run 'ConnectSmokeUnix' -count=1`;
+  - `go test -tags tui_smoke ./internal/daemon -run 'SmokeService|ListJobs' -count=1`.
 - `tap-preflight`: read-only clone `GoCodeAlone/homebrew-tap`, then run `RATCHET_RELEASE_GUARD_MODE=tap-preflight RATCHET_RELEASE_GUARD_TAP=<tap-checkout> go test -count=1 ./internal/releaseguard -run TestTapPreflight`.
 
 **Step 2: Verify workflow syntax and fresh release snapshot**
 
 ```bash
 go test ./cmd/ratchet ./internal/tui -run 'HarnessSmoke|TUIBinarySmoke|StartupSmoke' -count=1 -timeout=10m
+go test -tags tui_smoke ./internal/client -run 'ConnectSmokeUnix' -count=1
+go test -tags tui_smoke ./internal/daemon -run 'SmokeService|ListJobs' -count=1
 scripts/check-release-artifacts.sh
 go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/ci.yml .github/workflows/release.yml
 ```
@@ -794,12 +799,17 @@ After PR5 merges and `master` is green, tag the next semver patch/minor accordin
 
 ```bash
 git fetch origin --tags
+git checkout master
+git pull --ff-only origin master
+intended_sha="$(git rev-parse origin/master)"
+test "$(git rev-parse HEAD)" = "$intended_sha"
+test -z "$(git status --porcelain)"
 git describe --tags --abbrev=0
 git tag v<next>
 git push origin v<next>
 ```
 
-Expected: release workflow stays draft until postchecks pass, then publishes release; Homebrew tap Formula/Cask updates contain current version/checksum and no smoke tokens.
+Expected: local `master` is fast-forwarded to the intended merged `origin/master` SHA, worktree is clean before the immutable tag is created, release workflow stays draft until postchecks pass, then publishes release; Homebrew tap Formula/Cask updates contain current version/checksum and no smoke tokens.
 
 **Step 4: Retro**
 

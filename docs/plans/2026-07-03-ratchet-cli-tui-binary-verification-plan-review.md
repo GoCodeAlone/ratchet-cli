@@ -594,3 +594,61 @@
 3. Treat `internal/harnessredact` as a required touched package in every task that adds redaction obligations.
 
 **Verdict reasoning:** FAIL. P30-P37 are materially fixed, but P38-P40 remained as executable verification and merge-discipline gaps.
+
+## Cycle 15
+
+### Adversarial Review Report
+
+**Phase:** plan
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `P41` [User-intent drift / Infrastructure impact] [plan:20,46,569]: P39 is fixed in Task 9’s execution step, but the Scope Manifest and external prerequisite table still say the Homebrew tap prerequisite may be a PR/direct commit without requiring an explicit amendment override. That leaves a top-level executable path that conflicts with the user’s green-merge discipline. Recommendation: change manifest/prerequisite wording to PR-only; direct commit only with fresh explicit plan amendment override.
+- `P42` [Project-guidance conflict / Infrastructure verification mismatch] [workspace `docs/design-guidance.md`:39; plan:793-800]: The release tagging step fetches tags and pushes `v<next>`, but never asserts `git rev-parse HEAD` equals the intended merged commit before pushing an immutable release tag. Recommendation: add a pre-tag check that records the intended `master` SHA, verifies local HEAD equals it after fetch/fast-forward, verifies the worktree is clean, then tags.
+- `P43` [Security/privacy / Missing integration proof / Verification-class mismatch] [plan:98,156-158,170,766-767 vs 617-619,783-789]: Required tagged smoke-client and smoke-daemon tests prove security-sensitive socket containment and smoke-service inertness, but Task 10’s CI checks only add untagged `tui-smoke`/release/tap jobs. Admin merge once green can therefore mean GitHub checks are green while `go test -tags tui_smoke ./internal/client` and `./internal/daemon` were never run in CI. Recommendation: add a CI job or extend `tui-smoke` to run the tagged client/daemon commands with `-count=1`.
+
+**Findings (Minor):**
+- `P44` [Verification-class mismatch / formatting] [plan:415-416,451,456-458,482]: Task 7 modifies `internal/harnessredact`, but its gofmt command formats only `internal/releaseguard`. Recommendation: use `gofmt -w internal/harnessredact internal/releaseguard`.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | P42 conflicts with release-tag HEAD verification guidance. |
+| Assumptions under attack | Finding | P41 assumes lower task text overrides manifest; P43 assumes local tagged tests are enough for green-merge discipline. |
+| Repo-precedent conflicts | Finding | P42 misses workspace release-tag safety convention. |
+| Artifact-class precedent | Finding | P41 leaves external tap prerequisite classification inconsistent. |
+| YAGNI violations | Clean | No new user-facing releaseguard CLI, runner migration, or broad command registry is introduced. |
+| Missing failure modes | Finding | P42 misses stale-HEAD release tagging; P43 misses CI skipping tagged security contracts. |
+| Security/privacy at architecture level | Finding | P43 leaves socket containment and smoke-service inertness tests outside required CI proof. |
+| Infrastructure impact | Finding | P41/P42 affect tap and release operations. |
+| Multi-component validation | Finding | P43 omits CI proof for tagged client/daemon helper boundaries. |
+| Declared integration proof | Finding | P43’s declared smoke helper proof is not in merge-gating CI matrix. |
+| Contributed UI rendering proof | Clean | No contributed UI route is in scope. |
+| Rollback story | Clean | Rollback covers smoke code, workflows, release assets, and tap contamination. |
+| Simpler alternative not considered | Finding | P43 can add two tagged `go test` commands to CI. |
+| User-intent drift | Finding | P41 still permits direct tap path at manifest level. |
+| Existence/runtime-validity | Finding | P42 is an executable release command gap. |
+| Over-decomposition/under-decomposition | Clean | Thirteen tasks across six PRs remains coherent. |
+| Verification-class mismatch | Finding | P42/P43/P44 do not fully match release, tagged-security, or modified-file classes. |
+| Auth/authz chain composition | Clean | Trust slash proof remains daemon-backed. |
+| Hidden serial dependencies | Clean | Tap cleanup blocks Tasks 10-11; PR6 closeout is wired. |
+| Missing rollback wiring | Clean | Rollback wiring is present. |
+| Missing integration proof | Finding | P43 leaves tagged helper integration proof local/final rather than CI-gated. |
+| Missing declared integration matrix | Clean | Matrix classifies runtime, artifact, config-only, and deferred items. |
+| Missing contributed UI route proof | Clean | Not applicable. |
+| Infrastructure verification mismatch | Finding | P42 release tag safety and P43 CI-gated proof are incomplete. |
+| Plugin-loader runtime layout | Clean | No external plugin loader layout introduced. |
+| Config-validation schema rules | Clean | No new schema config. |
+| Identifier/naming-convention match | Clean | Env vars, modes, and filenames are consistent. |
+| Planned-code compile-validity | Clean | No embedded Go compile issue found. |
+
+**Options the author may not have considered:**
+1. Add a release tag preflight block to Task 13 that verifies intended merged SHA, clean tree, and latest tag before `git tag`.
+2. Make CI `tui-smoke` run both untagged PTY smoke and tagged helper contracts.
+3. Remove all top-level direct commit wording for tap cleanup.
+
+**Verdict reasoning:** FAIL. P30-P40 are mostly fixed, but top-level tap prerequisite drift, missing release-tag HEAD safety, and tagged smoke helper tests not being merge-gated by CI remained.
