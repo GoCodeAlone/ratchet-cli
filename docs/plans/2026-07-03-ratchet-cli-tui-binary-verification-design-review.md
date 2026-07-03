@@ -738,3 +738,47 @@ None.
 2. Release from scanned artifacts instead of rerunning GoReleaser publish.
 
 **Verdict reasoning:** D60-D63 and D65-D67 are resolved on paper, but D64 remains mechanically ambiguous, and final release proof has snapshot-vs-uploaded asset drift. Status FAIL.
+
+## Cycle 18
+
+### Adversarial Review Report
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `D72` [Existence/runtime-validity / Missing failure modes] [design:235-237,269-286; `internal/tui/commands/trust.go`:21-139]: Mechanical guard covers top-level parser/help/autocomplete, but not production-derived `modeCmd`, `trustCmd`, or provider subcommand drift. Recommendation: AST-extract mode keys, trust switch cases, and provider switch cases, then compare source-derived sets to typed spec and proof classifications.
+- `D73` [Multi-component validation / User-intent drift] [design:363-386,585,602; `cmd/ratchet/harness_smoke_test.go`:14-34; `internal/daemon/daemon.go`:142-147]: Windows packaged smoke only runs `version`/`help`, while release-shaped proof elsewhere includes `daemon status`. Recommendation: add packaged `ratchet.exe daemon status` on `windows-latest` with temp Windows home/state env and assert `daemon is not running`, or defer Windows daemon CLI runtime explicitly.
+- `D74` [Repo-precedent conflicts / Infrastructure impact] [design:417-421,455-463; `.github/workflows/release.yml`:24-39]: Draft-asset postcheck does not require the repo's existing `listReleases` retry/release-id lookup behavior, so a naive draft lookup can flake or miss assets. Recommendation: reuse `listReleases` retry by tag, pass release id to postcheck/undraft, and download assets by release id with explicit token.
+
+**Findings (Minor):**
+- `D75` [Project-guidance conflicts / Artifact-class precedent] [design:499-512; `README.md`:219-235; `RATCHET.md`:1-36; `docs/competitor-parity.md`:1-47]: Positive docs assertions still force detailed TUI smoke mechanics into `RATCHET.md` and parity docs. Recommendation: exact positive proof wording only in README harness table and `docs/harness-emulation.md`; RATCHET/parity get negative overclaim checks plus links unless they independently claim TUI evidence.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | No repo-local guidance; D75 still pushes detailed harness evidence into non-harness docs. |
+| Assumptions under attack | Finding | Test-owned subcommand specs are not fail-closed without source extraction; Windows help/version may not be enough runtime proof. |
+| Repo-precedent conflicts | Finding | D74 conflicts with existing draft-release lookup retry pattern. |
+| Artifact-class precedent | Finding | RATCHET/parity doc shape differs from harness evidence docs. |
+| YAGNI violations | Finding | Positive docs guard breadth is heavier than needed outside README/harness evidence surfaces. |
+| Missing failure modes | Finding | Mode/trust/provider additions can bypass the claimed fail-closed matrix. |
+| Security/privacy at architecture level | Clean | Build-tag isolation, temp state/workdir, socket containment, redaction, and hook/instruction leak controls are explicit. |
+| Infrastructure impact | Finding | Draft postcheck lookup can flake or miss assets; Windows daemon-status runtime unproven. |
+| Multi-component validation | Finding | Windows packaged proof skips safe daemon-status path. |
+| Declared integration proof | Finding | Windows daemon CLI behavior is outside declared runtime-integrated release-shaped proof. |
+| Contributed UI rendering proof | Clean | No plugin-contributed UI claimed. |
+| Rollback story | Clean | Source revert, draft retention, asset deletion/patch release, and tap rollback described. |
+| Simpler alternative not considered | Finding | Source-derived subcommand extractor and smaller docs-positive set not captured. |
+| User-intent drift | Finding | Windows follow-through stops at help/version despite safe daemon-status precedent. |
+| Existence/runtime-validity | Finding | D72 and D74 remain consumer-surface validity gaps. |
+
+**Options the author may not have considered:**
+1. Source-derived subcommand/mode guard.
+2. Packaged Windows daemon-status smoke.
+3. Harness-doc positive minimum with negative checks elsewhere.
+
+**Verdict reasoning:** D68-D71 are mostly addressed, but subcommand/mode drift, Windows daemon-status runtime, and draft-release lookup mechanics remain tangible design blockers.
