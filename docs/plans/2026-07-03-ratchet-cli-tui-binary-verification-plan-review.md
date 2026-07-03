@@ -536,3 +536,61 @@
 3. Add a negative workflow assertion that searches release/CI YAML for Windows executable invocation patterns, not just `windows-latest`.
 
 **Verdict reasoning:** FAIL. P30 is fixed, and P31-P33 corrections are present, but stale Windows runtime wording, releaseguard/docs packaging contradiction, and missing green-check merge path for PR6 remained.
+
+## Cycle 14
+
+### Adversarial Review Report
+
+**Phase:** plan
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `P38` [Existence/runtime-validity / Verification-class mismatch] [plan:458-462]: The negative manifest-mode verification pipes `go test` through `tee` without `pipefail`, so the pipeline exits with `tee` status. The `if` branch will run even when the intended failing `go test` fails, making the verification block fail unconditionally. Recommendation: use `set -o pipefail`, capture output to a temp file without a pipeline, or invert the command with explicit status capture.
+- `P39` [User-intent drift / Infrastructure impact] [plan:567]: Task 9 allows a direct admin commit to `GoCodeAlone/homebrew-tap` if repository policy permits it, bypassing the plan’s own PR/checks/green-merge discipline and the user’s admin merge once green constraint. Recommendation: require a PR with green checks for the tap cleanup, unless a fresh explicit override is recorded as a plan amendment.
+- `P40` [Security/privacy / Missing task wiring / Verification-class mismatch] [plan:310,326,331-333,343-354]: Task 5 lists `internal/harnessredact/redact_test.go` and requires docs/CLI help redaction paths, but Step 4 does not rerun the new harnessredact tests and Step 5 does not stage `internal/harnessredact`. That can leave the docs/command redaction proof uncommitted. Recommendation: include `internal/harnessredact` in gofmt/verification/staging for Task 5.
+
+**Findings (Minor):**
+- None.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | P39 conflicts with green-check merge discipline for external tap prerequisite. |
+| Assumptions under attack | Finding | P38 assumes piped negative checks preserve status; P39 assumes direct commit is compatible; P40 assumes listed redaction tests are verified and committed. |
+| Repo-precedent conflicts | Finding | P39 diverges from the PR/monitor/admin-merge pattern. |
+| Artifact-class precedent | Finding | P40 lists a test artifact but omits it from verify/commit flow. |
+| YAGNI violations | Clean | No new broad command registry, runner migration, or user-facing releaseguard CLI is introduced. |
+| Missing failure modes | Finding | P38 misses shell pipeline status behavior; P40 misses uncommitted redaction test changes. |
+| Security/privacy at architecture level | Finding | P40 weakens docs/CLI failure-payload redaction proof. |
+| Infrastructure impact | Finding | P39 affects external Homebrew tap merge path and release prerequisite evidence. |
+| Multi-component validation | Finding | P40 leaves cmd/ratchet docs surface to harnessredact proof partially wired. |
+| Declared integration proof | Finding | P40 declares docs/CLI redaction proof but does not commit it. |
+| Contributed UI rendering proof | Clean | No contributed UI route is in scope. |
+| Rollback story | Clean | Rollback paragraphs cover smoke code, workflows, release assets, and tap corrections. |
+| Simpler alternative not considered | Finding | P38 can use explicit status capture; P39 can require PR-only tap cleanup. |
+| User-intent drift | Finding | P39 remains drift from admin merge once green. |
+| Existence/runtime-validity | Finding | P38 is an executable shell validity bug. |
+| Over-decomposition/under-decomposition | Clean | Thirteen tasks across six PRs remains coherent. |
+| Verification-class mismatch | Finding | P38/P40 break declared verification commands or omit changed proof surface. |
+| Auth/authz chain composition | Clean | Trust proof is daemon-backed. |
+| Hidden serial dependencies | Clean | Tap cleanup prerequisite is represented before Tasks 10-11. |
+| Missing rollback wiring | Clean | Rollback wiring is present. |
+| Missing integration proof | Finding | P40 incompletely wires docs/CLI redaction proof. |
+| Missing declared integration matrix | Clean | Matrix classifies runtime, artifact, config-only, and deferred items. |
+| Missing contributed UI route proof | Clean | Not applicable. |
+| Infrastructure verification mismatch | Finding | P38 breaks releaseguard verification; P39 permits non-green external prerequisite path. |
+| Plugin-loader runtime layout | Clean | No external plugin layout added. |
+| Config-validation schema rules | Clean | No new schema config. |
+| Identifier/naming-convention match | Clean | Env vars and command identifiers are consistent. |
+| Planned-code compile-validity | Clean | No embedded Go compile issue found. |
+
+**Options the author may not have considered:**
+1. Replace the `tee` negative check with explicit status capture into a temp log file.
+2. Make tap cleanup PR-only for this plan.
+3. Treat `internal/harnessredact` as a required touched package in every task that adds redaction obligations.
+
+**Verdict reasoning:** FAIL. P30-P37 are materially fixed, but P38-P40 remained as executable verification and merge-discipline gaps.

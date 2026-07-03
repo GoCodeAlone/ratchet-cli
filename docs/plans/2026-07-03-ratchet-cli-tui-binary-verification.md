@@ -341,8 +341,9 @@ Add JSON fixture loader in tests only. Export or test-wrap `printUsage` without 
 **Step 4: Verify**
 
 ```bash
-gofmt -w internal/tui cmd/ratchet
+gofmt -w internal/harnessredact internal/tui cmd/ratchet
 go test ./internal/tui/commands ./internal/tui/components ./internal/tui ./cmd/ratchet -run 'CommandSurface|CLIHelp|Shortcut|Docs' -count=1
+go test ./internal/harnessredact -run 'Redact.*Docs|Redact.*Command' -count=1
 ```
 
 Expected: PASS.
@@ -350,7 +351,7 @@ Expected: PASS.
 **Step 5: Commit**
 
 ```bash
-git add internal/tui cmd/ratchet
+git add internal/harnessredact internal/tui cmd/ratchet
 git commit -m "test: lock tui command surface"
 ```
 
@@ -455,11 +456,12 @@ Implement Go helpers and shell wrapper. Route every releaseguard error, wrapper-
 gofmt -w internal/releaseguard
 go test ./internal/releaseguard -count=1
 go test ./internal/harnessredact ./internal/releaseguard -run 'Redact|ReleaseGuardRedaction' -count=1
-if RATCHET_RELEASE_GUARD_MODE=manifest go test ./internal/releaseguard -run TestManifestGuard -count=1 2>&1 | tee /tmp/releaseguard-missing-env.log; then
+logfile="$(mktemp)"
+if RATCHET_RELEASE_GUARD_MODE=manifest go test ./internal/releaseguard -run TestManifestGuard -count=1 >"$logfile" 2>&1; then
   echo "expected missing RATCHET_RELEASE_GUARD_DIST failure"
   exit 1
 fi
-rg 'RATCHET_RELEASE_GUARD_DIST' /tmp/releaseguard-missing-env.log
+rg 'RATCHET_RELEASE_GUARD_DIST' "$logfile"
 go test ./internal/tui -run SmokeSource -count=1
 ```
 
@@ -564,7 +566,7 @@ Expected before cleanup: FAIL naming stale root `ratchet-cli.rb`, unless the sta
 
 **Step 3: Remove only stale root file**
 
-In the tap checkout, remove root `ratchet-cli.rb` only. Preserve `Formula/ratchet-cli.rb` and `Casks/ratchet-cli.rb`. Commit, push, open PR, wait for tap checks, and admin merge when green; direct admin commit is allowed only if repository policy permits it. Record the merged tap commit SHA.
+In the tap checkout, remove root `ratchet-cli.rb` only. Preserve `Formula/ratchet-cli.rb` and `Casks/ratchet-cli.rb`. Commit, push, open PR, wait for tap checks, and admin merge only when required checks are green and review requirements are satisfied. Direct commits to the tap are out of scope unless a fresh explicit plan amendment records that override. Record the merged tap commit SHA.
 
 **Step 4: Verify cleanup with formula automation**
 
