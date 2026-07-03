@@ -519,3 +519,48 @@ None.
 2. Make smoke CI discover tests by contract rather than name regex: put all smoke tests behind an explicit `TestHarnessSmoke...` naming convention and enforce it in the design, or use a broader regex such as `Smoke|Startup` for the focused non-race job. Trade-off: broader regex can run a little more test code, but it avoids silent proof gaps.
 
 **Verdict reasoning:** The current text resolves most prior design failures, especially the build-tagged smoke binary, slash/mode/trust matrix, Windows safe-command smoke, and GoReleaser validation steps. It still has unresolved release-safety and CI-discovery gaps: the Homebrew tap can be modified before the proposed postcheck blocks public release, the GoReleaser PR preflight is not release-equivalent without full git history, and the startup smoke can be skipped by the fixed CI regex. Status is FAIL because open Important findings remain.
+
+## Cycle 13
+
+### Adversarial Review Report
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `D51` [Infrastructure impact / Rollback story / User-intent drift] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:315-321,416-426,457; .goreleaser.yaml:44-69]: The current text accepts after-the-fact Homebrew/tap rollback, but still says there is "No ... Homebrew publishing" and classifies the GoReleaser/Homebrew integration as `runtime-integrated`. That is mechanically inconsistent with the existing `homebrew_casks.repository` publish side effect and with the user's release-safe mandate: a bad tap commit can already be public before the postcheck runs. Recommendation: either split Homebrew publishing behind a pre-public guard, or downgrade the design claim explicitly to "GitHub release-safe; Homebrew/tap has precheck plus after-the-fact rollback" in Infrastructure Impact, Integration Matrix, Rollback, and docs/plan gates.
+- `D52` [Existence/runtime-validity / Repo-precedent conflicts / Multi-component validation] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:161-181; internal/tui/pages/chat.go:174-178; internal/tui/components/statusbar.go:58-60]: The design says `ctrl+h` is advertised but has no handler, but current code handles `ctrl+h` in the chat page when the thinking panel has content. The stated shortcut source of truth also omits page-level key handling, so the plan could remove or ignore a real shortcut while claiming to align advertised shortcuts with handlers. Recommendation: include `internal/tui/pages/chat.go` in the shortcut source-of-truth scan and either prove `ctrl+h` with a thinking-panel fixture or document why conditional thinking-panel behavior is out of scope without calling it unimplemented.
+- `D53` [Multi-component validation / User-intent drift / Artifact-class precedent] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:161-181; README.md:84-88; internal/tui/components/sessiontree.go:90-117; internal/tui/pages/session_tree.go:85-99]: The shortcut matrix claims every implemented or advertised core shortcut, but it only proves opening/closing the branch tree. README advertises tree navigation keys `j`/`k`, arrows, `h`/`l`, `Enter`, `r`, and `Esc`, and the tree components implement those keys. A PTY proof that only opens `/tree`/`ctrl+b` can still miss broken advertised tree navigation and branch switching. Recommendation: add a small branch-tree PTY/focused matrix for advertised tree navigation, refresh, collapse/expand, selection, and return-to-chat, or narrow the design/docs claim to "tree entry/exit only."
+- `D54` [Declared integration proof / Release safety / Existence/runtime-validity] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:78-93,284-355,462-476]: The release artifact guard forbids archive/checksum/member names containing `ratchet-tui-smoke`, but it does not extract the GoReleaser-built `ratchet` binaries and prove they expose no smoke help text or smoke command/flag. The local `go build ./cmd/ratchet` negative check is not the same artifact that the release workflow uploads. Recommendation: after snapshot generation, extract at least one Unix archive and inspect/run the archived `ratchet help`; for Windows, inspect the zip and run or string-check `ratchet.exe help` in the `windows-latest` job. Fail if smoke command/flag/help text appears.
+
+**Findings (Minor):**
+- `D55` [Security/privacy at architecture level / Missing failure modes] [docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md:196-200; docs/policy-matrix.md:58-75]: The trust-command PTY matrix uses policy patterns like `bash:rm -rf /` and `bash:curl *` as expected rendered output. They are not executed, but they are still sensitive-looking local policy metadata and will appear in normal passing snapshots or assertion strings unless every path is redacted perfectly. Recommendation: use harmless deterministic placeholders such as `smoke:deny-dangerous-command` and keep one parser-level unit test for shell-shaped patterns if needed.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | The design largely follows Windows honesty and real-boundary guidance, but the current Homebrew/tap wording still overstates release safety for a publish surface that can change before postcheck. |
+| Assumptions under attack | Finding | The design assumes after-the-fact tap rollback is acceptable release safety, assumes `app.go` plus statusbar fully define shortcuts, and assumes artifact name checks catch release-binary smoke exposure. |
+| Repo-precedent conflicts | Finding | Current code has page-level `ctrl+h` handling in `internal/tui/pages/chat.go`, while the design's shortcut source-of-truth excludes that layer. |
+| Artifact-class precedent | Finding | README advertises branch-tree keyboard navigation and the tree components implement it, but the proposed binary proof only covers entry/exit. |
+| YAGNI violations | Clean | The design still avoids ConPTY, visual snapshot frameworks, external provider CI, new runtime commands, and broader policy work. |
+| Missing failure modes | Finding | Bad Homebrew tap publication remains after-the-fact, archived release binaries can expose smoke text despite clean artifact names, and trust-pattern output can leak if redaction misses a path. |
+| Security/privacy at architecture level | Finding | Temp state and socket containment are strong, but using destructive-looking trust patterns as expected PTY output increases the redaction burden unnecessarily. |
+| Infrastructure impact | Finding | The Infrastructure Impact section contradicts the actual GoReleaser Homebrew cask publish side effect and needs a precise release-surface statement. |
+| Multi-component validation | Finding | TUI/daemon/mock proof is strong for chat and trust commands, but shortcut proof misses page-level `ctrl+h` and advertised branch-tree navigation. |
+| Declared integration proof | Finding | GoReleaser artifact proof checks names and metadata but does not verify the actual archived release binaries have no smoke command/flag/help surface. |
+| Contributed UI rendering proof | Clean | No plugin-contributed host-shell UI is claimed; direct Bubble Tea PTY rendering is the relevant UI surface. |
+| Rollback story | Finding | GitHub draft rollback is covered, but Homebrew/tap safety is explicitly after-the-fact and should not be described as fully release-safe. |
+| Simpler alternative not considered | Finding | A cheaper shortcut proof could add a focused tree-navigation test and a thinking-panel fixture instead of treating all shortcut proof as PTY-only. |
+| User-intent drift | Finding | The user asked for TUI/slash/shortcut proof that is real/current/release-safe; current text still misses advertised shortcut behavior and overstates Homebrew release safety. |
+| Existence/runtime-validity | Finding | The referenced code and workflows exist and contradict current text on `ctrl+h`, Homebrew side effects, and release artifact equivalence. |
+
+**Options the author may not have considered:**
+1. Split the release gate by publish surface: keep GoReleaser GitHub archives/checksums behind the current preflight and draft-asset postcheck, but move Homebrew/tap publication to a separate guarded step after generated cask material is inspected.
+2. Treat shortcut proof as two layers: PTY proves global TUI shortcuts and rendering boundaries; focused component/page tests prove advertised branch-tree navigation and conditional thinking-panel `ctrl+h` behavior.
+3. Verify archived release binaries directly: extract GoReleaser snapshot artifacts and run or inspect the packaged `ratchet` binaries, not just the locally built binary and artifact names.
+
+**Verdict reasoning:** The current design is close on the original TUI smoke gap, but it still has unresolved Important issues where the text can either prove a narrower shortcut surface than advertised or claim release safety stronger than the Homebrew workflow actually provides. Status remains FAIL until the Homebrew release-safety wording or workflow is corrected, shortcut source-of-truth/proof includes current page and tree behavior, and release artifact checks verify the actual packaged binaries.
