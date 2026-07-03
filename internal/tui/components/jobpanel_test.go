@@ -48,6 +48,9 @@ func TestJobPanel_RenderRefreshError(t *testing.T) {
 	if !strings.Contains(view, "boom") {
 		t.Fatalf("expected original error detail in view, got:\n%s", view)
 	}
+	if strings.Contains(view, "No active jobs") {
+		t.Fatalf("refresh error should not also render empty state, got:\n%s", view)
+	}
 }
 
 func TestJobPanel_Navigation(t *testing.T) {

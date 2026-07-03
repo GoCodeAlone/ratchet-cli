@@ -192,7 +192,7 @@ func (jp JobPanel) View(t theme.Theme) string {
 		lines = append(lines, line)
 	}
 
-	if len(jp.jobs) == 0 {
+	if len(jp.jobs) == 0 && jp.refreshErr == nil {
 		lines = append(lines, lipgloss.NewStyle().
 			Foreground(t.Muted).
 			Padding(0, 1).
