@@ -168,7 +168,7 @@ Rollback: revert commit; local sidecar files become inert and summary archives r
 **Step 1: Write failing CLI tests**
 
 Add parser/executor tests for:
-- `sessions export <id> --output a.json --history raw|summary|both`.
+- `sessions export <id> --output a.json --history summary|raw|both`.
 - invalid `--history` is rejected.
 - `sessions events <id> [--json] [--output events.ndjson]`.
 - raw export without sidecar surfaces raw-history-unavailable.
@@ -459,7 +459,7 @@ Rollback: revert PR3 guard commit with implementation commit if guard reveals in
 **Step 1: Update docs**
 
 Document:
-- `sessions export --history raw|summary|both`
+- `sessions export --history summary|raw|both`
 - `sessions events`
 - imported ACPX raw archive round-trip
 - compare `--save` bundles

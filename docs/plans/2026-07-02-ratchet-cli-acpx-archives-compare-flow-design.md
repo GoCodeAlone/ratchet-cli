@@ -72,7 +72,7 @@ Source: workspace `AGENTS.md`, repo `README.md`, `docs/harness-emulation.md`, `d
   - Reject invalid JSON-RPC history with `ErrInvalidSessionArchive`; tolerate empty history.
 - `ExportSession`:
   - Default remains current summary history for backward compatibility.
-  - New `--history raw|summary|both` selects raw ACPX-compatible history, existing summary history, or both (`history` raw + `summary_history`).
+  - New `--history summary|raw|both` selects existing summary history, raw ACPX-compatible history, or both (`history` raw + `summary_history`).
   - If raw is requested and no sidecar exists, fail with a typed raw-history-unavailable error; do not synthesize false wire history and do not emit empty raw archives by default.
 - `sessions events <id>`:
   - Print event count and sidecar path by default; `--json` returns structured metadata.

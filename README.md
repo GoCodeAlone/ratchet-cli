@@ -148,7 +148,7 @@ hook trust controls, ACP launch profiles, and Windows amd64/arm64 zip artifacts
 alongside Linux and macOS archives.
 
 ACP client archive v1 JSON remains the backward-compatible summary format by
-default. Use `sessions export --history raw|summary|both` for raw
+default. Use `sessions export --history summary|raw|both` for raw
 ACPX-compatible JSON-RPC history, summary history, or both. Raw ACPX event logs,
 compare bundles, flow replay bundles, prompts, responses, and action outputs
 are sensitive local conversation artifacts. JSON v1 flows support `acp`,
