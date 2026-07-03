@@ -695,3 +695,46 @@ None.
 2. All-archive binary byte scan plus executable `help/version` runs where supported.
 
 **Verdict reasoning:** D56-D63 are resolved on paper, but the proof remains non-fail-closed in three places: command classification is not mechanically tied to the parser, the new smoke CI job lacks existing private-module setup, and release artifact inspection does not cover all packaged binaries.
+
+## Cycle 17
+
+### Adversarial Review Report
+**Phase:** design
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `D68` [Existence/runtime-validity / Missing failure modes] [design:267-279; `internal/tui/commands/commands.go`:49-126,134-171; `internal/tui/components/autocomplete.go`:39-60]: AST guard still conflates top-level `Parse` cases, help lines containing subcommands/examples, and autocomplete entries. Recommendation: define separate extracted surfaces: top-level commands from `Parse`, documented subcommands from parser switches or explicit test tables, and examples excluded from discovery.
+- `D69` [Existence/runtime-validity / Declared integration proof] [design:299-305,363-371; `cmd/ratchet/main.go`:168-175]: Design allows public `ratchet help` slash-command section to be removed, while Windows packaged smoke requires slash entries in `ratchet.exe help`. Recommendation: choose one contract.
+- `D70` [Declared integration proof / Rollback story] [design:399-414,431-447,580]: D66 covers snapshot artifacts but not actual uploaded draft release contents after `goreleaser release --clean` reruns. Recommendation: publish already-scanned `dist/` or download every draft release archive before undrafting and run the same archive extraction/all-binary byte scan.
+
+**Findings (Minor):**
+- `D71` [Project-guidance conflicts / Artifact-class precedent] [design:487-513; `docs/policy-matrix.md`:1-7,93-103]: Positive TUI smoke wording in policy matrix risks noisy docs. Recommendation: keep negative overclaim scanning across public docs, but require positive TUI smoke wording only in README/RATCHET/harness docs unless policy text actually claims TUI evidence.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | No repo-local guidance; D71 pushes evidence wording into a policy artifact class. |
+| Assumptions under attack | Finding | Design assumes one AST extraction can unify parser/help/autocomplete and assumes snapshot artifacts equal uploaded draft assets. |
+| Repo-precedent conflicts | Finding | CLI help optional removal conflicts with Windows packaged-help assertion. |
+| Artifact-class precedent | Finding | Docs guard should keep positive evidence checks in harness/public evidence docs, not policy matrix by default. |
+| YAGNI violations | Clean | No ConPTY, visual snapshots, production command registry refactor, external-provider CI, or import/export/flow scope. |
+| Missing failure modes | Finding | Command-surface guard false-pass/false-fail modes remain. |
+| Security/privacy at architecture level | Clean | Build-tag isolation, temp state/workdir, socket containment, redaction, and hook/instruction leak controls are explicit. |
+| Infrastructure impact | Finding | Final tag-release asset gate remains weaker than snapshot CI gate. |
+| Multi-component validation | Finding | Uploaded release asset content remains unproven. |
+| Declared integration proof | Finding | Draft GitHub release assets are runtime-integrated but not byte-scanned after publish rerun. |
+| Contributed UI rendering proof | Clean | No plugin-contributed UI is claimed. |
+| Rollback story | Finding | Contaminated GitHub release archive may only be caught by name checks before undraft. |
+| Simpler alternative not considered | Finding | Test-only command-spec table and release-from-scanned-artifacts alternatives not captured. |
+| User-intent drift | Finding | D69 can drift by making Windows proof depend on optional help text. |
+| Existence/runtime-validity | Finding | D64 remains as D68; D69-D70 are executable-contract gaps. |
+
+**Options the author may not have considered:**
+1. Test-only command-spec table with top-level commands, subcommands, examples, autocomplete visibility, and proof class.
+2. Release from scanned artifacts instead of rerunning GoReleaser publish.
+
+**Verdict reasoning:** D60-D63 and D65-D67 are resolved on paper, but D64 remains mechanically ambiguous, and final release proof has snapshot-vs-uploaded asset drift. Status FAIL.

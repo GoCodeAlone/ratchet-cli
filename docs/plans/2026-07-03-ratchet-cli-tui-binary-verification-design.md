@@ -267,19 +267,26 @@ focused coverage table/test must classify it before CI passes.
 Mechanical fail-closed check:
 
 - Add `internal/tui/commands/command_surface_test.go`.
-- Use Go `parser`/`ast` to extract string literal `case` labels from the
-  `switch cmd` in `Parse` in `internal/tui/commands/commands.go`.
-- Extract `/...` command tokens from `helpCmd` output literals and from
-  `internal/tui/components/autocomplete.go` `CommandEntry` literals.
-- Compare the union of parser/help/autocomplete commands against a code-owned
-  classification map in the test matching this design's `pty-proven`,
-  `focused-proven`, and `deferred-runtime` rows.
-- Fail when any parser/help/autocomplete command is unclassified, when any
-  classified command is absent from `Parse`, or when docs claim PTY proof for a
-  non-`pty-proven` command.
-- Do not introduce a shared command registry in this slice; it would be a
-  broader command-dispatch refactor. The AST guard is narrower and keeps
-  behavior unchanged.
+- Use a test-owned typed command-spec table, not production dispatch metadata.
+  Each row contains: top-level command, proof class (`pty-proven`,
+  `focused-proven`, `deferred-runtime`), whether autocomplete should list it,
+  required help surface, and optional subcommands/modes. Examples are a
+  separate field and are never treated as commands.
+- Use Go `parser`/`ast` to extract only top-level string literal `case` labels
+  from the `switch cmd` in `Parse`.
+- Use separate extractors for help and autocomplete:
+  - help extractor reads command tokens only from the leading command portion of
+    `helpCmd` output lines; examples inside descriptions are ignored;
+  - autocomplete extractor reads `CommandEntry{Name: "/..."}` literals only;
+  - trust/mode/provider subcommand expectations come from the typed spec table
+    and focused parser tests, not from broad regex scans over help prose.
+- Compare top-level parser cases, help rows, and autocomplete entries against
+  the matching spec fields. Fail on unclassified parser commands, help-only
+  commands, missing required help rows, missing required autocomplete entries,
+  or docs claims that assign PTY proof to a non-`pty-proven` row.
+- Do not introduce a production shared command registry in this slice; that
+  would be a broader command-dispatch refactor. The test-owned spec table plus
+  AST guard is narrower and keeps behavior unchanged.
 
 ### Help And Autocomplete Alignment
 
@@ -296,10 +303,10 @@ Mechanical fail-closed check:
   - `/tree`.
 - Update autocomplete command entries to include `/tree`, `/mode`, and
   `/trust`.
-- Update public `ratchet help` / `printUsage` slash-command section to match
-  the same mode/trust/tree slash surface, or remove the stale partial slash
-  section entirely. If retained, binary smoke must assert the built CLI help
-  includes the aligned entries.
+- Update public `ratchet help` / `printUsage` slash-command section to retain
+  and match the same mode/trust/tree slash surface. Binary smoke must assert the
+  built CLI help includes the aligned entries; removing the section is out of
+  scope for this slice because Windows packaged-help smoke depends on it.
 - Add focused tests proving submitted-command support, `/help`, and
   autocomplete do not drift for the mode/trust/tree slash surface; add a
   built-binary help assertion for `ratchet help`.
@@ -445,6 +452,15 @@ Mechanical fail-closed check:
     extracts the snapshot Windows zip produced by `release-check`, and runs
     packaged `ratchet.exe version` and `ratchet.exe help` with the same
     forbidden-output checks.
+- Add a release draft asset postcheck script path before undrafting:
+  - after `goreleaser release --clean` creates the draft release, download all
+    draft GitHub release archive/checksum assets into a temp directory;
+  - run the same archive manifest, all-packaged-binary byte scan, packaged
+    help/version where executable, checksum-name, and forbidden-token checks
+    used for snapshot `dist/`;
+  - only then run the existing undraft step;
+  - if the postcheck fails, leave the GitHub release draft, delete or supersede
+    contaminated assets per rollback, and do not undraft.
 - Fail closed when expected artifact classes are missing:
   - at least one Linux archive, one Darwin archive, one Windows archive, and
     `checksums.txt` must be present;
@@ -485,9 +501,13 @@ Mechanical fail-closed check:
   compile proof, and the fact that release-shaped `ratchet` proof does not
   claim credential-free chat.
 - Make the docs guard bidirectional:
-  - public docs scanned: `README.md`, `RATCHET.md`,
+  - positive evidence assertions scan `README.md`, `RATCHET.md`,
+    `docs/harness-emulation.md`, and `docs/competitor-parity.md`;
+  - negative overclaim assertions scan `README.md`, `RATCHET.md`,
     `docs/harness-emulation.md`, `docs/competitor-parity.md`, and
     `docs/policy-matrix.md`;
+  - `docs/policy-matrix.md` only needs positive TUI smoke wording if it itself
+    starts making TUI binary-smoke evidence claims;
   - positive assertions require the split `ratchet` startup/onboarding proof
     and `ratchet-tui-smoke` interactive proof;
   - negative assertions scan each Markdown line and each table row as the
@@ -529,7 +549,7 @@ Mechanical fail-closed check:
 | Release artifact guard only runs manually. | Add the publish-free `release-check` CI job; CI uses GoReleaser action for snapshot generation and the same manifest guard script local runs use. |
 | Tag release bypasses artifact guard. | Add the same publish-free `goreleaser check` + snapshot + manifest guard to `.github/workflows/release.yml` before the publishing step. |
 | Release jobs cannot fetch private modules. | Mirror CI's `GOPRIVATE`/`GONOSUMCHECK` and private-module Git rewrite in release preflight/publish and Windows safe-command smoke jobs. |
-| Snapshot guard differs from uploaded release. | Add a draft-release postcheck before undrafting that inspects uploaded GitHub assets/checksums for forbidden smoke names; explicitly treat Homebrew/tap postcheck as after-the-fact rollback under the current GoReleaser workflow. |
+| Snapshot guard differs from uploaded release. | Add a draft-release postcheck before undrafting that downloads uploaded GitHub release archives/checksums and runs the same archive manifest plus all-packaged-binary byte-scan guard against actual uploaded assets; explicitly treat Homebrew/tap postcheck as after-the-fact rollback under the current GoReleaser workflow. |
 | Platform mismatch. | Unix PTY proof is explicitly Unix-only; Windows claim is limited to build/noninteractive smoke. |
 
 ## Infrastructure Impact
@@ -561,7 +581,7 @@ smoke entrypoint is build-tagged out.
 | Shortcuts | PTY sends global control keys and asserts branch tree/pane transitions with fixed-size full-frame checks matching current behavior; focused tests prove conditional `ctrl+h`, advertised branch-tree navigation, and App-level branch switch into child chat history. |
 | Docs to tests | Docs guard fails if automated TUI smoke evidence is removed. |
 | Binary smoke to CI | Non-race CI smoke job runs the built-binary/startup/TUI smoke tests that the race suite skips; `internal/tui` owns its race skip helper so package-local tests compile in both race and non-race suites. |
-| Release preflight to CI/release | `release-check` and tag release workflow both run `goreleaser check`, snapshot generation, and the same artifact-manifest guard before publish; guard extracts and byte-scans every packaged `ratchet` binary from every archive, runs executable help/version checks where practical, and release postcheck inspects uploaded GitHub draft assets before undrafting; Homebrew/tap postcheck is after-the-fact with rollback. |
+| Release preflight to CI/release | `release-check` and tag release workflow both run `goreleaser check`, snapshot generation, and the same artifact-manifest guard before publish; guard extracts and byte-scans every packaged `ratchet` binary from every archive, runs executable help/version checks where practical, and release postcheck downloads uploaded GitHub draft release assets and repeats the same checks before undrafting; Homebrew/tap postcheck is after-the-fact with rollback. |
 | Windows build/smoke | Cross-build commands prove release-shaped `ratchet` still compiles for Windows; `windows-safe-command-smoke` on `windows-latest` declares `needs: release-check`, builds source `ratchet.exe`, downloads the `release-check` snapshot `dist/` artifact, fails if no Windows zip exists, extracts the packaged Windows zip, then executes packaged `ratchet.exe version` and `ratchet.exe help`; `ratchet-tui-smoke` interactive PTY remains Unix-only. |
 
 ## Integration Matrix
@@ -577,7 +597,7 @@ smoke entrypoint is build-tagged out.
 | Slash help/autocomplete/CLI help | runtime-integrated | Focused tests invoke in-TUI `/help`, autocomplete models, and built `ratchet help` to prove submitted command support and discoverability stay aligned with the command-surface classification table. |
 | Non-race binary smoke CI | config-only | `.github/workflows/ci.yml` runs a focused non-race smoke job for subprocess/startup tests that are intentionally skipped under `-race`, with explicit test names for release startup and TUI binary smoke. |
 | Docs guard | config-only | `cmd/ratchet/harness_docs_test.go` checks public docs mention exact evidence boundaries. |
-| GoReleaser snapshot and GitHub draft assets | runtime-integrated | Publish-free `release-check` CI job, tag release preflight, local script, and release draft postcheck run `goreleaser check`/snapshot generation plus archive/upload inspection, all-archive packaged-binary byte scans, host/Windows packaged-binary help/version checks, and deterministic `.goreleaser.yaml` fallback to prove `ratchet-tui-smoke` is absent from GitHub archives/checksums before undraft. |
+| GoReleaser snapshot and GitHub draft assets | runtime-integrated | Publish-free `release-check` CI job, tag release preflight, local script, and release draft postcheck run `goreleaser check`/snapshot generation plus archive/upload inspection, all-archive packaged-binary byte scans, host/Windows packaged-binary help/version checks, and deterministic `.goreleaser.yaml` fallback. The postcheck downloads draft GitHub release assets and repeats the same checks before undraft, proving uploaded archives/checksums do not contain `ratchet-tui-smoke`. |
 | Homebrew/tap cask | config-only + post-publish audit | Snapshot/config precheck proves cask ids/binaries do not reference smoke artifacts; current GoReleaser workflow can still push the tap before postcheck, so tap safety is after-the-fact audit plus rollback, not pre-public gating. Split-publish pre-public gating is deferred. |
 | Windows safe-command smoke | runtime-integrated | `windows-safe-command-smoke` on `windows-latest` declares `needs: release-check`, builds source `ratchet.exe`, downloads `ratchet-snapshot-dist` from `release-check`, fails if no Windows zip exists, extracts the snapshot Windows zip, and runs packaged `ratchet.exe version` and `ratchet.exe help` to prove non-PTY Windows CLI startup/help behavior and packaged-archive absence of smoke surfaces. |
 | Windows smoke package boundary | config-only | `GOOS=windows GOARCH=amd64/arm64 go list` and `go build -tags tui_smoke ./cmd/ratchet-tui-smoke` fail with the expected Unix-only no-buildable-files class. |
@@ -707,3 +727,7 @@ corrected preflight PR.
 | D65 | Made the non-race smoke CI job setup-equivalent to existing CI with checkout, setup-go `1.26`, private-module env, and Git rewrite. |
 | D66 | Required extraction and byte-scanning of every packaged `ratchet` binary from every GoReleaser archive, with executable help/version checks kept where practical. |
 | D67 | Changed Windows cross-build proof to write explicit temp output paths instead of repo-root `ratchet.exe`. |
+| D68 | Replaced broad command regex extraction with a test-owned typed command-spec table plus separate top-level parser, help-row, autocomplete, and subcommand checks. |
+| D69 | Chose the retained public `ratchet help` slash-section contract and required CLI help alignment because Windows packaged-help smoke asserts it. |
+| D70 | Required draft-release postcheck to download actual uploaded GitHub release assets and run the same archive/all-binary byte-scan guard before undrafting. |
+| D71 | Split docs guard behavior: positive TUI smoke evidence required only in README/RATCHET/harness/parity docs; policy matrix gets negative overclaim scanning unless it starts claiming TUI binary evidence. |
