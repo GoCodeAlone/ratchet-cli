@@ -45,7 +45,7 @@
 |---|---|---|---|
 | `GoCodeAlone/homebrew-tap` | Remove stale unmanaged root `ratchet-cli.rb` and legacy `Formula/ratchet-cli.rb` if present; preserve active `Casks/ratchet-cli.rb` as the supported GoReleaser v2.16+ install surface. | Merged cleanup PR SHA, or existing tap HEAD SHA plus `TestTapPreflight` PASS proving stale root/Formula surfaces already absent, recorded in Task 9 backport note. Direct tap commit requires a fresh explicit plan amendment. | Tasks 10-11 must not enable fail-closed tap/release enforcement until evidence is recorded. |
 
-**Status:** Draft
+**Status:** Locked 2026-07-03T21:38:07Z
 
 ## Global Design Guidance
 
