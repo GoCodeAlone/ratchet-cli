@@ -17,7 +17,7 @@
 **PR Count:** 6
 **Tasks:** 13
 **Estimated Lines of Change:** ~2600
-**External prerequisites:** 1 Homebrew tap PR recorded by Task 9 before Tasks 10-11 start. Direct tap commits are out of scope unless a fresh explicit plan amendment records that override.
+**External prerequisites:** 1 Homebrew tap state proof recorded by Task 9 before Tasks 10-11 start: either a merged cleanup PR SHA or existing tap HEAD SHA plus `TestTapPreflight` PASS proving stale root is already absent. Direct tap commits are out of scope unless a fresh explicit plan amendment records that override.
 
 **Out of scope:**
 - Windows interactive ConPTY proof.
@@ -43,7 +43,7 @@
 
 | Repo | Work | Evidence | Gate |
 |---|---|---|---|
-| `GoCodeAlone/homebrew-tap` | Remove stale unmanaged root `ratchet-cli.rb`; preserve active `Formula/ratchet-cli.rb` and `Casks/ratchet-cli.rb`. | Merged PR SHA recorded in Task 9 backport note. Direct tap commit requires a fresh explicit plan amendment. | Tasks 10-11 must not enable fail-closed tap/release enforcement until evidence is recorded. |
+| `GoCodeAlone/homebrew-tap` | Remove stale unmanaged root `ratchet-cli.rb` if present; preserve active `Formula/ratchet-cli.rb` and `Casks/ratchet-cli.rb`. | Merged cleanup PR SHA, or existing tap HEAD SHA plus `TestTapPreflight` PASS proving stale root already absent, recorded in Task 9 backport note. Direct tap commit requires a fresh explicit plan amendment. | Tasks 10-11 must not enable fail-closed tap/release enforcement until evidence is recorded. |
 
 **Status:** Draft
 
@@ -344,9 +344,10 @@ Add JSON fixture loader in tests only. Export or test-wrap `printUsage` without 
 gofmt -w internal/harnessredact internal/tui cmd/ratchet
 go test ./internal/tui/commands ./internal/tui/components ./internal/tui ./cmd/ratchet -run 'CommandSurface|CLIHelp|Shortcut|Docs' -count=1
 go test ./internal/harnessredact -run 'Redact.*Docs|Redact.*Command' -count=1
+go test ./internal/tui -run TestTUIBinarySmoke -count=1 -timeout=8m
 ```
 
-Expected: PASS.
+Expected: PASS; any fixture row newly marked `pty-proven` is exercised again by `TestTUIBinarySmoke`.
 
 **Step 5: Commit**
 
@@ -563,11 +564,11 @@ Expected before cleanup: active Formula and Cask exist; output records either `s
 RATCHET_RELEASE_GUARD_MODE=tap-preflight RATCHET_RELEASE_GUARD_TAP=<tap-checkout> go test -count=1 ./internal/releaseguard -run TestTapPreflight
 ```
 
-Expected before cleanup: FAIL naming stale root `ratchet-cli.rb`, unless the stale root was already removed.
+Expected before cleanup: FAIL naming stale root `ratchet-cli.rb`, unless the stale root was already removed. If stale root is already absent and preflight PASSes after Task 8 formula automation, record the current tap HEAD SHA as state proof and skip PR creation.
 
 **Step 3: Remove only stale root file**
 
-In the tap checkout, remove root `ratchet-cli.rb` only. Preserve `Formula/ratchet-cli.rb` and `Casks/ratchet-cli.rb`. Commit, push, open PR, wait for tap checks, and admin merge only when required checks are green and review requirements are satisfied. Direct commits to the tap are out of scope unless a fresh explicit plan amendment records that override. Record the merged tap commit SHA.
+If stale root exists, remove root `ratchet-cli.rb` only. Preserve `Formula/ratchet-cli.rb` and `Casks/ratchet-cli.rb`. Commit, push, open PR, wait for tap checks, and admin merge only when required checks are green and review requirements are satisfied. Direct commits to the tap are out of scope unless a fresh explicit plan amendment records that override. Record the merged tap commit SHA. If stale root is already absent, make no tap commit; record the current tap HEAD SHA instead after Step 4 passes.
 
 **Step 4: Verify cleanup with formula automation**
 
@@ -586,12 +587,12 @@ Append a compact backport note to this plan:
 ```markdown
 ### Backport YYYY-MM-DD: Homebrew tap cleanup prerequisite
 
-Evidence: GoCodeAlone/homebrew-tap@<sha> removed stale root `ratchet-cli.rb`; `Formula/ratchet-cli.rb` and `Casks/ratchet-cli.rb` remain; `TestTapPreflight` PASS.
+Evidence: GoCodeAlone/homebrew-tap@<sha> either removed stale root `ratchet-cli.rb` via merged PR or already had stale root absent at recorded HEAD; `Formula/ratchet-cli.rb` and `Casks/ratchet-cli.rb` remain; `TestTapPreflight` PASS.
 Ratchet formula automation: GoCodeAlone/ratchet-cli@<sha> added GoReleaser `brews`; `scripts/check-release-artifacts.sh` PASS.
 Scope: no manifest change.
 ```
 
-Tasks 10 and 11 must not enable fail-closed `tap-preflight` or release postcheck until this SHA and Task 8's ratchet-cli formula automation commit SHA are recorded.
+Tasks 10 and 11 must not enable fail-closed `tap-preflight` or release postcheck until this tap state SHA and Task 8's ratchet-cli formula automation commit SHA are recorded.
 
 **Step 6: Commit plan evidence**
 
@@ -616,6 +617,7 @@ Rollback: if fail-closed checks have not merged, revert the ratchet-cli formula 
 
 Modify CI:
 - `release-check`: checkout `fetch-depth: 0`, setup Go `1.26`, private-module Git rewrite, GoReleaser action `goreleaser/goreleaser-action@v7` with `version: "~> v2"` and `args: check`, GoReleaser action `goreleaser/goreleaser-action@v7` with `version: "~> v2"` and `args: release --snapshot --clean --skip=publish`, `scripts/check-release-artifacts.sh --manifest-only dist`, upload `ratchet-snapshot-dist`.
+- existing `windows-build`: replace fixed `/tmp/ratchet-windows-*.exe` outputs with `$RUNNER_TEMP/ratchet-windows-*.exe` or an equivalent unique temp directory, and add workflow assertions that no CI step writes `/tmp/ratchet-windows-*.exe`.
 - `tui-smoke`: setup equivalent to existing CI and run untagged smoke plus tagged helper contracts without `-race`:
   - `go test ./cmd/ratchet ./internal/tui -run 'HarnessSmoke|TUIBinarySmoke|StartupSmoke' -count=1 -timeout=10m`;
   - `go test -tags tui_smoke ./internal/client -run 'ConnectSmokeUnix' -count=1`;
@@ -633,6 +635,7 @@ go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 .github/workflows/ci.y
 ```
 
 Expected: PASS locally where GoReleaser is installed; pinned actionlint command succeeds; CI workflow uses `goreleaser/goreleaser-action@v7` with `version: "~> v2"` for every GoReleaser action step; `scripts/check-release-artifacts.sh` regenerates fresh `dist` and executes packaged host-compatible `ratchet version/help`.
+Expected also: CI workflow contains no fixed `/tmp/ratchet-windows-*.exe` output paths; existing Windows cross-build writes to `$RUNNER_TEMP` or a unique temp directory.
 
 **Step 3: Commit**
 

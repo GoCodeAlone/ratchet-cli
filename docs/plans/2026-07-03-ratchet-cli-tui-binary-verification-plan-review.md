@@ -710,3 +710,61 @@
 3. Split releaseguard tests into ordinary fixture tests and explicit mode-selected integration tests with testdata env.
 
 **Verdict reasoning:** FAIL. P30-P44 remain fixed, but packaged release-binary execution proof, GoReleaser action pinning, and mode-gated releaseguard verification remained blockers.
+
+## Cycle 17
+
+### Adversarial Review Report
+
+**Phase:** plan
+**Artifact:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification.md
+**Status:** FAIL
+
+**Findings (Critical):**
+- None.
+
+**Findings (Important):**
+- `P48` [Infrastructure verification mismatch / Windows proof] [plan:617-623,690-714; design:493-497; `.github/workflows/ci.yml`:45-46]: The design says CI Windows cross-build outputs should use runner temp paths, but the existing `windows-build` job still writes fixed `/tmp/ratchet-windows-*.exe` paths and the plan never explicitly updates or asserts that job. Recommendation: add a Task 10/11 step to change the existing Windows build job to `$RUNNER_TEMP` or a unique temp dir and add workflow assertions against fixed `/tmp/ratchet-windows-*.exe` outputs.
+- `P49` [Hidden serial dependency / Missing integration proof] [plan:202-210,318-326,343-347]: Task 3 makes `TestTUIBinarySmoke` consume `command_surface_spec.json`, then Task 5 expands that same fixture to classify every slash command, but Task 5 verification does not rerun `TestTUIBinarySmoke`. A changed or newly added `pty-proven` row could merge without PTY proof until a later PR. Recommendation: rerun `go test ./internal/tui -run TestTUIBinarySmoke -count=1 -timeout=8m` in Task 5 after fixture changes, or move final `pty-proven` fixture expansion before Task 3.
+- `P50` [Hidden serial dependency / External prerequisite executability] [plan:20,46,551-566,589-594]: Task 9 correctly allows the stale tap root file to already be absent, but the manifest/precondition/backport template still require a merged tap cleanup PR/SHA. If cleanup already landed before execution, Tasks 10-11 have no explicit evidence path and can block or record false removed-stale-root evidence. Recommendation: allow either a new merged cleanup PR SHA or an existing tap commit/HEAD SHA plus `TestTapPreflight` PASS proving the stale root is already absent.
+
+**Findings (Minor):**
+- None.
+
+**Bug-class scan transcript:**
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | P48 weakens Windows temp-path guidance for CI cross-build proof. |
+| Assumptions under attack | Finding | P49 assumes fixture expansion cannot change PTY obligations; P50 assumes cleanup PR always exists. |
+| Repo-precedent conflicts | Clean | Plan otherwise follows existing Go test, GoReleaser, and Actions patterns. |
+| Artifact-class precedent | Finding | P49 changes a shared test fixture without rerunning consumer test artifact. |
+| YAGNI violations | Clean | No new runner class, public releaseguard CLI, or broad command registry. |
+| Missing failure modes | Finding | P48 misses fixed CI output collisions; P50 misses already-clean tap state. |
+| Security/privacy at architecture level | Clean | Redaction, temp-home, socket, and smoke-leak boundaries remain represented. |
+| Infrastructure impact | Finding | P48 affects CI Windows proof; P50 affects tap gate sequencing. |
+| Multi-component validation | Finding | P49 can leave command-spec-to-PTY behavior unproven after spec expansion. |
+| Declared integration proof | Finding | P49 undercuts runtime proof for `pty-proven` slash rows. |
+| Contributed UI rendering proof | Clean | No contributed UI route. |
+| Rollback story | Clean | Rollback covers code, workflows, release assets, tap contamination, and closeout. |
+| Simpler alternative not considered | Finding | P49 can rerun existing PTY smoke in Task 5. |
+| User-intent drift | Finding | P50 can block automatic continuation on no-op tap cleanup. |
+| Existence/runtime-validity | Finding | P50 leaves prerequisite path undefined when stale tap file already absent. |
+| Over-decomposition/under-decomposition | Clean | Thirteen tasks across six PRs remains proportional. |
+| Verification-class mismatch | Finding | P48/P49 use weaker verification than changed artifacts require. |
+| Auth/authz chain composition | Clean | Trust proof daemon-backed. |
+| Hidden serial dependencies | Finding | P49/P50 expose unstated ordering/evidence dependencies. |
+| Missing rollback wiring | Clean | Rollback wired. |
+| Missing integration proof | Finding | P49 omits PTY rerun after command fixture change. |
+| Missing declared integration matrix | Clean | Matrix classifies runtime/config/artifact/deferred items. |
+| Missing contributed UI route proof | Clean | Not applicable. |
+| Infrastructure verification mismatch | Finding | P48 leaves existing CI Windows job outside temp-output invariant. |
+| Plugin-loader runtime layout | Clean | No external plugin loader. |
+| Config-validation schema rules | Clean | No new schema config. |
+| Identifier/naming-convention match | Clean | Env vars, branch names, modes, releaseguard mode names are consistent. |
+| Planned-code compile-validity | Clean | No embedded compile issue found. |
+
+**Options the author may not have considered:**
+1. Make Task 5 own a second PTY smoke run whenever `command_surface_spec.json` changes.
+2. Add a workflow guard that rejects fixed `/tmp/ratchet-windows-*.exe` outputs anywhere in CI.
+3. Treat tap cleanup evidence as state proof: current tap HEAD plus preflight PASS is sufficient when stale root is already absent.
+
+**Verdict reasoning:** FAIL. P45-P47 are fixed and P30-P44 remain fixed, but existing CI Windows output paths, Task 5 PTY rerun, and already-clean tap evidence path remained executable gaps.
