@@ -32,7 +32,7 @@ func TestHarnessSmokeStartupOnboardingAndRPCShutdown(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_STATE_HOME", state)
-	red := harnessredact.New(home, state, work, root, bin, daemon.SocketPath(), daemon.PIDPath()).String
+	red := harnessredact.New(home, work, root, daemon.SocketPath(), bin, daemon.PIDPath(), state).String
 	env := []string{
 		"HOME=" + home,
 		"USERPROFILE=" + home,

@@ -140,10 +140,26 @@ func helpCommandRows() []string {
 	for _, line := range helpCmd().Lines {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "/") {
-			out = append(out, strings.Fields(line)[0])
+			fields := strings.Fields(line)
+			cmd := fields[0]
+			if len(fields) > 1 && literalSubcommand(fields[1]) {
+				cmd += " " + fields[1]
+				if cmd == "/trust persist" && len(fields) > 2 && literalSubcommand(fields[2]) {
+					cmd += " " + fields[2]
+				}
+			}
+			out = append(out, cmd)
 		}
 	}
 	return out
+}
+
+func literalSubcommand(field string) bool {
+	return field != "" &&
+		field == strings.ToLower(field) &&
+		!strings.HasPrefix(field, "<") &&
+		!strings.HasPrefix(field, "[") &&
+		!strings.Contains(field, "|")
 }
 
 func specCoversTopLevel(spec surfaceSpec, cmd string) bool {

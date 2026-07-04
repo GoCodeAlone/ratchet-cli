@@ -67,10 +67,20 @@ func capturePrintUsage(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	wClosed := false
+	defer func() {
+		os.Stdout = old
+		_ = r.Close()
+		if !wClosed {
+			_ = w.Close()
+		}
+	}()
 	os.Stdout = w
 	printUsage()
-	_ = w.Close()
-	os.Stdout = old
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	wClosed = true
 	var buf bytes.Buffer
 	if _, err := io.Copy(&buf, r); err != nil {
 		t.Fatal(err)
