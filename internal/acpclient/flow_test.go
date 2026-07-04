@@ -287,7 +287,8 @@ func TestLoadFlowReplaySummaryUsesACPXRuntimeSummary(t *testing.T) {
 	if !called {
 		t.Fatal("ACPX runtime summary function was not called")
 	}
-	if summary.RunID != "runtime-run" || summary.StepCount != 7 || summary.TraceCount != 11 || summary.SessionCount != 2 {
+	if summary.RunID != "runtime-run" || summary.Status != FlowRunStatusCompleted || summary.ManifestPath != "manifest.json" ||
+		summary.StepCount != 7 || summary.TraceCount != 11 || summary.SessionCount != 2 {
 		t.Fatalf("summary = %#v", summary)
 	}
 }
