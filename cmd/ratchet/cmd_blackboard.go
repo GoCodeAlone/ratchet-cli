@@ -25,7 +25,6 @@ type blackboardOptions struct {
 }
 
 type blackboardExportOptions struct {
-	json    bool
 	jsonl   bool
 	section string
 }
@@ -112,10 +111,11 @@ func parseBlackboardOptions(args []string) (blackboardOptions, error) {
 
 func parseBlackboardExportOptions(args []string) (blackboardExportOptions, error) {
 	var opts blackboardExportOptions
+	var json bool
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--json":
-			opts.json = true
+			json = true
 		case "--jsonl":
 			opts.jsonl = true
 		default:
@@ -128,7 +128,7 @@ func parseBlackboardExportOptions(args []string) (blackboardExportOptions, error
 			opts.section = args[i]
 		}
 	}
-	if opts.json && opts.jsonl {
+	if json && opts.jsonl {
 		return opts, fmt.Errorf("usage: ratchet blackboard export [section] [--json|--jsonl]")
 	}
 	return opts, nil

@@ -162,12 +162,11 @@ terminal sessions. Use `ratchet blackboard write coordination status ready` and
 handoff notes through the running daemon; add `--json` for scripts. The
 blackboard is daemon-scoped volatile state, not durable storage across daemon
 restart. Treat values as sensitive local coordination data because they can
-contain prompts, file paths, or task context. `ratchet blackboard export
-[section] --jsonl` emits local notification-event records with a
-`messaging.text` projection; external delivery belongs in the existing
-`workflow-plugin-messaging-core`, `workflow-plugin-slack`,
-`workflow-plugin-discord`, and `workflow-plugin-teams` plugin family, not in
-ratchet-cli direct adapters or credential flags.
+contain prompts, file paths, or task context. Use `ratchet blackboard export [section] --jsonl`
+to emit local notification-event records with a `messaging.text` projection;
+external delivery belongs in the existing `workflow-plugin-messaging-core`,
+`workflow-plugin-slack`, `workflow-plugin-discord`, and `workflow-plugin-teams`
+plugin family, not in ratchet-cli direct adapters or credential flags.
 
 The v0.25.0 release line adds raw ACPX event-log import/export, `sessions
 events`, saved compare bundles, and flow replay bundles on top of reviewable

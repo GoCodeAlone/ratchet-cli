@@ -99,11 +99,11 @@ refused at execution time. JSON v1 action nodes run local commands only with
 `--allow shell`; node cwd escapes require `--allow outside-cwd`, and run bundles
 may contain sensitive local command output. `flow replay` is read-only and does
 not contact agents or execute actions. The daemon blackboard is daemon-scoped
-volatile state and should not be used as durable storage. `ratchet blackboard
-export [section] --jsonl` emits local notification-event records with
-`messaging.text` for downstream Workflow messaging plugins; outbound Discord,
-Slack, Teams, email, webhook, or other service delivery stays in the existing
-messaging-core and channel plugins rather than built into ratchet-cli. The
+volatile state and should not be used as durable storage. Use `ratchet blackboard export [section] --jsonl`
+to emit local notification-event records with `messaging.text` for downstream
+Workflow messaging plugins; outbound Discord, Slack, Teams, email, webhook, or
+other service delivery stays in the existing messaging-core and channel plugins
+rather than built into ratchet-cli. The
 v0.25.0 release line keeps Windows
 amd64/arm64 zip artifacts in the GoReleaser output while adding raw event
 archives, compare artifacts, and replay-grade flow bundles. The policy
