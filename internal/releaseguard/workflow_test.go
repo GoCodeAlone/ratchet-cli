@@ -77,6 +77,60 @@ func TestCITUISmokeAndTapPreflightJobs(t *testing.T) {
 	requireRun(t, tap, "Run tap preflight", "go test -count=1 ./internal/releaseguard -run TestTapPreflight")
 }
 
+func TestReleaseWorkflowPrePublishGuards(t *testing.T) {
+	workflow := loadWorkflow(t, ".github/workflows/release.yml")
+	job := requireJob(t, workflow, "release")
+	requireRun(t, job, "Configure Git for private modules", `url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf`)
+	requireGoReleaserStep(t, job, "check")
+	requireGoReleaserStep(t, job, "release --snapshot --clean --skip=publish")
+	requireRun(t, job, "Check snapshot release artifacts", "scripts/check-release-artifacts.sh --manifest-only dist")
+	requireRun(t, job, "Check draft release config", "go test -count=1 ./internal/releaseguard -run TestGoReleaserReleaseDraftConfig")
+	requireRun(t, job, "Run tap preflight", "RATCHET_RELEASE_GUARD_MODE=tap-preflight")
+	requireRun(t, job, "Run tap preflight", "go test -count=1 ./internal/releaseguard -run TestTapPreflight")
+	requireGoReleaserStep(t, job, "release --clean")
+
+	raw := loadWorkflowRaw(t, ".github/workflows/release.yml")
+	requireTextOrder(t, raw, "args: check", "args: release --snapshot --clean --skip=publish")
+	requireTextOrder(t, raw, "args: release --snapshot --clean --skip=publish", "Check snapshot release artifacts")
+	requireTextOrder(t, raw, "Check draft release config", "args: release --clean")
+	requireTextOrder(t, raw, "Run tap preflight", "args: release --clean")
+}
+
+func TestReleaseWorkflowPostPublishGuards(t *testing.T) {
+	raw := loadWorkflowRaw(t, ".github/workflows/release.yml")
+	workflow := parseWorkflow(t, raw)
+	job := requireJob(t, workflow, "release")
+
+	requireRun(t, job, "Resolve draft release", "draft")
+	requireRun(t, job, "Download draft release assets", "metadata.json")
+	requireRun(t, job, "Check draft release assets", "RATCHET_RELEASE_GUARD_MODE=draft-assets")
+	requireRun(t, job, "Check draft release assets", "RATCHET_RELEASE_GUARD_ASSETS=\"$RUNNER_TEMP/release-assets\"")
+	requireRun(t, job, "Check draft release assets", "go test -count=1 ./internal/releaseguard -run TestDraftAssets")
+	requireRun(t, job, "Clone Homebrew tap", "HOMEBREW_TAP_TOKEN")
+	requireRun(t, job, "Derive tap commits", "Casks/ratchet-cli.rb")
+	requireRun(t, job, "Check tap post-publish state", "RATCHET_RELEASE_GUARD_MODE=tap-postcheck")
+	requireRun(t, job, "Check tap post-publish state", "RATCHET_RELEASE_GUARD_TAP_NAMES=ratchet-cli")
+	requireRun(t, job, "Check tap post-publish state", "RATCHET_RELEASE_GUARD_TAP_COMMITS=")
+	requireRun(t, job, "Check tap post-publish state", "go test -count=1 ./internal/releaseguard -run TestTapPostcheck")
+	requireRun(t, job, "Publish GitHub release", "updateRelease")
+
+	requireTextOrder(t, raw, "args: release --clean", "Check draft release assets")
+	requireTextOrder(t, raw, "Check draft release assets", "Check tap post-publish state")
+	requireTextOrder(t, raw, "Check tap post-publish state", "Publish GitHub release")
+}
+
+func TestWorkflowsAvoidWindowsRunnerAndExeExecution(t *testing.T) {
+	for _, rel := range []string{".github/workflows/ci.yml", ".github/workflows/release.yml"} {
+		raw := loadWorkflowRaw(t, rel)
+		if strings.Contains(raw, "windows-latest") {
+			t.Fatalf("%s must not add a Windows runner in this slice", rel)
+		}
+		if strings.Contains(raw, "./ratchet.exe") || strings.Contains(raw, " ratchet.exe") {
+			t.Fatalf("%s must not execute ratchet.exe in this slice", rel)
+		}
+	}
+}
+
 func loadWorkflow(t *testing.T, rel string) workflowFile {
 	t.Helper()
 	return parseWorkflow(t, loadWorkflowRaw(t, rel))
@@ -112,7 +166,7 @@ func requireJob(t *testing.T, workflow workflowFile, name string) workflowJob {
 func requireRun(t *testing.T, job workflowJob, name, contains string) {
 	t.Helper()
 	requireStep(t, job, func(step workflowStep) bool {
-		return step.Name == name && strings.Contains(step.Run, contains)
+		return step.Name == name && (strings.Contains(step.Run, contains) || strings.Contains(step.With["script"], contains))
 	}, name+" containing "+contains)
 }
 
@@ -133,4 +187,19 @@ func requireStep(t *testing.T, job workflowJob, match func(workflowStep) bool, d
 		}
 	}
 	t.Fatalf("workflow job missing step: %s", description)
+}
+
+func requireTextOrder(t *testing.T, text, before, after string) {
+	t.Helper()
+	beforeIndex := strings.Index(text, before)
+	if beforeIndex < 0 {
+		t.Fatalf("workflow missing %q", before)
+	}
+	afterIndex := strings.Index(text, after)
+	if afterIndex < 0 {
+		t.Fatalf("workflow missing %q", after)
+	}
+	if beforeIndex >= afterIndex {
+		t.Fatalf("workflow has %q after %q", before, after)
+	}
 }

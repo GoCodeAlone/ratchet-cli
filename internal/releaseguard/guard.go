@@ -154,12 +154,16 @@ func GuardDraftAssets(root, assets, version string) error {
 	var metadata struct {
 		Tag     string `json:"tag"`
 		Version string `json:"version"`
+		Draft   *bool  `json:"draft"`
 	}
 	if err := json.Unmarshal(data, &metadata); err != nil {
 		return fmt.Errorf("decode draft asset metadata: %w", err)
 	}
 	if !versionMatches(metadata.Tag, version) && !versionMatches(metadata.Version, version) {
 		return fmt.Errorf("draft asset metadata tag/version %q/%q does not match requested %q", metadata.Tag, metadata.Version, version)
+	}
+	if metadata.Draft != nil && !*metadata.Draft {
+		return fmt.Errorf("draft asset metadata draft state must be true")
 	}
 	return nil
 }

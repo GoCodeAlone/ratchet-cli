@@ -26,6 +26,19 @@ func TestGoReleaserConfigDraftAndTaxonomy(t *testing.T) {
 	}
 }
 
+func TestGoReleaserReleaseDraftConfig(t *testing.T) {
+	cfg, err := LoadGoReleaserConfig(filepath.Join(repoRoot(t), ".goreleaser.yaml"))
+	if err != nil {
+		t.Fatalf("load goreleaser config: %v", err)
+	}
+	if !cfg.Release.Draft {
+		t.Fatal("release preflight requires .goreleaser.yaml release.draft: true")
+	}
+	if err := ValidateGoReleaserConfig(cfg); err != nil {
+		t.Fatalf("validate draft release config: %v", err)
+	}
+}
+
 func TestGoReleaserConfigRejectsUnknownPublishableKeys(t *testing.T) {
 	cfg := GoReleaserConfig{
 		RawTopLevel: map[string]any{
@@ -166,6 +179,23 @@ end
 	}
 }
 
+func TestDraftAssets(t *testing.T) {
+	if os.Getenv("RATCHET_RELEASE_GUARD_MODE") != "draft-assets" {
+		t.Skip("releaseguard draft-assets mode not requested")
+	}
+	assets := os.Getenv("RATCHET_RELEASE_GUARD_ASSETS")
+	if assets == "" {
+		t.Fatal("RATCHET_RELEASE_GUARD_ASSETS is required")
+	}
+	if os.Getenv("RATCHET_RELEASE_GUARD_VERSION") == "" {
+		t.Fatal("RATCHET_RELEASE_GUARD_VERSION is required")
+	}
+	prepareModeFixtureDist(t, assets, true)
+	if err := RunFromEnv(repoRoot(t)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDraftAssetsRequiresMatchingVersion(t *testing.T) {
 	dist := t.TempDir()
 	writeMatrixDist(t, dist, archivePayload{
@@ -187,6 +217,63 @@ func TestDraftAssetsRequiresMatchingVersion(t *testing.T) {
 	}
 	if err := GuardDraftAssets(repoRoot(t), dist, "v0.0.0-test"); err != nil {
 		t.Fatalf("matching draft assets: %v", err)
+	}
+}
+
+func TestDraftAssetsRequiresDraftMetadata(t *testing.T) {
+	dist := t.TempDir()
+	writeMatrixDist(t, dist, archivePayload{
+		hostVersion: "ratchet version v0.0.0-test\n",
+		hostHelp:    "ratchet help\n",
+	})
+	if err := os.WriteFile(filepath.Join(dist, "metadata.json"), []byte(`{"tag":"v0.0.0-test","version":"0.0.0-test","draft":false}`), 0o644); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+	err := GuardDraftAssets(repoRoot(t), dist, "v0.0.0-test")
+	if err == nil {
+		t.Fatal("expected non-draft metadata to fail")
+	}
+	if !strings.Contains(err.Error(), "draft") {
+		t.Fatalf("error %q does not name draft state", err)
+	}
+	if err := os.WriteFile(filepath.Join(dist, "metadata.json"), []byte(`{"tag":"v0.0.0-test","version":"0.0.0-test","draft":true}`), 0o644); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+	if err := GuardDraftAssets(repoRoot(t), dist, "v0.0.0-test"); err != nil {
+		t.Fatalf("draft metadata should pass: %v", err)
+	}
+}
+
+func TestWindowsArchiveRequiresBothZips(t *testing.T) {
+	dist := t.TempDir()
+	writeMatrixDist(t, dist, archivePayload{
+		hostVersion: "ratchet version v0.0.0-test\n",
+		hostHelp:    "ratchet help\n",
+	})
+	missing := "ratchet_windows_arm64.zip"
+	if err := os.Remove(filepath.Join(dist, missing)); err != nil {
+		t.Fatalf("remove windows archive fixture: %v", err)
+	}
+	err := GuardManifest(repoRoot(t), dist)
+	if err == nil {
+		t.Fatal("expected missing windows archive failure")
+	}
+	if !strings.Contains(err.Error(), missing) {
+		t.Fatalf("error %q does not name missing windows archive %s", err, missing)
+	}
+}
+
+func TestWindowsArchive(t *testing.T) {
+	if os.Getenv("RATCHET_RELEASE_GUARD_MODE") != "manifest" {
+		t.Skip("releaseguard manifest mode not requested")
+	}
+	dist := os.Getenv("RATCHET_RELEASE_GUARD_DIST")
+	if dist == "" {
+		t.Fatal("RATCHET_RELEASE_GUARD_DIST is required")
+	}
+	prepareModeFixtureDist(t, dist, false)
+	if err := RunFromEnv(repoRoot(t)); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -388,6 +475,37 @@ func executablePayload(goos, goarch string, payload archivePayload) string {
 		return fmt.Sprintf("#!/bin/sh\ncase \"$1\" in\nversion) printf %q ;;\nhelp) printf %q ;;\n*) exit 2 ;;\nesac\n", payload.hostVersion, payload.hostHelp)
 	}
 	return "ratchet release binary\n"
+}
+
+func prepareModeFixtureDist(t *testing.T, path string, draft bool) {
+	t.Helper()
+	if !isReleaseGuardTestdataPath(path) {
+		return
+	}
+	root := repoRoot(t)
+	fixturePath := resolvePath(root, path)
+	if err := os.RemoveAll(fixturePath); err != nil {
+		t.Fatalf("clear fixture dist %s: %v", fixturePath, err)
+	}
+	if err := os.MkdirAll(fixturePath, 0o755); err != nil {
+		t.Fatalf("create fixture dist %s: %v", fixturePath, err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(fixturePath)
+	})
+	writeMatrixDist(t, fixturePath, archivePayload{
+		hostVersion: "ratchet version v0.0.0-test\n",
+		hostHelp:    "ratchet help\n",
+	})
+	if draft {
+		if err := os.WriteFile(filepath.Join(fixturePath, "metadata.json"), []byte(`{"tag":"v0.0.0-test","version":"0.0.0-test","draft":true}`), 0o644); err != nil {
+			t.Fatalf("write draft fixture metadata: %v", err)
+		}
+	}
+}
+
+func isReleaseGuardTestdataPath(path string) bool {
+	return strings.Contains(filepath.ToSlash(path), "internal/releaseguard/testdata/")
 }
 
 func sha256File(t *testing.T, path string) string {

@@ -80,12 +80,57 @@ end
 	if err := GuardTapPostcheck(root, tap, "ratchet-cli", "README.md=fixture-sha", "v0.0.0-test"); err == nil {
 		t.Fatal("expected tap-postcheck commits failure")
 	}
+	if err := GuardTapPostcheck(root, tap, "ratchet-cli", "Casks/ratchet-cli.rb=", "v0.0.0-test"); err == nil {
+		t.Fatal("expected tap-postcheck empty cask commit failure")
+	}
 	if err := GuardTapPostcheck(root, tap, "ratchet-cli", "Casks/ratchet-cli.rb=fixture-sha", "v0.0.0-other"); err == nil {
 		t.Fatal("expected tap-postcheck version failure")
 	}
 	if err := GuardTapPostcheck(root, tap, "ratchet-cli", "Casks/ratchet-cli.rb=fixture-sha", "v0.0.0-test"); err != nil {
 		t.Fatalf("tap postcheck: %v", err)
 	}
+}
+
+func TestTapPostcheck(t *testing.T) {
+	if os.Getenv("RATCHET_RELEASE_GUARD_MODE") != "tap-postcheck" {
+		t.Skip("releaseguard tap-postcheck mode not requested")
+	}
+	for _, name := range []string{
+		"RATCHET_RELEASE_GUARD_TAP",
+		"RATCHET_RELEASE_GUARD_TAP_NAMES",
+		"RATCHET_RELEASE_GUARD_TAP_COMMITS",
+		"RATCHET_RELEASE_GUARD_VERSION",
+	} {
+		if os.Getenv(name) == "" {
+			t.Fatalf("%s is required", name)
+		}
+	}
+	prepareModeFixtureTap(t, os.Getenv("RATCHET_RELEASE_GUARD_TAP"), os.Getenv("RATCHET_RELEASE_GUARD_VERSION"))
+	if err := RunFromEnv(repoRoot(t)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func prepareModeFixtureTap(t *testing.T, path, version string) {
+	t.Helper()
+	if !isReleaseGuardTestdataPath(path) {
+		return
+	}
+	root := repoRoot(t)
+	fixturePath := resolvePath(root, path)
+	if err := os.RemoveAll(fixturePath); err != nil {
+		t.Fatalf("clear fixture tap %s: %v", fixturePath, err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(fixturePath)
+	})
+	mustWrite(t, filepath.Join(fixturePath, "Casks", "ratchet-cli.rb"), `cask "ratchet-cli" do
+  version "`+strings.TrimPrefix(version, "v")+`"
+  url "https://github.com/GoCodeAlone/ratchet-cli/releases/download/`+version+`/ratchet_darwin_arm64.tar.gz"
+  name "ratchet-cli"
+  binary "ratchet"
+end
+`)
 }
 
 func mustWrite(t *testing.T, path, body string) {
