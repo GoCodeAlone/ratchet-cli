@@ -111,7 +111,11 @@ func RunFlow(ctx context.Context, def FlowDefinition, input map[string]any, opts
 		}
 	}()
 
-	for _, nodeID := range flowExecutionOrder(def) {
+	order, err := flowExecutionOrder(def)
+	if err != nil {
+		return result, err
+	}
+	for _, nodeID := range order {
 		node := nodes[nodeID]
 		output, err := runFlowNode(ctx, node, input, outputValues, runners, &closers, opts, replay)
 		step := FlowStepRecord{NodeID: node.ID, Type: node.Type, Output: output}
@@ -352,12 +356,8 @@ func defaultFlowStartRunner(ctx context.Context, spec AgentSpec, opts RunOptions
 	return runner, client.Close, nil
 }
 
-func flowExecutionOrder(def FlowDefinition) []string {
-	order, err := def.ExecutionOrder()
-	if err != nil {
-		return nil
-	}
-	return order
+func flowExecutionOrder(def FlowDefinition) ([]string, error) {
+	return def.ExecutionOrder()
 }
 
 func flowNodeMap(nodes []FlowNode) map[string]FlowNode {

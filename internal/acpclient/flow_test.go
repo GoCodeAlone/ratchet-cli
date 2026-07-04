@@ -78,7 +78,11 @@ func TestFlowExecutionOrderHonorsFanInDependencies(t *testing.T) {
 	if err := def.Validate(); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
-	if got, want := strings.Join(flowExecutionOrder(def), ","), "a,b,c,d"; got != want {
+	order, err := flowExecutionOrder(def)
+	if err != nil {
+		t.Fatalf("flowExecutionOrder error = %v", err)
+	}
+	if got, want := strings.Join(order, ","), "a,b,c,d"; got != want {
 		t.Fatalf("flowExecutionOrder = %q, want %q", got, want)
 	}
 }
