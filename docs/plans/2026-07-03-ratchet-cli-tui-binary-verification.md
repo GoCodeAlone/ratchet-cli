@@ -600,6 +600,12 @@ Scope: no manifest change.
 
 Tasks 10 and 11 must not enable fail-closed `tap-preflight` or release postcheck until this tap state SHA and Task 8's ratchet-cli cask-guard commit SHA are recorded.
 
+### Backport 2026-07-04: Homebrew tap cleanup prerequisite
+
+Evidence: GoCodeAlone/homebrew-tap@0cc65b3b70bbeecb67a7364ec0cda0621b8689f6 removed stale root `ratchet-cli.rb` and legacy `Formula/ratchet-cli.rb` via merged PR #63; `Casks/ratchet-cli.rb` remains; `TestTapPreflight` PASS against that tap checkout.
+Ratchet cask guard: GoCodeAlone/ratchet-cli@9b5e5920ba8be8084c411be40e6aaaaf3ed6008e (PR #76) validates GoReleaser `homebrew_casks`, rejects deprecated `brews`, and `scripts/check-release-artifacts.sh` PASS.
+Scope: no manifest change.
+
 **Step 6: Commit plan evidence**
 
 ```bash
