@@ -64,6 +64,8 @@ func main() {
 		handleTrust(filteredArgs[1:])
 	case "hooks":
 		handleHooks(filteredArgs[1:])
+	case "blackboard":
+		handleBlackboard(filteredArgs[1:])
 	case "project":
 		handleProject(filteredArgs[1:])
 	case "plugin":
@@ -159,6 +161,7 @@ Commands:
   team             Multi-agent orchestration
   trust            Manage runtime trust rules and persistent grants
   hooks            Review and trust lifecycle hooks
+  blackboard       Shared daemon blackboard
   plugin           Manage plugins
   skill            Manage skills
   config           Configuration

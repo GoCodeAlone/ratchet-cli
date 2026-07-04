@@ -10,7 +10,7 @@ func TestHarnessEmulationDocsCoverSupportedModesAndParity(t *testing.T) {
 	readme := readHarnessDoc(t, "../../README.md")
 	doc := readHarnessDoc(t, "../../docs/harness-emulation.md")
 
-	for _, mode := range []string{"TUI", "one-shot", "daemon", "ACP", "MCP", "team"} {
+	for _, mode := range []string{"TUI", "one-shot", "daemon", "blackboard", "ACP", "MCP", "team"} {
 		if !strings.Contains(readme, mode) && !strings.Contains(doc, mode) {
 			t.Fatalf("harness docs missing command mode %q", mode)
 		}
@@ -80,6 +80,11 @@ func TestHarnessEmulationDocsCoverPolicyMatrixLayers(t *testing.T) {
 		"hook trust",
 		"ACP launch profiles",
 		"ratchet acp client watch",
+		"ratchet blackboard write coordination status ready",
+		"ratchet blackboard read coordination status",
+		"daemon-scoped volatile",
+		"sensitive local coordination data",
+		"workflow-plugin-notify",
 		"background drain",
 		"extension hooks",
 		"action nodes",
