@@ -2,6 +2,7 @@ package acpclient
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -10,9 +11,11 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	acpx "github.com/GoCodeAlone/acpx-go"
 )
 
-const FlowReplayBundleSchema = "acpx.flow-run-bundle.v1"
+const FlowReplayBundleSchema = acpx.SchemaFlowRunBundleV1
 
 type FlowReplaySummary struct {
 	RunID        string `json:"run_id"`
@@ -297,6 +300,9 @@ func (s *FlowRunStore) WriteManifest(manifest FlowRunManifest) error {
 
 func LoadFlowReplaySummary(runDir string) (FlowReplaySummary, error) {
 	runDir = filepath.Clean(runDir)
+	if summary, err := loadACPXFlowReplaySummary(runDir); err == nil {
+		return summary, nil
+	}
 	manifestPath := filepath.Join(runDir, "manifest.json")
 	var manifest FlowRunManifest
 	if err := readJSONFile(manifestPath, &manifest); err != nil {
@@ -343,6 +349,25 @@ func LoadFlowReplaySummary(runDir string) (FlowReplaySummary, error) {
 		StepCount:    stepCount,
 		TraceCount:   traceCount,
 		SessionCount: len(manifest.Sessions),
+	}, nil
+}
+
+func loadACPXFlowReplaySummary(runDir string) (FlowReplaySummary, error) {
+	bundle, err := acpx.LoadBundle(context.Background(), runDir)
+	if err != nil {
+		return FlowReplaySummary{}, err
+	}
+	projection, err := acpx.RebuildTraceProjection(bundle.Trace)
+	if err != nil {
+		return FlowReplaySummary{}, err
+	}
+	return FlowReplaySummary{
+		RunID:        bundle.Manifest.RunID,
+		Status:       string(bundle.Manifest.Status),
+		ManifestPath: "manifest.json",
+		StepCount:    len(projection.Attempts),
+		TraceCount:   len(bundle.Trace),
+		SessionCount: len(bundle.Manifest.Sessions),
 	}, nil
 }
 

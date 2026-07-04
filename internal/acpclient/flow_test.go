@@ -249,6 +249,62 @@ func TestLoadFlowReplaySummaryRejectsManifestPathsOutsideRunDir(t *testing.T) {
 	}
 }
 
+func TestLoadFlowReplaySummaryReadsUpstreamACPXBundle(t *testing.T) {
+	runDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(runDir, "projections"), 0o700); err != nil {
+		t.Fatalf("mkdir projections: %v", err)
+	}
+	if err := writeJSONFileAtomic(filepath.Join(runDir, "manifest.json"), map[string]any{
+		"schema":      "acpx.flow-run-bundle.v1",
+		"runId":       "upstream-run",
+		"flowName":    "upstream-flow",
+		"startedAt":   "2026-07-04T00:00:00Z",
+		"finishedAt":  "2026-07-04T00:00:01Z",
+		"status":      "completed",
+		"traceSchema": "acpx.flow-trace-event.v1",
+		"paths": map[string]string{
+			"flow":            "flow.json",
+			"trace":           "trace.ndjson",
+			"runProjection":   "projections/run.json",
+			"liveProjection":  "projections/live.json",
+			"stepsProjection": "projections/steps.json",
+			"sessionsDir":     "sessions",
+			"artifactsDir":    "artifacts",
+		},
+		"sessions": []any{},
+	}, 0o600); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	if err := writeJSONFileAtomic(filepath.Join(runDir, "flow.json"), map[string]any{
+		"schema":  "acpx.flow-definition-snapshot.v1",
+		"name":    "upstream-flow",
+		"startAt": "only",
+		"nodes": map[string]any{
+			"only": map[string]any{"nodeType": "compute", "hasRun": true},
+		},
+		"edges": []any{},
+	}, 0o600); err != nil {
+		t.Fatalf("write flow: %v", err)
+	}
+	trace := strings.Join([]string{
+		`{"seq":1,"at":"2026-07-04T00:00:00Z","scope":"run","type":"run_started","runId":"upstream-run","payload":{}}`,
+		`{"seq":2,"at":"2026-07-04T00:00:00Z","scope":"node","type":"node_started","runId":"upstream-run","nodeId":"only","attemptId":"only#1","payload":{}}`,
+		`{"seq":3,"at":"2026-07-04T00:00:01Z","scope":"node","type":"node_outcome","runId":"upstream-run","nodeId":"only","attemptId":"only#1","payload":{}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(runDir, "trace.ndjson"), []byte(trace), 0o600); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+
+	summary, err := LoadFlowReplaySummary(runDir)
+	if err != nil {
+		t.Fatalf("LoadFlowReplaySummary: %v", err)
+	}
+	if summary.RunID != "upstream-run" || summary.Status != FlowRunStatusCompleted ||
+		summary.StepCount != 1 || summary.TraceCount != 3 || summary.SessionCount != 0 {
+		t.Fatalf("summary = %#v", summary)
+	}
+}
+
 func TestLoadFlowReplaySummaryRejectsSymlinkEscape(t *testing.T) {
 	root := t.TempDir()
 	runDir := filepath.Join(root, "run")
