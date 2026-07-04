@@ -852,3 +852,15 @@ Open the PR6 closeout branch `docs/tui-verification-closeout` after the state co
 Expected: PR6 is merged green; no closeout state remains only on an unmerged branch.
 
 Rollback: if release fails before undraft, leave draft private and fix assets/tap before publishing; if release publishes but tap postcheck fails, cut corrective patch release and path-specific tap corrective commit using reported SHA/path list.
+
+### Closeout 2026-07-04: TUI binary verification release
+
+Evidence:
+- PRs #72, #74, #76, #78, #80, plus retro PRs #73, #75, #77, #79, merged green in locked order; external tap cleanup PR GoCodeAlone/homebrew-tap#63 merged before fail-closed tap enforcement.
+- Local closeout verification passed: focused releaseguard, harnessredact, TUI, daemon/client, docs, tagged `tui_smoke`, Windows amd64/arm64 cross-builds, `go test -race ./...`, `go vet ./...`, `goreleaser check`, `scripts/check-release-artifacts.sh`, manifest-only releaseguard, and pinned actionlint.
+- Release `v0.26.0` published from `b348d8543675fab109bf3f4c9e20bbd537225f71` via Release run `28694540082`; release workflow completed successfully after draft asset and tap postchecks.
+- GitHub release `v0.26.0` is not draft and includes checksums plus Linux, macOS, and Windows amd64/arm64 archives; Homebrew tap `Casks/ratchet-cli.rb` is at version `0.26.0` at GoCodeAlone/homebrew-tap@7f31504f38accaa7763a8826fc381de4bac9c348.
+
+Deferred:
+- Windows interactive ConPTY proof remains out of scope pending a separate runner-change plan.
+- Split-publish pre-public Homebrew/tap gating remains deferred; current release gates keep GitHub release draft until release asset and tap postchecks pass.
