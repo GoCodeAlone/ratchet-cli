@@ -232,13 +232,15 @@ TUI binary evidence is split by boundary. The release-shaped startup smoke
 builds the untagged `ratchet` binary, starts it against a temp home/workdir,
 reaches the onboarding/provider setup boundary, and shuts the background daemon
 down by RPC; release-shaped startup smoke is not full TUI PTY proof.
-`ratchet-tui-smoke` is build-tagged test-only and is used for Unix PTY binary smoke
-of slash commands, shortcuts, trust state, session tree, and job panel
-flows. GoReleaser snapshot release-check, draft release asset postcheck, tap
-preflight, and tap postcheck gates verify release artifacts and the Homebrew
-cask path. Windows cross-build/package archive inspection is release artifact
-proof; Windows executable runtime remains deferred pending approved runner
-changes. Homebrew/tap safety is prechecked and postchecked, not fully pre-public gated.
+`ratchet-tui-smoke` is build-tagged test-only and is used for Unix PTY binary
+smoke of slash commands, shortcuts, trust state, session tree, and job panel
+flows. Windows ConPTY binary smoke drives the same test-only smoke binary
+through a ConPTY-backed TUI startup, mocked chat turn, slash help, and clean
+exit. GoReleaser snapshot release-check, draft release asset postcheck, tap
+preflight, generated-cask publish, and tap postcheck gates verify release
+artifacts and the Homebrew cask path before the GitHub release is made public.
+Windows cross-build/package archive inspection is release artifact proof;
+packaged release `ratchet.exe` runtime remains deferred.
 
 See [docs/harness-emulation.md](docs/harness-emulation.md) for credential-free
 mock provider recipes, and [docs/competitor-parity.md](docs/competitor-parity.md)

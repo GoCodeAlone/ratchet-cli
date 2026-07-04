@@ -114,9 +114,10 @@ func TestHarnessDocsDescribeTUIBinaryEvidenceBoundaries(t *testing.T) {
 			"Unix PTY binary smoke",
 			"release-shaped startup smoke is not full TUI PTY proof",
 			"Windows cross-build/package archive inspection",
-			"Homebrew/tap safety is prechecked and postchecked, not fully pre-public gated",
+			"Windows ConPTY binary smoke",
+			"before the GitHub release is made public",
 		} {
-			if !strings.Contains(doc.body, required) {
+			if !containsWords(doc.body, required) {
 				t.Fatalf("%s missing TUI binary evidence boundary %q", doc.name, required)
 			}
 		}
@@ -124,9 +125,8 @@ func TestHarnessDocsDescribeTUIBinaryEvidenceBoundaries(t *testing.T) {
 
 	publicDocs := strings.Join([]string{ratchet, parity, matrix}, "\n")
 	for _, forbidden := range []string{
-		"full TUI PTY proof",
-		"Windows interactive ConPTY proof",
-		"fully pre-public gated",
+		"full release TUI PTY proof",
+		"packaged release `ratchet.exe` runtime is proven",
 	} {
 		if strings.Contains(publicDocs, forbidden) {
 			t.Fatalf("public docs overclaim deferred evidence with %q", forbidden)
@@ -156,7 +156,8 @@ func TestHarnessDocsDescribeTUIBinaryEvidenceBoundaries(t *testing.T) {
 		"draft release asset postcheck",
 		"tap preflight",
 		"tap postcheck",
-		"Windows executable runtime remains deferred",
+		"generated-cask publish",
+		"packaged release `ratchet.exe` runtime remains deferred",
 	} {
 		for _, doc := range releaseEvidenceDocs {
 			if !containsWords(doc.body, required) {

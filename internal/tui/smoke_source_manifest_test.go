@@ -7,10 +7,14 @@ import (
 	"testing"
 )
 
-var smokeSourceManifest = map[string]struct{}{
-	"cmd/ratchet-tui-smoke/main.go":        {},
-	"internal/client/client_tui_smoke.go":  {},
-	"internal/daemon/service_tui_smoke.go": {},
+var smokeSourceManifest = map[string]string{
+	"cmd/ratchet-tui-smoke/main.go":                "//go:build tui_smoke && !windows\n\n",
+	"cmd/ratchet-tui-smoke/main_windows.go":        "//go:build tui_smoke && windows\n\n",
+	"internal/client/client_tui_smoke.go":          "//go:build tui_smoke && !windows\n\n",
+	"internal/client/client_tui_smoke_windows.go":  "//go:build tui_smoke && windows\n\n",
+	"internal/daemon/service_tui_smoke.go":         "//go:build tui_smoke\n\n",
+	"internal/daemon/service_tui_smoke_unix.go":    "//go:build tui_smoke && !windows\n\n",
+	"internal/daemon/service_tui_smoke_windows.go": "//go:build tui_smoke && windows\n\n",
 }
 
 var smokeSourceToolingAllowlist = map[string]struct{}{
@@ -19,17 +23,17 @@ var smokeSourceToolingAllowlist = map[string]struct{}{
 
 func TestSmokeSourceManifest(t *testing.T) {
 	root := tuiRepoRoot(t)
-	for rel := range smokeSourceManifest {
+	for rel, tag := range smokeSourceManifest {
 		src, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		if err != nil {
 			t.Fatalf("read manifest entry %s: %v", rel, err)
 		}
-		if !strings.HasPrefix(string(src), "//go:build tui_smoke && !windows\n\n") {
-			t.Fatalf("%s must start with exact smoke build tag", rel)
+		if !strings.HasPrefix(string(src), tag) {
+			t.Fatalf("%s must start with exact smoke build tag %q", rel, strings.TrimSpace(tag))
 		}
 	}
 
-	forbidden := []string{"ratchet-tui-smoke", "tui_smoke", "ConnectSmokeUnix"}
+	forbidden := []string{"ratchet-tui-smoke", "tui_smoke", "ConnectSmokeUnix", "ConnectSmokeLoopback", "StartTUISmokeDaemonLoopback"}
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err

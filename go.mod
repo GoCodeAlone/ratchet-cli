@@ -6,6 +6,7 @@ require (
 	charm.land/bubbles/v2 v2.1.0
 	charm.land/bubbletea/v2 v2.0.7
 	charm.land/lipgloss/v2 v2.0.4
+	github.com/ActiveState/termtest v0.7.2
 	github.com/GoCodeAlone/workflow v0.84.0
 	github.com/GoCodeAlone/workflow-plugin-agent v0.12.0
 	github.com/charmbracelet/glamour v0.10.0
@@ -29,6 +30,11 @@ require (
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	cloud.google.com/go/longrunning v0.8.0 // indirect
+	github.com/ActiveState/termtest/conpty v0.5.0 // indirect
+	github.com/ActiveState/termtest/expect v0.7.0 // indirect
+	github.com/ActiveState/termtest/xpty v0.6.0 // indirect
+	github.com/ActiveState/vt10x v1.3.1 // indirect
+	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
 	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/DataDog/datadog-go/v5 v5.8.3 // indirect
 	github.com/GoCodeAlone/go-plugin v1.7.0 // indirect
@@ -39,6 +45,7 @@ require (
 	github.com/GoCodeAlone/yaegi v0.17.2 // indirect
 	github.com/IBM/sarama v1.50.3 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
+	github.com/Netflix/go-expect v0.0.0-20201125194554-85d881c3777e // indirect
 	github.com/RoaringBitmap/roaring v1.9.4 // indirect
 	github.com/Workiva/go-datastructures v1.1.7 // indirect
 	github.com/alecthomas/chroma/v2 v2.14.0 // indirect
@@ -165,6 +172,7 @@ require (
 	github.com/json-iterator/go v1.1.13-0.20220915233716-71ac16282d12 // indirect
 	github.com/klauspost/compress v1.18.6 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
+	github.com/kr/pty v1.1.8 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
 	github.com/mailru/easyjson v0.9.2 // indirect
 	github.com/mark3labs/mcp-go v0.54.1 // indirect

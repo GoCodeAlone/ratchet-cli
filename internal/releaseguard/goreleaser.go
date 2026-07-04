@@ -46,6 +46,7 @@ type GoReleaserCask struct {
 	IDs          []string               `yaml:"ids"`
 	Binaries     []string               `yaml:"binaries"`
 	Repository   GoReleaserRepository   `yaml:"repository"`
+	SkipUpload   bool                   `yaml:"skip_upload"`
 	CommitAuthor GoReleaserCommitAuthor `yaml:"commit_author"`
 }
 
@@ -145,6 +146,9 @@ func ValidateHomebrewCaskConfig(cfg GoReleaserConfig) error {
 	}
 	if cask.Repository.Token != "{{ .Env.HOMEBREW_TAP_TOKEN }}" {
 		return fmt.Errorf("homebrew cask repository token must use HOMEBREW_TAP_TOKEN")
+	}
+	if !cask.SkipUpload {
+		return fmt.Errorf("homebrew cask skip_upload must be true so tap publish is gated after draft asset checks")
 	}
 	if cask.CommitAuthor.Name == "" || cask.CommitAuthor.Email == "" {
 		return fmt.Errorf("homebrew cask commit_author is required")

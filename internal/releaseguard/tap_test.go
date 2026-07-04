@@ -2,7 +2,9 @@ package releaseguard
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -62,6 +64,55 @@ end
 	if err := GuardTapPreflight(repoRoot(t), tap); err != nil {
 		t.Fatalf("guard tap preflight: %v", err)
 	}
+}
+
+func TestPublishHomebrewCaskScriptCommitsGeneratedCask(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script guard is verified on Unix CI")
+	}
+	root := repoRoot(t)
+	tap := t.TempDir()
+	generated := filepath.Join(t.TempDir(), "ratchet-cli.rb")
+	envFile := filepath.Join(t.TempDir(), "github-env")
+
+	runGit(t, tap, "init", "-b", "main")
+	runGit(t, tap, "config", "user.name", "test")
+	runGit(t, tap, "config", "user.email", "test@example.invalid")
+	mustWrite(t, filepath.Join(tap, "Casks", "ratchet-cli.rb"), `cask "ratchet-cli" do
+  version "0.0.0"
+  binary "ratchet"
+end
+`)
+	runGit(t, tap, "add", "Casks/ratchet-cli.rb")
+	runGit(t, tap, "commit", "-m", "seed cask")
+
+	mustWrite(t, generated, `cask "ratchet-cli" do
+  version "0.0.1"
+  url "https://github.com/GoCodeAlone/ratchet-cli/releases/download/v0.0.1/ratchet_darwin_arm64.tar.gz"
+  name "ratchet-cli"
+  binary "ratchet"
+end
+`)
+	cmd := exec.Command("bash", filepath.Join(root, "scripts", "publish-homebrew-cask.sh"), generated, tap)
+	cmd.Env = append(os.Environ(), "GITHUB_ENV="+envFile, "RELEASE_TAG=v0.0.1")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("publish cask script: %v\n%s", err, out)
+	}
+	envData, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatalf("read github env: %v", err)
+	}
+	if !strings.Contains(string(envData), "RATCHET_RELEASE_GUARD_TAP_COMMITS=Casks/ratchet-cli.rb=") {
+		t.Fatalf("github env missing tap commit: %s", envData)
+	}
+	data, err := os.ReadFile(filepath.Join(tap, "Casks", "ratchet-cli.rb"))
+	if err != nil {
+		t.Fatalf("read published cask: %v", err)
+	}
+	if !strings.Contains(string(data), `version "0.0.1"`) {
+		t.Fatalf("published cask missing generated version:\n%s", data)
+	}
+	runGit(t, tap, "diff", "--quiet")
 }
 
 func TestTapPostcheckUsesNamesCommitsAndVersion(t *testing.T) {
@@ -131,6 +182,15 @@ func prepareModeFixtureTap(t *testing.T, path, version string) {
   binary "ratchet"
 end
 `)
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
 }
 
 func mustWrite(t *testing.T, path, body string) {
