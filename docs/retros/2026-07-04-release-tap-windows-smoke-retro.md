@@ -53,7 +53,7 @@ Activation log unavailable at the canonical repo root `.claude/autodev-state/in-
 
 - The first draft-assets implementation under-specified required metadata: `draft:false` failed, but missing `draft` passed until Copilot review.
 - `gh pr merge --admin` attempted local git worktree operations when run inside a worktree whose base branch was checked out elsewhere; remote-only `--repo` invocation avoided the local checkout conflict.
-- `Release Check` is the slowest PR/master job by a wide margin; the bounded polling still worked, but future release-check failures will need direct job-log inspection after completion.
+- `Release Check` is the slowest checked job by a wide margin; the bounded polling still worked, but future release-check failures will need direct job-log inspection after completion.
 
 ## Plugin-level follow-ups
 
@@ -63,4 +63,4 @@ No plugin-level change yet. The missing-field issue is a useful local testing le
 
 | Guidance file | Change | Reason |
 |---|---|---|
-| `docs/design-guidance.md` | no change | No durable project-wide guidance file exists, and the lesson is releaseguard-test specificity rather than a new ratchet-cli product or architecture constraint. |
+| `docs/design-guidance.md` | not created | No durable project-wide guidance file exists, and the lesson is releaseguard-test specificity rather than a new ratchet-cli product or architecture constraint. |
