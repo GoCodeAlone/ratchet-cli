@@ -20,7 +20,7 @@ Design: `docs/plans/2026-07-04-ratchet-cli-conpty-split-publish-design.md`
 |------|-------|-------|--------|
 | 1 | feat: prove windows conpty and split publish | Task 1, Task 2, Task 3, Task 4, Task 5, Task 6, Task 7, Task 8, Task 9, Task 10 | feat/conpty-split-publish |
 
-**Status:** Locked 2026-07-04T06:22:29Z
+**Status:** Complete 2026-07-04T07:29:12Z
 
 ### Task 1: Record And Lock Plan
 
