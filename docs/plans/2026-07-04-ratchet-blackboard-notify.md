@@ -30,7 +30,7 @@
 |------|-------|-------|--------|
 | 1 | feat: add daemon blackboard CLI | Task 1, Task 2, Task 3, Task 4 | feat/blackboard-cli |
 
-**Status:** Draft
+**Status:** Locked 2026-07-04T19:49:20Z
 
 ### Task 1: Blackboard CLI Parser And Output Tests
 
