@@ -162,7 +162,7 @@ func GuardDraftAssets(root, assets, version string) error {
 	if !versionMatches(metadata.Tag, version) && !versionMatches(metadata.Version, version) {
 		return fmt.Errorf("draft asset metadata tag/version %q/%q does not match requested %q", metadata.Tag, metadata.Version, version)
 	}
-	if metadata.Draft != nil && !*metadata.Draft {
+	if metadata.Draft == nil || !*metadata.Draft {
 		return fmt.Errorf("draft asset metadata draft state must be true")
 	}
 	return nil

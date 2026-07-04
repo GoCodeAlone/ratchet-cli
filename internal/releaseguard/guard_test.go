@@ -212,7 +212,7 @@ func TestDraftAssetsRequiresMatchingVersion(t *testing.T) {
 	if !strings.Contains(err.Error(), "v0.0.0-test") {
 		t.Fatalf("error %q does not name requested version", err)
 	}
-	if err := os.WriteFile(filepath.Join(dist, "metadata.json"), []byte(`{"tag":"v0.0.0-test","version":"0.0.0-test"}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dist, "metadata.json"), []byte(`{"tag":"v0.0.0-test","version":"0.0.0-test","draft":true}`), 0o644); err != nil {
 		t.Fatalf("write matching metadata: %v", err)
 	}
 	if err := GuardDraftAssets(repoRoot(t), dist, "v0.0.0-test"); err != nil {
@@ -226,10 +226,20 @@ func TestDraftAssetsRequiresDraftMetadata(t *testing.T) {
 		hostVersion: "ratchet version v0.0.0-test\n",
 		hostHelp:    "ratchet help\n",
 	})
-	if err := os.WriteFile(filepath.Join(dist, "metadata.json"), []byte(`{"tag":"v0.0.0-test","version":"0.0.0-test","draft":false}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dist, "metadata.json"), []byte(`{"tag":"v0.0.0-test","version":"0.0.0-test"}`), 0o644); err != nil {
 		t.Fatalf("write metadata: %v", err)
 	}
 	err := GuardDraftAssets(repoRoot(t), dist, "v0.0.0-test")
+	if err == nil {
+		t.Fatal("expected missing draft metadata to fail")
+	}
+	if !strings.Contains(err.Error(), "draft") {
+		t.Fatalf("error %q does not name draft state", err)
+	}
+	if err := os.WriteFile(filepath.Join(dist, "metadata.json"), []byte(`{"tag":"v0.0.0-test","version":"0.0.0-test","draft":false}`), 0o644); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+	err = GuardDraftAssets(repoRoot(t), dist, "v0.0.0-test")
 	if err == nil {
 		t.Fatal("expected non-draft metadata to fail")
 	}
