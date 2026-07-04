@@ -21,15 +21,15 @@ func TestAutocompleteSetFilter(t *testing.T) {
 	})
 
 	t.Run("partial_prefix_filters", func(t *testing.T) {
-		ac = ac.SetFilter("/mo")
+		ac = ac.SetFilter("/cle")
 		if !ac.Visible() {
-			t.Error("expected autocomplete to be visible for /mo")
+			t.Error("expected autocomplete to be visible for /cle")
 		}
 		if len(ac.matches) != 1 {
-			t.Fatalf("expected 1 match for /mo, got %d", len(ac.matches))
+			t.Fatalf("expected 1 match for /cle, got %d", len(ac.matches))
 		}
-		if ac.matches[0].Name != "/model" {
-			t.Errorf("expected /model, got %s", ac.matches[0].Name)
+		if ac.matches[0].Name != "/clear" {
+			t.Errorf("expected /clear, got %s", ac.matches[0].Name)
 		}
 	})
 
