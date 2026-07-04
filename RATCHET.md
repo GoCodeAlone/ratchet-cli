@@ -34,6 +34,9 @@ go install github.com/GoCodeAlone/ratchet-cli/cmd/ratchet@latest
 
 GitHub Releases also publish Linux and macOS tar.gz archives plus Windows zip
 archives for amd64 and arm64. Windows installer packages are not published yet.
+Release safety is covered by the GoReleaser snapshot release-check, draft
+release asset postcheck, tap preflight, and tap postcheck gates. Windows
+executable runtime remains deferred pending approved runner changes.
 
 Harness evidence boundaries live in [docs/harness-emulation.md](docs/harness-emulation.md);
 policy and deferred automation boundaries live in

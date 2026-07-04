@@ -54,6 +54,10 @@ The TUI binary evidence has explicit boundaries:
   `pty-proven` in `internal/tui/commands/testdata/command_surface_spec.json`;
 - Windows cross-build/package archive inspection is release artifact proof, not
   Windows interactive ConPTY proof;
+- GoReleaser snapshot release-check, draft release asset postcheck, tap
+  preflight, and tap postcheck gates verify release archives and Homebrew cask
+  updates;
+- Windows executable runtime remains deferred pending approved runner changes;
 - Homebrew/tap safety is prechecked and postchecked, not fully pre-public gated.
 
 ```sh
