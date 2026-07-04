@@ -14,10 +14,18 @@ import (
 )
 
 type retroAnalyzeOutput struct {
-	SessionID            string          `json:"session_id,omitempty"`
-	Findings             []retro.Finding `json:"findings"`
-	LocalActions         []string        `json:"local_actions,omitempty"`
-	UpstreamInstructions []string        `json:"upstream_instructions,omitempty"`
+	SessionID            string                `json:"session_id,omitempty"`
+	Findings             []retroAnalyzeFinding `json:"findings"`
+	LocalActions         []string              `json:"local_actions,omitempty"`
+	UpstreamInstructions []string              `json:"upstream_instructions,omitempty"`
+}
+
+type retroAnalyzeFinding struct {
+	Pattern        string `json:"pattern"`
+	Evidence       string `json:"evidence"`
+	Project        string `json:"project,omitempty"`
+	LocalAction    string `json:"local_action,omitempty"`
+	UpstreamAction string `json:"upstream_action,omitempty"`
 }
 
 type retroAnalyzeOptions struct {
@@ -26,9 +34,12 @@ type retroAnalyzeOptions struct {
 	JSON         bool
 }
 
+var exitProcess = os.Exit
+
 func handleRetro(args []string) {
 	if err := runRetro(context.Background(), args, os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "retro error: %v\n", err)
+		exitProcess(1)
 	}
 }
 
@@ -89,7 +100,7 @@ func executeRetroAnalyze(ctx context.Context, opts retroAnalyzeOptions, w io.Wri
 	routed := retro.RouteFindings(cfg.Retro, report)
 	output := retroAnalyzeOutput{
 		SessionID:            report.SessionID,
-		Findings:             report.Findings,
+		Findings:             retroAnalyzeFindings(report.Findings),
 		LocalActions:         routed.LocalActions,
 		UpstreamInstructions: routed.UpstreamInstructions,
 	}
@@ -98,6 +109,20 @@ func executeRetroAnalyze(ctx context.Context, opts retroAnalyzeOptions, w io.Wri
 	}
 	printRetroAnalyzeText(w, output)
 	return nil
+}
+
+func retroAnalyzeFindings(findings []retro.Finding) []retroAnalyzeFinding {
+	out := make([]retroAnalyzeFinding, 0, len(findings))
+	for _, finding := range findings {
+		out = append(out, retroAnalyzeFinding{
+			Pattern:        finding.Pattern,
+			Evidence:       finding.Evidence,
+			Project:        finding.Project,
+			LocalAction:    finding.LocalAction,
+			UpstreamAction: finding.UpstreamAction,
+		})
+	}
+	return out
 }
 
 func filterRetroEventsBySession(events []retro.Event, sessionID string) []retro.Event {

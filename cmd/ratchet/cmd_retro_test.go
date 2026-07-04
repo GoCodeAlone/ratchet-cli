@@ -83,6 +83,27 @@ func TestHandleRetroAnalyzeJSON(t *testing.T) {
 	if len(payload.UpstreamInstructions) != 1 || !strings.Contains(payload.UpstreamInstructions[0], "ratchet-cli PR instruction:") {
 		t.Fatalf("upstream instructions = %#v", payload.UpstreamInstructions)
 	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &raw); err != nil {
+		t.Fatalf("decode raw json %q: %v", stdout.String(), err)
+	}
+	findings, ok := raw["findings"].([]any)
+	if !ok || len(findings) != 1 {
+		t.Fatalf("raw findings = %#v", raw["findings"])
+	}
+	finding, ok := findings[0].(map[string]any)
+	if !ok {
+		t.Fatalf("raw finding = %#v", findings[0])
+	}
+	for _, key := range []string{"pattern", "evidence", "project", "local_action", "upstream_action"} {
+		if _, ok := finding[key]; !ok {
+			t.Fatalf("raw finding missing snake_case key %q: %#v", key, finding)
+		}
+	}
+	if _, ok := finding["Pattern"]; ok {
+		t.Fatalf("raw finding uses exported Go field names: %#v", finding)
+	}
 }
 
 func TestHandleRetroAnalyzeDisabledConfigSuppressesRoutes(t *testing.T) {
@@ -118,6 +139,28 @@ func TestHandleRetroAnalyzeMissingEvidence(t *testing.T) {
 	err := runRetro(context.Background(), []string{"analyze", "--evidence", filepath.Join(t.TempDir(), "missing.jsonl")}, &stdout)
 	if err == nil || !strings.Contains(err.Error(), "read retro evidence") {
 		t.Fatalf("runRetro missing evidence error = %v", err)
+	}
+}
+
+func TestHandleRetroExitsNonzeroOnError(t *testing.T) {
+	oldExit := exitProcess
+	t.Cleanup(func() { exitProcess = oldExit })
+	var gotCode int
+	exitProcess = func(code int) {
+		gotCode = code
+		panic("exit")
+	}
+
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatal("handleRetro did not exit")
+			}
+		}()
+		handleRetro([]string{"analyze", "--evidence", filepath.Join(t.TempDir(), "missing.jsonl")})
+	}()
+	if gotCode != 1 {
+		t.Fatalf("exit code = %d, want 1", gotCode)
 	}
 }
 
