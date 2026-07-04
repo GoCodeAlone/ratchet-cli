@@ -74,5 +74,5 @@ No plugin-level change is warranted from this closeout alone. The useful local p
 
 - PRs #72, #74, #76, #78, and #80 merged green in locked order; retro PRs #73, #75, #77, and #79 also merged green.
 - External prerequisite GoCodeAlone/homebrew-tap#63 removed stale tap install surfaces before fail-closed tap enforcement.
-- Local closeout verification covered focused releaseguard, harness redaction, startup/TUI/daemon/client/docs tests, tagged `tui_smoke` tests, Windows amd64/arm64 cross-builds, `go test -race ./...`, `go vet ./...`, `goreleaser check`, release artifact guards, and pinned actionlint.
+- Local closeout verification covered focused `internal/releaseguard`, `internal/harnessredact`, startup/TUI/daemon/client/docs tests, tagged `tui_smoke` tests, Windows amd64/arm64 cross-builds, `go test -race ./...`, `go vet ./...`, `goreleaser check`, release artifact guards, and pinned actionlint.
 - Release `v0.26.0` published from `b348d8543675fab109bf3f4c9e20bbd537225f71`; Homebrew tap `Casks/ratchet-cli.rb` was updated to version `0.26.0` at GoCodeAlone/homebrew-tap@7f31504f38accaa7763a8826fc381de4bac9c348.

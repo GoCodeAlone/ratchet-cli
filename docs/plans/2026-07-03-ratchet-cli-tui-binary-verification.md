@@ -857,7 +857,7 @@ Rollback: if release fails before undraft, leave draft private and fix assets/ta
 
 Evidence:
 - PRs #72, #74, #76, #78, #80, plus retro PRs #73, #75, #77, #79, merged green in locked order; external tap cleanup PR GoCodeAlone/homebrew-tap#63 merged before fail-closed tap enforcement.
-- Local closeout verification passed: focused releaseguard, harnessredact, TUI, daemon/client, docs, tagged `tui_smoke`, Windows amd64/arm64 cross-builds, `go test -race ./...`, `go vet ./...`, `goreleaser check`, `scripts/check-release-artifacts.sh`, manifest-only releaseguard, and pinned actionlint.
+- Local closeout verification passed: focused `internal/releaseguard`, `internal/harnessredact`, TUI, daemon/client, docs, tagged `tui_smoke`, Windows amd64/arm64 cross-builds, `go test -race ./...`, `go vet ./...`, `goreleaser check`, `scripts/check-release-artifacts.sh`, manifest-only `internal/releaseguard`, and pinned actionlint.
 - Release `v0.26.0` published from `b348d8543675fab109bf3f4c9e20bbd537225f71` via Release run `28694540082`; release workflow completed successfully after draft asset and tap postchecks.
 - GitHub release `v0.26.0` is not draft and includes checksums plus Linux, macOS, and Windows amd64/arm64 archives; Homebrew tap `Casks/ratchet-cli.rb` is at version `0.26.0` at GoCodeAlone/homebrew-tap@7f31504f38accaa7763a8826fc381de4bac9c348.
 
