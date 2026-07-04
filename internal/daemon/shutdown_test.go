@@ -57,15 +57,19 @@ func TestStartShutdownRPCStopsServerAndRemovesFiles(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	errCh := make(chan error, 1)
+	var exited atomic.Bool
 	go func() {
 		errCh <- Start(ctx, false)
 	}()
 	t.Cleanup(func() {
 		cancel()
-		select {
-		case <-errCh:
-		case <-time.After(3 * time.Second):
-			t.Log("daemon Start did not exit before cleanup timeout")
+		if !exited.Load() {
+			select {
+			case <-errCh:
+				exited.Store(true)
+			case <-time.After(3 * time.Second):
+				t.Log("daemon Start did not exit before cleanup timeout")
+			}
 		}
 		CleanupSocket()
 		CleanupPID()
@@ -101,6 +105,7 @@ func TestStartShutdownRPCStopsServerAndRemovesFiles(t *testing.T) {
 
 	select {
 	case err := <-errCh:
+		exited.Store(true)
 		if err != nil && !errors.Is(err, grpc.ErrServerStopped) && !errors.Is(err, net.ErrClosed) {
 			t.Fatalf("Start returned unexpected error: %v", err)
 		}
