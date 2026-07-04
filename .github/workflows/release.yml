@@ -39,14 +39,13 @@ jobs:
           RATCHET_RELEASE_GUARD_MODE=tap-preflight \
             RATCHET_RELEASE_GUARD_TAP="$RUNNER_TEMP/homebrew-tap-preflight" \
             go test -count=1 ./internal/releaseguard -run TestTapPreflight
-      - name: Publish with GoReleaser
+      - name: Publish GitHub draft with GoReleaser
         uses: goreleaser/goreleaser-action@v7
         with:
           version: "~> v2"
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
       - name: Resolve draft release
         uses: actions/github-script@v7
         with:
@@ -95,12 +94,13 @@ jobs:
         run: |
           git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/GoCodeAlone/homebrew-tap.git" "$RUNNER_TEMP/homebrew-tap"
           git -C "$RUNNER_TEMP/homebrew-tap" checkout main
+          git -C "$RUNNER_TEMP/homebrew-tap" config user.name goreleaserbot
+          git -C "$RUNNER_TEMP/homebrew-tap" config user.email bot@goreleaser.com
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-      - name: Derive tap commits
+      - name: Publish generated Homebrew cask
         run: |
-          cask_sha="$(git -C "$RUNNER_TEMP/homebrew-tap" log -n 1 --format=%H -- Casks/ratchet-cli.rb)"
-          printf 'RATCHET_RELEASE_GUARD_TAP_COMMITS=Casks/ratchet-cli.rb=%s\n' "$cask_sha" >> "$GITHUB_ENV"
+          scripts/publish-homebrew-cask.sh --push dist/homebrew/Casks/ratchet-cli.rb "$RUNNER_TEMP/homebrew-tap"
       - name: Check tap post-publish state
         run: |
           RATCHET_RELEASE_GUARD_MODE=tap-postcheck \

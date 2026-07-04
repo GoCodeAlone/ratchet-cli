@@ -4,15 +4,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
 
 func TestSmokeBinaryBuildTags(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("smoke driver is Unix-only")
-	}
 	root := repoRoot(t)
 
 	assertGoListHasNoGoFiles(t, root, nil, "go list ./cmd/ratchet-tui-smoke")
@@ -24,8 +20,8 @@ func TestSmokeBinaryBuildTags(t *testing.T) {
 
 	for _, arch := range []string{"amd64", "arm64"} {
 		env := []string{"GOOS=windows", "GOARCH=" + arch}
-		assertGoListHasNoGoFiles(t, root, env, "windows go list -tags tui_smoke "+arch, "-tags", "tui_smoke")
-		assertGoFails(t, root, env, "windows go build -tags tui_smoke "+arch,
+		assertGoListHasBuildableFiles(t, root, env, "windows go list -tags tui_smoke "+arch, "-tags", "tui_smoke")
+		assertGoSucceeds(t, root, env, "windows go build -tags tui_smoke "+arch,
 			"build", "-tags", "tui_smoke", "./cmd/ratchet-tui-smoke")
 	}
 }
@@ -40,6 +36,19 @@ func assertGoListHasNoGoFiles(t *testing.T, root string, env []string, label str
 	}
 	if strings.TrimSpace(out) != "0" {
 		t.Fatalf("%s: expected zero non-test buildable files, got %q", label, strings.TrimSpace(out))
+	}
+}
+
+func assertGoListHasBuildableFiles(t *testing.T, root string, env []string, label string, extraArgs ...string) {
+	t.Helper()
+	args := append([]string{"list"}, extraArgs...)
+	args = append(args, "-f", "{{len .GoFiles}}", "./cmd/ratchet-tui-smoke")
+	out, err := runGo(root, env, args...)
+	if err != nil {
+		t.Fatalf("%s: go list failed unexpectedly: %v\n%s", label, err, out)
+	}
+	if strings.TrimSpace(out) == "0" {
+		t.Fatalf("%s: expected tagged buildable files, got %q", label, strings.TrimSpace(out))
 	}
 }
 

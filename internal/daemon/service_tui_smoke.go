@@ -1,4 +1,4 @@
-//go:build tui_smoke && !windows
+//go:build tui_smoke
 
 package daemon
 
@@ -6,12 +6,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"net"
 	"os"
 	"time"
-
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/hooks"
 	"github.com/GoCodeAlone/ratchet-cli/internal/mesh"
@@ -21,76 +17,6 @@ import (
 	"github.com/GoCodeAlone/workflow/secrets"
 	_ "modernc.org/sqlite"
 )
-
-// StartTUISmokeDaemon starts the private daemon used by ratchet-tui-smoke.
-func StartTUISmokeDaemon(ctx context.Context, tempRoot, socketPath string) (*pb.Session, func(), error) {
-	svc, err := newTUISmokeService(ctx, tempRoot)
-	if err != nil {
-		return nil, func() {}, err
-	}
-
-	lis, err := net.Listen("unix", socketPath)
-	if err != nil {
-		svc.close()
-		return nil, func() {}, fmt.Errorf("listen smoke socket: %w", err)
-	}
-	if err := os.Chmod(socketPath, 0600); err != nil {
-		_ = lis.Close()
-		svc.close()
-		return nil, func() {}, fmt.Errorf("chmod smoke socket: %w", err)
-	}
-
-	server := grpc.NewServer()
-	pb.RegisterRatchetDaemonServer(server, svc)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		_ = server.Serve(lis)
-	}()
-
-	conn, err := grpc.NewClient("unix://"+socketPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		server.GracefulStop()
-		<-done
-		_ = lis.Close()
-		svc.close()
-		return nil, func() {}, fmt.Errorf("connect smoke setup client: %w", err)
-	}
-	setupClient := pb.NewRatchetDaemonClient(conn)
-	if _, err := setupClient.AddProvider(ctx, &pb.AddProviderReq{
-		Alias:     "e2e-mock",
-		Type:      "mock",
-		IsDefault: true,
-	}); err != nil {
-		_ = conn.Close()
-		server.GracefulStop()
-		<-done
-		_ = lis.Close()
-		svc.close()
-		return nil, func() {}, fmt.Errorf("add smoke provider: %w", err)
-	}
-	session, err := setupClient.CreateSession(ctx, &pb.CreateSessionReq{
-		WorkingDir: tempRoot,
-		Provider:   "e2e-mock",
-	})
-	_ = conn.Close()
-	if err != nil {
-		server.GracefulStop()
-		<-done
-		_ = lis.Close()
-		svc.close()
-		return nil, func() {}, fmt.Errorf("create smoke session: %w", err)
-	}
-
-	cleanup := func() {
-		server.GracefulStop()
-		<-done
-		_ = lis.Close()
-		svc.close()
-		_ = os.Remove(socketPath)
-	}
-	return session, cleanup, nil
-}
 
 func newTUISmokeService(ctx context.Context, tempRoot string) (*Service, error) {
 	db, err := sql.Open("sqlite", ":memory:?_journal_mode=WAL&_busy_timeout=5000")

@@ -95,6 +95,20 @@ jobs:
       - name: Run tagged daemon smoke tests
         run: go test -tags tui_smoke ./internal/daemon -run 'SmokeService|ListJobs' -count=1
 
+  windows-conpty-smoke:
+    name: Windows ConPTY Smoke
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - name: Configure Git for private modules
+        run: git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
+      - name: Run Windows ConPTY smoke tests
+        run: go test -tags tui_smoke ./internal/client ./internal/daemon ./internal/tui -run 'ConnectSmokeLoopback|SmokeServiceLoopback|WindowsConPTY' -count=1 -timeout=10m
+
   tap-preflight:
     name: Tap Preflight
     runs-on: ubuntu-latest

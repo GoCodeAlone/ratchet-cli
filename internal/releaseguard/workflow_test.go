@@ -70,6 +70,13 @@ func TestCITUISmokeAndTapPreflightJobs(t *testing.T) {
 	requireRun(t, smoke, "Run tagged client smoke tests", "go test -tags tui_smoke ./internal/client -run 'ConnectSmokeUnix' -count=1")
 	requireRun(t, smoke, "Run tagged daemon smoke tests", "go test -tags tui_smoke ./internal/daemon -run 'SmokeService|ListJobs' -count=1")
 
+	windowsSmoke := requireJob(t, workflow, "windows-conpty-smoke")
+	if windowsSmoke.RunsOn != "windows-2025" {
+		t.Fatalf("windows-conpty-smoke runs-on = %q, want windows-2025", windowsSmoke.RunsOn)
+	}
+	requireRun(t, windowsSmoke, "Run Windows ConPTY smoke tests", "go test -tags tui_smoke ./internal/client ./internal/daemon ./internal/tui")
+	requireRun(t, windowsSmoke, "Run Windows ConPTY smoke tests", "WindowsConPTY")
+
 	tap := requireJob(t, workflow, "tap-preflight")
 	requireRun(t, tap, "Clone Homebrew tap", "gh repo clone GoCodeAlone/homebrew-tap")
 	requireRun(t, tap, "Run tap preflight", "RATCHET_RELEASE_GUARD_MODE=tap-preflight")
@@ -87,13 +94,18 @@ func TestReleaseWorkflowPrePublishGuards(t *testing.T) {
 	requireRun(t, job, "Check draft release config", "go test -count=1 ./internal/releaseguard -run TestGoReleaserReleaseDraftConfig")
 	requireRun(t, job, "Run tap preflight", "RATCHET_RELEASE_GUARD_MODE=tap-preflight")
 	requireRun(t, job, "Run tap preflight", "go test -count=1 ./internal/releaseguard -run TestTapPreflight")
-	requireGoReleaserStep(t, job, "release --clean")
+	requireStep(t, job, func(step workflowStep) bool {
+		return step.Name == "Publish GitHub draft with GoReleaser" &&
+			step.Uses == "goreleaser/goreleaser-action@v7" &&
+			step.With["args"] == "release --clean" &&
+			step.Env["HOMEBREW_TAP_TOKEN"] == ""
+	}, "GoReleaser draft publish without HOMEBREW_TAP_TOKEN")
 
 	raw := loadWorkflowRaw(t, ".github/workflows/release.yml")
 	requireTextOrder(t, raw, "args: check", "args: release --snapshot --clean --skip=publish")
 	requireTextOrder(t, raw, "args: release --snapshot --clean --skip=publish", "Check snapshot release artifacts")
-	requireTextOrder(t, raw, "Check draft release config", "args: release --clean")
-	requireTextOrder(t, raw, "Run tap preflight", "args: release --clean")
+	requireTextOrder(t, raw, "Check draft release config", "Publish GitHub draft with GoReleaser")
+	requireTextOrder(t, raw, "Run tap preflight", "Publish GitHub draft with GoReleaser")
 }
 
 func TestReleaseWorkflowPostPublishGuards(t *testing.T) {
@@ -107,27 +119,32 @@ func TestReleaseWorkflowPostPublishGuards(t *testing.T) {
 	requireRun(t, job, "Check draft release assets", "RATCHET_RELEASE_GUARD_ASSETS=\"$RUNNER_TEMP/release-assets\"")
 	requireRun(t, job, "Check draft release assets", "go test -count=1 ./internal/releaseguard -run TestDraftAssets")
 	requireRun(t, job, "Clone Homebrew tap", "HOMEBREW_TAP_TOKEN")
-	requireRun(t, job, "Derive tap commits", "Casks/ratchet-cli.rb")
+	requireRun(t, job, "Publish generated Homebrew cask", "scripts/publish-homebrew-cask.sh --push dist/homebrew/Casks/ratchet-cli.rb")
 	requireRun(t, job, "Check tap post-publish state", "RATCHET_RELEASE_GUARD_MODE=tap-postcheck")
 	requireRun(t, job, "Check tap post-publish state", "RATCHET_RELEASE_GUARD_TAP_NAMES=ratchet-cli")
 	requireRun(t, job, "Check tap post-publish state", "RATCHET_RELEASE_GUARD_TAP_COMMITS=")
 	requireRun(t, job, "Check tap post-publish state", "go test -count=1 ./internal/releaseguard -run TestTapPostcheck")
 	requireRun(t, job, "Publish GitHub release", "updateRelease")
 
-	requireTextOrder(t, raw, "args: release --clean", "Check draft release assets")
-	requireTextOrder(t, raw, "Check draft release assets", "Check tap post-publish state")
+	requireTextOrder(t, raw, "Publish GitHub draft with GoReleaser", "Check draft release assets")
+	requireTextOrder(t, raw, "Check draft release assets", "Publish generated Homebrew cask")
+	requireTextOrder(t, raw, "Publish generated Homebrew cask", "Check tap post-publish state")
 	requireTextOrder(t, raw, "Check tap post-publish state", "Publish GitHub release")
 }
 
-func TestWorkflowsAvoidWindowsRunnerAndExeExecution(t *testing.T) {
+func TestWorkflowsAvoidStaleWindowsRunnerAndReleaseExeExecution(t *testing.T) {
 	for _, rel := range []string{".github/workflows/ci.yml", ".github/workflows/release.yml"} {
 		raw := loadWorkflowRaw(t, rel)
 		if strings.Contains(raw, "windows-latest") {
-			t.Fatalf("%s must not add a Windows runner in this slice", rel)
+			t.Fatalf("%s must pin concrete Windows images instead of windows-latest", rel)
 		}
-		if strings.Contains(raw, "./ratchet.exe") || strings.Contains(raw, " ratchet.exe") {
-			t.Fatalf("%s must not execute ratchet.exe in this slice", rel)
-		}
+	}
+	raw := loadWorkflowRaw(t, ".github/workflows/release.yml")
+	if strings.Contains(raw, "windows-2025") {
+		t.Fatalf("release workflow must not add a Windows runner")
+	}
+	if strings.Contains(raw, "./ratchet.exe") || strings.Contains(raw, " ratchet.exe") {
+		t.Fatalf("release workflow must not execute ratchet.exe")
 	}
 }
 

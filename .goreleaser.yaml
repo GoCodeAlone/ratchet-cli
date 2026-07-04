@@ -54,6 +54,7 @@ homebrew_casks:
       name: homebrew-tap
       branch: main
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    skip_upload: true
     commit_author:
       name: goreleaserbot
       email: bot@goreleaser.com

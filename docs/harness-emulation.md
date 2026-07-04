@@ -52,13 +52,15 @@ The TUI binary evidence has explicit boundaries:
   public release artifacts;
 - Unix PTY binary smoke drives `ratchet-tui-smoke` through command rows marked
   `pty-proven` in `internal/tui/commands/testdata/command_surface_spec.json`;
-- Windows cross-build/package archive inspection is release artifact proof, not
-  Windows interactive ConPTY proof;
+- Windows ConPTY binary smoke drives the test-only `ratchet-tui-smoke` binary
+  through TUI startup, mocked chat, slash help, and clean exit on a hosted
+  Windows runner;
+- Windows cross-build/package archive inspection remains release artifact
+  proof for the packaged Windows archives;
 - GoReleaser snapshot release-check, draft release asset postcheck, tap
-  preflight, and tap postcheck gates verify release archives and Homebrew cask
-  updates;
-- Windows executable runtime remains deferred pending approved runner changes;
-- Homebrew/tap safety is prechecked and postchecked, not fully pre-public gated.
+  preflight, generated-cask publish, and tap postcheck gates verify release
+  archives and Homebrew cask updates before the GitHub release is made public;
+- packaged release `ratchet.exe` runtime remains deferred.
 
 ```sh
 go test ./cmd/ratchet -run 'StartupSmoke|VersionHelpAndDaemonStatus' -count=1
