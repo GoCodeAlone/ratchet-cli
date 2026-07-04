@@ -82,7 +82,7 @@ Rollback: revert commit; no daemon data migration.
 ### Task 2: Real CLI-To-Daemon Smoke
 
 **Files:**
-- Modify: `cmd/ratchet/harness_smoke_test.go` or sibling focused smoke test.
+- Create: `cmd/ratchet/blackboard_harness_test.go`
 
 **Step 1: Write failing smoke test**
 
@@ -133,7 +133,7 @@ Extend help-surface or command docs tests to require:
 
 **Step 2: Verify red**
 
-Run: `go test ./cmd/ratchet -run 'TestCLIHelp|TestHarnessDocs' -count=1`
+Run: `go test ./cmd/ratchet -run 'TestCLIHelpSlashSurfaceMatchesCommandSpec|TestHarnessEmulationDocsCoverSupportedModesAndParity|TestHarnessDocsDescribeTUIBinaryEvidenceBoundaries' -count=1`
 Expected: FAIL until docs/help mention the command.
 
 **Step 3: Update docs/help**
@@ -146,7 +146,7 @@ Document:
 
 **Step 4: Verify green**
 
-Run: `go test ./cmd/ratchet -run 'TestCLIHelp|TestHarnessDocs' -count=1`
+Run: `go test ./cmd/ratchet -run 'TestCLIHelpSlashSurfaceMatchesCommandSpec|TestHarnessEmulationDocsCoverSupportedModesAndParity|TestHarnessDocsDescribeTUIBinaryEvidenceBoundaries' -count=1`
 Expected: PASS.
 
 **Step 5: Commit**
@@ -173,7 +173,7 @@ Record:
 **Step 2: Run verification**
 
 Run:
-- `go test ./cmd/ratchet -run 'TestHandleBlackboard|TestHarnessSmokeBlackboardCLI|TestCLIHelp|TestHarnessDocs' -count=1`
+- `go test ./cmd/ratchet -run 'TestHandleBlackboard|TestHarnessSmokeBlackboardCLI|TestCLIHelpSlashSurfaceMatchesCommandSpec|TestHarnessEmulationDocsCoverSupportedModesAndParity|TestHarnessDocsDescribeTUIBinaryEvidenceBoundaries' -count=1`
 - `go test ./internal/daemon -run 'TestBlackboardRPCReadWriteList|TestDaemonMCPToolCallsUseDaemonClient|TestMeshStream_BlackboardSync' -count=1`
 - `go test ./cmd/ratchet ./internal/daemon -count=1`
 - `go vet ./...`
