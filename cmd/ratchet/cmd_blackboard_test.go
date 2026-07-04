@@ -145,9 +145,9 @@ func TestHandleBlackboardValidation(t *testing.T) {
 		args []string
 		want string
 	}{
-		{name: "missing subcommand", args: nil, want: "Usage: ratchet blackboard"},
-		{name: "read missing key", args: []string{"read", "coordination"}, want: "Usage: ratchet blackboard read"},
-		{name: "write missing value", args: []string{"write", "coordination", "status"}, want: "Usage: ratchet blackboard write"},
+		{name: "missing subcommand", args: nil, want: "usage: ratchet blackboard"},
+		{name: "read missing key", args: []string{"read", "coordination"}, want: "usage: ratchet blackboard read"},
+		{name: "write missing value", args: []string{"write", "coordination", "status"}, want: "usage: ratchet blackboard write"},
 		{name: "unknown command", args: []string{"remove", "coordination", "status"}, want: "unknown blackboard command"},
 	}
 

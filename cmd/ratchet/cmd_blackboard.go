@@ -41,7 +41,7 @@ func handleBlackboard(args []string) {
 func runBlackboard(ctx context.Context, c blackboardClient, args []string, stdout, stderr io.Writer) error {
 	_ = stderr
 	if len(args) == 0 {
-		return fmt.Errorf("Usage: ratchet blackboard <list|read|write> [args...]")
+		return fmt.Errorf("usage: ratchet blackboard <list|read|write> [args...]")
 	}
 
 	subcmd := args[0]
@@ -92,7 +92,7 @@ func defaultBlackboardAuthor() string {
 
 func runBlackboardList(ctx context.Context, c blackboardClient, opts blackboardOptions, stdout io.Writer) error {
 	if len(opts.args) > 1 {
-		return fmt.Errorf("Usage: ratchet blackboard list [section] [--json]")
+		return fmt.Errorf("usage: ratchet blackboard list [section] [--json]")
 	}
 	section := ""
 	if len(opts.args) == 1 {
@@ -120,7 +120,7 @@ func runBlackboardList(ctx context.Context, c blackboardClient, opts blackboardO
 
 func runBlackboardRead(ctx context.Context, c blackboardClient, opts blackboardOptions, stdout io.Writer) error {
 	if len(opts.args) != 2 {
-		return fmt.Errorf("Usage: ratchet blackboard read <section> <key> [--json]")
+		return fmt.Errorf("usage: ratchet blackboard read <section> <key> [--json]")
 	}
 	resp, err := c.BlackboardRead(ctx, opts.args[0], opts.args[1])
 	if err != nil {
@@ -138,7 +138,7 @@ func runBlackboardRead(ctx context.Context, c blackboardClient, opts blackboardO
 
 func runBlackboardWrite(ctx context.Context, c blackboardClient, opts blackboardOptions, stdout io.Writer) error {
 	if len(opts.args) < 3 {
-		return fmt.Errorf("Usage: ratchet blackboard write <section> <key> <value...> [--author name] [--json]")
+		return fmt.Errorf("usage: ratchet blackboard write <section> <key> <value...> [--author name] [--json]")
 	}
 	section, key := opts.args[0], opts.args[1]
 	value := strings.Join(opts.args[2:], " ")
