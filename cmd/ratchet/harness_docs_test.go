@@ -140,6 +140,19 @@ func TestHarnessDocsDescribeTUIBinaryEvidenceBoundaries(t *testing.T) {
 			t.Fatalf("public docs missing evidence boundary link %q", requiredLink)
 		}
 	}
+
+	releaseEvidenceDocs := strings.Join([]string{readme, harness, ratchet, parity, matrix}, "\n")
+	for _, required := range []string{
+		"GoReleaser snapshot release-check",
+		"draft release asset postcheck",
+		"tap preflight",
+		"tap postcheck",
+		"Windows executable runtime remains deferred",
+	} {
+		if !strings.Contains(releaseEvidenceDocs, required) {
+			t.Fatalf("public docs missing final release evidence wording %q", required)
+		}
+	}
 }
 
 func readHarnessDoc(t *testing.T, path string) string {
