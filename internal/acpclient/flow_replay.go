@@ -17,6 +17,8 @@ import (
 
 const FlowReplayBundleSchema = acpx.SchemaFlowRunBundleV1
 
+var errNotUpstreamACPXBundle = errors.New("not an upstream-shaped acpx bundle")
+
 type FlowReplaySummary struct {
 	RunID        string `json:"run_id"`
 	Status       string `json:"status"`
@@ -302,6 +304,8 @@ func LoadFlowReplaySummary(runDir string) (FlowReplaySummary, error) {
 	runDir = filepath.Clean(runDir)
 	if summary, err := loadACPXFlowReplaySummary(runDir); err == nil {
 		return summary, nil
+	} else if !errors.Is(err, errNotUpstreamACPXBundle) {
+		return FlowReplaySummary{}, err
 	}
 	manifestPath := filepath.Join(runDir, "manifest.json")
 	var manifest FlowRunManifest
@@ -353,6 +357,9 @@ func LoadFlowReplaySummary(runDir string) (FlowReplaySummary, error) {
 }
 
 func loadACPXFlowReplaySummary(runDir string) (FlowReplaySummary, error) {
+	if err := validateUpstreamACPXReplayPaths(runDir); err != nil {
+		return FlowReplaySummary{}, err
+	}
 	bundle, err := acpx.LoadBundle(context.Background(), runDir)
 	if err != nil {
 		return FlowReplaySummary{}, err
@@ -369,6 +376,53 @@ func loadACPXFlowReplaySummary(runDir string) (FlowReplaySummary, error) {
 		TraceCount:   len(bundle.Trace),
 		SessionCount: len(bundle.Manifest.Sessions),
 	}, nil
+}
+
+func validateUpstreamACPXReplayPaths(runDir string) error {
+	var manifest struct {
+		RunID string `json:"runId"`
+		Paths struct {
+			Flow            string `json:"flow"`
+			Trace           string `json:"trace"`
+			RunProjection   string `json:"runProjection"`
+			LiveProjection  string `json:"liveProjection"`
+			StepsProjection string `json:"stepsProjection"`
+			SessionsDir     string `json:"sessionsDir"`
+			ArtifactsDir    string `json:"artifactsDir"`
+		} `json:"paths"`
+		Sessions []struct {
+			BindingPath string `json:"bindingPath"`
+			RecordPath  string `json:"recordPath"`
+			EventsPath  string `json:"eventsPath"`
+		} `json:"sessions"`
+	}
+	if err := readJSONFile(filepath.Join(runDir, "manifest.json"), &manifest); err != nil {
+		return err
+	}
+	if manifest.RunID == "" && manifest.Paths.Trace == "" {
+		return errNotUpstreamACPXBundle
+	}
+	paths := []string{
+		manifest.Paths.Flow,
+		manifest.Paths.Trace,
+		manifest.Paths.RunProjection,
+		manifest.Paths.LiveProjection,
+		manifest.Paths.StepsProjection,
+		manifest.Paths.SessionsDir,
+		manifest.Paths.ArtifactsDir,
+	}
+	for _, session := range manifest.Sessions {
+		paths = append(paths, session.BindingPath, session.RecordPath, session.EventsPath)
+	}
+	for _, rel := range paths {
+		if rel == "" {
+			continue
+		}
+		if _, err := containedReplayPath(runDir, rel); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func containedReplayPath(runDir, rel string) (string, error) {
