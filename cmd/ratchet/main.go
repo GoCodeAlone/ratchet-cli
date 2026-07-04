@@ -161,6 +161,7 @@ Commands:
   team             Multi-agent orchestration
   trust            Manage runtime trust rules and persistent grants
   hooks            Review and trust lifecycle hooks
+  blackboard       Shared daemon blackboard
   plugin           Manage plugins
   skill            Manage skills
   config           Configuration
