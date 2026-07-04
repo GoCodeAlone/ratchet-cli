@@ -80,6 +80,8 @@ ratchet blackboard write coordination status ready
                             # Share local coordination state through the daemon
 ratchet blackboard read coordination status
                             # Read coordination state from another terminal
+ratchet retro analyze --evidence ~/.ratchet/retro/evidence.jsonl --session ID
+                            # Analyze local retro evidence without mutating config
 ratchet provider list       # List providers
 ratchet team start "task"   # Start agent team
 ratchet hooks list --cwd .  # Review lifecycle hooks before trusting them
@@ -108,6 +110,12 @@ in the daemon's local state database through
 `/trust revoke "pattern" [--scope scope]` to remove one. Treat grant listings
 as sensitive local policy metadata because patterns can reveal local paths,
 commands, or workflow conventions.
+
+Retro analysis is reporting-only. Use
+`ratchet retro analyze --evidence <evidence.jsonl> [--session ID] [--json]` to
+load local evidence, summarize findings, and emit local-action or upstream-PR
+instructions according to `retro.*` config. The command does not edit config or
+open PRs.
 
 Lifecycle hooks are reviewable local command hooks. User hooks in
 `~/.ratchet/hooks.yaml` remain trusted by default for compatibility; project
