@@ -58,7 +58,11 @@ func GuardTapPostcheck(root, tap, names, commits, version string) error {
 	if !slices.Contains(splitCSV(names), "ratchet-cli") {
 		return fmt.Errorf("tap postcheck names %q must include ratchet-cli", names)
 	}
-	if !strings.Contains(commits, "Casks/ratchet-cli.rb=") {
+	commitMap, err := parsePathCommits(commits)
+	if err != nil {
+		return err
+	}
+	if commitMap["Casks/ratchet-cli.rb"] == "" {
 		return fmt.Errorf("tap postcheck commits must include Casks/ratchet-cli.rb=<sha>")
 	}
 	data, err := os.ReadFile(filepath.Join(tap, "Casks", "ratchet-cli.rb"))
@@ -70,6 +74,24 @@ func GuardTapPostcheck(root, tap, names, commits, version string) error {
 		return fmt.Errorf("managed cask does not reference requested version %q", version)
 	}
 	return nil
+}
+
+func parsePathCommits(value string) (map[string]string, error) {
+	out := map[string]string{}
+	for item := range strings.SplitSeq(value, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		path, sha, ok := strings.Cut(item, "=")
+		path = strings.TrimSpace(path)
+		sha = strings.TrimSpace(sha)
+		if !ok || path == "" || sha == "" {
+			return nil, fmt.Errorf("tap postcheck commit entry %q must be <path>=<sha>", item)
+		}
+		out[path] = sha
+	}
+	return out, nil
 }
 
 func splitCSV(value string) []string {

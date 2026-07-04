@@ -7,6 +7,8 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.RELEASES_TOKEN || github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -14,23 +16,44 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
-      - uses: goreleaser/goreleaser-action@v7
+      - name: Configure Git for private modules
+        run: git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
+      - name: GoReleaser check
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: check
+      - name: GoReleaser snapshot
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: release --snapshot --clean --skip=publish
+      - name: Check snapshot release artifacts
+        run: scripts/check-release-artifacts.sh --manifest-only dist
+      - name: Check draft release config
+        run: go test -count=1 ./internal/releaseguard -run TestGoReleaserReleaseDraftConfig
+      - name: Clone Homebrew tap for preflight
+        run: gh repo clone GoCodeAlone/homebrew-tap "$RUNNER_TEMP/homebrew-tap-preflight"
+      - name: Run tap preflight
+        run: |
+          RATCHET_RELEASE_GUARD_MODE=tap-preflight \
+            RATCHET_RELEASE_GUARD_TAP="$RUNNER_TEMP/homebrew-tap-preflight" \
+            go test -count=1 ./internal/releaseguard -run TestTapPreflight
+      - name: Publish with GoReleaser
+        uses: goreleaser/goreleaser-action@v7
         with:
           version: "~> v2"
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-      - name: Publish GitHub release
+      - name: Resolve draft release
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.RELEASES_TOKEN || github.token }}
           script: |
             const tag = context.ref.replace('refs/tags/', '');
             const { owner, repo } = context.repo;
-            // GoReleaser creates draft releases; listReleases sees drafts while
-            // getReleaseByTag can 404. Retry because the release can be
-            // eventually visible after asset uploads finish.
             let release;
             for (let attempt = 0; attempt < 12; attempt++) {
               const { data: releases } = await github.rest.repos.listReleases({ owner, repo, per_page: 100 });
@@ -39,13 +62,62 @@ jobs:
               await new Promise(resolve => setTimeout(resolve, 5000));
             }
             if (!release) {
-              throw new Error(`release for tag ${tag} not found in repo listing (latest 100 releases)`);
+              throw new Error(`draft release for tag ${tag} not found in repo listing (latest 100 releases)`);
             }
-            if (release.draft) {
-              await github.rest.repos.updateRelease({
-                owner,
-                repo,
-                release_id: release.id,
-                draft: false,
-              });
+            if (!release.draft) {
+              throw new Error(`release ${tag} must remain draft until post-publish checks pass`);
             }
+            const fs = require('fs');
+            fs.appendFileSync(process.env.GITHUB_ENV, `RELEASE_ID=${release.id}\n`);
+            fs.appendFileSync(process.env.GITHUB_ENV, `RELEASE_TAG=${release.tag_name}\n`);
+            fs.appendFileSync(process.env.GITHUB_ENV, `RELEASE_DRAFT=${release.draft}\n`);
+      - name: Download draft release assets
+        run: |
+          mkdir -p "$RUNNER_TEMP/release-assets"
+          gh api "/repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets" --jq '.[].id' | while read -r asset_id; do
+            name="$(gh api "/repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" --jq '.name')"
+            gh api "/repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
+              -H "Accept: application/octet-stream" > "$RUNNER_TEMP/release-assets/$name"
+          done
+          jq -n \
+            --arg id "$RELEASE_ID" \
+            --arg tag "$RELEASE_TAG" \
+            --arg version "$RELEASE_TAG" \
+            --argjson draft "$RELEASE_DRAFT" \
+            '{id:$id,tag:$tag,version:$version,draft:$draft}' > "$RUNNER_TEMP/release-assets/metadata.json"
+      - name: Check draft release assets
+        run: |
+          RATCHET_RELEASE_GUARD_MODE=draft-assets \
+            RATCHET_RELEASE_GUARD_ASSETS="$RUNNER_TEMP/release-assets" \
+            RATCHET_RELEASE_GUARD_VERSION="$RELEASE_TAG" \
+            go test -count=1 ./internal/releaseguard -run TestDraftAssets
+      - name: Clone Homebrew tap
+        run: |
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/GoCodeAlone/homebrew-tap.git" "$RUNNER_TEMP/homebrew-tap"
+          git -C "$RUNNER_TEMP/homebrew-tap" checkout main
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      - name: Derive tap commits
+        run: |
+          cask_sha="$(git -C "$RUNNER_TEMP/homebrew-tap" log -n 1 --format=%H -- Casks/ratchet-cli.rb)"
+          printf 'RATCHET_RELEASE_GUARD_TAP_COMMITS=Casks/ratchet-cli.rb=%s\n' "$cask_sha" >> "$GITHUB_ENV"
+      - name: Check tap post-publish state
+        run: |
+          RATCHET_RELEASE_GUARD_MODE=tap-postcheck \
+            RATCHET_RELEASE_GUARD_TAP="$RUNNER_TEMP/homebrew-tap" \
+            RATCHET_RELEASE_GUARD_TAP_NAMES=ratchet-cli \
+            RATCHET_RELEASE_GUARD_TAP_COMMITS="$RATCHET_RELEASE_GUARD_TAP_COMMITS" \
+            RATCHET_RELEASE_GUARD_VERSION="$RELEASE_TAG" \
+            go test -count=1 ./internal/releaseguard -run TestTapPostcheck
+      - name: Publish GitHub release
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.RELEASES_TOKEN || github.token }}
+          script: |
+            const { owner, repo } = context.repo;
+            await github.rest.repos.updateRelease({
+              owner,
+              repo,
+              release_id: Number(process.env.RELEASE_ID),
+              draft: false,
+            });

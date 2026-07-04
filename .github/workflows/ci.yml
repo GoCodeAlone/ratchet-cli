@@ -42,8 +42,79 @@ jobs:
         run: git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
       - name: Build Windows binaries
         run: |
-          GOOS=windows GOARCH=amd64 go build -o /tmp/ratchet-windows-amd64.exe ./cmd/ratchet
-          GOOS=windows GOARCH=arm64 go build -o /tmp/ratchet-windows-arm64.exe ./cmd/ratchet
+          out="$(mktemp -d "$RUNNER_TEMP/ratchet-windows-XXXXXX")"
+          GOOS=windows GOARCH=amd64 go build -o "$out/ratchet-windows-amd64.exe" ./cmd/ratchet
+          GOOS=windows GOARCH=arm64 go build -o "$out/ratchet-windows-arm64.exe" ./cmd/ratchet
+
+  release-check:
+    name: Release Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - name: Configure Git for private modules
+        run: git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
+      - name: GoReleaser check
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: check
+      - name: GoReleaser snapshot
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: release --snapshot --clean --skip=publish
+      - name: Check release artifacts
+        run: scripts/check-release-artifacts.sh --manifest-only dist
+      - name: Upload snapshot dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: ratchet-snapshot-dist
+          path: dist
+
+  tui-smoke:
+    name: TUI Smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - name: Configure Git for private modules
+        run: git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
+      - name: Run untagged smoke tests
+        run: go test ./cmd/ratchet ./internal/tui -run 'HarnessSmoke|TUIBinarySmoke|StartupSmoke' -count=1 -timeout=10m
+      - name: Run tagged client smoke tests
+        run: go test -tags tui_smoke ./internal/client -run 'ConnectSmokeUnix' -count=1
+      - name: Run tagged daemon smoke tests
+        run: go test -tags tui_smoke ./internal/daemon -run 'SmokeService|ListJobs' -count=1
+
+  tap-preflight:
+    name: Tap Preflight
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - name: Configure Git for private modules
+        run: git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
+      - name: Clone Homebrew tap
+        run: gh repo clone GoCodeAlone/homebrew-tap "$RUNNER_TEMP/homebrew-tap"
+      - name: Run tap preflight
+        run: |
+          RATCHET_RELEASE_GUARD_MODE=tap-preflight \
+            RATCHET_RELEASE_GUARD_TAP="$RUNNER_TEMP/homebrew-tap" \
+            go test -count=1 ./internal/releaseguard -run TestTapPreflight
 
   test:
     name: Test
