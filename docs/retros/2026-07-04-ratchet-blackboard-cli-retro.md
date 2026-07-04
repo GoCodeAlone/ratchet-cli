@@ -1,7 +1,7 @@
 # Retro: Ratchet Blackboard CLI
 
-**PR:** pending
-**Merged:** pending
+**PR:** https://github.com/GoCodeAlone/ratchet-cli/pull/89
+**Merged:** 2026-07-04 at merge commit `0dc5e64e6e255ba60595c43f3883215137263d4a`
 **Branch:** feat/blackboard-cli
 **Design:** docs/plans/2026-07-04-ratchet-blackboard-notify-design.md
 **Plan:** docs/plans/2026-07-04-ratchet-blackboard-notify.md
@@ -23,6 +23,8 @@
 | Issue | Gate that missed | Why it slipped | Fix idea |
 |---|---|---|---|
 | Task 2 smoke did not produce a red failure because Task 1 already supplied the command behavior. | test-driven-development | Task 2 validates integration over behavior already implemented by Task 1. | For dependent smoke tasks, mark expected red as "fails before prior task; may pass after prior implementation" or write the smoke before Task 1 when practical. |
+| Initial PR lint failed on capitalized CLI usage errors. | local pre-PR verification | `go vet` passed, but `golangci-lint --new-from-rev=origin/master` was not run until after CI surfaced staticcheck ST1005. | Include the PR lint command in the completion checklist for CLI text changes, not only `go vet`. |
+| Retro was drafted before the PR merged, so it had pending merge metadata. | post-merge-retrospective timing | The retro file was committed in the feature PR as a closeout artifact before the post-merge gate could be known. | Keep retro drafts out of feature PRs or add an explicit finalization PR after post-merge CI is green. |
 
 ## Missed skill activations
 
@@ -41,6 +43,7 @@
 - Existing daemon blackboard and gRPC methods made the same-device coordination slice small.
 - Built CLI smoke proved separate process invocations share the daemon state.
 - Keeping Notify out of ratchet-cli avoided Slack/Discord dependency sprawl and matched the plugin ecosystem direction.
+- Post-merge `master` CI and CodeQL both completed successfully for `0dc5e64e6e255ba60595c43f3883215137263d4a`.
 
 ## What didn't
 
