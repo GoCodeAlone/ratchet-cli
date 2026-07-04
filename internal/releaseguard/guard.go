@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -65,7 +66,7 @@ func RunFromEnv(root string) error {
 			return fmt.Errorf("RATCHET_RELEASE_GUARD_VERSION is required for %s mode", mode)
 		}
 		assets = resolvePath(root, assets)
-		err = GuardManifest(root, assets)
+		err = GuardDraftAssets(root, assets, version)
 		return redactError(err, root, assets)
 	case ModeTapPreflight:
 		tap := os.Getenv("RATCHET_RELEASE_GUARD_TAP")
@@ -91,7 +92,7 @@ func RunFromEnv(root string) error {
 			}
 		}
 		tap = resolvePath(root, tap)
-		err = GuardTapPreflight(root, tap)
+		err = GuardTapPostcheck(root, tap, names, commits, version)
 		return redactError(err, root, tap)
 	default:
 		return fmt.Errorf("unknown RATCHET_RELEASE_GUARD_MODE %q", mode)
@@ -136,6 +137,35 @@ func GuardManifest(root, dist string) error {
 		}
 	}
 	return scanGeneratedMaterial(dist)
+}
+
+func GuardDraftAssets(root, assets, version string) error {
+	if version == "" {
+		return fmt.Errorf("draft asset version is required")
+	}
+	if err := GuardManifest(root, assets); err != nil {
+		return err
+	}
+	metadataPath := filepath.Join(assets, "metadata.json")
+	data, err := os.ReadFile(metadataPath)
+	if err != nil {
+		return fmt.Errorf("read draft asset metadata: %w", err)
+	}
+	var metadata struct {
+		Tag     string `json:"tag"`
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return fmt.Errorf("decode draft asset metadata: %w", err)
+	}
+	if !versionMatches(metadata.Tag, version) && !versionMatches(metadata.Version, version) {
+		return fmt.Errorf("draft asset metadata tag/version %q/%q does not match requested %q", metadata.Tag, metadata.Version, version)
+	}
+	return nil
+}
+
+func versionMatches(got, want string) bool {
+	return got == want || strings.TrimPrefix(got, "v") == strings.TrimPrefix(want, "v")
 }
 
 type archiveTarget struct {
@@ -236,7 +266,7 @@ func scanTarGzArchive(path string) error {
 		h, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			if executables != 1 {
-				return fmt.Errorf("%s has %d packaged ratchet binaries, want 1; missing packaged ratchet binary", path, executables)
+				return packagedBinaryCountError(path, executables)
 			}
 			return nil
 		}
@@ -290,9 +320,16 @@ func scanZipArchive(path string) error {
 		}
 	}
 	if executables != 1 {
-		return fmt.Errorf("%s has %d packaged ratchet binaries, want 1; missing packaged ratchet binary", path, executables)
+		return packagedBinaryCountError(path, executables)
 	}
 	return nil
+}
+
+func packagedBinaryCountError(path string, got int) error {
+	if got == 0 {
+		return fmt.Errorf("%s has 0 packaged ratchet binaries, want 1; missing packaged ratchet binary", path)
+	}
+	return fmt.Errorf("%s has %d packaged ratchet binaries, want 1", path, got)
 }
 
 func isExecutableMember(name string) bool {
@@ -423,12 +460,20 @@ func scanGeneratedMaterial(dist string) error {
 		if token, ok := findForbiddenToken(string(data)); ok {
 			return fmt.Errorf("generated material %s contains forbidden smoke token %q", path, token)
 		}
-		text := string(data)
-		if strings.Contains(text, "ratchet-tui-smoke") || !strings.Contains(text, "ratchet-cli") || !strings.Contains(text, "ratchet") {
-			return fmt.Errorf("generated cask material %s must reference ratchet-cli cask and ratchet binary only", path)
+		if err := validateGeneratedCaskMaterial(path, string(data)); err != nil {
+			return err
 		}
 		return nil
 	})
+}
+
+func validateGeneratedCaskMaterial(path, text string) error {
+	for _, want := range []string{`cask "ratchet-cli"`, `binary "ratchet"`} {
+		if !strings.Contains(text, want) {
+			return fmt.Errorf("generated cask material %s missing %s", path, want)
+		}
+	}
+	return nil
 }
 
 func findForbiddenToken(v any) (string, bool) {

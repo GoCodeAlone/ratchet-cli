@@ -118,6 +118,78 @@ func TestManifestGuardRejectsArchiveMissingPackagedBinary(t *testing.T) {
 	}
 }
 
+func TestManifestGuardRejectsArchiveDuplicatePackagedBinary(t *testing.T) {
+	dist := t.TempDir()
+	writeMatrixDist(t, dist, archivePayload{
+		hostVersion: "ratchet version v0.0.0-test\n",
+		hostHelp:    "ratchet help\n",
+	})
+	target := nonHostTarget()
+	path := filepath.Join(dist, target.archiveName())
+	if target.goos == "windows" {
+		writeZipWithDuplicateBinary(t, path)
+	} else {
+		writeTarWithDuplicateBinary(t, path)
+	}
+	rewriteChecksum(t, dist, target.archiveName())
+
+	err := GuardManifest(repoRoot(t), dist)
+	if err == nil {
+		t.Fatal("expected duplicate packaged binary failure")
+	}
+	if strings.Contains(err.Error(), "missing packaged ratchet binary") {
+		t.Fatalf("duplicate binary error should not say missing: %q", err)
+	}
+	if !strings.Contains(err.Error(), "has 2 packaged ratchet binaries") {
+		t.Fatalf("error %q does not name duplicate packaged binaries", err)
+	}
+}
+
+func TestManifestGuardRequiresGeneratedCaskBinaryDirective(t *testing.T) {
+	dist := t.TempDir()
+	writeMatrixDist(t, dist, archivePayload{
+		hostVersion: "ratchet version v0.0.0-test\n",
+		hostHelp:    "ratchet help\n",
+	})
+	if err := os.WriteFile(filepath.Join(dist, "ratchet-cli.rb"), []byte(`cask "ratchet-cli" do
+  name "ratchet-cli"
+end
+`), 0o644); err != nil {
+		t.Fatalf("write cask without binary: %v", err)
+	}
+	err := GuardManifest(repoRoot(t), dist)
+	if err == nil {
+		t.Fatal("expected missing generated cask binary directive failure")
+	}
+	if !strings.Contains(err.Error(), `binary "ratchet"`) {
+		t.Fatalf("error %q does not name missing binary directive", err)
+	}
+}
+
+func TestDraftAssetsRequiresMatchingVersion(t *testing.T) {
+	dist := t.TempDir()
+	writeMatrixDist(t, dist, archivePayload{
+		hostVersion: "ratchet version v0.0.0-test\n",
+		hostHelp:    "ratchet help\n",
+	})
+	if err := os.WriteFile(filepath.Join(dist, "metadata.json"), []byte(`{"tag":"v0.0.0-other","version":"0.0.0-other"}`), 0o644); err != nil {
+		t.Fatalf("write metadata: %v", err)
+	}
+	err := GuardDraftAssets(repoRoot(t), dist, "v0.0.0-test")
+	if err == nil {
+		t.Fatal("expected draft asset version mismatch")
+	}
+	if !strings.Contains(err.Error(), "v0.0.0-test") {
+		t.Fatalf("error %q does not name requested version", err)
+	}
+	if err := os.WriteFile(filepath.Join(dist, "metadata.json"), []byte(`{"tag":"v0.0.0-test","version":"0.0.0-test"}`), 0o644); err != nil {
+		t.Fatalf("write matching metadata: %v", err)
+	}
+	if err := GuardDraftAssets(repoRoot(t), dist, "v0.0.0-test"); err != nil {
+		t.Fatalf("matching draft assets: %v", err)
+	}
+}
+
 func TestManifestGuardAcceptsCompleteDistAndRunsHostBinary(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("host binary execution fixture is Unix-only")
@@ -193,6 +265,21 @@ func writeTarWithoutBinary(t *testing.T, path string) {
 	writeTarFile(t, tw, "RATCHET.md", "approved docs\n", 0o644)
 }
 
+func writeTarWithDuplicateBinary(t *testing.T, path string) {
+	t.Helper()
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create tar fixture: %v", err)
+	}
+	defer f.Close()
+	gw := gzip.NewWriter(f)
+	defer gw.Close()
+	tw := tar.NewWriter(gw)
+	defer tw.Close()
+	writeTarFile(t, tw, "ratchet", "release binary\n", 0o755)
+	writeTarFile(t, tw, "bin/ratchet", "release binary\n", 0o755)
+}
+
 func writeZipWithoutBinary(t *testing.T, path string) {
 	t.Helper()
 	f, err := os.Create(path)
@@ -203,6 +290,19 @@ func writeZipWithoutBinary(t *testing.T, path string) {
 	zw := zip.NewWriter(f)
 	defer zw.Close()
 	writeZipFile(t, zw, "RATCHET.md", "approved docs\n")
+}
+
+func writeZipWithDuplicateBinary(t *testing.T, path string) {
+	t.Helper()
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create zip fixture: %v", err)
+	}
+	defer f.Close()
+	zw := zip.NewWriter(f)
+	defer zw.Close()
+	writeZipFile(t, zw, "ratchet.exe", "release binary\n")
+	writeZipFile(t, zw, "bin/ratchet.exe", "release binary\n")
 }
 
 func rewriteChecksum(t *testing.T, dist, archiveName string) {

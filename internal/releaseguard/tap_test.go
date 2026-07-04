@@ -64,6 +64,30 @@ end
 	}
 }
 
+func TestTapPostcheckUsesNamesCommitsAndVersion(t *testing.T) {
+	tap := t.TempDir()
+	mustWrite(t, filepath.Join(tap, "Casks", "ratchet-cli.rb"), `cask "ratchet-cli" do
+  version "0.0.0-test"
+  url "https://github.com/GoCodeAlone/ratchet-cli/releases/download/v0.0.0-test/ratchet_darwin_arm64.tar.gz"
+  name "ratchet-cli"
+  binary "ratchet"
+end
+`)
+	root := repoRoot(t)
+	if err := GuardTapPostcheck(root, tap, "other", "Casks/ratchet-cli.rb=fixture-sha", "v0.0.0-test"); err == nil {
+		t.Fatal("expected tap-postcheck names failure")
+	}
+	if err := GuardTapPostcheck(root, tap, "ratchet-cli", "README.md=fixture-sha", "v0.0.0-test"); err == nil {
+		t.Fatal("expected tap-postcheck commits failure")
+	}
+	if err := GuardTapPostcheck(root, tap, "ratchet-cli", "Casks/ratchet-cli.rb=fixture-sha", "v0.0.0-other"); err == nil {
+		t.Fatal("expected tap-postcheck version failure")
+	}
+	if err := GuardTapPostcheck(root, tap, "ratchet-cli", "Casks/ratchet-cli.rb=fixture-sha", "v0.0.0-test"); err != nil {
+		t.Fatalf("tap postcheck: %v", err)
+	}
+}
+
 func mustWrite(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
