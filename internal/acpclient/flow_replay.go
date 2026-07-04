@@ -13,11 +13,27 @@ import (
 	"time"
 
 	acpx "github.com/GoCodeAlone/acpx-go"
+	"github.com/GoCodeAlone/workflow-plugin-acpx/acpxruntime"
 )
 
 const FlowReplayBundleSchema = acpx.SchemaFlowRunBundleV1
 
 var errNotUpstreamACPXBundle = errors.New("not an upstream-shaped acpx bundle")
+
+var acpxReplaySummaryFunc = func(ctx context.Context, runDir string) (FlowReplaySummary, error) {
+	summary, err := acpxruntime.ReplaySummary(ctx, runDir)
+	if err != nil {
+		return FlowReplaySummary{}, err
+	}
+	return FlowReplaySummary{
+		RunID:        summary.RunID,
+		Status:       summary.Status,
+		ManifestPath: "manifest.json",
+		StepCount:    summary.StepCount,
+		TraceCount:   summary.TraceCount,
+		SessionCount: summary.SessionCount,
+	}, nil
+}
 
 type FlowReplaySummary struct {
 	RunID        string `json:"run_id"`
@@ -485,22 +501,7 @@ func loadACPXFlowReplaySummary(runDir string) (FlowReplaySummary, error) {
 	if err := validateUpstreamACPXReplayPaths(runDir); err != nil {
 		return FlowReplaySummary{}, err
 	}
-	bundle, err := acpx.LoadBundle(context.Background(), runDir)
-	if err != nil {
-		return FlowReplaySummary{}, err
-	}
-	projection, err := acpx.RebuildTraceProjection(bundle.Trace)
-	if err != nil {
-		return FlowReplaySummary{}, err
-	}
-	return FlowReplaySummary{
-		RunID:        bundle.Manifest.RunID,
-		Status:       string(bundle.Manifest.Status),
-		ManifestPath: "manifest.json",
-		StepCount:    len(projection.Attempts),
-		TraceCount:   len(bundle.Trace),
-		SessionCount: len(bundle.Manifest.Sessions),
-	}, nil
+	return acpxReplaySummaryFunc(context.Background(), runDir)
 }
 
 func validateUpstreamACPXReplayPaths(runDir string) error {

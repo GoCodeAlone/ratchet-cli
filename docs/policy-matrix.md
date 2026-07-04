@@ -89,7 +89,7 @@ authorization, cancellation, audit evidence, and redaction boundaries:
 | Sandbox/path/network expansion | Deferred | Define enforced filesystem and network boundaries before claiming parity with Codex or Claude sandbox controls. |
 | Per-agent policy scopes | Deferred | Define how agent roles, teams, worktrees, channels, and scopes compose with persistent grants and runtime rules. |
 | Credentialed third-party agent CI | Deferred | Define secret handling, provider credentials, failure isolation, and artifact redaction. |
-| ACPX flow source execution | Deferred | Ratchet supports Go-native ACPX durable bundle generation and validation through `acpx-go`; executing `.flow.ts` files remains out of scope unless a future design defines source compatibility and runtime boundaries. |
+| ACPX flow source execution | Deferred | Ratchet supports Go-native ACPX durable bundle generation and replay validation through the shared `workflow-plugin-acpx` runtime while continuing to write bundles with `acpx-go`; executing `.flow.ts` files remains out of scope unless a future design defines source compatibility and runtime boundaries. |
 | Local-first gateway/channels | Deferred | Define account/channel routing, inbox persistence, and sandboxing for non-main sessions. |
 
 ## Verification

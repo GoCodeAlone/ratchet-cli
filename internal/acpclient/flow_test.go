@@ -256,6 +256,57 @@ func TestLoadFlowReplaySummaryReadsUpstreamACPXBundle(t *testing.T) {
 	}
 }
 
+func TestLoadFlowReplaySummaryUsesACPXRuntimeSummary(t *testing.T) {
+	runDir := t.TempDir()
+	writeMinimalUpstreamACPXBundle(t, runDir, "trace.ndjson")
+	old := acpxReplaySummaryFunc
+	t.Cleanup(func() { acpxReplaySummaryFunc = old })
+	called := false
+	acpxReplaySummaryFunc = func(ctx context.Context, root string) (FlowReplaySummary, error) {
+		if ctx == nil {
+			t.Fatal("summary context is nil")
+		}
+		called = true
+		if root != runDir {
+			t.Fatalf("runtime root = %q, want %q", root, runDir)
+		}
+		return FlowReplaySummary{
+			RunID:        "runtime-run",
+			Status:       FlowRunStatusCompleted,
+			ManifestPath: "manifest.json",
+			StepCount:    7,
+			TraceCount:   11,
+			SessionCount: 2,
+		}, nil
+	}
+
+	summary, err := LoadFlowReplaySummary(runDir)
+	if err != nil {
+		t.Fatalf("LoadFlowReplaySummary: %v", err)
+	}
+	if !called {
+		t.Fatal("ACPX runtime summary function was not called")
+	}
+	if summary.RunID != "runtime-run" || summary.StepCount != 7 || summary.TraceCount != 11 || summary.SessionCount != 2 {
+		t.Fatalf("summary = %#v", summary)
+	}
+}
+
+func TestLoadFlowReplaySummaryRejectsUpstreamEscapesBeforeACPXRuntime(t *testing.T) {
+	runDir := t.TempDir()
+	writeMinimalUpstreamACPXBundle(t, runDir, "../outside.ndjson")
+	old := acpxReplaySummaryFunc
+	t.Cleanup(func() { acpxReplaySummaryFunc = old })
+	acpxReplaySummaryFunc = func(context.Context, string) (FlowReplaySummary, error) {
+		t.Fatal("ACPX runtime summary function was called for an escaping manifest")
+		return FlowReplaySummary{}, nil
+	}
+
+	if _, err := LoadFlowReplaySummary(runDir); err == nil || !strings.Contains(err.Error(), "outside run dir") {
+		t.Fatalf("LoadFlowReplaySummary error = %v, want outside run dir", err)
+	}
+}
+
 func TestLoadFlowReplaySummaryRejectsUpstreamManifestPathsOutsideRunDir(t *testing.T) {
 	runDir := t.TempDir()
 	writeMinimalUpstreamACPXBundle(t, runDir, "../outside.ndjson")
