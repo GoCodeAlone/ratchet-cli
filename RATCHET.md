@@ -34,3 +34,7 @@ go install github.com/GoCodeAlone/ratchet-cli/cmd/ratchet@latest
 
 GitHub Releases also publish Linux and macOS tar.gz archives plus Windows zip
 archives for amd64 and arm64. Windows installer packages are not published yet.
+
+Harness evidence boundaries live in [docs/harness-emulation.md](docs/harness-emulation.md);
+policy and deferred automation boundaries live in
+[docs/policy-matrix.md](docs/policy-matrix.md).

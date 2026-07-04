@@ -21,6 +21,8 @@ func Start(ctx context.Context, debug bool) error {
 	if err := EnsureDataDir(); err != nil {
 		return err
 	}
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
 	if IsRunning() {
 		return fmt.Errorf("daemon already running (pid file: %s)", PIDPath())
@@ -46,19 +48,20 @@ func Start(ctx context.Context, debug bool) error {
 	}
 
 	srv := grpc.NewServer()
-	svc, err := NewService(ctx)
+	svc, err := NewService(runCtx)
 	if err != nil {
 		return fmt.Errorf("create service: %w", err)
 	}
 	svc.engine.Debug = debug
+	svc.SetShutdownFunc(cancel)
 	pb.RegisterRatchetDaemonServer(srv, svc)
 
 	// Graceful shutdown on the platform's configured daemon shutdown signals.
-	ctx, stop := signal.NotifyContext(ctx, shutdownSignals()...)
+	runCtx, stop := signal.NotifyContext(runCtx, shutdownSignals()...)
 	defer stop()
 
 	go func() {
-		<-ctx.Done()
+		<-runCtx.Done()
 		log.Println("shutting down daemon...")
 		srv.GracefulStop()
 	}()

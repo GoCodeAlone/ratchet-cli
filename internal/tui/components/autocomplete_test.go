@@ -1,6 +1,7 @@
 package components
 
 import (
+	"slices"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -20,15 +21,15 @@ func TestAutocompleteSetFilter(t *testing.T) {
 	})
 
 	t.Run("partial_prefix_filters", func(t *testing.T) {
-		ac = ac.SetFilter("/mo")
+		ac = ac.SetFilter("/cle")
 		if !ac.Visible() {
-			t.Error("expected autocomplete to be visible for /mo")
+			t.Error("expected autocomplete to be visible for /cle")
 		}
 		if len(ac.matches) != 1 {
-			t.Fatalf("expected 1 match for /mo, got %d", len(ac.matches))
+			t.Fatalf("expected 1 match for /cle, got %d", len(ac.matches))
 		}
-		if ac.matches[0].Name != "/model" {
-			t.Errorf("expected /model, got %s", ac.matches[0].Name)
+		if ac.matches[0].Name != "/clear" {
+			t.Errorf("expected /clear, got %s", ac.matches[0].Name)
 		}
 	})
 
@@ -80,6 +81,43 @@ func TestAutocompleteSetFilter(t *testing.T) {
 			t.Errorf("expected /help match, got %v", ac.matches)
 		}
 	})
+}
+
+func TestAutocompleteCoversParserTopLevelCommands(t *testing.T) {
+	ac := NewAutocomplete()
+	var got []string
+	for _, entry := range ac.commands {
+		got = append(got, entry.Name)
+	}
+	for _, want := range []string{
+		"/help",
+		"/model",
+		"/clear",
+		"/cost",
+		"/agents",
+		"/sessions",
+		"/tree",
+		"/provider",
+		"/loop",
+		"/cron",
+		"/fleet",
+		"/mcp",
+		"/compact",
+		"/review",
+		"/team",
+		"/plan",
+		"/approve",
+		"/reject",
+		"/jobs",
+		"/login",
+		"/mode",
+		"/trust",
+		"/exit",
+	} {
+		if !slices.Contains(got, want) {
+			t.Fatalf("autocomplete commands missing %s; got %v", want, got)
+		}
+	}
 }
 
 func TestAutocompleteNavigation(t *testing.T) {
