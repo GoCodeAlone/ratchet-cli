@@ -39,6 +39,21 @@ Current settings are visible with:
 ratchet config show
 ```
 
+## Analyze Evidence
+
+Use `ratchet retro analyze` to inspect an explicit evidence file without
+starting the daemon or mutating local files:
+
+```sh
+ratchet retro analyze --evidence ~/.ratchet/retro/evidence.jsonl --session SESSION_ID
+ratchet retro analyze --evidence ~/.ratchet/retro/evidence.jsonl --json
+```
+
+The text output groups findings, local actions, and upstream instructions. JSON
+output emits the same sections for scripts. `retro.enabled` still gates routing:
+with the default disabled config, findings are shown but local actions and
+upstream instructions are empty.
+
 ## Local Improvement Example
 
 Evidence:

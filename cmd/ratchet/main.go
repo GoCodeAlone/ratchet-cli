@@ -66,6 +66,8 @@ func main() {
 		handleHooks(filteredArgs[1:])
 	case "blackboard":
 		handleBlackboard(filteredArgs[1:])
+	case "retro":
+		handleRetro(filteredArgs[1:])
 	case "project":
 		handleProject(filteredArgs[1:])
 	case "plugin":
@@ -162,6 +164,7 @@ Commands:
   trust            Manage runtime trust rules and persistent grants
   hooks            Review and trust lifecycle hooks
   blackboard       Shared daemon blackboard
+  retro            Analyze optional retro evidence
   plugin           Manage plugins
   skill            Manage skills
   config           Configuration
