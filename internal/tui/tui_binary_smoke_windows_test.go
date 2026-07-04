@@ -49,26 +49,60 @@ func TestTUIBinaryWindowsConPTYSmoke(t *testing.T) {
 	}
 	defer cp.Close()
 
-	if _, err := cp.Expect("Message ratchet", 8*time.Second); err != nil {
-		if _, splashErr := cp.Expect("press any key", 2*time.Second); splashErr != nil {
+	if err := expectConPTY(cp, "Message ratchet", 8*time.Second); err != nil {
+		if splashErr := expectConPTY(cp, "press any key", 2*time.Second); splashErr != nil {
 			t.Fatalf("wait for TUI prompt or splash: %v / %v", err, splashErr)
 		}
 		cp.SendUnterminated(" ")
-		if _, err := cp.Expect("Message ratchet", 8*time.Second); err != nil {
+		if err := expectConPTY(cp, "Message ratchet", 8*time.Second); err != nil {
 			t.Fatalf("wait for TUI prompt after splash: %v", err)
 		}
 	}
 
-	cp.SendLine("smoke prompt body")
-	if _, err := cp.Expect("I have completed the task.", 15*time.Second); err != nil {
+	sendConPTYLine(cp, "smoke prompt body")
+	if err := expectConPTY(cp, "I have completed the task.", 15*time.Second); err != nil {
 		t.Fatalf("wait for smoke response: %v", err)
 	}
-	cp.SendLine("/help ")
-	if _, err := cp.Expect("Quit ratchet", 8*time.Second); err != nil {
+	sendConPTYLine(cp, "/help ")
+	if err := expectConPTY(cp, "Quit ratchet", 8*time.Second); err != nil {
 		t.Fatalf("wait for help command output: %v", err)
 	}
-	cp.SendLine("/exit ")
-	if _, err := cp.ExpectExitCode(0, 8*time.Second); err != nil {
+	sendConPTYLine(cp, "/exit ")
+	if err := expectConPTYExit(cp, 8*time.Second); err != nil {
 		t.Fatalf("wait for clean exit: %v", err)
+	}
+}
+
+func sendConPTYLine(cp *termtest.ConsoleProcess, value string) {
+	cp.SendUnterminated(value + "\r")
+}
+
+func expectConPTY(cp *termtest.ConsoleProcess, value string, timeout time.Duration) error {
+	done := make(chan error, 1)
+	go func() {
+		_, err := cp.Expect(value, timeout)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(timeout + time.Second):
+		_ = cp.Close()
+		return termtest.ErrWaitTimeout
+	}
+}
+
+func expectConPTYExit(cp *termtest.ConsoleProcess, timeout time.Duration) error {
+	done := make(chan error, 1)
+	go func() {
+		_, err := cp.ExpectExitCode(0, timeout)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(timeout + time.Second):
+		_ = cp.Close()
+		return termtest.ErrWaitTimeout
 	}
 }
