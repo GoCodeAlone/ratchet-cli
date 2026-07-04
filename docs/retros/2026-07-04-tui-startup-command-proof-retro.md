@@ -66,4 +66,4 @@
 
 | Guidance file | Change | Reason |
 |---|---|---|
-| docs/design-guidance.md | no change | Lessons are test/review checklist refinements, not durable project architecture guidance |
+| docs/design-guidance.md | not created | No repo-local guidance file exists; this retro did not introduce a durable project architecture lesson that warrants creating one |
