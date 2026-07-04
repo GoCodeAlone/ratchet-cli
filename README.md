@@ -228,6 +228,15 @@ ratchet acp client watch work \
 | MCP | `ratchet mcp blackboard` / `ratchet mcp daemon` | Exposes standalone blackboard or daemon-backed session/project/blackboard/team MCP tools over stdio, including active-team `team_message`. |
 | Team | `ratchet team start "task"` | Uses daemon team orchestration with configured providers. |
 
+TUI binary evidence is split by boundary. The release-shaped startup smoke
+builds the untagged `ratchet` binary, starts it against a temp home/workdir,
+reaches the onboarding/provider setup boundary, and shuts the background daemon
+down by RPC; release-shaped startup smoke is not full TUI PTY proof.
+`ratchet-tui-smoke` is build-tagged test-only and is used for Unix PTY binary smoke
+of slash commands, shortcuts, trust state, session tree, and job panel flows.
+Windows cross-build/package archive inspection is planned for release artifacts
+without claiming Windows interactive ConPTY coverage. Homebrew/tap safety is prechecked and postchecked, not fully pre-public gated.
+
 See [docs/harness-emulation.md](docs/harness-emulation.md) for credential-free
 mock provider recipes, and [docs/competitor-parity.md](docs/competitor-parity.md)
 for the dated source-backed parity matrix. Policy boundaries for trust,

@@ -9,7 +9,7 @@ possible.
 
 | Mode | Command | Backing path | Status | Smoke evidence |
 |---|---|---|---|---|
-| TUI | `ratchet` | daemon gRPC + Bubble Tea UI | Supported | Covered by daemon/session tests; full TUI remains manual. |
+| TUI | `ratchet` | daemon gRPC + Bubble Tea UI | Supported | Release-shaped startup smoke builds untagged `ratchet`, reaches onboarding/provider setup, and shuts the daemon down by RPC; Unix PTY binary smoke drives the build-tagged test-only TUI binary through slash commands and shortcuts. |
 | one-shot | `ratchet -p "prompt"` | daemon session + default provider | Supported when provider configured | CLI binary smoke covers command dispatch; mock provider roundtrip covers daemon path. |
 | daemon | `ratchet daemon status` | pid/socket state under `~/.ratchet` | Supported | `TestHarnessSmokeVersionHelpAndDaemonStatus`. |
 | session lineage | `ratchet sessions history`, `ratchet sessions clone`, `ratchet sessions fork`, `ratchet sessions tree`, `ratchet sessions browse`, `ratchet sessions summary`, `ratchet sessions compactions` | daemon gRPC session history/clone/fork/tree/summary/compaction APIs plus Bubble Tea session tree browser | Supported for separate fork/clone sessions, branch summaries, persisted compaction records, archive session links, and Pi-style in-place branch navigation through `ctrl+b`, `/tree`, and `sessions browse` | `TestSessionLineageHistoryCloneForkTreeRPC`; `TestCompactionRecordRPC`; `TestHandleSessionsHistoryCloneForkTree`; `TestAppCtrlBOpensSessionTreeBrowser`; `TestParseTreeRequestsSessionTreeNavigation`; `TestHandleSessionsBrowseRunsInjectedBrowser`. |
@@ -41,6 +41,24 @@ The CLI binary smoke is also hermetic and uses a temp home:
 
 ```sh
 go test ./cmd/ratchet -run TestHarnessSmokeVersionHelpAndDaemonStatus -count=1
+```
+
+The TUI binary evidence has explicit boundaries:
+
+- release-shaped startup smoke is not full TUI PTY proof; it proves untagged
+  `ratchet` startup, temp home/workdir containment, onboarding/provider setup
+  reachability, daemon socket permissions, and RPC shutdown cleanup;
+- `ratchet-tui-smoke` is build-tagged test-only and must not be packaged in
+  public release artifacts;
+- Unix PTY binary smoke drives `ratchet-tui-smoke` through command rows marked
+  `pty-proven` in `internal/tui/commands/testdata/command_surface_spec.json`;
+- Windows cross-build/package archive inspection is release artifact proof, not
+  Windows interactive ConPTY proof;
+- Homebrew/tap safety is prechecked and postchecked, not fully pre-public gated.
+
+```sh
+go test ./cmd/ratchet -run 'StartupSmoke|VersionHelpAndDaemonStatus' -count=1
+go test ./internal/tui -run TestTUIBinarySmoke -count=1 -timeout=8m
 ```
 
 The ACP prompt smoke uses `acp-go-sdk` client and agent-side connections over

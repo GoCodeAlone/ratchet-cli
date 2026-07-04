@@ -94,6 +94,54 @@ func TestHarnessEmulationDocsCoverPolicyMatrixLayers(t *testing.T) {
 	}
 }
 
+func TestHarnessDocsDescribeTUIBinaryEvidenceBoundaries(t *testing.T) {
+	readme := readHarnessDoc(t, "../../README.md")
+	harness := readHarnessDoc(t, "../../docs/harness-emulation.md")
+	ratchet := readHarnessDoc(t, "../../RATCHET.md")
+	parity := readHarnessDoc(t, "../../docs/competitor-parity.md")
+	matrix := readHarnessDoc(t, "../../docs/policy-matrix.md")
+
+	for _, doc := range []struct {
+		name string
+		body string
+	}{
+		{name: "README.md", body: readme},
+		{name: "docs/harness-emulation.md", body: harness},
+	} {
+		for _, required := range []string{
+			"release-shaped startup smoke",
+			"`ratchet-tui-smoke` is build-tagged test-only",
+			"Unix PTY binary smoke",
+			"release-shaped startup smoke is not full TUI PTY proof",
+			"Windows cross-build/package archive inspection",
+			"Homebrew/tap safety is prechecked and postchecked, not fully pre-public gated",
+		} {
+			if !strings.Contains(doc.body, required) {
+				t.Fatalf("%s missing TUI binary evidence boundary %q", doc.name, required)
+			}
+		}
+	}
+
+	publicDocs := strings.Join([]string{ratchet, parity, matrix}, "\n")
+	for _, forbidden := range []string{
+		"full TUI PTY proof",
+		"Windows interactive ConPTY proof",
+		"fully pre-public gated",
+	} {
+		if strings.Contains(publicDocs, forbidden) {
+			t.Fatalf("public docs overclaim deferred evidence with %q", forbidden)
+		}
+	}
+	for _, requiredLink := range []string{
+		"docs/harness-emulation.md",
+		"docs/policy-matrix.md",
+	} {
+		if !strings.Contains(publicDocs, requiredLink) {
+			t.Fatalf("public docs missing evidence boundary link %q", requiredLink)
+		}
+	}
+}
+
 func readHarnessDoc(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)
