@@ -64,6 +64,8 @@ func main() {
 		handleTrust(filteredArgs[1:])
 	case "hooks":
 		handleHooks(filteredArgs[1:])
+	case "blackboard":
+		handleBlackboard(filteredArgs[1:])
 	case "project":
 		handleProject(filteredArgs[1:])
 	case "plugin":
