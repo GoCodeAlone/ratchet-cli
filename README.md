@@ -153,11 +153,13 @@ ACPX-compatible JSON-RPC history, summary history, or both. Raw ACPX event logs,
 compare bundles, flow replay bundles, prompts, responses, and action outputs
 are sensitive local conversation artifacts. JSON v1 flows support `acp`,
 `compute`, and `action` nodes, template prompts, shared session handles, and
-persisted run bundles; `flow replay` reads those bundles without contacting
-agents or executing actions. Action nodes require `--allow shell`, and node
-working directories outside the flow base require `--allow outside-cwd`. Action
-stdout/stderr in run bundles is sensitive local command output. ACPX TypeScript
-flow runtime compatibility remains deferred.
+persisted run bundles; `flow replay` reads ratchet bundles and upstream-shaped
+ACPX durable bundles through the Go-native `acpx-go` compatibility library
+without contacting agents or executing actions. Action nodes require
+`--allow shell`, and node working directories outside the flow base require
+`--allow outside-cwd`. Action stdout/stderr in run bundles is sensitive local
+command output. Ratchet does not execute `.flow.ts` files or embed a TypeScript
+ACPX runtime.
 
 ## ACP Client Examples
 
