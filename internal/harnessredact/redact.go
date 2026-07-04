@@ -25,7 +25,7 @@ func New(values ...string) Redactor {
 		"<executable>",
 		"<artifact>",
 		"<prompt>",
-		"<trust-body>",
+		"<trust>",
 	}
 	repls := make([]replacement, 0, len(values))
 	for i, raw := range values {
