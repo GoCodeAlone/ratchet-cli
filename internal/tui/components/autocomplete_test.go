@@ -1,6 +1,7 @@
 package components
 
 import (
+	"slices"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -80,6 +81,43 @@ func TestAutocompleteSetFilter(t *testing.T) {
 			t.Errorf("expected /help match, got %v", ac.matches)
 		}
 	})
+}
+
+func TestAutocompleteCoversParserTopLevelCommands(t *testing.T) {
+	ac := NewAutocomplete()
+	var got []string
+	for _, entry := range ac.commands {
+		got = append(got, entry.Name)
+	}
+	for _, want := range []string{
+		"/help",
+		"/model",
+		"/clear",
+		"/cost",
+		"/agents",
+		"/sessions",
+		"/tree",
+		"/provider",
+		"/loop",
+		"/cron",
+		"/fleet",
+		"/mcp",
+		"/compact",
+		"/review",
+		"/team",
+		"/plan",
+		"/approve",
+		"/reject",
+		"/jobs",
+		"/login",
+		"/mode",
+		"/trust",
+		"/exit",
+	} {
+		if !slices.Contains(got, want) {
+			t.Fatalf("autocomplete commands missing %s; got %v", want, got)
+		}
+	}
 }
 
 func TestAutocompleteNavigation(t *testing.T) {

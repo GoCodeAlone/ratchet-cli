@@ -167,11 +167,22 @@ Commands:
 
 Slash commands (inside TUI):
   /help                      Show available commands
+  /tree                      Open session branch tree
   /provider list             List configured providers
   /provider add              Add a new provider
   /provider remove <alias>   Remove a provider
   /provider default <alias>  Set default provider
   /provider test <alias>     Test provider connection
+  /mode <mode>               Switch trust mode (conservative|permissive|locked|sandbox|custom)
+  /trust list                Show active trust rules
+  /trust grants              Show persistent grants
+  /trust allow "pattern" [--scope scope]  Add allow rule
+  /trust deny "pattern" [--scope scope]   Add deny rule
+  /trust persist allow "pattern" [--scope scope]  Add persistent allow grant
+  /trust persist deny "pattern" [--scope scope]   Add persistent deny grant
+  /trust revoke "pattern" [--scope scope]  Revoke persistent grant
+  /trust reset               Reset to config defaults
+  /exit                      Quit ratchet
 
 Run 'ratchet <command> --help' for details.
 `)

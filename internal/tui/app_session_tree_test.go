@@ -141,6 +141,24 @@ func TestAppEscClosesSessionTreeWithoutChangingSession(t *testing.T) {
 	}
 }
 
+func TestAppEscClosesJobPanel(t *testing.T) {
+	app := readyChatApp(t, "root-session-12345678")
+	model, _ := app.Update(ctrlKey('j'))
+	app = model.(App)
+	if !app.showJobs {
+		t.Fatal("ctrl+j did not open job panel")
+	}
+
+	model, _ = app.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	app = model.(App)
+	if app.showJobs {
+		t.Fatal("esc did not close job panel")
+	}
+	if app.page != pageChat {
+		t.Fatalf("page = %v, want pageChat", app.page)
+	}
+}
+
 func TestAppSidebarSelectionRebuildsChatAndUpdatesMarker(t *testing.T) {
 	app := readyChatApp(t, "root-session-12345678")
 	app.sidebar = components.NewSidebar([]*pb.Session{

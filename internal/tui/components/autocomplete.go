@@ -43,6 +43,7 @@ func NewAutocomplete() AutocompleteModel {
 		{Name: "/cost", Desc: "Show token usage"},
 		{Name: "/agents", Desc: "List active agents"},
 		{Name: "/sessions", Desc: "List sessions"},
+		{Name: "/tree", Desc: "Open session branch tree"},
 		{Name: "/provider", Desc: "Provider management"},
 		{Name: "/exit", Desc: "Quit ratchet"},
 		{Name: "/plan", Desc: "Show plan mode info"},
@@ -57,6 +58,8 @@ func NewAutocomplete() AutocompleteModel {
 		{Name: "/mcp", Desc: "MCP tool management"},
 		{Name: "/jobs", Desc: "Show job control panel"},
 		{Name: "/login", Desc: "Re-authenticate provider"},
+		{Name: "/mode", Desc: "Switch trust mode"},
+		{Name: "/trust", Desc: "Manage trust rules and grants"},
 	}
 	return AutocompleteModel{commands: commands}
 }
