@@ -1,7 +1,7 @@
 # Retro: TUI Binary Verification
 
 **PR:** #81 - docs: close tui binary verification
-**Merged:** pending
+**Merged:** 2026-07-04
 **Branch:** docs/tui-verification-closeout
 **Design:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification-design.md
 **Plan:** docs/plans/2026-07-03-ratchet-cli-tui-binary-verification.md
