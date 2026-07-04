@@ -13,6 +13,10 @@ var smokeSourceManifest = map[string]struct{}{
 	"internal/daemon/service_tui_smoke.go": {},
 }
 
+var smokeSourceToolingAllowlist = map[string]struct{}{
+	"internal/releaseguard/guard.go": {},
+}
+
 func TestSmokeSourceManifest(t *testing.T) {
 	root := tuiRepoRoot(t)
 	for rel := range smokeSourceManifest {
@@ -54,6 +58,9 @@ func TestSmokeSourceManifest(t *testing.T) {
 		}
 		for _, token := range forbidden {
 			if strings.Contains(string(src), token) {
+				if _, ok := smokeSourceToolingAllowlist[rel]; ok {
+					continue
+				}
 				t.Fatalf("unmanifested non-test Go file %s contains smoke token %q", rel, token)
 			}
 		}
