@@ -80,6 +80,8 @@ ratchet blackboard write coordination status ready
                             # Share local coordination state through the daemon
 ratchet blackboard read coordination status
                             # Read coordination state from another terminal
+ratchet blackboard export coordination --jsonl
+                            # Export local notification-event records for messaging plugins
 ratchet retro analyze --evidence ~/.ratchet/retro/evidence.jsonl --session ID
                             # Analyze local retro evidence without mutating config
 ratchet provider list       # List providers
@@ -160,9 +162,11 @@ terminal sessions. Use `ratchet blackboard write coordination status ready` and
 handoff notes through the running daemon; add `--json` for scripts. The
 blackboard is daemon-scoped volatile state, not durable storage across daemon
 restart. Treat values as sensitive local coordination data because they can
-contain prompts, file paths, or task context. External notification delivery is
-deferred to a future reusable `workflow-plugin-notify` built around Notify, not
-implemented in ratchet-cli directly.
+contain prompts, file paths, or task context. Use `ratchet blackboard export [section] --jsonl`
+to emit local notification-event records with a `messaging.text` projection;
+external delivery belongs in the existing `workflow-plugin-messaging-core`,
+`workflow-plugin-slack`, `workflow-plugin-discord`, and `workflow-plugin-teams`
+plugin family, not in ratchet-cli direct adapters or credential flags.
 
 The v0.25.0 release line adds raw ACPX event-log import/export, `sessions
 events`, saved compare bundles, and flow replay bundles on top of reviewable
@@ -249,7 +253,7 @@ ratchet acp client watch work \
 | TUI | `ratchet` | Starts a daemon-backed interactive session. |
 | One-shot | `ratchet -p "prompt"` | Uses the configured default provider. |
 | Daemon | `HOME="$(mktemp -d)" ratchet daemon status` | Runs credential-free when pointed at a temp home. |
-| Blackboard | `ratchet blackboard write coordination status ready` / `ratchet blackboard read coordination status` | Shares daemon-scoped volatile local coordination data across separate terminal invocations; `TestHarnessSmokeBlackboardCLI` proves built CLI write/read/list through the daemon. |
+| Blackboard | `ratchet blackboard write coordination status ready` / `ratchet blackboard read coordination status` / `ratchet blackboard export [section] --jsonl` | Shares daemon-scoped volatile local coordination data across separate terminal invocations and exports local notification-event records for Workflow messaging plugins; `TestHarnessSmokeBlackboardCLI` proves built CLI write/read/list through the daemon. |
 | ACP | `ratchet acp` | Exposes the agent over ACP stdio JSON-RPC; prompt smoke is covered by `TestACPStdioPromptSmoke`. |
 | ACP client | `ratchet acp client exec --command ./agent "prompt"` | Drives an external ACP agent over stdio; binary smoke covers exec, persisted sessions, FIFO `--no-wait` queue, queue inspection, explicit watch/drain, status, cancel, archive export/import with raw ACPX event logs, saved compare bundles, Go-native ACPX flow replay bundles, and trusted ACP launch profiles. |
 | MCP | `ratchet mcp blackboard` / `ratchet mcp daemon` | Exposes standalone blackboard or daemon-backed session/project/blackboard/team MCP tools over stdio, including active-team `team_message`. |

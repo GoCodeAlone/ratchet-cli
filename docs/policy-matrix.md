@@ -55,14 +55,15 @@ or deferred rows below must not be treated as fully enforced runtime behavior.
 | Hooks/extensions | `internal/hooks`, plugin manifests, and future extension work | Supported with review/trust / Deferred | User hooks in `~/.ratchet/hooks.yaml` remain trusted by default for compatibility. Project hooks in `.ratchet/hooks.yaml` and plugin hooks are listed but skipped until exact descriptor hook trust is recorded with `ratchet hooks trust <hash>`. `ratchet hooks disable <hash>` overrides trust, changed hook descriptors require re-review, and plugin hook/profile paths must stay inside plugin roots. Managed hooks remain deferred. TypeScript extension SDK remains deferred, including tool registration, hot reload, lifecycle interception SDKs, and unreviewed local mutation. | Hook trust store, CLI, daemon wiring, plugin containment, and Windows command-selection tests. Future managed hooks and extension SDK work need a separate locked design. |
 | Flow action nodes | `internal/acpclient` | Supported with explicit grants | JSON v1 `action` nodes run runtime-owned local commands only after `ratchet acp client flow run` receives `--allow shell`. Node working directories outside the flow base require `--allow outside-cwd`. Action stdout/stderr persisted in run bundles is sensitive local command output. This is flow-local preflight, not a new trust engine or full sandbox. | ACP client flow tests and binary smoke cover action nodes, missing grants, cwd escapes, and persisted outputs. |
 | Retro/self-improvement | `internal/retro` and local project evidence routing | Partial | Retro evidence is opt-in. `ratchet retro analyze --evidence <file> [--session ID] [--json]` reports findings, local actions, and upstream instructions without mutating config or opening PRs. Automatic local mutation and upstream PR creation are disabled unless a future configurable policy enables them. | Retro analyzer, command, and config-gating tests. |
+| Blackboard notification-event export | Daemon blackboard CLI | Supported local-only | `ratchet blackboard export [section] [--json\|--jsonl]` reads daemon blackboard entries and projects them into local notification-event records with `messaging.text`. It does not post to Slack, Discord, Teams, webhooks, email, or any network provider, and it has no credential/channel flags. External delivery remains a Workflow messaging plugin responsibility. | Blackboard command tests cover section export, all-section export, JSONL output, and rejected provider credential flags. |
 | Per-agent/team scopes | Daemon team manager and mesh configs | Partial / Deferred | Team orchestration and MCP team messaging exist. Per-agent permission scopes, worktree isolation policy, and channel routing are future work. | Team and MCP tests for current behavior; future per-agent scopes need a separate design. |
 
 ## Sensitive Metadata
 
 Trust rules, grant patterns, hook descriptors, launch profile names and
 commands, queue contents, archive exports, raw ACPX event logs, compare
-bundles, flow replay bundles, retro evidence, flow action output, and policy
-decisions are sensitive local policy metadata.
+bundles, flow replay bundles, retro evidence, blackboard export records, flow
+action output, and policy decisions are sensitive local policy metadata.
 They can reveal local paths, command names, provider usage, project conventions,
 prompts, responses, stdout/stderr, or operational habits. Do not expand logging,
 exports, or public docs with raw policy values unless a future design includes
@@ -74,6 +75,8 @@ conversation data:
 - prefer local-only storage under the user's state directory;
 - redact command/path/provider values in shared evidence;
 - avoid exporting queued prompts or grant lists unless explicitly requested;
+- avoid sharing blackboard export records unless the local coordination payload
+  was reviewed for secrets and prompt context;
 - keep retro evidence opt-in and redacted.
 
 ## Deferred Automation
