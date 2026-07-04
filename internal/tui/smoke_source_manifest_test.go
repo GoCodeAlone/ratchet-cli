@@ -40,7 +40,7 @@ func TestSmokeSourceManifest(t *testing.T) {
 		}
 		if d.IsDir() {
 			name := d.Name()
-			if name == ".git" || name == "dist" {
+			if name == ".git" || name == ".worktrees" || name == "dist" {
 				return filepath.SkipDir
 			}
 			return nil

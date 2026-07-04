@@ -52,8 +52,10 @@ github.com/GoCodeAlone/modular/modules/jsonschema v1.17.0 h1:zoWioqUvuNNDfnjHA1s
 github.com/GoCodeAlone/modular/modules/jsonschema v1.17.0/go.mod h1:GDU/jsD6AddmXKedj0wZwieUIaQsTBSGMzuj+XHXMrw=
 github.com/GoCodeAlone/modular/modules/reverseproxy/v2 v2.10.0 h1:+2M/ecyCxDiXfJM4ibcERuu/BBeIbLTQNcVgRsllR64=
 github.com/GoCodeAlone/modular/modules/reverseproxy/v2 v2.10.0/go.mod h1:tlVH1mA5yuU8CB7R7+HXIRaBixZoNid6h+5tew5u3FU=
-github.com/GoCodeAlone/workflow v0.84.6 h1:79KizHRiW1REPnE+6o0wfNrTYadL/wEXWnsQ0WTl3wY=
-github.com/GoCodeAlone/workflow v0.84.6/go.mod h1:vBi/HkWBt8LrZ/J3E61bx/Q4MSh15ieXy8sIEqK5lNU=
+github.com/GoCodeAlone/workflow v0.85.1 h1:M1lQH5onfyvnqXyGOIud9LUOnZg7mU/5+nEOJa9s8WE=
+github.com/GoCodeAlone/workflow v0.85.1/go.mod h1:ME95eFauCD/NNC+no3JUravITpI46x/Vay2a1kI7Vzo=
+github.com/GoCodeAlone/workflow-plugin-acpx v0.1.0 h1:mwwaLAfsxEIYdIQ4wvV/PkT0Ol30ntGhiun6vArRexI=
+github.com/GoCodeAlone/workflow-plugin-acpx v0.1.0/go.mod h1:Bun12gpt+/WmqlAafEXpxSG1esbI3TAmwWFrgaR1xOY=
 github.com/GoCodeAlone/workflow-plugin-agent v0.12.0 h1:hYvsALgYxDt1Ti/hZa9rmy3s42ZU4lt3K0Y9YUT+ejk=
 github.com/GoCodeAlone/workflow-plugin-agent v0.12.0/go.mod h1:E3ciphc2GFgtxFugQO7S35mlnFVOWEF3+s+Qi6vzO5M=
 github.com/GoCodeAlone/workflow-plugin-authz v0.5.13 h1:5vORZ5sUsVWEs4r/zmmy1cYSFGh8ZzhbVbgn0UhhoXs=

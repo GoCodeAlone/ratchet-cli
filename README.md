@@ -168,7 +168,7 @@ compare bundles, flow replay bundles, prompts, responses, and action outputs
 are sensitive local conversation artifacts. JSON v1 flows support `acp`,
 `compute`, and `action` nodes, template prompts, shared session handles, and
 persisted run bundles; `flow replay` reads ratchet bundles and upstream-shaped
-ACPX durable bundles through the Go-native `acpx-go` compatibility library
+ACPX durable bundles through the shared `workflow-plugin-acpx` runtime
 without contacting agents or executing actions. New `flow run` bundles write
 ACPX-shaped `manifest.json`, `flow.json`, `trace.ndjson`, projections, session
 records, and artifacts while preserving the JSON v1 input flow format. Action
