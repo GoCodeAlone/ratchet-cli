@@ -32,14 +32,13 @@ func handleBlackboard(args []string) {
 	}
 	defer c.Close()
 
-	if err := runBlackboard(context.Background(), c, args, os.Stdout, os.Stderr); err != nil {
+	if err := runBlackboard(context.Background(), c, args, os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func runBlackboard(ctx context.Context, c blackboardClient, args []string, stdout, stderr io.Writer) error {
-	_ = stderr
+func runBlackboard(ctx context.Context, c blackboardClient, args []string, stdout io.Writer) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: ratchet blackboard <list|read|write> [args...]")
 	}
@@ -66,6 +65,9 @@ func parseBlackboardOptions(args []string) (blackboardOptions, error) {
 	opts := blackboardOptions{author: defaultBlackboardAuthor()}
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--":
+			opts.args = append(opts.args, args[i+1:]...)
+			return opts, nil
 		case "--json":
 			opts.json = true
 		case "--author":

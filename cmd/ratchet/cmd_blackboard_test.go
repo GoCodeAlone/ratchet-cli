@@ -62,10 +62,10 @@ func (f *fakeBlackboardClient) BlackboardList(_ context.Context, section string)
 }
 
 func TestHandleBlackboardWritePrintsRevision(t *testing.T) {
-	var stdout, stderr bytes.Buffer
+	var stdout bytes.Buffer
 	fake := &fakeBlackboardClient{}
 
-	err := runBlackboard(context.Background(), fake, []string{"write", "coordination", "status", "ready", "--author", "agent-a"}, &stdout, &stderr)
+	err := runBlackboard(context.Background(), fake, []string{"write", "coordination", "status", "ready", "--author", "agent-a"}, &stdout)
 
 	if err != nil {
 		t.Fatalf("runBlackboard: %v", err)
@@ -79,16 +79,13 @@ func TestHandleBlackboardWritePrintsRevision(t *testing.T) {
 	if got := stdout.String(); !strings.Contains(got, "coordination/status") || !strings.Contains(got, "rev=7") {
 		t.Fatalf("stdout = %q", got)
 	}
-	if stderr.Len() != 0 {
-		t.Fatalf("stderr = %q", stderr.String())
-	}
 }
 
 func TestHandleBlackboardReadPrintsValue(t *testing.T) {
-	var stdout, stderr bytes.Buffer
+	var stdout bytes.Buffer
 	fake := &fakeBlackboardClient{}
 
-	err := runBlackboard(context.Background(), fake, []string{"read", "coordination", "status"}, &stdout, &stderr)
+	err := runBlackboard(context.Background(), fake, []string{"read", "coordination", "status"}, &stdout)
 
 	if err != nil {
 		t.Fatalf("runBlackboard: %v", err)
@@ -96,16 +93,13 @@ func TestHandleBlackboardReadPrintsValue(t *testing.T) {
 	if got := stdout.String(); !strings.Contains(got, "ready") || strings.Contains(got, "{") {
 		t.Fatalf("stdout = %q", got)
 	}
-	if stderr.Len() != 0 {
-		t.Fatalf("stderr = %q", stderr.String())
-	}
 }
 
 func TestHandleBlackboardListPrintsSectionsAndEntries(t *testing.T) {
 	var stdout bytes.Buffer
 	fake := &fakeBlackboardClient{}
 
-	if err := runBlackboard(context.Background(), fake, []string{"list"}, &stdout, &bytes.Buffer{}); err != nil {
+	if err := runBlackboard(context.Background(), fake, []string{"list"}, &stdout); err != nil {
 		t.Fatalf("list sections: %v", err)
 	}
 	if got := stdout.String(); !strings.Contains(got, "coordination") || !strings.Contains(got, "status") {
@@ -113,7 +107,7 @@ func TestHandleBlackboardListPrintsSectionsAndEntries(t *testing.T) {
 	}
 
 	stdout.Reset()
-	if err := runBlackboard(context.Background(), fake, []string{"list", "coordination"}, &stdout, &bytes.Buffer{}); err != nil {
+	if err := runBlackboard(context.Background(), fake, []string{"list", "coordination"}, &stdout); err != nil {
 		t.Fatalf("list entries: %v", err)
 	}
 	if got := stdout.String(); !strings.Contains(got, "status") || !strings.Contains(got, "ready") {
@@ -125,7 +119,7 @@ func TestHandleBlackboardJSONOutput(t *testing.T) {
 	var stdout bytes.Buffer
 	fake := &fakeBlackboardClient{}
 
-	err := runBlackboard(context.Background(), fake, []string{"read", "coordination", "status", "--json"}, &stdout, &bytes.Buffer{})
+	err := runBlackboard(context.Background(), fake, []string{"read", "coordination", "status", "--json"}, &stdout)
 
 	if err != nil {
 		t.Fatalf("runBlackboard: %v", err)
@@ -136,6 +130,26 @@ func TestHandleBlackboardJSONOutput(t *testing.T) {
 	}
 	if !payload.Found || payload.Entry.GetValue() != "ready" {
 		t.Fatalf("payload = %#v", &payload)
+	}
+}
+
+func TestHandleBlackboardWriteSupportsEndOfFlagsMarker(t *testing.T) {
+	var stdout bytes.Buffer
+	fake := &fakeBlackboardClient{}
+
+	err := runBlackboard(context.Background(), fake, []string{"write", "coordination", "flaggy", "--", "--json", "--author", "literal"}, &stdout)
+
+	if err != nil {
+		t.Fatalf("runBlackboard: %v", err)
+	}
+	if fake.written == nil {
+		t.Fatal("expected write call")
+	}
+	if fake.written.Value != "--json --author literal" {
+		t.Fatalf("written value = %q", fake.written.Value)
+	}
+	if fake.written.Author == "literal" {
+		t.Fatalf("--author after -- must be positional, author = %q", fake.written.Author)
 	}
 }
 
@@ -153,8 +167,7 @@ func TestHandleBlackboardValidation(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			var stderr bytes.Buffer
-			err := runBlackboard(context.Background(), &fakeBlackboardClient{}, tc.args, &bytes.Buffer{}, &stderr)
+			err := runBlackboard(context.Background(), &fakeBlackboardClient{}, tc.args, &bytes.Buffer{})
 			if err == nil {
 				t.Fatal("expected error")
 			}
