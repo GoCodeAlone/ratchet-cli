@@ -7,7 +7,7 @@ require (
 	charm.land/bubbletea/v2 v2.0.7
 	charm.land/lipgloss/v2 v2.0.4
 	github.com/ActiveState/termtest v0.7.2
-	github.com/GoCodeAlone/acpx-go v0.1.0
+	github.com/GoCodeAlone/acpx-go v0.2.0
 	github.com/GoCodeAlone/workflow v0.84.6
 	github.com/GoCodeAlone/workflow-plugin-agent v0.12.0
 	github.com/charmbracelet/glamour v0.10.0

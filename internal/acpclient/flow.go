@@ -2,19 +2,21 @@ package acpclient
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/GoCodeAlone/acpx-go/flowjson"
 )
 
-var ErrInvalidFlowDefinition = errors.New("invalid acp client flow definition")
+var ErrInvalidFlowDefinition = flowjson.ErrInvalidDefinition
 
 const (
-	FlowNodeTypeACP     = "acp"
-	FlowNodeTypeAction  = "action"
-	FlowNodeTypeCompute = "compute"
+	FlowNodeTypeACP        = flowjson.NodeTypeACP
+	FlowNodeTypeAction     = flowjson.NodeTypeAction
+	FlowNodeTypeCompute    = flowjson.NodeTypeCompute
+	FlowNodeTypeCheckpoint = flowjson.NodeTypeCheckpoint
 
 	FlowRunStatusRunning   = "running"
 	FlowRunStatusCompleted = "completed"
@@ -24,34 +26,10 @@ const (
 	FlowStepStatusFailed    = "failed"
 )
 
-type FlowDefinition struct {
-	FormatVersion int        `json:"format_version"`
-	Name          string     `json:"name,omitempty"`
-	Requires      []string   `json:"requires,omitempty"`
-	StartAt       string     `json:"start_at"`
-	Nodes         []FlowNode `json:"nodes"`
-	Edges         []FlowEdge `json:"edges,omitempty"`
-}
-
-type FlowNode struct {
-	ID      string            `json:"id"`
-	Type    string            `json:"type"`
-	Prompt  string            `json:"prompt,omitempty"`
-	Agent   string            `json:"agent,omitempty"`
-	Command string            `json:"command,omitempty"`
-	Args    []string          `json:"args,omitempty"`
-	Session string            `json:"session,omitempty"`
-	Cwd     string            `json:"cwd,omitempty"`
-	Env     map[string]string `json:"env,omitempty"`
-	Input   json.RawMessage   `json:"input,omitempty"`
-	Value   json.RawMessage   `json:"value,omitempty"`
-	Select  string            `json:"select,omitempty"`
-}
-
-type FlowEdge struct {
-	From string `json:"from"`
-	To   string `json:"to"`
-}
+type FlowDefinition = flowjson.Definition
+type FlowNode = flowjson.Node
+type FlowEdge = flowjson.Edge
+type FlowSwitchEdge = flowjson.SwitchEdge
 
 type FlowRunState struct {
 	RunID  string           `json:"run_id"`
@@ -80,112 +58,6 @@ func LoadFlowDefinition(path string) (FlowDefinition, error) {
 		return FlowDefinition{}, err
 	}
 	return def, nil
-}
-
-func (def FlowDefinition) Validate() error {
-	if def.FormatVersion != 1 {
-		return fmt.Errorf("%w: format_version must be 1", ErrInvalidFlowDefinition)
-	}
-	if def.StartAt == "" {
-		return fmt.Errorf("%w: start_at is required", ErrInvalidFlowDefinition)
-	}
-	if len(def.Nodes) == 0 {
-		return fmt.Errorf("%w: at least one node is required", ErrInvalidFlowDefinition)
-	}
-	nodes := make(map[string]FlowNode, len(def.Nodes))
-	for _, node := range def.Nodes {
-		if node.ID == "" {
-			return fmt.Errorf("%w: node id is required", ErrInvalidFlowDefinition)
-		}
-		if !safeFlowIdentifier(node.ID) {
-			return fmt.Errorf("%w: unsafe node id %s", ErrInvalidFlowDefinition, node.ID)
-		}
-		if _, exists := nodes[node.ID]; exists {
-			return fmt.Errorf("%w: duplicate node %s", ErrInvalidFlowDefinition, node.ID)
-		}
-		switch node.Type {
-		case FlowNodeTypeACP:
-			if node.Prompt == "" {
-				return fmt.Errorf("%w: acp node %s prompt is required", ErrInvalidFlowDefinition, node.ID)
-			}
-		case FlowNodeTypeAction:
-			if strings.TrimSpace(node.Command) == "" {
-				return fmt.Errorf("%w: action node %s command is required", ErrInvalidFlowDefinition, node.ID)
-			}
-		case FlowNodeTypeCompute:
-			hasValue := len(node.Value) > 0
-			hasSelect := node.Select != ""
-			if hasValue == hasSelect {
-				return fmt.Errorf("%w: compute node %s must set exactly one of value or select", ErrInvalidFlowDefinition, node.ID)
-			}
-		default:
-			return fmt.Errorf("%w: unknown node type %s", ErrInvalidFlowDefinition, node.Type)
-		}
-		nodes[node.ID] = node
-	}
-	if _, ok := nodes[def.StartAt]; !ok {
-		return fmt.Errorf("%w: start_at node %s does not exist", ErrInvalidFlowDefinition, def.StartAt)
-	}
-	graph := make(map[string][]string, len(nodes))
-	for _, edge := range def.Edges {
-		if edge.From == "" || edge.To == "" {
-			return fmt.Errorf("%w: edge endpoints are required", ErrInvalidFlowDefinition)
-		}
-		if _, ok := nodes[edge.From]; !ok {
-			return fmt.Errorf("%w: edge from node %s does not exist", ErrInvalidFlowDefinition, edge.From)
-		}
-		if _, ok := nodes[edge.To]; !ok {
-			return fmt.Errorf("%w: edge to node %s does not exist", ErrInvalidFlowDefinition, edge.To)
-		}
-		if edge.To == def.StartAt {
-			return fmt.Errorf("%w: edge into start_at node %s is not allowed", ErrInvalidFlowDefinition, def.StartAt)
-		}
-		graph[edge.From] = append(graph[edge.From], edge.To)
-	}
-	for id := range nodes {
-		if hasFlowCycle(id, graph, map[string]bool{}, map[string]bool{}) {
-			return fmt.Errorf("%w: graph contains cycle", ErrInvalidFlowDefinition)
-		}
-	}
-	reachable := reachableFlowNodes(def.StartAt, graph)
-	if len(reachable) != len(nodes) {
-		return fmt.Errorf("%w: graph contains unreachable nodes", ErrInvalidFlowDefinition)
-	}
-	return nil
-}
-
-func hasFlowCycle(node string, graph map[string][]string, visiting, visited map[string]bool) bool {
-	if visiting[node] {
-		return true
-	}
-	if visited[node] {
-		return false
-	}
-	visiting[node] = true
-	for _, next := range graph[node] {
-		if hasFlowCycle(next, graph, visiting, visited) {
-			return true
-		}
-	}
-	visiting[node] = false
-	visited[node] = true
-	return false
-}
-
-func reachableFlowNodes(start string, graph map[string][]string) map[string]bool {
-	reachable := map[string]bool{}
-	var walk func(string)
-	walk = func(id string) {
-		if reachable[id] {
-			return
-		}
-		reachable[id] = true
-		for _, next := range graph[id] {
-			walk(next)
-		}
-	}
-	walk(start)
-	return reachable
 }
 
 func safeFlowIdentifier(id string) bool {

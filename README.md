@@ -155,11 +155,13 @@ are sensitive local conversation artifacts. JSON v1 flows support `acp`,
 `compute`, and `action` nodes, template prompts, shared session handles, and
 persisted run bundles; `flow replay` reads ratchet bundles and upstream-shaped
 ACPX durable bundles through the Go-native `acpx-go` compatibility library
-without contacting agents or executing actions. Action nodes require
-`--allow shell`, and node working directories outside the flow base require
-`--allow outside-cwd`. Action stdout/stderr in run bundles is sensitive local
-command output. Ratchet does not execute `.flow.ts` files or embed a TypeScript
-ACPX runtime.
+without contacting agents or executing actions. New `flow run` bundles write
+ACPX-shaped `manifest.json`, `flow.json`, `trace.ndjson`, projections, session
+records, and artifacts while preserving the JSON v1 input flow format. Action
+nodes require `--allow shell`, and node working directories outside the flow
+base require `--allow outside-cwd`. Action stdout/stderr in run bundles is
+sensitive local command output. Ratchet does not execute `.flow.ts` files or
+embed a TypeScript ACPX runtime.
 
 ## ACP Client Examples
 
@@ -226,7 +228,7 @@ ratchet acp client watch work \
 | One-shot | `ratchet -p "prompt"` | Uses the configured default provider. |
 | Daemon | `HOME="$(mktemp -d)" ratchet daemon status` | Runs credential-free when pointed at a temp home. |
 | ACP | `ratchet acp` | Exposes the agent over ACP stdio JSON-RPC; prompt smoke is covered by `TestACPStdioPromptSmoke`. |
-| ACP client | `ratchet acp client exec --command ./agent "prompt"` | Drives an external ACP agent over stdio; binary smoke covers exec, persisted sessions, FIFO `--no-wait` queue, queue inspection, explicit watch/drain, status, cancel, archive export/import with raw ACPX event logs, saved compare bundles, JSON v1 flow replay bundles, and trusted ACP launch profiles. |
+| ACP client | `ratchet acp client exec --command ./agent "prompt"` | Drives an external ACP agent over stdio; binary smoke covers exec, persisted sessions, FIFO `--no-wait` queue, queue inspection, explicit watch/drain, status, cancel, archive export/import with raw ACPX event logs, saved compare bundles, Go-native ACPX flow replay bundles, and trusted ACP launch profiles. |
 | MCP | `ratchet mcp blackboard` / `ratchet mcp daemon` | Exposes standalone blackboard or daemon-backed session/project/blackboard/team MCP tools over stdio, including active-team `team_message`. |
 | Team | `ratchet team start "task"` | Uses daemon team orchestration with configured providers. |
 

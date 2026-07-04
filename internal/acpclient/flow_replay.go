@@ -88,7 +88,10 @@ type FlowTraceEvent struct {
 type flowReplayRecorder struct {
 	store     *FlowRunStore
 	runID     string
+	flowName  string
+	startedAt time.Time
 	steps     []FlowReplayStep
+	acpxSteps []acpx.FlowStepRecord
 	sessions  map[string]FlowReplaySession
 	events    map[string][]EventLogLine
 	prompts   map[string]FlowReplayArtifactRef
@@ -96,17 +99,32 @@ type flowReplayRecorder struct {
 	seq       int
 }
 
-func newFlowReplayRecorder(store *FlowRunStore, runID string) *flowReplayRecorder {
+func newFlowReplayRecorder(store *FlowRunStore, runID string, def FlowDefinition) *flowReplayRecorder {
 	if store == nil {
 		return nil
 	}
 	return &flowReplayRecorder{
-		store:    store,
-		runID:    runID,
-		sessions: map[string]FlowReplaySession{},
-		events:   map[string][]EventLogLine{},
-		prompts:  map[string]FlowReplayArtifactRef{},
+		store:     store,
+		runID:     runID,
+		flowName:  firstNonEmpty(def.Name, "flow"),
+		startedAt: time.Now().UTC(),
+		sessions:  map[string]FlowReplaySession{},
+		events:    map[string][]EventLogLine{},
+		prompts:   map[string]FlowReplayArtifactRef{},
 	}
+}
+
+func (r *flowReplayRecorder) RecordRunStarted() error {
+	if r == nil {
+		return nil
+	}
+	return r.appendTraceEvent(acpx.TraceEvent{
+		At:      r.startedAt.Format(time.RFC3339Nano),
+		Scope:   acpx.TraceScopeRun,
+		Type:    "run_started",
+		RunID:   r.runID,
+		Payload: map[string]json.RawMessage{},
+	})
 }
 
 func (r *flowReplayRecorder) RecordStep(node FlowNode, step FlowStepRecord) error {
@@ -157,17 +175,46 @@ func (r *flowReplayRecorder) RecordStep(node FlowNode, step FlowStepRecord) erro
 		replayStep.PromptArtifact = r.prompts[handle]
 	}
 	r.steps = append(r.steps, replayStep)
-	r.seq++
-	return r.store.AppendTraceEvent(FlowTraceEvent{
-		Seq:      r.seq,
-		At:       time.Now().UTC(),
-		Kind:     "step",
-		NodeID:   step.NodeID,
-		Type:     node.Type,
-		Status:   step.Status,
-		Error:    step.Error,
-		Output:   replayStep.Output,
-		Artifact: replayStep.OutputArtifact.Path,
+	now := time.Now().UTC()
+	attemptID := step.NodeID + "#1"
+	outcome := acpx.NodeOutcomeOK
+	if step.Status == FlowStepStatusFailed {
+		outcome = acpx.NodeOutcomeFailed
+	}
+	acpxStep := acpx.FlowStepRecord{
+		AttemptID:  attemptID,
+		NodeID:     step.NodeID,
+		NodeType:   acpx.NodeType(node.Type),
+		Outcome:    outcome,
+		StartedAt:  now.Format(time.RFC3339Nano),
+		FinishedAt: now.Format(time.RFC3339Nano),
+		Output:     step.Output,
+		Error:      step.Error,
+	}
+	r.acpxSteps = append(r.acpxSteps, acpxStep)
+	if err := r.appendTraceEvent(acpx.TraceEvent{
+		At:        now.Format(time.RFC3339Nano),
+		Scope:     acpx.TraceScopeNode,
+		Type:      "node_started",
+		RunID:     r.runID,
+		NodeID:    step.NodeID,
+		AttemptID: attemptID,
+		Payload:   map[string]json.RawMessage{"nodeType": rawJSONString(node.Type)},
+	}); err != nil {
+		return err
+	}
+	return r.appendTraceEvent(acpx.TraceEvent{
+		At:        now.Format(time.RFC3339Nano),
+		Scope:     acpx.TraceScopeNode,
+		Type:      "node_outcome",
+		RunID:     r.runID,
+		NodeID:    step.NodeID,
+		AttemptID: attemptID,
+		Artifact:  acpxArtifactRef(replayStep.OutputArtifact),
+		Payload: map[string]json.RawMessage{
+			"outcome": rawJSONString(string(outcome)),
+			"status":  rawJSONString(step.Status),
+		},
 	})
 }
 
@@ -185,6 +232,23 @@ func (r *flowReplayRecorder) RecordACPPrompt(handle, sessionID, prompt string, e
 	if err := writeCompareEventsFile(filepath.Join(r.store.Dir(), eventPath), r.events[handle]); err != nil {
 		return err
 	}
+	sessionDir := filepath.ToSlash(filepath.Join("sessions", safeCompareSegment(handle)))
+	bindingPath := filepath.ToSlash(filepath.Join(sessionDir, "binding.json"))
+	recordPath := filepath.ToSlash(filepath.Join(sessionDir, "record.json"))
+	if err := writeJSONFileAtomic(filepath.Join(r.store.Dir(), filepath.FromSlash(bindingPath)), map[string]any{
+		"schema":    acpx.SchemaSessionV1,
+		"handle":    handle,
+		"sessionId": sessionID,
+	}, 0o600); err != nil {
+		return err
+	}
+	if err := writeJSONFileAtomic(filepath.Join(r.store.Dir(), filepath.FromSlash(recordPath)), map[string]any{
+		"schema":    acpx.SchemaSessionV1,
+		"handle":    handle,
+		"sessionId": sessionID,
+	}, 0o600); err != nil {
+		return err
+	}
 	r.sessions[handle] = FlowReplaySession{Handle: handle, SessionID: sessionID, Events: eventPath}
 	return nil
 }
@@ -197,13 +261,29 @@ func (r *flowReplayRecorder) Finalize(result FlowRunResult) error {
 	for _, session := range r.sessions {
 		sessions = append(sessions, session)
 	}
-	runProjection := FlowReplaySummary{
-		RunID:        result.RunID,
-		Status:       result.Status,
-		ManifestPath: "manifest.json",
-		StepCount:    len(r.steps),
-		TraceCount:   r.seq,
-		SessionCount: len(sessions),
+	finishedAt := time.Now().UTC()
+	status := acpx.RunStatus(result.Status)
+	runProjection := acpx.FlowRunState{
+		RunID:      result.RunID,
+		FlowName:   r.flowName,
+		StartedAt:  r.startedAt.Format(time.RFC3339Nano),
+		FinishedAt: finishedAt.Format(time.RFC3339Nano),
+		UpdatedAt:  finishedAt.Format(time.RFC3339Nano),
+		Status:     status,
+		Outputs:    result.Outputs,
+		Results:    map[string]acpx.FlowNodeResult{},
+	}
+	for _, step := range r.acpxSteps {
+		runProjection.Results[step.NodeID] = acpx.FlowNodeResult{
+			AttemptID:  step.AttemptID,
+			NodeID:     step.NodeID,
+			NodeType:   step.NodeType,
+			Outcome:    step.Outcome,
+			StartedAt:  step.StartedAt,
+			FinishedAt: step.FinishedAt,
+			Output:     step.Output,
+			Error:      step.Error,
+		}
 	}
 	if err := r.store.WriteProjection("run", runProjection); err != nil {
 		return err
@@ -211,25 +291,38 @@ func (r *flowReplayRecorder) Finalize(result FlowRunResult) error {
 	if err := r.store.WriteProjection("live", runProjection); err != nil {
 		return err
 	}
-	if err := r.store.WriteProjection("steps", r.steps); err != nil {
+	if err := r.store.WriteProjection("steps", r.acpxSteps); err != nil {
 		return err
 	}
-	return r.store.WriteManifest(FlowRunManifest{
-		Schema:     FlowReplayBundleSchema,
-		RunID:      result.RunID,
-		Status:     result.Status,
-		Definition: "flow.json",
-		Input:      "input.json",
-		State:      "state.json",
-		Trace:      "trace.ndjson",
-		Projections: FlowReplayProjections{
-			Run:   filepath.ToSlash(filepath.Join("projections", "run.json")),
-			Live:  filepath.ToSlash(filepath.Join("projections", "live.json")),
-			Steps: filepath.ToSlash(filepath.Join("projections", "steps.json")),
+	manifestSessions := make([]acpx.ManifestSessionEntry, 0, len(sessions))
+	for _, session := range sessions {
+		sessionDir := filepath.ToSlash(filepath.Join(acpx.DefaultSessionsDir, safeCompareSegment(session.Handle)))
+		manifestSessions = append(manifestSessions, acpx.ManifestSessionEntry{
+			ID:          safeCompareSegment(session.Handle),
+			Handle:      session.Handle,
+			BindingPath: filepath.ToSlash(filepath.Join(sessionDir, "binding.json")),
+			RecordPath:  filepath.ToSlash(filepath.Join(sessionDir, "record.json")),
+			EventsPath:  session.Events,
+		})
+	}
+	return r.store.WriteACPXManifest(acpx.Manifest{
+		Schema:      acpx.SchemaFlowRunBundleV1,
+		RunID:       result.RunID,
+		FlowName:    r.flowName,
+		StartedAt:   r.startedAt.Format(time.RFC3339Nano),
+		FinishedAt:  finishedAt.Format(time.RFC3339Nano),
+		Status:      status,
+		TraceSchema: acpx.SchemaFlowTraceEventV1,
+		Paths: acpx.ManifestPaths{
+			Flow:            acpx.DefaultFlowPath,
+			Trace:           acpx.DefaultTracePath,
+			RunProjection:   acpx.DefaultRunProjectionPath,
+			LiveProjection:  acpx.DefaultLiveProjectionPath,
+			StepsProjection: acpx.DefaultStepsProjectionPath,
+			SessionsDir:     acpx.DefaultSessionsDir,
+			ArtifactsDir:    acpx.DefaultArtifactsDir,
 		},
-		Steps:     r.steps,
-		Sessions:  sessions,
-		Artifacts: r.artifacts,
+		Sessions: manifestSessions,
 	})
 }
 
@@ -269,7 +362,16 @@ func (s *FlowRunStore) WriteArtifact(kind string, data []byte) (FlowReplayArtifa
 	return FlowReplayArtifactRef{Kind: kind, SHA256: "sha256:" + hash, Path: rel}, nil
 }
 
-func (s *FlowRunStore) AppendTraceEvent(event FlowTraceEvent) (err error) {
+func (r *flowReplayRecorder) appendTraceEvent(event acpx.TraceEvent) error {
+	r.seq++
+	event.Seq = int64(r.seq)
+	if event.Payload == nil {
+		event.Payload = map[string]json.RawMessage{}
+	}
+	return r.store.AppendTraceEvent(event)
+}
+
+func (s *FlowRunStore) AppendTraceEvent(event acpx.TraceEvent) (err error) {
 	if s == nil {
 		return errors.New("flow run store is required")
 	}
@@ -298,6 +400,29 @@ func (s *FlowRunStore) WriteProjection(name string, value any) error {
 
 func (s *FlowRunStore) WriteManifest(manifest FlowRunManifest) error {
 	return writeJSONFileAtomic(filepath.Join(s.dir, "manifest.json"), manifest, 0o600)
+}
+
+func (s *FlowRunStore) WriteACPXManifest(manifest acpx.Manifest) error {
+	return writeJSONFileAtomic(filepath.Join(s.dir, "manifest.json"), manifest, 0o600)
+}
+
+func rawJSONString(value string) json.RawMessage {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return json.RawMessage(`""`)
+	}
+	return data
+}
+
+func acpxArtifactRef(ref FlowReplayArtifactRef) *acpx.ArtifactRef {
+	if ref.Path == "" {
+		return nil
+	}
+	return &acpx.ArtifactRef{
+		Path:      ref.Path,
+		MediaType: "application/json",
+		SHA256:    strings.TrimPrefix(ref.SHA256, "sha256:"),
+	}
 }
 
 func LoadFlowReplaySummary(runDir string) (FlowReplaySummary, error) {
