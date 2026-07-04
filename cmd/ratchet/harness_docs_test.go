@@ -141,7 +141,16 @@ func TestHarnessDocsDescribeTUIBinaryEvidenceBoundaries(t *testing.T) {
 		}
 	}
 
-	releaseEvidenceDocs := strings.Join([]string{readme, harness, ratchet, parity, matrix}, "\n")
+	releaseEvidenceDocs := []struct {
+		name string
+		body string
+	}{
+		{name: "README.md", body: readme},
+		{name: "RATCHET.md", body: ratchet},
+		{name: "docs/harness-emulation.md", body: harness},
+		{name: "docs/competitor-parity.md", body: parity},
+		{name: "docs/policy-matrix.md", body: matrix},
+	}
 	for _, required := range []string{
 		"GoReleaser snapshot release-check",
 		"draft release asset postcheck",
@@ -149,10 +158,18 @@ func TestHarnessDocsDescribeTUIBinaryEvidenceBoundaries(t *testing.T) {
 		"tap postcheck",
 		"Windows executable runtime remains deferred",
 	} {
-		if !strings.Contains(releaseEvidenceDocs, required) {
-			t.Fatalf("public docs missing final release evidence wording %q", required)
+		for _, doc := range releaseEvidenceDocs {
+			if !containsWords(doc.body, required) {
+				t.Fatalf("%s missing final release evidence wording %q", doc.name, required)
+			}
 		}
 	}
+}
+
+func containsWords(body, phrase string) bool {
+	normalizedBody := strings.Join(strings.Fields(body), " ")
+	normalizedPhrase := strings.Join(strings.Fields(phrase), " ")
+	return strings.Contains(normalizedBody, normalizedPhrase)
 }
 
 func readHarnessDoc(t *testing.T, path string) string {
