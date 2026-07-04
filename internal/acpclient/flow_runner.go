@@ -95,7 +95,10 @@ func RunFlow(ctx context.Context, def FlowDefinition, input map[string]any, opts
 		if err := store.WriteInput(input); err != nil {
 			return result, err
 		}
-		replay = newFlowReplayRecorder(store, runID)
+		replay = newFlowReplayRecorder(store, runID, def)
+		if err := replay.RecordRunStarted(); err != nil {
+			return result, err
+		}
 	}
 
 	nodes := flowNodeMap(def.Nodes)
@@ -350,29 +353,9 @@ func defaultFlowStartRunner(ctx context.Context, spec AgentSpec, opts RunOptions
 }
 
 func flowExecutionOrder(def FlowDefinition) []string {
-	graph := map[string][]string{}
-	indegree := map[string]int{}
-	for _, node := range def.Nodes {
-		indegree[node.ID] = 0
-	}
-	for _, edge := range def.Edges {
-		graph[edge.From] = append(graph[edge.From], edge.To)
-		indegree[edge.To]++
-	}
-	ready := []string{def.StartAt}
-	queued := map[string]bool{def.StartAt: true}
-	order := make([]string, 0, len(def.Nodes))
-	for len(ready) > 0 {
-		id := ready[0]
-		ready = ready[1:]
-		order = append(order, id)
-		for _, next := range graph[id] {
-			indegree[next]--
-			if indegree[next] == 0 && !queued[next] {
-				ready = append(ready, next)
-				queued[next] = true
-			}
-		}
+	order, err := def.ExecutionOrder()
+	if err != nil {
+		return nil
 	}
 	return order
 }

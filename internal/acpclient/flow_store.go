@@ -34,7 +34,11 @@ func (s *FlowRunStore) Dir() string {
 }
 
 func (s *FlowRunStore) WriteDefinition(def FlowDefinition) error {
-	return writeJSONFileAtomic(filepath.Join(s.dir, "flow.json"), def, 0o600)
+	snapshot, err := def.ToSnapshot()
+	if err != nil {
+		return err
+	}
+	return writeJSONFileAtomic(filepath.Join(s.dir, "flow.json"), snapshot, 0o600)
 }
 
 func (s *FlowRunStore) WriteInput(input any) error {

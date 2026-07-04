@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	acpx "github.com/GoCodeAlone/acpx-go"
 	acpsdk "github.com/coder/acp-go-sdk"
 )
 
@@ -174,45 +175,33 @@ func TestRunFlowWritesReplayBundleFiles(t *testing.T) {
 	assertFlowArtifact(t, runDir, "prepared stdout")
 	assertFlowArtifact(t, runDir, "prepared stderr")
 	assertFlowArtifact(t, runDir, string(result.Outputs["prepare"]))
-	var manifest struct {
-		Schema string `json:"schema"`
-		RunID  string `json:"run_id"`
-		Status string `json:"status"`
-		Trace  string `json:"trace"`
-		Steps  []struct {
-			NodeID string `json:"node_id"`
-			Type   string `json:"type"`
-		} `json:"steps"`
-		Sessions []struct {
-			Handle string `json:"handle"`
-			Events string `json:"events"`
-		} `json:"sessions"`
+	bundle, err := acpx.LoadBundle(t.Context(), runDir)
+	if err != nil {
+		t.Fatalf("LoadBundle: %v", err)
 	}
-	readFlowJSONFile(t, filepath.Join(runDir, "manifest.json"), &manifest)
-	if manifest.Schema != "acpx.flow-run-bundle.v1" || manifest.RunID != "run-replay" ||
-		manifest.Status != FlowRunStatusCompleted || manifest.Trace != "trace.ndjson" ||
-		len(manifest.Steps) != 2 || manifest.Steps[1].NodeID != "ask" ||
-		len(manifest.Sessions) != 1 || manifest.Sessions[0].Handle != "main" {
-		t.Fatalf("manifest = %#v", manifest)
+	if bundle.Manifest.Schema != "acpx.flow-run-bundle.v1" || bundle.Manifest.RunID != "run-replay" ||
+		bundle.Manifest.Status != acpx.RunStatusComplete || bundle.Manifest.Paths.Trace != "trace.ndjson" ||
+		len(bundle.Manifest.Sessions) != 1 || bundle.Manifest.Sessions[0].Handle != "main" ||
+		bundle.Flow == nil || bundle.Flow.Nodes["prepare"].NodeType != acpx.NodeTypeAction {
+		t.Fatalf("bundle = %#v", bundle)
 	}
 	traceBytes, err := os.ReadFile(filepath.Join(runDir, "trace.ndjson"))
 	if err != nil {
 		t.Fatalf("read trace: %v", err)
 	}
 	lines := strings.Split(strings.TrimSpace(string(traceBytes)), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("trace lines = %d, want 2\n%s", len(lines), traceBytes)
+	if len(lines) != 5 {
+		t.Fatalf("trace lines = %d, want 5\n%s", len(lines), traceBytes)
 	}
 	for i, line := range lines {
 		var event struct {
-			Seq    int    `json:"seq"`
-			NodeID string `json:"node_id"`
-			Status string `json:"status"`
+			Seq  int    `json:"seq"`
+			Type string `json:"type"`
 		}
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
 			t.Fatalf("trace line %d json: %v\n%s", i, err, line)
 		}
-		if event.Seq != i+1 || event.NodeID == "" || event.Status != FlowStepStatusCompleted {
+		if event.Seq != i+1 || event.Type == "" {
 			t.Fatalf("trace event %d = %#v", i, event)
 		}
 	}
@@ -221,13 +210,13 @@ func TestRunFlowWritesReplayBundleFiles(t *testing.T) {
 		t.Fatalf("LoadFlowReplaySummary: %v", err)
 	}
 	if summary.RunID != "run-replay" || summary.Status != FlowRunStatusCompleted ||
-		summary.ManifestPath != "manifest.json" || summary.StepCount != 2 || summary.TraceCount != 2 || summary.SessionCount != 1 {
+		summary.ManifestPath != "manifest.json" || summary.StepCount != 2 || summary.TraceCount != 5 || summary.SessionCount != 1 {
 		t.Fatalf("summary = %#v", summary)
 	}
-	var runProjection FlowReplaySummary
+	var runProjection acpx.FlowRunState
 	readFlowJSONFile(t, filepath.Join(runDir, "projections", "run.json"), &runProjection)
-	if runProjection.ManifestPath != "manifest.json" {
-		t.Fatalf("run projection manifest path = %q, want relative manifest.json", runProjection.ManifestPath)
+	if runProjection.RunID != "run-replay" || runProjection.Status != acpx.RunStatusComplete || len(runProjection.Results) != 2 {
+		t.Fatalf("run projection = %#v", runProjection)
 	}
 }
 
@@ -833,7 +822,7 @@ func TestRunFlowActionNonZeroExitWritesReplayFailedStep(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadFlowReplaySummary: %v", err)
 	}
-	if summary.Status != FlowRunStatusFailed || summary.StepCount != 1 || summary.TraceCount != 1 {
+	if summary.Status != FlowRunStatusFailed || summary.StepCount != 1 || summary.TraceCount != 3 {
 		t.Fatalf("summary = %#v", summary)
 	}
 }
