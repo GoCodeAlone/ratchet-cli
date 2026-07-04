@@ -42,7 +42,7 @@
 
 - Existing daemon blackboard and gRPC methods made the same-device coordination slice small.
 - Built CLI smoke proved separate process invocations share the daemon state.
-- Keeping Notify out of ratchet-cli avoided Slack/Discord dependency sprawl and matched the plugin ecosystem direction.
+- Keeping messaging transports out of ratchet-cli avoided Slack/Discord dependency sprawl and matched the plugin ecosystem direction.
 - Post-merge `master` CI and CodeQL both completed successfully for `0dc5e64e6e255ba60595c43f3883215137263d4a`.
 
 ## What didn't
@@ -52,10 +52,10 @@
 
 ## Plugin-level follow-ups
 
-- Design `workflow-plugin-notify` around `github.com/nikoksr/notify` for outbound notification fanout. Requirements: stubbed external transports in CI, explicit non-critical-delivery docs, anti-spam/rate controls, secret-backed credentials, registry manifest, GoReleaser workflow, and a later ratchet bridge that can emit selected blackboard/team events through Workflow rather than direct service adapters.
+- Reuse and extend `workflow-plugin-messaging-core`, `workflow-plugin-slack`, `workflow-plugin-discord`, and `workflow-plugin-teams` for outbound delivery. Requirements: stubbed external transports in CI, explicit non-critical-delivery docs, anti-spam/rate controls, secret-backed credentials, registry manifests/releases as needed, and ratchet exports that can emit selected blackboard/team events through Workflow rather than direct service adapters.
 
 ## Project guidance updates
 
 | Guidance file | Change | Reason |
 |---|---|---|
-| `docs/design-guidance.md` | none | Existing reuse/plugin guidance already covered the decision to defer Notify into a Workflow plugin. |
+| `docs/design-guidance.md` | none | Existing reuse/plugin guidance already covered the decision to keep messaging delivery in Workflow plugins. |

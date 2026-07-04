@@ -26,7 +26,7 @@
 | YAGNI violations | Clean | `watch`, persistence, external delivery, and remote mesh are explicit non-goals. |
 | Missing failure modes | Finding | Volatile memory surprise is mitigated by docs/non-goal, not implementation. |
 | Security/privacy | Finding | Sensitive-value echo is acceptable for explicit operator command but must be documented. |
-| Infrastructure impact | Clean | PR1 has no infra; Notify plugin impact is deferred and named. |
+| Infrastructure impact | Clean | PR1 has no infra; messaging delivery impact stays deferred to existing plugins. |
 | Multi-component validation | Clean | Design requires CLI-to-daemon proof, not only unit tests. |
 | Declared integration proof | Clean | Notify is deferred; PR1 integrates only existing daemon RPC. |
 | Contributed UI rendering proof | Clean | No UI contribution. |

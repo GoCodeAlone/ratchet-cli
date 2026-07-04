@@ -24,6 +24,26 @@ type blackboardOptions struct {
 	args   []string
 }
 
+type blackboardExportOptions struct {
+	json    bool
+	jsonl   bool
+	section string
+}
+
+type blackboardExportRecord struct {
+	Section   string                    `json:"section"`
+	Key       string                    `json:"key"`
+	Value     string                    `json:"value"`
+	Author    string                    `json:"author"`
+	Revision  int64                     `json:"revision"`
+	Timestamp string                    `json:"timestamp"`
+	Messaging blackboardMessagingRecord `json:"messaging"`
+}
+
+type blackboardMessagingRecord struct {
+	Text string `json:"text"`
+}
+
 func handleBlackboard(args []string) {
 	c, err := client.EnsureDaemon()
 	if err != nil {
@@ -40,10 +60,17 @@ func handleBlackboard(args []string) {
 
 func runBlackboard(ctx context.Context, c blackboardClient, args []string, stdout io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: ratchet blackboard <list|read|write> [args...]")
+		return fmt.Errorf("usage: ratchet blackboard <list|read|write|export> [args...]")
 	}
 
 	subcmd := args[0]
+	if subcmd == "export" {
+		opts, err := parseBlackboardExportOptions(args[1:])
+		if err != nil {
+			return err
+		}
+		return runBlackboardExport(ctx, c, opts, stdout)
+	}
 	opts, err := parseBlackboardOptions(args[1:])
 	if err != nil {
 		return err
@@ -79,6 +106,30 @@ func parseBlackboardOptions(args []string) (blackboardOptions, error) {
 		default:
 			opts.args = append(opts.args, args[i])
 		}
+	}
+	return opts, nil
+}
+
+func parseBlackboardExportOptions(args []string) (blackboardExportOptions, error) {
+	var opts blackboardExportOptions
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--json":
+			opts.json = true
+		case "--jsonl":
+			opts.jsonl = true
+		default:
+			if strings.HasPrefix(args[i], "--") {
+				return opts, fmt.Errorf("unknown blackboard export flag: %s", args[i])
+			}
+			if opts.section != "" {
+				return opts, fmt.Errorf("usage: ratchet blackboard export [section] [--json|--jsonl]")
+			}
+			opts.section = args[i]
+		}
+	}
+	if opts.json && opts.jsonl {
+		return opts, fmt.Errorf("usage: ratchet blackboard export [section] [--json|--jsonl]")
 	}
 	return opts, nil
 }
@@ -154,6 +205,72 @@ func runBlackboardWrite(ctx context.Context, c blackboardClient, opts blackboard
 	fmt.Fprintf(stdout, "wrote %s/%s rev=%d author=%s\n",
 		entry.GetSection(), entry.GetKey(), entry.GetRevision(), entry.GetAuthor())
 	return nil
+}
+
+func runBlackboardExport(ctx context.Context, c blackboardClient, opts blackboardExportOptions, stdout io.Writer) error {
+	records, err := loadBlackboardExportRecords(ctx, c, opts.section)
+	if err != nil {
+		return err
+	}
+	if opts.jsonl {
+		enc := json.NewEncoder(stdout)
+		for _, record := range records {
+			if err := enc.Encode(record); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return writeJSON(stdout, records)
+}
+
+func loadBlackboardExportRecords(ctx context.Context, c blackboardClient, section string) ([]blackboardExportRecord, error) {
+	if section != "" {
+		return loadBlackboardExportSection(ctx, c, section)
+	}
+	resp, err := c.BlackboardList(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	records := make([]blackboardExportRecord, 0)
+	for _, name := range resp.Sections {
+		sectionRecords, err := loadBlackboardExportSection(ctx, c, name)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, sectionRecords...)
+	}
+	return records, nil
+}
+
+func loadBlackboardExportSection(ctx context.Context, c blackboardClient, section string) ([]blackboardExportRecord, error) {
+	resp, err := c.BlackboardList(ctx, section)
+	if err != nil {
+		return nil, err
+	}
+	records := make([]blackboardExportRecord, 0, len(resp.Entries))
+	for _, entry := range resp.Entries {
+		records = append(records, blackboardExportRecordFromEntry(entry))
+	}
+	return records, nil
+}
+
+func blackboardExportRecordFromEntry(entry *pb.BlackboardEntry) blackboardExportRecord {
+	if entry == nil {
+		return blackboardExportRecord{}
+	}
+	section, key, value := entry.GetSection(), entry.GetKey(), entry.GetValue()
+	return blackboardExportRecord{
+		Section:   section,
+		Key:       key,
+		Value:     value,
+		Author:    entry.GetAuthor(),
+		Revision:  entry.GetRevision(),
+		Timestamp: entry.GetTimestamp(),
+		Messaging: blackboardMessagingRecord{
+			Text: fmt.Sprintf("[%s/%s] %s", section, key, value),
+		},
+	}
 }
 
 func writeJSON(w io.Writer, v any) error {

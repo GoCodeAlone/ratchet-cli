@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -57,7 +58,7 @@ func (f *fakeBlackboardClient) BlackboardList(_ context.Context, section string)
 		return &pb.BlackboardListResp{Sections: []string{"coordination", "status"}}, nil
 	}
 	return &pb.BlackboardListResp{Entries: []*pb.BlackboardEntry{
-		{Section: section, Key: "status", Value: "ready", Author: "tester", Revision: 3},
+		{Section: section, Key: "status", Value: "ready", Author: "tester", Revision: 3, Timestamp: "2026-07-04T10:00:00Z"},
 	}}, nil
 }
 
@@ -175,5 +176,87 @@ func TestHandleBlackboardValidation(t *testing.T) {
 				t.Fatalf("error = %q, want contains %q", err.Error(), tc.want)
 			}
 		})
+	}
+}
+
+func TestHandleBlackboardExportSectionJSON(t *testing.T) {
+	var stdout bytes.Buffer
+	fake := &fakeBlackboardClient{}
+
+	err := runBlackboard(context.Background(), fake, []string{"export", "coordination", "--json"}, &stdout)
+
+	if err != nil {
+		t.Fatalf("runBlackboard export: %v", err)
+	}
+	var records []blackboardExportRecord
+	if err := json.Unmarshal(stdout.Bytes(), &records); err != nil {
+		t.Fatalf("decode export json %q: %v", stdout.String(), err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("records = %#v", records)
+	}
+	record := records[0]
+	if record.Section != "coordination" || record.Key != "status" || record.Value != "ready" ||
+		record.Author != "tester" || record.Revision != 3 || record.Timestamp != "2026-07-04T10:00:00Z" {
+		t.Fatalf("record = %#v", record)
+	}
+	if record.Messaging.Text != "[coordination/status] ready" {
+		t.Fatalf("messaging text = %q", record.Messaging.Text)
+	}
+}
+
+func TestHandleBlackboardExportAllSectionsJSON(t *testing.T) {
+	var stdout bytes.Buffer
+	fake := &fakeBlackboardClient{}
+
+	if err := runBlackboard(context.Background(), fake, []string{"export", "--json"}, &stdout); err != nil {
+		t.Fatalf("runBlackboard export all: %v", err)
+	}
+	var records []blackboardExportRecord
+	if err := json.Unmarshal(stdout.Bytes(), &records); err != nil {
+		t.Fatalf("decode export json %q: %v", stdout.String(), err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("records = %#v", records)
+	}
+	gotSections := records[0].Section + "," + records[1].Section
+	if gotSections != "coordination,status" {
+		t.Fatalf("sections = %q", gotSections)
+	}
+}
+
+func TestHandleBlackboardExportJSONL(t *testing.T) {
+	var stdout bytes.Buffer
+	fake := &fakeBlackboardClient{}
+
+	if err := runBlackboard(context.Background(), fake, []string{"export", "coordination", "--jsonl"}, &stdout); err != nil {
+		t.Fatalf("runBlackboard export jsonl: %v", err)
+	}
+	scanner := bufio.NewScanner(strings.NewReader(stdout.String()))
+	var lines int
+	for scanner.Scan() {
+		lines++
+		var record blackboardExportRecord
+		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
+			t.Fatalf("decode jsonl line %d: %v\n%s", lines, err, scanner.Text())
+		}
+		if record.Messaging.Text == "" {
+			t.Fatalf("record missing messaging projection: %#v", record)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scan jsonl: %v", err)
+	}
+	if lines != 1 {
+		t.Fatalf("jsonl lines = %d, want 1", lines)
+	}
+}
+
+func TestHandleBlackboardExportRejectsCredentialFlags(t *testing.T) {
+	for _, flag := range []string{"--webhook-url", "--channel", "--token", "--provider"} {
+		err := runBlackboard(context.Background(), &fakeBlackboardClient{}, []string{"export", "coordination", flag, "secret"}, &bytes.Buffer{})
+		if err == nil || !strings.Contains(err.Error(), "unknown blackboard export flag") {
+			t.Fatalf("runBlackboard export with %s error = %v, want unknown flag", flag, err)
+		}
 	}
 }

@@ -1,10 +1,10 @@
-# Ratchet Blackboard + Notify Implementation Plan
+# Ratchet Blackboard + Messaging Implementation Plan
 
 > **For the implementing agent:** REQUIRED SUB-SKILL: Use autodev:executing-plans to implement this plan task-by-task.
 
-**Goal:** Add a direct `ratchet blackboard` CLI for same-device multi-session coordination, and document the Notify-backed Workflow plugin as the next outbound integration layer.
+**Goal:** Add a direct `ratchet blackboard` CLI for same-device multi-session coordination, and document existing Workflow messaging plugins as the outbound integration layer.
 
-**Architecture:** Reuse the existing daemon `BlackboardRead`, `BlackboardWrite`, and `BlackboardList` gRPC APIs. Keep the first PR local-only and dependency-free; external notifications remain a documented follow-up for a Workflow plugin built around `github.com/nikoksr/notify`.
+**Architecture:** Reuse the existing daemon `BlackboardRead`, `BlackboardWrite`, and `BlackboardList` gRPC APIs. Keep the first PR local-only and dependency-free; external notifications remain delegated to Workflow messaging plugins.
 
 **Tech Stack:** Go, existing ratchet daemon gRPC client, existing `mesh.Blackboard`, stdlib JSON.
 
@@ -19,7 +19,7 @@
 **Estimated Lines of Change:** ~260
 
 **Out of scope:**
-- Discord, Slack, or Notify delivery implementation.
+- Discord, Slack, Teams, or other delivery implementation in ratchet-cli.
 - Blackboard persistence across daemon restart.
 - Background daemon notification scheduler.
 - Remote multi-device mesh.
@@ -142,7 +142,7 @@ Document:
 - same-device/separate-terminal usage
 - daemon-scoped volatile storage
 - sensitivity warning
-- Notify plugin follow-up as outbound integration path, not implemented behavior
+- Workflow messaging plugin path as outbound integration, not implemented behavior
 
 **Step 4: Verify green**
 
@@ -166,9 +166,9 @@ Rollback: revert commit.
 **Step 1: Add retro**
 
 Record:
-- why local blackboard landed before Notify
+- why local blackboard landed before outbound messaging
 - proof commands and outcomes
-- follow-up: design `workflow-plugin-notify` around Notify with stubbed external delivery and registry/release plan
+- follow-up: reuse and extend `workflow-plugin-messaging-core`, `workflow-plugin-slack`, `workflow-plugin-discord`, and `workflow-plugin-teams` with stubbed external delivery tests and registry/release updates as needed
 
 **Step 2: Run verification**
 

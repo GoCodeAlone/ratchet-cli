@@ -12,7 +12,7 @@ possible.
 | TUI | `ratchet` | daemon gRPC + Bubble Tea UI | Supported | Release-shaped startup smoke builds untagged `ratchet`, reaches onboarding/provider setup, and shuts the daemon down by RPC; Unix PTY binary smoke drives the build-tagged test-only TUI binary through slash commands and shortcuts. |
 | one-shot | `ratchet -p "prompt"` | daemon session + default provider | Supported when provider configured | CLI binary smoke covers command dispatch; mock provider roundtrip covers daemon path. |
 | daemon | `ratchet daemon status` | pid/socket state under `~/.ratchet` | Supported | `TestHarnessSmokeVersionHelpAndDaemonStatus`. |
-| blackboard | `ratchet blackboard write coordination status ready` / `ratchet blackboard read coordination status` | daemon gRPC `BlackboardWrite`/`BlackboardRead`/`BlackboardList` | Supported for same-device, daemon-scoped volatile local coordination data across separate terminal invocations | `TestHarnessSmokeBlackboardCLI`. |
+| blackboard | `ratchet blackboard write coordination status ready` / `ratchet blackboard read coordination status` / `ratchet blackboard export [section] --jsonl` | daemon gRPC `BlackboardWrite`/`BlackboardRead`/`BlackboardList` | Supported for same-device, daemon-scoped volatile local coordination data across separate terminal invocations and local notification-event export | `TestHarnessSmokeBlackboardCLI`; blackboard export command tests. |
 | session lineage | `ratchet sessions history`, `ratchet sessions clone`, `ratchet sessions fork`, `ratchet sessions tree`, `ratchet sessions browse`, `ratchet sessions summary`, `ratchet sessions compactions` | daemon gRPC session history/clone/fork/tree/summary/compaction APIs plus Bubble Tea session tree browser | Supported for separate fork/clone sessions, branch summaries, persisted compaction records, archive session links, and Pi-style in-place branch navigation through `ctrl+b`, `/tree`, and `sessions browse` | `TestSessionLineageHistoryCloneForkTreeRPC`; `TestCompactionRecordRPC`; `TestHandleSessionsHistoryCloneForkTree`; `TestAppCtrlBOpensSessionTreeBrowser`; `TestParseTreeRequestsSessionTreeNavigation`; `TestHandleSessionsBrowseRunsInjectedBrowser`. |
 | ACP | `ratchet acp` | ACP stdio JSON-RPC agent wrapping daemon service | Supported for initialize/new/load/prompt/cancel/model/mode | `TestACPStdioPromptSmoke`; `TestHarnessSmokeInitializeNewAndLoadSession`; `TestParityNewSessionIDCanBeLoaded`. |
 | ACP client | `ratchet acp client exec --command <agent> "prompt"` | typed `acp-go-sdk` client over child-process stdio plus local JSON state under XDG state | Supported for one-shot exec, persisted session metadata, sessions list/show/status, multi-prompt FIFO `--no-wait` queue, explicit queue inspection/drain, cooperative cancel requests, ratchet-cli archive v1 export/import with raw ACPX event logs, `sessions events`, saved compare bundles, Go-native ACPX flow replay bundles, `flow replay`, and trusted ACP launch profiles | `TestACPClientExecBinarySmoke`; `TestDrainQueueAgainstFixtureProcessReusesSession`; `TestClientRunPromptAgainstFixtureProcess`; `TestSessionStoreLoadsMissingFileAndPersistsRecords`; profile command, archive, compare, and flow replay tests. |
@@ -99,9 +99,11 @@ refused at execution time. JSON v1 action nodes run local commands only with
 `--allow shell`; node cwd escapes require `--allow outside-cwd`, and run bundles
 may contain sensitive local command output. `flow replay` is read-only and does
 not contact agents or execute actions. The daemon blackboard is daemon-scoped
-volatile state and should not be used as durable storage. Outbound Discord,
-Slack, email, webhook, or other service delivery is deferred to a future
-`workflow-plugin-notify` integration rather than built into ratchet-cli. The
+volatile state and should not be used as durable storage. `ratchet blackboard
+export [section] --jsonl` emits local notification-event records with
+`messaging.text` for downstream Workflow messaging plugins; outbound Discord,
+Slack, Teams, email, webhook, or other service delivery stays in the existing
+messaging-core and channel plugins rather than built into ratchet-cli. The
 v0.25.0 release line keeps Windows
 amd64/arm64 zip artifacts in the GoReleaser output while adding raw event
 archives, compare artifacts, and replay-grade flow bundles. The policy
