@@ -66,4 +66,4 @@ Activation log unavailable at `.claude/autodev-state/in-progress.jsonl`; this wo
 
 | Guidance file | Change | Reason |
 |---|---|---|
-| `docs/design-guidance.md` | no change | No existing project guidance file; the durable lifecycle boundary is already captured in `decisions/0002-runtime-extension-lifecycle.md`. |
+| `decisions/0002-runtime-extension-lifecycle.md` | no change | Durable lifecycle boundary already captured in the existing ADR; no separate project guidance file exists. |
