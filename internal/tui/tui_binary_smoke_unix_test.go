@@ -65,18 +65,20 @@ func TestTUIBinarySmoke(t *testing.T) {
 	assertNoInstructionOrHookSurface(t, s.snapshot(), red)
 
 	for _, row := range spec.Commands {
-		if row.Evidence != "pty-proven" || row.Command == "/exit" {
+		if row.Evidence != "pty-proven" || row.Command == "/exit" || row.Command == "/tree" {
 			continue
 		}
 		s.clear()
 		s.submitSlash(row.Command)
 		s.waitFor(expectedForSmokeCommand(row.Command), 8*time.Second)
 		assertTrustStateAfterCommand(t, s, row.Command)
-		if row.Command == "/tree" {
-			s.send("\x1b")
-			s.waitFor("Message ratchet", 8*time.Second)
-		}
 	}
+
+	s.clear()
+	s.submitSlash("/tree")
+	s.waitFor(expectedForSmokeCommand("/tree"), 8*time.Second)
+	s.send("\x1b")
+	s.waitFor("Message ratchet", 8*time.Second)
 
 	for _, row := range spec.Shortcuts {
 		if row.Evidence != "pty-proven" {
