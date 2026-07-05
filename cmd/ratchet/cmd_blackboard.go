@@ -38,7 +38,7 @@ type blackboardExportRecord struct {
 	Revision  int64                     `json:"revision"`
 	Timestamp string                    `json:"timestamp"`
 	Messaging blackboardMessagingRecord `json:"messaging"`
-	Workflow  blackboardWorkflowRecord  `json:"workflow,omitempty"`
+	Workflow  *blackboardWorkflowRecord `json:"workflow,omitempty"`
 }
 
 type blackboardMessagingRecord struct {
@@ -235,7 +235,8 @@ func runBlackboardExport(ctx context.Context, c blackboardClient, opts blackboar
 	}
 	if opts.workflowMessaging {
 		for i := range records {
-			records[i].Workflow = blackboardWorkflowRecordFromExport(records[i])
+			workflow := blackboardWorkflowRecordFromExport(records[i])
+			records[i].Workflow = &workflow
 		}
 	}
 	if opts.jsonl {

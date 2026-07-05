@@ -203,6 +203,9 @@ func TestHandleBlackboardExportSectionJSON(t *testing.T) {
 	if record.Messaging.Text != "[coordination/status] ready" {
 		t.Fatalf("messaging text = %q", record.Messaging.Text)
 	}
+	if record.Workflow != nil {
+		t.Fatalf("workflow projection should be omitted without --workflow-messaging: %#v", record.Workflow)
+	}
 }
 
 func TestHandleBlackboardExportAllSectionsJSON(t *testing.T) {
@@ -267,6 +270,9 @@ func TestHandleBlackboardExportWorkflowMessagingJSON(t *testing.T) {
 		t.Fatalf("records = %#v", records)
 	}
 	workflow := records[0].Workflow
+	if workflow == nil {
+		t.Fatal("workflow projection missing")
+	}
 	if workflow.StepType != "step.messaging_send" {
 		t.Fatalf("workflow step type = %q", workflow.StepType)
 	}
@@ -296,7 +302,7 @@ func TestHandleBlackboardExportWorkflowMessagingJSONL(t *testing.T) {
 		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
 			t.Fatalf("decode jsonl line %d: %v\n%s", lines, err, scanner.Text())
 		}
-		if record.Workflow.StepType != "step.messaging_send" || record.Workflow.Input.Text == "" {
+		if record.Workflow == nil || record.Workflow.StepType != "step.messaging_send" || record.Workflow.Input.Text == "" {
 			t.Fatalf("record missing workflow projection: %#v", record)
 		}
 	}
