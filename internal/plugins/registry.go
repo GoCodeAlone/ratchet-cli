@@ -19,18 +19,24 @@ type RegistryEntry struct {
 }
 
 func (e *RegistryEntry) UnmarshalJSON(data []byte) error {
-	type alias RegistryEntry
-	aux := struct {
-		Enabled *bool `json:"enabled"`
-		*alias
-	}{
-		alias: (*alias)(e),
+	var aux struct {
+		Source      string    `json:"source"`
+		Version     string    `json:"version"`
+		InstalledAt time.Time `json:"installed_at"`
+		Path        string    `json:"path"`
+		Enabled     *bool     `json:"enabled"`
 	}
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
 	}
+	e.Source = aux.Source
+	e.Version = aux.Version
+	e.InstalledAt = aux.InstalledAt
+	e.Path = aux.Path
 	if aux.Enabled == nil {
 		e.Enabled = true
+	} else {
+		e.Enabled = *aux.Enabled
 	}
 	return nil
 }
@@ -93,6 +99,10 @@ func (r *Registry) Save() error {
 // Add inserts or replaces a plugin entry and saves.
 func (r *Registry) Add(name string, entry RegistryEntry) error {
 	entry.Enabled = true
+	return r.Put(name, entry)
+}
+
+func (r *Registry) Put(name string, entry RegistryEntry) error {
 	r.Plugins[name] = entry
 	return r.Save()
 }

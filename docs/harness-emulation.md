@@ -232,10 +232,13 @@ the plugin root. The daemon fires session, prompt, command, tool, permission,
 compaction, stop/failure, token-limit, cron, plan, fleet, and team-agent hook
 events. Plugin skills are listed by `ratchet skill list`, explicit skill
 mentions such as `$autodev:using-autodev` load full skill text into the next
-chat turn, and `ratchet plugin reload` refreshes installed plugin capabilities
-without a daemon restart. Managed hooks, marketplaces, autoupdate, routines,
-dynamic workflows, broader extension hooks, and the TypeScript extension SDK
-remain deferred to the runtime extension lifecycle plan.
+chat turn, `ratchet plugin marketplace add|list|update|remove` manages reviewed
+catalog sources, `ratchet plugin install <name>@<marketplace>` installs catalog
+entries, `ratchet plugin enable|disable` controls loader participation, and
+`ratchet plugin reload` refreshes installed plugin capabilities without a
+daemon restart. Managed hooks, plugin autoupdate, routines, dynamic workflows,
+broader extension hooks, and the TypeScript extension SDK remain deferred to the
+runtime extension lifecycle plan.
 
 Scriptable equivalents are available through `ratchet trust list`,
 `ratchet trust grants`, `ratchet trust allow|deny`,

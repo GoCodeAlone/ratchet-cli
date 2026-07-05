@@ -165,7 +165,7 @@ Commands:
   hooks            Review and trust lifecycle hooks
   blackboard       Shared daemon blackboard
   retro            Analyze optional retro evidence
-  plugin           Manage plugins
+  plugin           Manage plugins, marketplaces, enable/disable, and reload
   skill            Manage skills
   config           Configuration
   acp              Run as ACP agent (stdio JSON-RPC)
