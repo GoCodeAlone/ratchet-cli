@@ -139,26 +139,7 @@ func TestQA_CronScheduling_LoopAndVerifyTicks(t *testing.T) {
 		t.Fatalf("CreateCron (loop): %v", err)
 	}
 
-	// Wait enough for 2-3 ticks.
-	time.Sleep(400 * time.Millisecond)
-
-	list, err := client.ListCrons(ctx, &pb.Empty{})
-	if err != nil {
-		t.Fatalf("ListCrons: %v", err)
-	}
-	var found *pb.CronJob
-	for _, j := range list.Jobs {
-		if j.Id == job.Id {
-			jCopy := j
-			found = jCopy
-		}
-	}
-	if found == nil {
-		t.Fatal("QA30: job not found after ticks")
-	}
-	if found.RunCount < 2 {
-		t.Errorf("QA30: expected >= 2 ticks, got run_count=%d", found.RunCount)
-	}
+	found := waitForCronRunCount(t, ctx, client, job.Id, 2, 3*time.Second)
 	if found.LastRun == "" {
 		t.Error("QA30: last_run should be set after ticks")
 	}
@@ -197,14 +178,8 @@ func TestQA_CronScheduling_LoopAndVerifyTicks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResumeCron: %v", err)
 	}
-	time.Sleep(250 * time.Millisecond)
 
-	list3, _ := client.ListCrons(ctx, &pb.Empty{})
-	for _, j := range list3.Jobs {
-		if j.Id == job.Id && j.RunCount <= countAtPause {
-			t.Errorf("QA30: resumed job should have ticked (still at %d)", j.RunCount)
-		}
-	}
+	waitForCronRunCount(t, ctx, client, job.Id, countAtPause+1, 3*time.Second)
 
 	// /cron stop → removed/stopped.
 	_, err = client.StopCron(ctx, &pb.CronJobReq{JobId: job.Id})
@@ -217,6 +192,36 @@ func TestQA_CronScheduling_LoopAndVerifyTicks(t *testing.T) {
 			t.Error("QA30: stopped job should not be active")
 		}
 	}
+}
+
+func waitForCronRunCount(t *testing.T, ctx context.Context, client pb.RatchetDaemonClient, jobID string, minRunCount int32, timeout time.Duration) *pb.CronJob {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	var found *pb.CronJob
+	for time.Now().Before(deadline) {
+		list, err := client.ListCrons(ctx, &pb.Empty{})
+		if err != nil {
+			t.Fatalf("ListCrons: %v", err)
+		}
+		found = nil
+		for _, j := range list.Jobs {
+			if j.Id == jobID {
+				jCopy := j
+				found = jCopy
+				break
+			}
+		}
+		if found != nil && found.RunCount >= minRunCount {
+			return found
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if found == nil {
+		t.Fatalf("QA30: job %s not found after waiting for run_count >= %d", jobID, minRunCount)
+	}
+	t.Fatalf("QA30: expected run_count >= %d, got run_count=%d", minRunCount, found.RunCount)
+	return nil
 }
 
 func TestQA_CronScheduling_InvalidExpression(t *testing.T) {
