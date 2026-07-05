@@ -252,6 +252,62 @@ func TestHandleBlackboardExportJSONL(t *testing.T) {
 	}
 }
 
+func TestHandleBlackboardExportWorkflowMessagingJSON(t *testing.T) {
+	var stdout bytes.Buffer
+	fake := &fakeBlackboardClient{}
+
+	if err := runBlackboard(context.Background(), fake, []string{"export", "coordination", "--workflow-messaging", "--json"}, &stdout); err != nil {
+		t.Fatalf("runBlackboard export workflow messaging: %v", err)
+	}
+	var records []blackboardExportRecord
+	if err := json.Unmarshal(stdout.Bytes(), &records); err != nil {
+		t.Fatalf("decode export json %q: %v", stdout.String(), err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("records = %#v", records)
+	}
+	workflow := records[0].Workflow
+	if workflow.StepType != "step.messaging_send" {
+		t.Fatalf("workflow step type = %q", workflow.StepType)
+	}
+	if workflow.PluginFamily != "workflow-plugin-messaging-core" {
+		t.Fatalf("workflow plugin family = %q", workflow.PluginFamily)
+	}
+	if workflow.Input.Text != "[coordination/status] ready" {
+		t.Fatalf("workflow input text = %q", workflow.Input.Text)
+	}
+	if got := strings.Join(workflow.RequiredConfig, ","); got != "channel" {
+		t.Fatalf("workflow required config = %q", got)
+	}
+}
+
+func TestHandleBlackboardExportWorkflowMessagingJSONL(t *testing.T) {
+	var stdout bytes.Buffer
+	fake := &fakeBlackboardClient{}
+
+	if err := runBlackboard(context.Background(), fake, []string{"export", "coordination", "--workflow-messaging", "--jsonl"}, &stdout); err != nil {
+		t.Fatalf("runBlackboard export workflow messaging jsonl: %v", err)
+	}
+	scanner := bufio.NewScanner(strings.NewReader(stdout.String()))
+	var lines int
+	for scanner.Scan() {
+		lines++
+		var record blackboardExportRecord
+		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
+			t.Fatalf("decode jsonl line %d: %v\n%s", lines, err, scanner.Text())
+		}
+		if record.Workflow.StepType != "step.messaging_send" || record.Workflow.Input.Text == "" {
+			t.Fatalf("record missing workflow projection: %#v", record)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scan jsonl: %v", err)
+	}
+	if lines != 1 {
+		t.Fatalf("jsonl lines = %d, want 1", lines)
+	}
+}
+
 func TestHandleBlackboardExportRejectsCredentialFlags(t *testing.T) {
 	for _, flag := range []string{"--webhook-url", "--channel", "--token", "--provider"} {
 		err := runBlackboard(context.Background(), &fakeBlackboardClient{}, []string{"export", "coordination", flag, "secret"}, &bytes.Buffer{})
