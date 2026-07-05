@@ -25,8 +25,9 @@ type blackboardOptions struct {
 }
 
 type blackboardExportOptions struct {
-	jsonl   bool
-	section string
+	jsonl             bool
+	section           string
+	workflowMessaging bool
 }
 
 type blackboardExportRecord struct {
@@ -37,10 +38,28 @@ type blackboardExportRecord struct {
 	Revision  int64                     `json:"revision"`
 	Timestamp string                    `json:"timestamp"`
 	Messaging blackboardMessagingRecord `json:"messaging"`
+	Workflow  blackboardWorkflowRecord  `json:"workflow,omitempty"`
 }
 
 type blackboardMessagingRecord struct {
 	Text string `json:"text"`
+}
+
+type blackboardWorkflowRecord struct {
+	StepType       string                         `json:"stepType"`
+	PluginFamily   string                         `json:"pluginFamily"`
+	Input          blackboardWorkflowInput        `json:"input"`
+	RequiredConfig []string                       `json:"requiredConfig"`
+	Metadata       blackboardWorkflowRecordSource `json:"metadata"`
+}
+
+type blackboardWorkflowInput struct {
+	Text string `json:"text"`
+}
+
+type blackboardWorkflowRecordSource struct {
+	Section string `json:"section"`
+	Key     string `json:"key"`
 }
 
 func handleBlackboard(args []string) {
@@ -118,6 +137,8 @@ func parseBlackboardExportOptions(args []string) (blackboardExportOptions, error
 			json = true
 		case "--jsonl":
 			opts.jsonl = true
+		case "--workflow-messaging":
+			opts.workflowMessaging = true
 		default:
 			if strings.HasPrefix(args[i], "--") {
 				return opts, fmt.Errorf("unknown blackboard export flag: %s", args[i])
@@ -212,6 +233,11 @@ func runBlackboardExport(ctx context.Context, c blackboardClient, opts blackboar
 	if err != nil {
 		return err
 	}
+	if opts.workflowMessaging {
+		for i := range records {
+			records[i].Workflow = blackboardWorkflowRecordFromExport(records[i])
+		}
+	}
 	if opts.jsonl {
 		enc := json.NewEncoder(stdout)
 		for _, record := range records {
@@ -260,6 +286,9 @@ func blackboardExportRecordFromEntry(entry *pb.BlackboardEntry) blackboardExport
 		return blackboardExportRecord{}
 	}
 	section, key, value := entry.GetSection(), entry.GetKey(), entry.GetValue()
+	messaging := blackboardMessagingRecord{
+		Text: fmt.Sprintf("[%s/%s] %s", section, key, value),
+	}
 	return blackboardExportRecord{
 		Section:   section,
 		Key:       key,
@@ -267,8 +296,21 @@ func blackboardExportRecordFromEntry(entry *pb.BlackboardEntry) blackboardExport
 		Author:    entry.GetAuthor(),
 		Revision:  entry.GetRevision(),
 		Timestamp: entry.GetTimestamp(),
-		Messaging: blackboardMessagingRecord{
-			Text: fmt.Sprintf("[%s/%s] %s", section, key, value),
+		Messaging: messaging,
+	}
+}
+
+func blackboardWorkflowRecordFromExport(record blackboardExportRecord) blackboardWorkflowRecord {
+	return blackboardWorkflowRecord{
+		StepType:     "step.messaging_send",
+		PluginFamily: "workflow-plugin-messaging-core",
+		Input: blackboardWorkflowInput{
+			Text: record.Messaging.Text,
+		},
+		RequiredConfig: []string{"channel"},
+		Metadata: blackboardWorkflowRecordSource{
+			Section: record.Section,
+			Key:     record.Key,
 		},
 	}
 }
