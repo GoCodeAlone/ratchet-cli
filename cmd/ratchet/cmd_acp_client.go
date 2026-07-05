@@ -136,6 +136,7 @@ const (
 	acpClientProfilesInstall acpClientProfilesKind = "install"
 	acpClientProfilesTrust   acpClientProfilesKind = "trust"
 	acpClientProfilesRemove  acpClientProfilesKind = "remove"
+	acpClientProfilesVerify  acpClientProfilesKind = "verify"
 )
 
 type acpClientProfilesCommand struct {
@@ -149,6 +150,8 @@ type acpClientProfilesCommand struct {
 	cwd     string
 	trust   bool
 	json    bool
+	prompt  string
+	timeout time.Duration
 }
 
 type repeatedStringFlag []string
@@ -505,9 +508,11 @@ func parseACPClientCommandWithOutput(args []string, output io.Writer) (acpClient
 	}
 }
 
+const defaultACPProfileVerifyPrompt = "ratchet profile verification"
+
 func parseACPClientProfiles(args []string, output io.Writer) (acpClientProfilesCommand, error) {
 	if len(args) == 0 {
-		return acpClientProfilesCommand{}, errors.New("usage: ratchet acp client profiles <list|add|install|trust|remove>")
+		return acpClientProfilesCommand{}, errors.New("usage: ratchet acp client profiles <list|add|install|trust|remove|verify>")
 	}
 	switch args[0] {
 	case "list":
@@ -527,6 +532,8 @@ func parseACPClientProfiles(args []string, output io.Writer) (acpClientProfilesC
 			return acpClientProfilesCommand{}, errors.New("usage: ratchet acp client profiles remove <name>")
 		}
 		return acpClientProfilesCommand{kind: acpClientProfilesRemove, name: args[1]}, nil
+	case "verify":
+		return parseACPClientProfilesVerify(args[1:], output)
 	default:
 		return acpClientProfilesCommand{}, fmt.Errorf("unknown acp client profiles command: %s", args[0])
 	}
@@ -567,6 +574,30 @@ func parseACPClientProfilesInstall(args []string, output io.Writer) (acpClientPr
 	}
 	if len(fs.Args()) > 0 || strings.TrimSpace(cmd.as) == "" {
 		return acpClientProfilesCommand{}, errors.New("usage: ratchet acp client profiles install <plugin>/<profile> --as <name> [--trust]")
+	}
+	return cmd, nil
+}
+
+func parseACPClientProfilesVerify(args []string, output io.Writer) (acpClientProfilesCommand, error) {
+	if len(args) == 0 || strings.TrimSpace(args[0]) == "" || strings.HasPrefix(args[0], "-") {
+		return acpClientProfilesCommand{}, errors.New("usage: ratchet acp client profiles verify <name> [--prompt text] [--timeout duration] [--json]")
+	}
+	cmd := acpClientProfilesCommand{
+		kind:    acpClientProfilesVerify,
+		name:    args[0],
+		prompt:  defaultACPProfileVerifyPrompt,
+		timeout: 30 * time.Second,
+	}
+	fs := flag.NewFlagSet("ratchet acp client profiles verify", flag.ContinueOnError)
+	fs.SetOutput(output)
+	fs.StringVar(&cmd.prompt, "prompt", cmd.prompt, "verification prompt")
+	fs.DurationVar(&cmd.timeout, "timeout", cmd.timeout, "verification timeout")
+	fs.BoolVar(&cmd.json, "json", false, "emit JSON")
+	if err := fs.Parse(args[1:]); err != nil {
+		return acpClientProfilesCommand{}, err
+	}
+	if len(fs.Args()) > 0 {
+		return acpClientProfilesCommand{}, errors.New("usage: ratchet acp client profiles verify <name> [--prompt text] [--timeout duration] [--json]")
 	}
 	return cmd, nil
 }
@@ -1032,6 +1063,7 @@ Commands:
   compare    Run one prompt serially across multiple ACP agents
   flow       Run JSON ACP client flows
   profiles   Manage local ACP launch profiles
+             Subcommands: list, add, install, trust, remove, verify
   sessions   List or inspect ACP client sessions
              Subcommands: list, show, history (alias for show), export, import, events
   queue      List queued prompts for an ACP client session
@@ -1105,9 +1137,62 @@ func executeACPClientProfiles(store *acpclient.ProfileStore, cmd acpClientProfil
 		}
 		fmt.Fprintf(w, "Removed ACP profile %s\n", cmd.name)
 		return nil
+	case acpClientProfilesVerify:
+		return executeACPClientProfilesVerify(context.Background(), cmd, defaultACPClientExecRunner{}, w)
 	default:
 		return fmt.Errorf("unknown acp client profiles command: %s", cmd.kind)
 	}
+}
+
+func executeACPClientProfilesVerify(ctx context.Context, cmd acpClientProfilesCommand, runner acpClientExecRunner, w io.Writer) error {
+	timeout := cmd.timeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	prompt := cmd.prompt
+	if prompt == "" {
+		prompt = defaultACPProfileVerifyPrompt
+	}
+	reg, err := defaultACPClientRegistry()
+	if err != nil {
+		return err
+	}
+	runOpts := acpclient.RunOptions{
+		Agent:   cmd.name,
+		Cwd:     ".",
+		Timeout: timeout,
+	}
+	spec, err := reg.Resolve(runOpts)
+	if err != nil {
+		return err
+	}
+	verifyCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	result, err := runner.RunPrompt(verifyCtx, spec, runOpts, prompt)
+	if err != nil {
+		return err
+	}
+	payload := struct {
+		Name               string `json:"name"`
+		Status             string `json:"status"`
+		CommandFingerprint string `json:"commandFingerprint"`
+		ACPSessionID       string `json:"acpSessionId"`
+		StopReason         string `json:"stopReason"`
+		TextBytes          int    `json:"textBytes"`
+	}{
+		Name:               spec.Name,
+		Status:             "ok",
+		CommandFingerprint: spec.Fingerprint(),
+		ACPSessionID:       string(result.SessionID),
+		StopReason:         string(result.StopReason),
+		TextBytes:          len([]byte(result.Text)),
+	}
+	if cmd.json {
+		return json.NewEncoder(w).Encode(payload)
+	}
+	fmt.Fprintf(w, "verified ACP profile %s session=%s stop=%s text_bytes=%d\n",
+		payload.Name, payload.ACPSessionID, payload.StopReason, payload.TextBytes)
+	return nil
 }
 
 func executeACPClientProfilesList(store *acpclient.ProfileStore, jsonOut bool, w io.Writer) error {
