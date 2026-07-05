@@ -89,6 +89,8 @@ func TestHarnessEmulationDocsCoverPolicyMatrixLayers(t *testing.T) {
 		"workflow-plugin-slack",
 		"workflow-plugin-discord",
 		"workflow-plugin-teams",
+		"--workflow-messaging",
+		"step.messaging_send",
 		"background drain",
 		"extension hooks",
 		"action nodes",
