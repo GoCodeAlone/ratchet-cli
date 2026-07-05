@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/GoCodeAlone/ratchet-cli/internal/storefile"
 )
 
 const RunStatusRecorded = "recorded"
@@ -197,47 +199,8 @@ func (s *Store) RunsForRoutine(id string) []Run {
 }
 
 func (s *Store) Save() error {
-	if err := os.MkdirAll(filepath.Dir(s.filePath), 0o755); err != nil {
-		return fmt.Errorf("create routines dir: %w", err)
-	}
-	data, err := json.MarshalIndent(s, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal routines store: %w", err)
-	}
-	tmp := s.filePath + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return fmt.Errorf("write routines temp file: %w", err)
-	}
-	if err := replaceFile(s.filePath, tmp); err != nil {
-		return fmt.Errorf("replace routines store: %w", err)
-	}
-	return nil
-}
-
-func replaceFile(path, tmp string) error {
-	if err := os.Rename(tmp, path); err == nil {
-		return nil
-	}
-	backup := path + ".bak"
-	_ = os.Remove(backup)
-	backupCreated := false
-	if err := os.Rename(path, backup); err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			_ = os.Remove(tmp)
-			return err
-		}
-	} else {
-		backupCreated = true
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		if backupCreated {
-			_ = os.Rename(backup, path)
-		}
-		_ = os.Remove(tmp)
-		return err
-	}
-	if backupCreated {
-		_ = os.Remove(backup)
+	if err := storefile.WriteJSON(s.filePath, s, 0o600); err != nil {
+		return fmt.Errorf("save routines store: %w", err)
 	}
 	return nil
 }
