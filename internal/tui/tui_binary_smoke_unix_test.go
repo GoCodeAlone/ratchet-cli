@@ -260,8 +260,12 @@ func trustBodiesFromSpec(spec commandSurfaceSpec) []string {
 
 func (s *tuiPTY) submitSlash(cmd string) {
 	s.t.Helper()
-	s.send(cmd + " ")
-	time.Sleep(100 * time.Millisecond)
+	text := cmd + " "
+	for _, r := range text {
+		s.send(string(r))
+		time.Sleep(20 * time.Millisecond)
+	}
+	time.Sleep(300 * time.Millisecond)
 	s.send("\r")
 }
 
