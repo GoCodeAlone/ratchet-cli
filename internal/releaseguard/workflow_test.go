@@ -120,7 +120,7 @@ func TestReleaseWorkflowPostPublishGuards(t *testing.T) {
 	requireRun(t, job, "Check draft release assets", "go test -count=1 ./internal/releaseguard -run TestDraftAssets")
 	requireRun(t, job, "Render compatibility Homebrew formula", "scripts/render-homebrew-formula.sh dist dist/homebrew/Formula/ratchet-cli.rb")
 	requireRun(t, job, "Clone Homebrew tap", "HOMEBREW_TAP_TOKEN")
-	requireRun(t, job, "Publish generated Homebrew tap files", "scripts/publish-homebrew-cask.sh --push dist/homebrew/Casks/ratchet-cli.rb dist/homebrew/Formula/ratchet-cli.rb")
+	requireRun(t, job, "Publish generated Homebrew tap files", `scripts/publish-homebrew-cask.sh --push dist/homebrew/Casks/ratchet-cli.rb dist/homebrew/Formula/ratchet-cli.rb "$RUNNER_TEMP/homebrew-tap"`)
 	requireRun(t, job, "Check tap post-publish state", "RATCHET_RELEASE_GUARD_MODE=tap-postcheck")
 	requireRun(t, job, "Check tap post-publish state", "RATCHET_RELEASE_GUARD_TAP_NAMES=ratchet-cli")
 	requireRun(t, job, "Check tap post-publish state", "RATCHET_RELEASE_GUARD_TAP_COMMITS=")

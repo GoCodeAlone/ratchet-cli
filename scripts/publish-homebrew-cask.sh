@@ -40,10 +40,12 @@ if [[ -n "$(git -C "$tap" status --porcelain)" ]]; then
 fi
 
 for token in ratchet-tui-smoke tui_smoke --tui-smoke ConnectSmokeUnix; do
-  if grep -Fq -- "$token" "$generated_cask" "$generated_formula"; then
-    echo "generated cask contains forbidden smoke token: $token" >&2
-    exit 1
-  fi
+  for file in "$generated_cask" "$generated_formula"; do
+    if grep -Fq -- "$token" "$file"; then
+      echo "generated Homebrew file $file contains forbidden smoke token: $token" >&2
+      exit 1
+    fi
+  done
 done
 for want in 'cask "ratchet-cli"' 'binary "ratchet"'; do
   if ! grep -Fq -- "$want" "$generated_cask"; then
