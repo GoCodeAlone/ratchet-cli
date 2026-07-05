@@ -76,7 +76,7 @@ func TestTUIBinarySmoke(t *testing.T) {
 
 	s.clear()
 	s.submitSlash("/tree")
-	s.waitFor("Session Tree", 8*time.Second)
+	s.waitFor(expectedForSmokeCommand("/tree"), 8*time.Second)
 	s.send("\x1b")
 	s.waitFor("Message ratchet", 8*time.Second)
 
