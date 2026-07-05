@@ -31,3 +31,23 @@ func TestWriteJSONCreatesParentDirectoryAndRewritesFile(t *testing.T) {
 		t.Fatalf("backup file still exists or unexpected stat error: %v", err)
 	}
 }
+
+func TestWriteJSONDoesNotReusePredictableTempSibling(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "store.json")
+	predictableTemp := path + ".tmp"
+	if err := os.WriteFile(predictableTemp, []byte("do not overwrite"), 0o600); err != nil {
+		t.Fatalf("write predictable temp: %v", err)
+	}
+
+	if err := WriteJSON(path, map[string]string{"status": "ready"}, 0o600); err != nil {
+		t.Fatalf("WriteJSON: %v", err)
+	}
+
+	data, err := os.ReadFile(predictableTemp)
+	if err != nil {
+		t.Fatalf("read predictable temp: %v", err)
+	}
+	if string(data) != "do not overwrite" {
+		t.Fatalf("predictable temp was modified: %q", data)
+	}
+}

@@ -9,20 +9,47 @@ import (
 )
 
 func WriteJSON(path string, value any, perm os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create store dir: %w", err)
 	}
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal store: %w", err)
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, perm); err != nil {
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("create store temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	closed := false
+	cleanup := true
+	defer func() {
+		if !closed {
+			_ = tmp.Close()
+		}
+		if cleanup {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if _, err := tmp.Write(data); err != nil {
 		return fmt.Errorf("write store temp file: %w", err)
 	}
-	if err := Replace(path, tmp); err != nil {
+	if err := tmp.Chmod(perm); err != nil {
+		return fmt.Errorf("chmod store temp file: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("sync store temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		closed = true
+		return fmt.Errorf("close store temp file: %w", err)
+	}
+	closed = true
+	if err := Replace(path, tmpPath); err != nil {
 		return fmt.Errorf("replace store: %w", err)
 	}
+	cleanup = false
 	return nil
 }
 
