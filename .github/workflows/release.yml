@@ -90,6 +90,8 @@ jobs:
             RATCHET_RELEASE_GUARD_ASSETS="$RUNNER_TEMP/release-assets" \
             RATCHET_RELEASE_GUARD_VERSION="$RELEASE_TAG" \
             go test -count=1 ./internal/releaseguard -run TestDraftAssets
+      - name: Render compatibility Homebrew formula
+        run: scripts/render-homebrew-formula.sh dist dist/homebrew/Formula/ratchet-cli.rb
       - name: Clone Homebrew tap
         run: |
           git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/GoCodeAlone/homebrew-tap.git" "$RUNNER_TEMP/homebrew-tap"
@@ -98,9 +100,9 @@ jobs:
           git -C "$RUNNER_TEMP/homebrew-tap" config user.email bot@goreleaser.com
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-      - name: Publish generated Homebrew cask
+      - name: Publish generated Homebrew tap files
         run: |
-          scripts/publish-homebrew-cask.sh --push dist/homebrew/Casks/ratchet-cli.rb "$RUNNER_TEMP/homebrew-tap"
+          scripts/publish-homebrew-cask.sh --push dist/homebrew/Casks/ratchet-cli.rb dist/homebrew/Formula/ratchet-cli.rb "$RUNNER_TEMP/homebrew-tap"
       - name: Check tap post-publish state
         run: |
           RATCHET_RELEASE_GUARD_MODE=tap-postcheck \

@@ -19,6 +19,20 @@ func TestGoReleaserHomebrewCaskConfig(t *testing.T) {
 	}
 }
 
+func TestGoReleaserRejectsDeprecatedBrewSurface(t *testing.T) {
+	cfg, err := LoadGoReleaserConfig(filepath.Join(repoRoot(t), ".goreleaser.yaml"))
+	if err != nil {
+		t.Fatalf("load goreleaser config: %v", err)
+	}
+	if _, ok := cfg.RawTopLevel["brews"]; !ok {
+		cfg.RawTopLevel["brews"] = []any{map[string]any{"name": "ratchet-cli"}}
+	}
+	err = ValidateGoReleaserConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "deprecated publish surface") {
+		t.Fatalf("expected deprecated brews rejection, got %v", err)
+	}
+}
+
 func TestTapPreflight(t *testing.T) {
 	if os.Getenv("RATCHET_RELEASE_GUARD_MODE") != "tap-preflight" {
 		t.Skip("releaseguard artifact mode not requested")
@@ -34,31 +48,50 @@ func TestTapPreflight(t *testing.T) {
 func TestTapPreflightRejectsLegacyInstallSurfaces(t *testing.T) {
 	tap := t.TempDir()
 	mustWrite(t, filepath.Join(tap, "ratchet-cli.rb"), `cask "ratchet-cli" do
-  binary "ratchet"
-end
-`)
-	mustWrite(t, filepath.Join(tap, "Formula", "ratchet-cli.rb"), "class RatchetCli < Formula\nend\n")
+	  binary "ratchet"
+	end
+	`)
 	mustWrite(t, filepath.Join(tap, "Casks", "ratchet-cli.rb"), `cask "ratchet-cli" do
-  binary "ratchet"
+	  binary "ratchet"
+	end
+	`)
+	mustWrite(t, filepath.Join(tap, "Formula", "ratchet-cli.rb"), `class RatchetCli < Formula
+  desc "Interactive AI agent CLI"
+  homepage "https://github.com/GoCodeAlone/ratchet-cli"
+  url "https://github.com/GoCodeAlone/ratchet-cli/releases/download/v0.0.0/ratchet_darwin_arm64.tar.gz"
+  sha256 "fixture"
+
+  def install
+    bin.install "ratchet"
+  end
 end
 `)
 	err := GuardTapPreflight(repoRoot(t), tap)
 	if err == nil {
 		t.Fatal("expected stale tap surfaces to fail")
 	}
-	for _, want := range []string{"ratchet-cli.rb", "Formula/ratchet-cli.rb"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("error %q does not name %s", err, want)
-		}
+	if !strings.Contains(err.Error(), "ratchet-cli.rb") {
+		t.Fatalf("error %q does not name stale root ratchet-cli.rb", err)
 	}
 }
 
-func TestTapPreflightAcceptsManagedCask(t *testing.T) {
+func TestTapPreflightAcceptsManagedCaskAndFormula(t *testing.T) {
 	tap := t.TempDir()
 	mustWrite(t, filepath.Join(tap, "Casks", "ratchet-cli.rb"), `cask "ratchet-cli" do
+	  url "https://github.com/GoCodeAlone/ratchet-cli/releases/download/v0.0.0/ratchet_darwin_arm64.tar.gz"
+	  name "ratchet-cli"
+	  binary "ratchet"
+	end
+	`)
+	mustWrite(t, filepath.Join(tap, "Formula", "ratchet-cli.rb"), `class RatchetCli < Formula
+  desc "Interactive AI agent CLI"
+  homepage "https://github.com/GoCodeAlone/ratchet-cli"
   url "https://github.com/GoCodeAlone/ratchet-cli/releases/download/v0.0.0/ratchet_darwin_arm64.tar.gz"
-  name "ratchet-cli"
-  binary "ratchet"
+  sha256 "fixture"
+
+  def install
+    bin.install "ratchet"
+  end
 end
 `)
 	if err := GuardTapPreflight(repoRoot(t), tap); err != nil {
@@ -66,37 +99,56 @@ end
 	}
 }
 
-func TestPublishHomebrewCaskScriptCommitsGeneratedCask(t *testing.T) {
+func TestPublishHomebrewScriptCommitsGeneratedCaskAndFormula(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell script guard is verified on Unix CI")
 	}
 	root := repoRoot(t)
 	tap := t.TempDir()
-	generated := filepath.Join(t.TempDir(), "ratchet-cli.rb")
+	generatedCask := filepath.Join(t.TempDir(), "ratchet-cli.rb")
+	generatedFormula := filepath.Join(t.TempDir(), "ratchet-cli.rb")
 	envFile := filepath.Join(t.TempDir(), "github-env")
 
 	runGit(t, tap, "init", "-b", "main")
 	runGit(t, tap, "config", "user.name", "test")
 	runGit(t, tap, "config", "user.email", "test@example.invalid")
 	mustWrite(t, filepath.Join(tap, "Casks", "ratchet-cli.rb"), `cask "ratchet-cli" do
-  version "0.0.0"
-  binary "ratchet"
+	  version "0.0.0"
+	  binary "ratchet"
+	end
+	`)
+	mustWrite(t, filepath.Join(tap, "Formula", "ratchet-cli.rb"), `class RatchetCli < Formula
+  def install
+    bin.install "ratchet"
+  end
 end
 `)
-	runGit(t, tap, "add", "Casks/ratchet-cli.rb")
-	runGit(t, tap, "commit", "-m", "seed cask")
+	runGit(t, tap, "add", "Casks/ratchet-cli.rb", "Formula/ratchet-cli.rb")
+	runGit(t, tap, "commit", "-m", "seed homebrew files")
 
-	mustWrite(t, generated, `cask "ratchet-cli" do
+	mustWrite(t, generatedCask, `cask "ratchet-cli" do
+	  version "0.0.1"
+	  url "https://github.com/GoCodeAlone/ratchet-cli/releases/download/v0.0.1/ratchet_darwin_arm64.tar.gz"
+	  name "ratchet-cli"
+	  binary "ratchet"
+	end
+	`)
+	mustWrite(t, generatedFormula, `class RatchetCli < Formula
+  desc "Interactive AI agent CLI"
+  homepage "https://github.com/GoCodeAlone/ratchet-cli"
   version "0.0.1"
   url "https://github.com/GoCodeAlone/ratchet-cli/releases/download/v0.0.1/ratchet_darwin_arm64.tar.gz"
-  name "ratchet-cli"
-  binary "ratchet"
+  sha256 "fixture"
+
+  def install
+    bin.install "ratchet"
+  end
 end
 `)
-	cmd := exec.Command("bash", filepath.Join(root, "scripts", "publish-homebrew-cask.sh"), generated, tap)
+	cmd := exec.Command("bash", filepath.Join(root, "scripts", "publish-homebrew-cask.sh"), generatedCask, generatedFormula, tap)
 	cmd.Env = append(os.Environ(), "GITHUB_ENV="+envFile, "RELEASE_TAG=v0.0.1")
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("publish cask script: %v\n%s", err, out)
+		t.Fatalf("publish homebrew script: %v\n%s", err, out)
 	}
 	envData, err := os.ReadFile(envFile)
 	if err != nil {
@@ -105,6 +157,9 @@ end
 	if !strings.Contains(string(envData), "RATCHET_RELEASE_GUARD_TAP_COMMITS=Casks/ratchet-cli.rb=") {
 		t.Fatalf("github env missing tap commit: %s", envData)
 	}
+	if !strings.Contains(string(envData), ",Formula/ratchet-cli.rb=") {
+		t.Fatalf("github env missing formula commit: %s", envData)
+	}
 	data, err := os.ReadFile(filepath.Join(tap, "Casks", "ratchet-cli.rb"))
 	if err != nil {
 		t.Fatalf("read published cask: %v", err)
@@ -112,16 +167,71 @@ end
 	if !strings.Contains(string(data), `version "0.0.1"`) {
 		t.Fatalf("published cask missing generated version:\n%s", data)
 	}
+	data, err = os.ReadFile(filepath.Join(tap, "Formula", "ratchet-cli.rb"))
+	if err != nil {
+		t.Fatalf("read published formula: %v", err)
+	}
+	if !strings.Contains(string(data), `version "0.0.1"`) {
+		t.Fatalf("published formula missing generated version:\n%s", data)
+	}
 	runGit(t, tap, "diff", "--quiet")
+}
+
+func TestRenderHomebrewFormulaScript(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script guard is verified on Unix CI")
+	}
+	root := repoRoot(t)
+	dist := t.TempDir()
+	out := filepath.Join(t.TempDir(), "ratchet-cli.rb")
+	mustWrite(t, filepath.Join(dist, "checksums.txt"), `1111111111111111111111111111111111111111111111111111111111111111  ratchet_darwin_amd64.tar.gz
+2222222222222222222222222222222222222222222222222222222222222222  ratchet_darwin_arm64.tar.gz
+3333333333333333333333333333333333333333333333333333333333333333  ratchet_linux_amd64.tar.gz
+4444444444444444444444444444444444444444444444444444444444444444  ratchet_linux_arm64.tar.gz
+`)
+	cmd := exec.Command("bash", filepath.Join(root, "scripts", "render-homebrew-formula.sh"), dist, out)
+	cmd.Env = append(os.Environ(), "RELEASE_TAG=v0.0.1")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("render formula: %v\n%s", err, output)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("read formula: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		`class RatchetCli < Formula`,
+		`version "0.0.1"`,
+		`ratchet_darwin_arm64.tar.gz`,
+		`sha256 "2222222222222222222222222222222222222222222222222222222222222222"`,
+		`ratchet_linux_amd64.tar.gz`,
+		`bin.install "ratchet"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("formula missing %s:\n%s", want, text)
+		}
+	}
 }
 
 func TestTapPostcheckUsesNamesCommitsAndVersion(t *testing.T) {
 	tap := t.TempDir()
 	mustWrite(t, filepath.Join(tap, "Casks", "ratchet-cli.rb"), `cask "ratchet-cli" do
+	  version "0.0.0-test"
+	  url "https://github.com/GoCodeAlone/ratchet-cli/releases/download/v0.0.0-test/ratchet_darwin_arm64.tar.gz"
+	  name "ratchet-cli"
+	  binary "ratchet"
+	end
+	`)
+	mustWrite(t, filepath.Join(tap, "Formula", "ratchet-cli.rb"), `class RatchetCli < Formula
+  desc "Interactive AI agent CLI"
+  homepage "https://github.com/GoCodeAlone/ratchet-cli"
   version "0.0.0-test"
   url "https://github.com/GoCodeAlone/ratchet-cli/releases/download/v0.0.0-test/ratchet_darwin_arm64.tar.gz"
-  name "ratchet-cli"
-  binary "ratchet"
+  sha256 "fixture"
+
+  def install
+    bin.install "ratchet"
+  end
 end
 `)
 	root := repoRoot(t)
@@ -134,10 +244,13 @@ end
 	if err := GuardTapPostcheck(root, tap, "ratchet-cli", "Casks/ratchet-cli.rb=", "v0.0.0-test"); err == nil {
 		t.Fatal("expected tap-postcheck empty cask commit failure")
 	}
+	if err := GuardTapPostcheck(root, tap, "ratchet-cli", "Casks/ratchet-cli.rb=fixture-sha", "v0.0.0-test"); err == nil {
+		t.Fatal("expected tap-postcheck formula commit failure")
+	}
 	if err := GuardTapPostcheck(root, tap, "ratchet-cli", "Casks/ratchet-cli.rb=fixture-sha", "v0.0.0-other"); err == nil {
 		t.Fatal("expected tap-postcheck version failure")
 	}
-	if err := GuardTapPostcheck(root, tap, "ratchet-cli", "Casks/ratchet-cli.rb=fixture-sha", "v0.0.0-test"); err != nil {
+	if err := GuardTapPostcheck(root, tap, "ratchet-cli", "Casks/ratchet-cli.rb=fixture-sha,Formula/ratchet-cli.rb=fixture-sha", "v0.0.0-test"); err != nil {
 		t.Fatalf("tap postcheck: %v", err)
 	}
 }
@@ -176,10 +289,22 @@ func prepareModeFixtureTap(t *testing.T, path, version string) {
 		_ = os.RemoveAll(fixturePath)
 	})
 	mustWrite(t, filepath.Join(fixturePath, "Casks", "ratchet-cli.rb"), `cask "ratchet-cli" do
+	  version "`+strings.TrimPrefix(version, "v")+`"
+	  url "https://github.com/GoCodeAlone/ratchet-cli/releases/download/`+version+`/ratchet_darwin_arm64.tar.gz"
+	  name "ratchet-cli"
+	  binary "ratchet"
+	end
+	`)
+	mustWrite(t, filepath.Join(fixturePath, "Formula", "ratchet-cli.rb"), `class RatchetCli < Formula
+  desc "Interactive AI agent CLI"
+  homepage "https://github.com/GoCodeAlone/ratchet-cli"
   version "`+strings.TrimPrefix(version, "v")+`"
   url "https://github.com/GoCodeAlone/ratchet-cli/releases/download/`+version+`/ratchet_darwin_arm64.tar.gz"
-  name "ratchet-cli"
-  binary "ratchet"
+  sha256 "fixture"
+
+  def install
+    bin.install "ratchet"
+  end
 end
 `)
 }
