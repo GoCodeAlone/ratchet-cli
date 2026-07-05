@@ -221,7 +221,11 @@ contain prompts, file paths, or task context. Use
 records with a `messaging.text` projection, or add `--workflow-messaging` to
 include `workflow-plugin-messaging-core` handoff metadata for
 `step.messaging_send` with `channel` supplied by the downstream Workflow
-pipeline. External delivery belongs in the existing
+pipeline. `workflow-plugin-messaging-core` exposes
+`ParseRatchetNotificationEvents` and
+`ProjectRatchetNotificationToMessagingSend` for Workflow-side JSON/JSONL
+parsing and typed `step.messaging_send` input projection. External delivery
+belongs in the existing
 `workflow-plugin-messaging-core`, `workflow-plugin-slack`,
 `workflow-plugin-discord`, and `workflow-plugin-teams` plugin family, not in
 ratchet-cli direct adapters or credential flags.
