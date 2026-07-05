@@ -8,9 +8,9 @@ require (
 	charm.land/lipgloss/v2 v2.0.4
 	github.com/ActiveState/termtest v0.7.2
 	github.com/GoCodeAlone/acpx-go v0.2.1
-	github.com/GoCodeAlone/workflow v0.85.1
+	github.com/GoCodeAlone/workflow v0.85.2
 	github.com/GoCodeAlone/workflow-plugin-acpx v0.1.0
-	github.com/GoCodeAlone/workflow-plugin-agent v0.12.0
+	github.com/GoCodeAlone/workflow-plugin-agent v0.12.2
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/coder/acp-go-sdk v0.6.3
 	github.com/creack/pty v1.1.24
@@ -40,7 +40,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/DataDog/datadog-go/v5 v5.8.3 // indirect
 	github.com/GoCodeAlone/go-plugin v1.7.0 // indirect
-	github.com/GoCodeAlone/modular v1.13.4 // indirect
+	github.com/GoCodeAlone/modular v1.13.5 // indirect
 	github.com/GoCodeAlone/modular/modules/auth v1.17.0 // indirect
 	github.com/GoCodeAlone/modular/modules/eventbus/v2 v2.10.0 // indirect
 	github.com/GoCodeAlone/workflow-plugin-authz v0.5.13 // indirect
