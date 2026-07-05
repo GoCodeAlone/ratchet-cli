@@ -34,7 +34,7 @@
 | 3 | Visible routines and workflows | Task 6, Task 7 | feat/ratchet-routines-workflows |
 | 4 | Messaging bridge contract and closeout | Task 8, Task 9 | feat/ratchet-messaging-bridge |
 
-**Status:** Locked 2026-07-05T05:45:22Z
+**Status:** Complete 2026-07-05T07:16:27Z
 
 ## Current State
 
