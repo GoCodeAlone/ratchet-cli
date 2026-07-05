@@ -4,6 +4,10 @@
 **Scope:** 4 PR groups / 9 tasks
 **Completed:** 2026-07-05
 
+Note: `docs/retros/2026-07-05-runtime-extension-lifecycle-retro.md` is the
+earlier PR #97 retro. This file closes the full locked lifecycle after PRs
+#102/#103 and workflow-plugin-messaging-core #10.
+
 ## Delivered
 
 - PR #97: daemon plugin reload, plugin skills, hook parity.
