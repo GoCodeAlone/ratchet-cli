@@ -19,14 +19,17 @@ brew install --cask gocodealone/tap/ratchet-cli
 ratchet --version
 ```
 
-Older installations may have a stale formula named `ratchet-cli` linked at
-`/opt/homebrew/bin/ratchet`. If `brew info ratchet-cli` reports an installed
-formula instead of the cask, remove the old formula before installing the cask:
+The tap also keeps a Formula current so older `brew install ratchet-cli`
+installations can upgrade without leaving a stale binary linked at
+`/opt/homebrew/bin/ratchet`:
 
 ```sh
-brew uninstall ratchet-cli
-brew install --cask gocodealone/tap/ratchet-cli
+brew upgrade gocodealone/tap/ratchet-cli
+ratchet --version
 ```
+
+If you prefer to move from the Formula to the cask, uninstall the Formula first,
+then install the cask.
 
 You can also install from source:
 

@@ -98,7 +98,7 @@ func ValidateGoReleaserConfig(cfg GoReleaserConfig) error {
 	}
 	for key, value := range cfg.RawTopLevel {
 		if key == "brews" {
-			return fmt.Errorf("deprecated publish surface %q is not allowed", key)
+			return fmt.Errorf("deprecated publish surface %q is not allowed; compatibility Formula is rendered by scripts/render-homebrew-formula.sh", key)
 		}
 		if _, ok := allowed[key]; !ok {
 			return fmt.Errorf("unknown top-level goreleaser key %q", key)
@@ -125,9 +125,6 @@ func ValidateGoReleaserConfig(cfg GoReleaserConfig) error {
 }
 
 func ValidateHomebrewCaskConfig(cfg GoReleaserConfig) error {
-	if _, ok := cfg.RawTopLevel["brews"]; ok {
-		return fmt.Errorf("deprecated brews section is not allowed")
-	}
 	if len(cfg.HomebrewCask) != 1 {
 		return fmt.Errorf("expected one homebrew_casks entry, got %d", len(cfg.HomebrewCask))
 	}

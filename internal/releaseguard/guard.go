@@ -464,14 +464,22 @@ func scanGeneratedMaterial(dist string) error {
 		if token, ok := findForbiddenToken(string(data)); ok {
 			return fmt.Errorf("generated material %s contains forbidden smoke token %q", path, token)
 		}
-		if err := validateGeneratedCaskMaterial(path, string(data)); err != nil {
+		if err := validateGeneratedHomebrewMaterial(path, string(data)); err != nil {
 			return err
 		}
 		return nil
 	})
 }
 
-func validateGeneratedCaskMaterial(path, text string) error {
+func validateGeneratedHomebrewMaterial(path, text string) error {
+	if strings.Contains(filepath.ToSlash(path), "/Formula/") || strings.Contains(text, "class RatchetCli < Formula") {
+		for _, want := range []string{`class RatchetCli < Formula`, `bin.install "ratchet"`} {
+			if !strings.Contains(text, want) {
+				return fmt.Errorf("generated formula material %s missing %s", path, want)
+			}
+		}
+		return nil
+	}
 	for _, want := range []string{`cask "ratchet-cli"`, `binary "ratchet"`} {
 		if !strings.Contains(text, want) {
 			return fmt.Errorf("generated cask material %s missing %s", path, want)

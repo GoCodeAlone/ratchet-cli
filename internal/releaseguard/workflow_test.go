@@ -118,8 +118,9 @@ func TestReleaseWorkflowPostPublishGuards(t *testing.T) {
 	requireRun(t, job, "Check draft release assets", "RATCHET_RELEASE_GUARD_MODE=draft-assets")
 	requireRun(t, job, "Check draft release assets", "RATCHET_RELEASE_GUARD_ASSETS=\"$RUNNER_TEMP/release-assets\"")
 	requireRun(t, job, "Check draft release assets", "go test -count=1 ./internal/releaseguard -run TestDraftAssets")
+	requireRun(t, job, "Render compatibility Homebrew formula", "scripts/render-homebrew-formula.sh dist dist/homebrew/Formula/ratchet-cli.rb")
 	requireRun(t, job, "Clone Homebrew tap", "HOMEBREW_TAP_TOKEN")
-	requireRun(t, job, "Publish generated Homebrew cask", "scripts/publish-homebrew-cask.sh --push dist/homebrew/Casks/ratchet-cli.rb")
+	requireRun(t, job, "Publish generated Homebrew tap files", "scripts/publish-homebrew-cask.sh --push dist/homebrew/Casks/ratchet-cli.rb dist/homebrew/Formula/ratchet-cli.rb")
 	requireRun(t, job, "Check tap post-publish state", "RATCHET_RELEASE_GUARD_MODE=tap-postcheck")
 	requireRun(t, job, "Check tap post-publish state", "RATCHET_RELEASE_GUARD_TAP_NAMES=ratchet-cli")
 	requireRun(t, job, "Check tap post-publish state", "RATCHET_RELEASE_GUARD_TAP_COMMITS=")
@@ -127,8 +128,9 @@ func TestReleaseWorkflowPostPublishGuards(t *testing.T) {
 	requireRun(t, job, "Publish GitHub release", "updateRelease")
 
 	requireTextOrder(t, raw, "Publish GitHub draft with GoReleaser", "Check draft release assets")
-	requireTextOrder(t, raw, "Check draft release assets", "Publish generated Homebrew cask")
-	requireTextOrder(t, raw, "Publish generated Homebrew cask", "Check tap post-publish state")
+	requireTextOrder(t, raw, "Check draft release assets", "Render compatibility Homebrew formula")
+	requireTextOrder(t, raw, "Render compatibility Homebrew formula", "Publish generated Homebrew tap files")
+	requireTextOrder(t, raw, "Publish generated Homebrew tap files", "Check tap post-publish state")
 	requireTextOrder(t, raw, "Check tap post-publish state", "Publish GitHub release")
 }
 
