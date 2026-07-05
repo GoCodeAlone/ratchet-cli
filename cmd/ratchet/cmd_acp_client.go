@@ -1190,8 +1190,8 @@ func executeACPClientProfilesVerify(ctx context.Context, cmd acpClientProfilesCo
 	if cmd.json {
 		return json.NewEncoder(w).Encode(payload)
 	}
-	fmt.Fprintf(w, "verified ACP profile %s session=%s stop=%s text_bytes=%d\n",
-		payload.Name, payload.ACPSessionID, payload.StopReason, payload.TextBytes)
+	fmt.Fprintf(w, "verified ACP profile %s session=%s stop=%s fingerprint=%s text_bytes=%d\n",
+		payload.Name, payload.ACPSessionID, payload.StopReason, payload.CommandFingerprint, payload.TextBytes)
 	return nil
 }
 

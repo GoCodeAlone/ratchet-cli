@@ -451,6 +451,34 @@ func TestExecuteACPClientProfilesVerifyTrustedProfileRedactsOutput(t *testing.T)
 	}
 }
 
+func TestExecuteACPClientProfilesVerifyHumanOutputIncludesFingerprint(t *testing.T) {
+	setupDefaultACPProfile(t, "fixture", true)
+	runner := &fakeACPClientExecRunner{
+		result: acpclient.Result{
+			SessionID:  acpsdk.SessionId("fixture-session"),
+			StopReason: acpsdk.StopReasonEndTurn,
+			Text:       "human secret response",
+		},
+	}
+	var out bytes.Buffer
+	err := executeACPClientProfilesVerify(t.Context(), acpClientProfilesCommand{
+		name:    "fixture",
+		prompt:  "human secret prompt",
+		timeout: time.Second,
+	}, runner, &out)
+	if err != nil {
+		t.Fatalf("execute verify: %v", err)
+	}
+	got := out.String()
+	wantFingerprint := runner.spec.Fingerprint()
+	if !strings.Contains(got, "fingerprint="+wantFingerprint) {
+		t.Fatalf("human output = %q, want fingerprint %s", got, wantFingerprint)
+	}
+	if strings.Contains(got, "human secret prompt") || strings.Contains(got, "human secret response") {
+		t.Fatalf("verify human output leaked prompt/response: %s", got)
+	}
+}
+
 func TestExecuteACPClientProfilesVerifyRejectsUntrustedProfile(t *testing.T) {
 	setupDefaultACPProfile(t, "fixture", false)
 	runner := &fakeACPClientExecRunner{}

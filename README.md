@@ -143,9 +143,9 @@ can be used with `--agent <name>` for `exec`, `drain`, `watch`, `compare`, and
 Plugin-distributed profile templates can be installed into the local profile
 store, then reviewed or trusted like local profiles. Use
 `ratchet acp client profiles verify <name> [--json]` as a credential-free CI
-contract check for trusted profiles; it reports session id, stop reason, and
-response byte count without printing prompt text, response text, or env values.
-The TypeScript extension SDK remains deferred.
+contract check for trusted profiles; it reports session id, stop reason,
+command fingerprint, and response byte count without printing prompt text,
+response text, or env values. The TypeScript extension SDK remains deferred.
 
 See [docs/policy-matrix.md](docs/policy-matrix.md) for the Policy Matrix
 covering static config trust rules, runtime trust rules, persistent trust

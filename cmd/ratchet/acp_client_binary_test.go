@@ -82,9 +82,11 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 	profileVerify := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "profiles", "verify", "fixture-profile", "--prompt", "binary profile verify secret", "--json")
 	profileVerify.Dir = repoRoot
 	profileVerify.Env = env
+	var profileVerifyErr bytes.Buffer
+	profileVerify.Stderr = &profileVerifyErr
 	profileVerifyOut, err := profileVerify.Output()
 	if err != nil {
-		t.Fatalf("profiles verify fixture-profile: %v\n%s", err, profileVerifyOut)
+		t.Fatalf("profiles verify fixture-profile: %v\nstdout:\n%s\nstderr:\n%s", err, profileVerifyOut, profileVerifyErr.String())
 	}
 	var verifyPayload struct {
 		Name         string `json:"name"`
