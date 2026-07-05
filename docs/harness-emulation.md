@@ -106,9 +106,9 @@ volatile state and should not be used as durable storage. Use
 records with `messaging.text` for downstream Workflow messaging plugins; add
 `--workflow-messaging` when the handoff should include
 `workflow-plugin-messaging-core` `step.messaging_send` metadata.
-`workflow-plugin-messaging-core` owns `ParseRatchetNotificationEvents` and
-`ProjectRatchetNotificationToMessagingSend` so Workflow-side pipelines can parse
-ratchet JSON/JSONL exports and supply the target `channel`. Outbound
+`workflow-plugin-messaging-core` owns `ParseNotificationEvents` and
+`ProjectNotificationEventToMessagingSend` so Workflow-side pipelines can parse
+notification-event JSON/JSONL exports and supply the target `channel`. Outbound
 Discord, Slack, Teams, email, webhook, or other service delivery stays in the
 existing messaging-core and channel plugins rather than built into ratchet-cli.
 The

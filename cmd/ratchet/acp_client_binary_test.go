@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -9,9 +10,26 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/acpclient"
 )
+
+const (
+	binarySmokeCommandTimeout = 45 * time.Second
+	binarySmokeBuildTimeout   = 2 * time.Minute
+)
+
+func newBinarySmokeCommand(t *testing.T, name string, args ...string) *exec.Cmd {
+	t.Helper()
+	timeout := binarySmokeCommandTimeout
+	if name == "go" && len(args) > 0 && args[0] == "build" {
+		timeout = binarySmokeBuildTimeout
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), timeout)
+	t.Cleanup(cancel)
+	return exec.CommandContext(ctx, name, args...)
+}
 
 func TestACPClientExecBinarySmoke(t *testing.T) {
 	repoRoot := filepath.Clean(filepath.Join("..", ".."))
@@ -23,13 +41,13 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 		fixtureBin += ".exe"
 	}
 
-	buildRatchet := exec.CommandContext(t.Context(), "go", "build", "-o", ratchetBin, "./cmd/ratchet")
+	buildRatchet := newBinarySmokeCommand(t, "go", "build", "-o", ratchetBin, "./cmd/ratchet")
 	buildRatchet.Dir = repoRoot
 	if out, err := buildRatchet.CombinedOutput(); err != nil {
 		t.Fatalf("build ratchet: %v\n%s", err, out)
 	}
 
-	buildFixture := exec.CommandContext(t.Context(), "go", "build", "-o", fixtureBin, "./internal/acpclient/testdata/fixture-agent")
+	buildFixture := newBinarySmokeCommand(t, "go", "build", "-o", fixtureBin, "./internal/acpclient/testdata/fixture-agent")
 	buildFixture.Dir = repoRoot
 	if out, err := buildFixture.CombinedOutput(); err != nil {
 		t.Fatalf("build fixture: %v\n%s", err, out)
@@ -41,7 +59,7 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 		t.Fatalf("mkdir cwd: %v", err)
 	}
 	env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, ".state"))
-	human := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "exec", "--command", fixtureBin, "--cwd", cwd, "binary hello")
+	human := newBinarySmokeCommand(t, ratchetBin, "acp", "client", "exec", "--command", fixtureBin, "--cwd", cwd, "binary hello")
 	human.Dir = repoRoot
 	human.Env = env
 	humanOut, err := human.CombinedOutput()
@@ -52,7 +70,7 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 		t.Fatalf("human output = %q", got)
 	}
 
-	jsonCmd := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "exec", "--command", fixtureBin, "--cwd", cwd, "--json", "json hello")
+	jsonCmd := newBinarySmokeCommand(t, ratchetBin, "acp", "client", "exec", "--command", fixtureBin, "--cwd", cwd, "--json", "json hello")
 	jsonCmd.Dir = repoRoot
 	jsonCmd.Env = env
 	var jsonErr bytes.Buffer
@@ -73,13 +91,13 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 		t.Fatalf("payload = %#v", payload)
 	}
 
-	profileAdd := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "profiles", "add", "fixture-profile", "--command", fixtureBin, "--trust")
+	profileAdd := newBinarySmokeCommand(t, ratchetBin, "acp", "client", "profiles", "add", "fixture-profile", "--command", fixtureBin, "--trust")
 	profileAdd.Dir = repoRoot
 	profileAdd.Env = env
 	if out, err := profileAdd.CombinedOutput(); err != nil {
 		t.Fatalf("profiles add fixture-profile: %v\n%s", err, out)
 	}
-	profileVerify := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "profiles", "verify", "fixture-profile", "--prompt", "binary profile verify secret", "--json")
+	profileVerify := newBinarySmokeCommand(t, ratchetBin, "acp", "client", "profiles", "verify", "fixture-profile", "--prompt", "binary profile verify secret", "--json")
 	profileVerify.Dir = repoRoot
 	profileVerify.Env = env
 	var profileVerifyErr bytes.Buffer
@@ -108,7 +126,7 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 		t.Fatalf("profiles verify leaked prompt/response: %s", got)
 	}
 
-	sessions := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "sessions", "list")
+	sessions := newBinarySmokeCommand(t, ratchetBin, "acp", "client", "sessions", "list")
 	sessions.Dir = repoRoot
 	sessions.Env = env
 	sessionsOut, err := sessions.CombinedOutput()
@@ -120,7 +138,7 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 	}
 
 	for _, prompt := range []string{"queued binary one", "queued binary two"} {
-		queue := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "exec", "--command", fixtureBin, "--cwd", cwd, "--session", "queued-binary", "--no-wait", prompt)
+		queue := newBinarySmokeCommand(t, ratchetBin, "acp", "client", "exec", "--command", fixtureBin, "--cwd", cwd, "--session", "queued-binary", "--no-wait", prompt)
 		queue.Dir = repoRoot
 		queue.Env = env
 		queueOut, err := queue.CombinedOutput()
@@ -132,7 +150,7 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 		}
 	}
 
-	queueJSON := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "queue", "queued-binary", "--json")
+	queueJSON := newBinarySmokeCommand(t, ratchetBin, "acp", "client", "queue", "queued-binary", "--json")
 	queueJSON.Dir = repoRoot
 	queueJSON.Env = env
 	queueJSONOut, err := queueJSON.Output()
@@ -156,7 +174,7 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 		t.Fatalf("queue payload = %#v", queuePayload)
 	}
 
-	status := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "status", "queued-binary")
+	status := newBinarySmokeCommand(t, ratchetBin, "acp", "client", "status", "queued-binary")
 	status.Dir = repoRoot
 	status.Env = env
 	statusOut, err := status.CombinedOutput()
@@ -167,7 +185,7 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 		t.Fatalf("status output = %q", got)
 	}
 
-	drain := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "drain", "queued-binary", "--command", fixtureBin, "--arg", "--echo-session", "--arg", "--load-session", "--cwd", cwd, "--max", "2")
+	drain := newBinarySmokeCommand(t, ratchetBin, "acp", "client", "drain", "queued-binary", "--command", fixtureBin, "--arg", "--echo-session", "--arg", "--load-session", "--cwd", cwd, "--max", "2")
 	drain.Dir = repoRoot
 	drain.Env = env
 	drainOut, err := drain.CombinedOutput()
@@ -178,7 +196,7 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 		t.Fatalf("drain output = %q", got)
 	}
 
-	statusDone := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "status", "queued-binary")
+	statusDone := newBinarySmokeCommand(t, ratchetBin, "acp", "client", "status", "queued-binary")
 	statusDone.Dir = repoRoot
 	statusDone.Env = env
 	statusDoneOut, err := statusDone.CombinedOutput()
@@ -189,7 +207,7 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 		t.Fatalf("status done output = %q", got)
 	}
 
-	showJSON := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "sessions", "show", "--json", "queued-binary")
+	showJSON := newBinarySmokeCommand(t, ratchetBin, "acp", "client", "sessions", "show", "--json", "queued-binary")
 	showJSON.Dir = repoRoot
 	showJSON.Env = env
 	showJSONOut, err := showJSON.Output()
@@ -215,7 +233,7 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 	}
 
 	archivePath := filepath.Join(t.TempDir(), "queued-binary.archive.json")
-	exportCmd := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "sessions", "export", "queued-binary", "--output", archivePath, "--json")
+	exportCmd := newBinarySmokeCommand(t, ratchetBin, "acp", "client", "sessions", "export", "queued-binary", "--output", archivePath, "--json")
 	exportCmd.Dir = repoRoot
 	exportCmd.Env = env
 	exportOut, err := exportCmd.Output()
@@ -252,7 +270,7 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 	}
 
 	rawArchivePath := filepath.Join(t.TempDir(), "fixture-session.raw.archive.json")
-	rawExportCmd := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "sessions", "export", "fixture-session", "--output", rawArchivePath, "--history", "raw", "--json")
+	rawExportCmd := newBinarySmokeCommand(t, ratchetBin, "acp", "client", "sessions", "export", "fixture-session", "--output", rawArchivePath, "--history", "raw", "--json")
 	rawExportCmd.Dir = repoRoot
 	rawExportCmd.Env = env
 	rawExportOut, err := rawExportCmd.Output()
@@ -289,7 +307,7 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 		}
 	}
 
-	eventsJSON := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "sessions", "events", "fixture-session", "--json")
+	eventsJSON := newBinarySmokeCommand(t, ratchetBin, "acp", "client", "sessions", "events", "fixture-session", "--json")
 	eventsJSON.Dir = repoRoot
 	eventsJSON.Env = env
 	eventsOut, err := eventsJSON.Output()
@@ -342,7 +360,7 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 	if err := os.WriteFile(acpxArchivePath, acpxBytes, 0o600); err != nil {
 		t.Fatalf("write acpx archive: %v", err)
 	}
-	importACPX := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "sessions", "import", acpxArchivePath, "--session", "imported-acpx-binary", "--cwd", cwd, "--json")
+	importACPX := newBinarySmokeCommand(t, ratchetBin, "acp", "client", "sessions", "import", acpxArchivePath, "--session", "imported-acpx-binary", "--cwd", cwd, "--json")
 	importACPX.Dir = repoRoot
 	importACPX.Env = env
 	importACPXOut, err := importACPX.Output()
@@ -350,7 +368,7 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 		t.Fatalf("import acpx archive: %v\n%s", err, importACPXOut)
 	}
 	importedRawPath := filepath.Join(t.TempDir(), "imported-acpx.raw.archive.json")
-	exportImportedRaw := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "sessions", "export", "imported-acpx-binary", "--output", importedRawPath, "--history", "raw", "--json")
+	exportImportedRaw := newBinarySmokeCommand(t, ratchetBin, "acp", "client", "sessions", "export", "imported-acpx-binary", "--output", importedRawPath, "--history", "raw", "--json")
 	exportImportedRaw.Dir = repoRoot
 	exportImportedRaw.Env = env
 	if out, err := exportImportedRaw.CombinedOutput(); err != nil {
@@ -371,7 +389,7 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 	}
 
 	importedCWD := filepath.Join(home, "imported-project")
-	importCmd := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "sessions", "import", archivePath, "--session", "imported-binary", "--cwd", importedCWD, "--json")
+	importCmd := newBinarySmokeCommand(t, ratchetBin, "acp", "client", "sessions", "import", archivePath, "--session", "imported-binary", "--cwd", importedCWD, "--json")
 	importCmd.Dir = repoRoot
 	importCmd.Env = env
 	importOut, err := importCmd.Output()
@@ -390,7 +408,7 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 		t.Fatalf("import payload = %#v", importPayload)
 	}
 
-	importShow := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "sessions", "show", "--json", "imported-binary")
+	importShow := newBinarySmokeCommand(t, ratchetBin, "acp", "client", "sessions", "show", "--json", "imported-binary")
 	importShow.Dir = repoRoot
 	importShow.Env = env
 	importShowOut, err := importShow.Output()
@@ -416,7 +434,7 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 		t.Fatalf("imported show payload = %#v", importShowPayload)
 	}
 
-	compare := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "compare",
+	compare := newBinarySmokeCommand(t, ratchetBin, "acp", "client", "compare",
 		"--command", fixtureBin,
 		"--command", fixtureBin,
 		"--arg", "--echo-session",
@@ -443,7 +461,7 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 	}
 
 	compareRunRoot := filepath.Join(t.TempDir(), "compare-runs")
-	compareSave := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "compare",
+	compareSave := newBinarySmokeCommand(t, ratchetBin, "acp", "client", "compare",
 		"--command", fixtureBin,
 		"--command", fixtureBin,
 		"--arg", "--echo-session",
@@ -503,7 +521,7 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 	if err := os.WriteFile(flowPath, flowBytes, 0o600); err != nil {
 		t.Fatalf("write flow: %v", err)
 	}
-	flow := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "flow", "run", flowPath,
+	flow := newBinarySmokeCommand(t, ratchetBin, "acp", "client", "flow", "run", flowPath,
 		"--input-json", `{"task":"binary flow"}`,
 		"--command", fixtureBin,
 		"--arg", "--echo-session",
@@ -558,7 +576,7 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 			t.Fatalf("flow bundle missing %s: %v", rel, err)
 		}
 	}
-	replay := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "flow", "replay", flowResult.RunDir, "--json")
+	replay := newBinarySmokeCommand(t, ratchetBin, "acp", "client", "flow", "replay", flowResult.RunDir, "--json")
 	replay.Dir = repoRoot
 	replay.Env = env
 	replayOut, err := replay.Output()
@@ -573,7 +591,7 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 		replaySummary.StepCount != 3 || replaySummary.TraceCount != 7 || replaySummary.SessionCount != 1 {
 		t.Fatalf("flow replay summary = %#v", replaySummary)
 	}
-	replayText := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "flow", "replay", flowResult.RunDir)
+	replayText := newBinarySmokeCommand(t, ratchetBin, "acp", "client", "flow", "replay", flowResult.RunDir)
 	replayText.Dir = repoRoot
 	replayText.Env = env
 	replayTextOut, err := replayText.Output()
@@ -596,13 +614,13 @@ func TestACPClientWatchBinarySmoke(t *testing.T) {
 		fixtureBin += ".exe"
 	}
 
-	buildRatchet := exec.CommandContext(t.Context(), "go", "build", "-o", ratchetBin, "./cmd/ratchet")
+	buildRatchet := newBinarySmokeCommand(t, "go", "build", "-o", ratchetBin, "./cmd/ratchet")
 	buildRatchet.Dir = repoRoot
 	if out, err := buildRatchet.CombinedOutput(); err != nil {
 		t.Fatalf("build ratchet: %v\n%s", err, out)
 	}
 
-	buildFixture := exec.CommandContext(t.Context(), "go", "build", "-o", fixtureBin, "./internal/acpclient/testdata/fixture-agent")
+	buildFixture := newBinarySmokeCommand(t, "go", "build", "-o", fixtureBin, "./internal/acpclient/testdata/fixture-agent")
 	buildFixture.Dir = repoRoot
 	if out, err := buildFixture.CombinedOutput(); err != nil {
 		t.Fatalf("build fixture: %v\n%s", err, out)
@@ -615,7 +633,7 @@ func TestACPClientWatchBinarySmoke(t *testing.T) {
 	}
 	env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, ".state"))
 	for _, prompt := range []string{"watch binary one", "watch binary two"} {
-		queue := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "exec", "--command", fixtureBin, "--cwd", cwd, "--session", "watch-binary", "--no-wait", prompt)
+		queue := newBinarySmokeCommand(t, ratchetBin, "acp", "client", "exec", "--command", fixtureBin, "--cwd", cwd, "--session", "watch-binary", "--no-wait", prompt)
 		queue.Dir = repoRoot
 		queue.Env = env
 		queueOut, err := queue.CombinedOutput()
@@ -624,7 +642,7 @@ func TestACPClientWatchBinarySmoke(t *testing.T) {
 		}
 	}
 
-	watch := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "watch", "watch-binary",
+	watch := newBinarySmokeCommand(t, ratchetBin, "acp", "client", "watch", "watch-binary",
 		"--command", fixtureBin,
 		"--arg", "--echo-session",
 		"--arg", "--load-session",
@@ -646,7 +664,7 @@ func TestACPClientWatchBinarySmoke(t *testing.T) {
 		t.Fatalf("watch output leaked prompt bodies: %q", gotWatch)
 	}
 
-	statusDone := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "status", "watch-binary")
+	statusDone := newBinarySmokeCommand(t, ratchetBin, "acp", "client", "status", "watch-binary")
 	statusDone.Dir = repoRoot
 	statusDone.Env = env
 	statusDoneOut, err := statusDone.CombinedOutput()
