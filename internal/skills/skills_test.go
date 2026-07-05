@@ -3,6 +3,7 @@ package skills
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -64,5 +65,37 @@ func TestInjectEmpty(t *testing.T) {
 	result := Inject("base prompt", nil)
 	if result != "base prompt" {
 		t.Errorf("expected unchanged prompt with no skills, got: %s", result)
+	}
+}
+
+func TestNamespacedAliasesAndExplicitInjection(t *testing.T) {
+	pluginSkill := Skill{
+		Name:       "using-autodev",
+		Source:     "plugin",
+		PluginName: "autodev",
+		Content:    "---\ndescription: Autodev bootstrap\n---\nUse autodev before responding.",
+	}
+	available := Merge([]Skill{pluginSkill}, NamespacedAliases([]Skill{pluginSkill}))
+	result := InjectForPrompt("base", available, "please proceed $autodev:using-autodev")
+
+	if !strings.Contains(result, "`autodev:using-autodev`") {
+		t.Fatalf("expected namespaced skill in index, got:\n%s", result)
+	}
+	if !strings.Contains(result, "### autodev:using-autodev") {
+		t.Fatalf("expected explicit namespaced skill content, got:\n%s", result)
+	}
+	if !strings.Contains(result, "Autodev bootstrap") {
+		t.Fatalf("expected description from frontmatter, got:\n%s", result)
+	}
+}
+
+func TestInjectForPromptDoesNotInjectUnmentionedSkillContent(t *testing.T) {
+	available := []Skill{{Name: "large-skill", Content: "secret large body"}}
+	result := InjectForPrompt("base", available, "ordinary prompt")
+	if strings.Contains(result, "### large-skill") || strings.Contains(result, "secret large body") {
+		t.Fatalf("unexpected full skill body injection:\n%s", result)
+	}
+	if !strings.Contains(result, "`large-skill`") {
+		t.Fatalf("expected skill index entry, got:\n%s", result)
 	}
 }

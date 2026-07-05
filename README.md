@@ -89,6 +89,8 @@ ratchet retro analyze --evidence ~/.ratchet/retro/evidence.jsonl --session ID
 ratchet provider list       # List providers
 ratchet team start "task"   # Start agent team
 ratchet hooks list --cwd .  # Review lifecycle hooks before trusting them
+ratchet plugin reload       # Reload installed plugin capabilities in the daemon
+ratchet skill list          # List user, project, and plugin skills
 ```
 
 In the TUI, press `ctrl+b` or submit `/tree` to open the in-place session
@@ -129,7 +131,25 @@ skipped until their descriptor hash is trusted. Use
 truncated command preview, then `ratchet hooks trust <hash>` to enable that
 exact descriptor. `ratchet hooks disable <hash>` overrides trust, and changed
 project or plugin hook commands produce a new hash that must be reviewed again.
-This hook trust model is local and hash-based; managed hooks remain deferred.
+The daemon fires hooks at session start/end, prompt submit, command start/end,
+tool pre/post/failure, permission request/denial, compaction, stop/failure,
+token-limit, cron, plan, fleet, and team-agent lifecycle points. Hook template
+data prefers IDs, paths, counts, and hashes; raw prompt text is not passed to
+hooks by default. This hook trust model is local and hash-based; managed hooks
+remain deferred.
+
+Installed plugin skills are available through `ratchet skill list` and
+`ratchet skill show <name>`. Plugin skills are also exposed to chat turns
+through a compact index, and full skill text is injected only when explicitly
+referenced by name, such as `$autodev:using-autodev` or `/plugin:skill`. Use
+`ratchet plugin reload` after installing or updating plugins to refresh daemon
+skills, hooks, commands, tools, MCP declarations, ACP profiles, and plugin
+daemons without restarting ratchet.
+
+Marketplace-backed install/update, plugin enable/disable, autoupdate policy,
+visible routines, and dynamic workflow run primitives are designed in
+`docs/plans/2026-07-05-ratchet-runtime-extension-lifecycle-design.md` and remain
+the next implementation slices.
 
 ACP launch profiles are reviewed launch specs for explicit foreground ACP
 client commands. Use `ratchet acp client profiles list`, `add`, `install`,
@@ -145,8 +165,9 @@ SDK remains deferred.
 See [docs/policy-matrix.md](docs/policy-matrix.md) for the Policy Matrix
 covering static config trust rules, runtime trust rules, persistent trust
 grants, permission prompts, explicit ACP client watch/drain, partial
-sandbox/path/network controls, hook trust, ACP launch profiles, retro evidence,
-and deferred daemon background drain and extension SDK work.
+sandbox/path/network controls, hook trust, plugin reload, ACP launch profiles,
+retro evidence, and deferred daemon background drain, marketplaces, routines,
+dynamic workflows, and extension SDK work.
 
 The ACP client queue persists prompt text under the user's XDG state directory.
 Do not use `--no-wait` for prompts that should not be written to local disk.

@@ -225,9 +225,14 @@ skipped until `ratchet hooks trust <hash>` records the descriptor shown by
 `ratchet hooks list --cwd .`. `ratchet hooks disable <hash>` overrides trust,
 and changed hook commands, events, glob filters, or source metadata produce a
 new hash that must be reviewed again. Plugin hook/profile paths are contained to
-the plugin root. Managed hooks remain deferred, and the TypeScript extension SDK
-remains deferred. Broad extension hooks beyond reviewed command hooks remain
-deferred.
+the plugin root. The daemon fires session, prompt, command, tool, permission,
+compaction, stop/failure, token-limit, cron, plan, fleet, and team-agent hook
+events. Plugin skills are listed by `ratchet skill list`, explicit skill
+mentions such as `$autodev:using-autodev` load full skill text into the next
+chat turn, and `ratchet plugin reload` refreshes installed plugin capabilities
+without a daemon restart. Managed hooks, marketplaces, autoupdate, routines,
+dynamic workflows, broader extension hooks, and the TypeScript extension SDK
+remain deferred to the runtime extension lifecycle plan.
 
 Scriptable equivalents are available through `ratchet trust list`,
 `ratchet trust grants`, `ratchet trust allow|deny`,

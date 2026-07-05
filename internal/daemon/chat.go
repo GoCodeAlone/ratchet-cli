@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -20,6 +21,7 @@ import (
 	"github.com/GoCodeAlone/ratchet-cli/internal/config"
 	"github.com/GoCodeAlone/ratchet-cli/internal/hooks"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
+	"github.com/GoCodeAlone/ratchet-cli/internal/skills"
 )
 
 // pendingPermission holds a permission request waiting for a TUI response.
@@ -94,6 +96,37 @@ func debugLog(format string, args ...any) {
 	logger.Printf(format, args...)
 }
 
+func hookPromptData(sessionID, workingDir, prompt string) map[string]string {
+	sum := sha256.Sum256([]byte(prompt))
+	return map[string]string{
+		"session_id":        sessionID,
+		"working_dir":       workingDir,
+		"prompt_sha256":     fmt.Sprintf("%x", sum[:]),
+		"prompt_bytes":      fmt.Sprintf("%d", len([]byte(prompt))),
+		"prompt_rune_count": fmt.Sprintf("%d", len([]rune(prompt))),
+	}
+}
+
+func hookToolData(sessionID, workingDir, toolName, callID string, argsJSON []byte) map[string]string {
+	sum := sha256.Sum256(argsJSON)
+	return map[string]string{
+		"session_id":       sessionID,
+		"working_dir":      workingDir,
+		"tool":             toolName,
+		"tool_call_id":     callID,
+		"arguments_sha256": fmt.Sprintf("%x", sum[:]),
+		"arguments_bytes":  fmt.Sprintf("%d", len(argsJSON)),
+	}
+}
+
+func copyHookData(data map[string]string) map[string]string {
+	copied := make(map[string]string, len(data))
+	for k, v := range data {
+		copied[k] = v
+	}
+	return copied
+}
+
 // broadcastStream wraps a send-message stream and fans out each event to the broadcaster.
 type broadcastStream struct {
 	pb.RatchetDaemon_SendMessageServer
@@ -127,8 +160,20 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 		return fmt.Errorf("get session %s: %w", sessionID, err)
 	}
 	if session.Status == "completed" || session.Status == "killed" {
+		runHooksAndLog(ctx, s.engine, hooks.StopFailure, map[string]string{
+			"session_id": sessionID,
+			"error":      "session inactive",
+		}, "chat inactive")
 		return sendError(stream, fmt.Sprintf("session %s is no longer active (status: %s)", sessionID, session.Status))
 	}
+
+	promptData := hookPromptData(sessionID, session.WorkingDir, userMessage)
+	runHooksAndLog(ctx, s.engine, hooks.UserPromptSubmit, promptData, "prompt submit")
+	runHooksAndLog(ctx, s.engine, hooks.PreCommand, map[string]string{
+		"session_id":  sessionID,
+		"working_dir": session.WorkingDir,
+		"command":     "chat",
+	}, "chat pre")
 
 	// Resolve provider
 	var prov provider.Provider
@@ -138,6 +183,16 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 		prov, err = s.engine.ProviderRegistry.GetDefault(ctx)
 	}
 	if err != nil {
+		runHooksAndLog(ctx, s.engine, hooks.OnError, map[string]string{
+			"session_id":  sessionID,
+			"working_dir": session.WorkingDir,
+			"error":       err.Error(),
+		}, "provider resolve")
+		runHooksAndLog(ctx, s.engine, hooks.StopFailure, map[string]string{
+			"session_id":  sessionID,
+			"working_dir": session.WorkingDir,
+			"error":       err.Error(),
+		}, "provider resolve")
 		return sendError(stream, "no provider configured: "+err.Error())
 	}
 
@@ -153,6 +208,11 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 	if systemPrompt == "" {
 		systemPrompt = "You are a helpful AI coding assistant."
 	}
+	s.engine.ExtensionMu.RLock()
+	pluginSkills := append([]skills.Skill(nil), s.engine.PluginSkills...)
+	s.engine.ExtensionMu.RUnlock()
+	availableSkills := skills.Merge(pluginSkills, skills.NamespacedAliases(pluginSkills), skills.Discover(session.WorkingDir))
+	systemPrompt = skills.InjectForPrompt(systemPrompt, availableSkills, userMessage)
 
 	// Load conversation history
 	history, err := s.loadHistory(ctx, sessionID)
@@ -180,6 +240,16 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 	// so failed requests don't pollute conversation history).
 	eventCh, err := prov.Stream(ctx, messages, nil) // tools will be added in later task
 	if err != nil {
+		runHooksAndLog(ctx, s.engine, hooks.OnError, map[string]string{
+			"session_id":  sessionID,
+			"working_dir": session.WorkingDir,
+			"error":       err.Error(),
+		}, "provider stream")
+		runHooksAndLog(ctx, s.engine, hooks.StopFailure, map[string]string{
+			"session_id":  sessionID,
+			"working_dir": session.WorkingDir,
+			"error":       err.Error(),
+		}, "provider stream")
 		if isAuthError(err) {
 			return sendAuthError(stream, session.Provider, err.Error())
 		}
@@ -222,6 +292,9 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 			if callID == "" {
 				callID = uuid.New().String()
 			}
+			toolData := hookToolData(sessionID, session.WorkingDir, event.Tool.Name, callID, argsJSON)
+			runHooksAndLog(ctx, s.engine, hooks.OnToolCall, toolData, "tool call")
+			runHooksAndLog(ctx, s.engine, hooks.PreToolUse, toolData, "pre tool")
 
 			// Send tool start event
 			if err := stream.Send(&pb.ChatEvent{
@@ -239,6 +312,10 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 			// Check permission
 			if !s.isAutoAllowed(cfg, event.Tool.Name) {
 				reqID := uuid.New().String()
+				permissionData := copyHookData(toolData)
+				permissionData["request_id"] = reqID
+				runHooksAndLog(ctx, s.engine, hooks.OnPermissionRequest, permissionData, "permission request")
+				runHooksAndLog(ctx, s.engine, hooks.PermissionRequest, permissionData, "permission request")
 				if err := stream.Send(&pb.ChatEvent{
 					Event: &pb.ChatEvent_Permission{
 						Permission: &pb.PermissionRequest{
@@ -253,6 +330,7 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 				}
 				resp := s.permGate.Wait(reqID)
 				if !resp.Allowed {
+					runHooksAndLog(ctx, s.engine, hooks.PermissionDenied, permissionData, "permission denied")
 					if err := stream.Send(&pb.ChatEvent{
 						Event: &pb.ChatEvent_ToolResult{
 							ToolResult: &pb.ToolCallResult{
@@ -272,6 +350,15 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 			result, execErr := s.executeTool(ctx, event.Tool)
 			resultJSON, _ := json.Marshal(result)
 			success := execErr == nil
+			postToolData := copyHookData(toolData)
+			postToolData["success"] = fmt.Sprintf("%t", success)
+			if execErr != nil {
+				postToolData["error"] = execErr.Error()
+				runHooksAndLog(ctx, s.engine, hooks.PostToolUseFailure, postToolData, "post tool failure")
+				runHooksAndLog(ctx, s.engine, hooks.OnError, postToolData, "tool error")
+			} else {
+				runHooksAndLog(ctx, s.engine, hooks.PostToolUse, postToolData, "post tool")
+			}
 
 			if err := stream.Send(&pb.ChatEvent{
 				Event: &pb.ChatEvent_ToolResult{
@@ -288,6 +375,16 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 		case "done":
 			// Stream complete
 		case "error":
+			runHooksAndLog(ctx, s.engine, hooks.OnError, map[string]string{
+				"session_id":  sessionID,
+				"working_dir": session.WorkingDir,
+				"error":       event.Error,
+			}, "provider event")
+			runHooksAndLog(ctx, s.engine, hooks.StopFailure, map[string]string{
+				"session_id":  sessionID,
+				"working_dir": session.WorkingDir,
+				"error":       event.Error,
+			}, "provider event")
 			if isAuthError(fmt.Errorf("%s", event.Error)) {
 				return sendAuthError(stream, session.Provider, event.Error)
 			}
@@ -347,6 +444,10 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 			if compErr == nil {
 				removed := len(history) - len(compressed)
 				if removed > 0 {
+					runHooksAndLog(ctx, s.engine, hooks.PreCompact, map[string]string{
+						"session_id": sessionID,
+						"reason":     "auto",
+					}, "auto compact pre")
 					firstKeptID := firstKeptMessageID(historyRecords, contextCfg.PreserveMessages)
 					replacementIDs := compactionReplacementMessageIDs(historyRecords, contextCfg.PreserveMessages, len(compressed))
 					if _, recordErr := s.compactHistoryWithArchive(ctx, sessionID, historyRecords, compressed, replacementIDs, CompactionRecord{
@@ -360,6 +461,12 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 						log.Printf("archive/record auto compaction: %v", recordErr)
 					}
 					s.tokens.Reset(sessionID)
+					runHooksAndLog(ctx, s.engine, hooks.PostCompact, map[string]string{
+						"session_id":       sessionID,
+						"reason":           "auto",
+						"messages_removed": fmt.Sprintf("%d", removed),
+						"messages_kept":    fmt.Sprintf("%d", len(compressed)),
+					}, "auto compact post")
 					_ = stream.Send(&pb.ChatEvent{
 						Event: &pb.ChatEvent_ContextCompressed{
 							ContextCompressed: &pb.ContextCompressedEvent{
@@ -376,6 +483,16 @@ func (s *Service) handleChat(ctx context.Context, sessionID, userMessage string,
 	}
 
 	// Send completion
+	stopData := map[string]string{
+		"session_id":  sessionID,
+		"working_dir": session.WorkingDir,
+	}
+	runHooksAndLog(ctx, s.engine, hooks.Stop, stopData, "chat stop")
+	runHooksAndLog(ctx, s.engine, hooks.PostCommand, map[string]string{
+		"session_id":  sessionID,
+		"working_dir": session.WorkingDir,
+		"command":     "chat",
+	}, "chat post")
 	return stream.Send(&pb.ChatEvent{
 		Event: &pb.ChatEvent_Complete{
 			Complete: &pb.SessionComplete{Summary: "done"},
@@ -390,10 +507,13 @@ func (s *Service) isAutoAllowed(cfg *config.Config, toolName string) bool {
 
 // executeTool runs a tool via the tool registry.
 func (s *Service) executeTool(ctx context.Context, tool *provider.ToolCall) (map[string]any, error) {
-	if s.engine.ToolRegistry == nil {
+	s.engine.ExtensionMu.RLock()
+	registry := s.engine.ToolRegistry
+	s.engine.ExtensionMu.RUnlock()
+	if registry == nil {
 		return map[string]any{"error": "no tool registry"}, fmt.Errorf("no tool registry")
 	}
-	result, err := s.engine.ToolRegistry.Execute(ctx, tool.Name, tool.Arguments)
+	result, err := registry.Execute(ctx, tool.Name, tool.Arguments)
 	if err != nil {
 		return map[string]any{"error": err.Error()}, err
 	}
@@ -518,12 +638,18 @@ func (s *Service) compactHistoryWithArchive(ctx context.Context, sessionID strin
 // handleCompact immediately compresses the session's conversation history and
 // sends a ContextCompressed event to the stream. No AI provider call is made.
 func (s *Service) handleCompact(ctx context.Context, sessionID string, stream pb.RatchetDaemon_SendMessageServer) error {
+	runHooksAndLog(ctx, s.engine, hooks.PreCompact, map[string]string{
+		"session_id": sessionID,
+		"reason":     "manual",
+	}, "manual compact pre")
 	history, err := s.loadHistory(ctx, sessionID)
 	if err != nil {
+		runHooksAndLog(ctx, s.engine, hooks.OnError, map[string]string{"session_id": sessionID, "error": err.Error()}, "compact load")
 		return sendError(stream, "load history: "+err.Error())
 	}
 	historyRecords, recordsErr := s.sessions.ListMessages(ctx, sessionID)
 	if recordsErr != nil {
+		runHooksAndLog(ctx, s.engine, hooks.OnError, map[string]string{"session_id": sessionID, "error": recordsErr.Error()}, "compact records")
 		return sendError(stream, "load compact message records: "+recordsErr.Error())
 	}
 
@@ -552,6 +678,7 @@ func (s *Service) handleCompact(ctx context.Context, sessionID string, stream pb
 
 	compressed, summary, compErr := Compress(ctx, history, preserveCount, prov)
 	if compErr != nil {
+		runHooksAndLog(ctx, s.engine, hooks.OnError, map[string]string{"session_id": sessionID, "error": compErr.Error()}, "compact")
 		return sendError(stream, "compress: "+compErr.Error())
 	}
 
@@ -574,9 +701,16 @@ func (s *Service) handleCompact(ctx context.Context, sessionID string, stream pb
 		MessagesKept:       len(compressed),
 		FirstKeptMessageID: firstKeptMessageID(historyRecords, preserveCount),
 	}); dbErr != nil {
+		runHooksAndLog(ctx, s.engine, hooks.OnError, map[string]string{"session_id": sessionID, "error": dbErr.Error()}, "compact persist")
 		return sendError(stream, "persist compressed history: "+dbErr.Error())
 	}
 	s.tokens.Reset(sessionID)
+	runHooksAndLog(ctx, s.engine, hooks.PostCompact, map[string]string{
+		"session_id":       sessionID,
+		"reason":           "manual",
+		"messages_removed": fmt.Sprintf("%d", removed),
+		"messages_kept":    fmt.Sprintf("%d", len(compressed)),
+	}, "manual compact post")
 
 	if err := stream.Send(&pb.ChatEvent{
 		Event: &pb.ChatEvent_ContextCompressed{

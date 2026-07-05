@@ -74,6 +74,11 @@ func pluginsDir() string {
 	return filepath.Join(home, ".ratchet", "plugins")
 }
 
+// DefaultDir returns the default plugin installation directory.
+func DefaultDir() string {
+	return pluginsDir()
+}
+
 // LoadAll scans pluginDir for plugin directories, parses their manifests, and
 // returns all discovered capabilities aggregated in a LoadResult.
 // Daemon tools are started using ctx; cancel ctx to terminate them.
@@ -107,12 +112,54 @@ func (l *Loader) LoadAll(ctx context.Context) (*LoadResult, error) {
 	return result, nil
 }
 
+// LoadSkills scans installed plugins and returns only skill capabilities. It is
+// intentionally passive: tool daemons and MCP discovery are not started.
+func (l *Loader) LoadSkills() ([]skills.Skill, error) {
+	entries, err := os.ReadDir(l.pluginDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read plugins dir: %w", err)
+	}
+	var result []skills.Skill
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		pluginDir := filepath.Join(l.pluginDir, entry.Name())
+		m, err := LoadManifest(pluginDir)
+		if err != nil {
+			continue
+		}
+		if m.Capabilities.Skills == "" {
+			continue
+		}
+		loaded, err := loadSkills(filepath.Join(pluginDir, m.Capabilities.Skills))
+		if err != nil {
+			return nil, fmt.Errorf("load plugin %s skills: %w", m.Name, err)
+		}
+		for i := range loaded {
+			loaded[i].Source = "plugin"
+			loaded[i].PluginName = m.Name
+			loaded[i].PluginVersion = m.Version
+		}
+		result = append(result, loaded...)
+	}
+	return result, nil
+}
+
 // loadPlugin loads a single plugin's capabilities into result.
 func (l *Loader) loadPlugin(ctx context.Context, pluginDir string, m *Manifest, result *LoadResult) error {
 	if m.Capabilities.Skills != "" {
 		s, err := loadSkills(filepath.Join(pluginDir, m.Capabilities.Skills))
 		if err != nil {
 			return fmt.Errorf("skills: %w", err)
+		}
+		for i := range s {
+			s[i].Source = "plugin"
+			s[i].PluginName = m.Name
+			s[i].PluginVersion = m.Version
 		}
 		result.Skills = append(result.Skills, s...)
 	}

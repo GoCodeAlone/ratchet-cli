@@ -89,6 +89,30 @@ func (c *Client) RequestReload(ctx context.Context) (<-chan *pb.ReloadStatus, er
 	return ch, nil
 }
 
+// RequestPluginReload asks the daemon to refresh installed plugin capabilities
+// without restarting the daemon process.
+func (c *Client) RequestPluginReload(ctx context.Context) (<-chan *pb.ReloadStatus, error) {
+	stream, err := c.daemon.RequestReload(ctx, &pb.ReloadReq{CliVersion: "plugins"})
+	if err != nil {
+		return nil, err
+	}
+	ch := make(chan *pb.ReloadStatus, 8)
+	go func() {
+		defer close(ch)
+		for {
+			msg, err := stream.Recv()
+			if err == io.EOF {
+				return
+			}
+			if err != nil {
+				return
+			}
+			ch <- msg
+		}
+	}()
+	return ch, nil
+}
+
 func (c *Client) Close() error {
 	return c.conn.Close()
 }

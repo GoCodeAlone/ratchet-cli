@@ -208,6 +208,21 @@ func (s *Service) CheckVersion(ctx context.Context, req *pb.VersionCheckReq) (*p
 // RequestReload checkpoints state and initiates a graceful daemon restart.
 // It streams status events back to the caller.
 func (s *Service) RequestReload(req *pb.ReloadReq, stream pb.RatchetDaemon_RequestReloadServer) error {
+	if req.GetCliVersion() == "plugins" && req.GetNewBinaryPath() == "" {
+		_ = stream.Send(&pb.ReloadStatus{Status: "reloading", Message: "refreshing plugin capabilities..."})
+		summary, err := s.engine.ReloadPlugins(stream.Context())
+		if err != nil {
+			_ = stream.Send(&pb.ReloadStatus{Status: "failed", Message: fmt.Sprintf("plugin reload failed: %v", err)})
+			return status.Errorf(codes.Internal, "plugin reload: %v", err)
+		}
+		_ = stream.Send(&pb.ReloadStatus{
+			Status: "complete",
+			Message: fmt.Sprintf("plugins reloaded: skills=%d agents=%d commands=%d tools=%d hooks=%d daemons=%d",
+				summary.Skills, summary.Agents, summary.Commands, summary.Tools, summary.Hooks, summary.Daemons),
+		})
+		return nil
+	}
+
 	_ = stream.Send(&pb.ReloadStatus{Status: "checkpointing", Message: "saving daemon state..."})
 
 	cp, err := ExportCheckpoint(s)
@@ -254,10 +269,23 @@ func (s *Service) Shutdown(ctx context.Context, _ *pb.Empty) (*pb.Empty, error) 
 }
 
 func (s *Service) CreateSession(ctx context.Context, req *pb.CreateSessionReq) (*pb.Session, error) {
+	runHooksAndLog(ctx, s.engine, hooks.PreSession, map[string]string{
+		"working_dir": req.WorkingDir,
+		"provider":    req.Provider,
+		"model":       req.Model,
+	}, "session pre")
 	si, err := s.sessions.Create(ctx, req.WorkingDir, req.Provider, req.Model, req.InitialPrompt)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "create session: %v", err)
 	}
+	sessionHookData := map[string]string{
+		"session_id":  si.ID,
+		"working_dir": si.WorkingDir,
+		"provider":    si.Provider,
+		"model":       si.Model,
+	}
+	runHooksAndLog(ctx, s.engine, hooks.PostSession, sessionHookData, "session post")
+	runHooksAndLog(ctx, s.engine, hooks.SessionStart, sessionHookData, "session start")
 	s.recordRetroEvidence(retro.Event{
 		SessionID:  si.ID,
 		Kind:       retro.EventSessionCreated,
@@ -463,6 +491,7 @@ func (s *Service) KillSession(ctx context.Context, req *pb.KillReq) (*pb.Empty, 
 	if err := s.sessions.Kill(ctx, req.SessionId); err != nil {
 		return nil, status.Errorf(codes.Internal, "kill session: %v", err)
 	}
+	runHooksAndLog(ctx, s.engine, hooks.SessionEnd, map[string]string{"session_id": req.SessionId}, "session end")
 	s.recordRetroEvidence(retro.Event{
 		SessionID: req.SessionId,
 		Kind:      retro.EventSessionCompleted,
