@@ -260,7 +260,9 @@ func trustBodiesFromSpec(spec commandSurfaceSpec) []string {
 
 func (s *tuiPTY) submitSlash(cmd string) {
 	s.t.Helper()
-	s.sendLine(cmd + " ")
+	s.send(cmd + " ")
+	time.Sleep(100 * time.Millisecond)
+	s.send("\r")
 }
 
 func expectedForSmokeCommand(cmd string) string {

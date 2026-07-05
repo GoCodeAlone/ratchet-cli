@@ -92,7 +92,7 @@ func main() {
 		handleMCP(filteredArgs[1:])
 	case "chat":
 		handleChat(filteredArgs) // pass "chat" + remaining args
-	case "version":
+	case "version", "--version", "-v":
 		fmt.Println(version.String())
 	case "help", "--help", "-h":
 		printUsage()

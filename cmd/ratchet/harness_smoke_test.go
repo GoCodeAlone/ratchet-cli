@@ -24,6 +24,7 @@ func TestHarnessSmokeVersionHelpAndDaemonStatus(t *testing.T) {
 		want string
 	}{
 		{name: "version", args: []string{"version"}, want: "ratchet"},
+		{name: "version flag", args: []string{"--version"}, want: "ratchet"},
 		{name: "help", args: []string{"help"}, want: "Commands:"},
 		{name: "daemon status", args: []string{"daemon", "status"}, want: "daemon is not running"},
 	}

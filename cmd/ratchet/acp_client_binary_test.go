@@ -17,7 +17,7 @@ import (
 
 const (
 	binarySmokeCommandTimeout = 45 * time.Second
-	binarySmokeBuildTimeout   = 2 * time.Minute
+	binarySmokeBuildTimeout   = 5 * time.Minute
 )
 
 func newBinarySmokeCommand(t *testing.T, name string, args ...string) *exec.Cmd {
