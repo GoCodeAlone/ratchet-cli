@@ -30,7 +30,7 @@
 | 1 | Add Workflow messaging blackboard export envelopes | Task 1, Task 2, Task 3 | feat/ratchet-blackboard-workflow-export |
 | 2 | Add ACP profile verification command and fixture CI proof | Task 4, Task 5, Task 6 | feat/ratchet-profile-verify-ci |
 
-**Status:** Locked 2026-07-05T04:04:27Z
+**Status:** Complete 2026-07-05T04:42:58Z
 
 ## Declared Integration Matrix
 
