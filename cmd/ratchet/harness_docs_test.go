@@ -72,6 +72,7 @@ func TestHarnessEmulationDocsCoverPolicyMatrixLayers(t *testing.T) {
 		"ratchet hooks list",
 		"ratchet hooks trust",
 		"ratchet acp client profiles",
+		"ratchet acp client profiles verify",
 		"ratchet acp client sessions events",
 		"--history raw",
 		"compare --save",

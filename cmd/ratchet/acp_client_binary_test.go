@@ -73,6 +73,39 @@ func TestACPClientExecBinarySmoke(t *testing.T) {
 		t.Fatalf("payload = %#v", payload)
 	}
 
+	profileAdd := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "profiles", "add", "fixture-profile", "--command", fixtureBin, "--trust")
+	profileAdd.Dir = repoRoot
+	profileAdd.Env = env
+	if out, err := profileAdd.CombinedOutput(); err != nil {
+		t.Fatalf("profiles add fixture-profile: %v\n%s", err, out)
+	}
+	profileVerify := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "profiles", "verify", "fixture-profile", "--prompt", "binary profile verify secret", "--json")
+	profileVerify.Dir = repoRoot
+	profileVerify.Env = env
+	profileVerifyOut, err := profileVerify.Output()
+	if err != nil {
+		t.Fatalf("profiles verify fixture-profile: %v\n%s", err, profileVerifyOut)
+	}
+	var verifyPayload struct {
+		Name         string `json:"name"`
+		Status       string `json:"status"`
+		ACPSessionID string `json:"acpSessionId"`
+		StopReason   string `json:"stopReason"`
+		TextBytes    int    `json:"textBytes"`
+	}
+	if err := json.Unmarshal(profileVerifyOut, &verifyPayload); err != nil {
+		t.Fatalf("profiles verify json output: %v\n%s", err, profileVerifyOut)
+	}
+	if verifyPayload.Name != "fixture-profile" || verifyPayload.Status != "ok" ||
+		verifyPayload.ACPSessionID != "fixture-session" || verifyPayload.StopReason != "end_turn" ||
+		verifyPayload.TextBytes == 0 {
+		t.Fatalf("verify payload = %#v", verifyPayload)
+	}
+	if got := string(profileVerifyOut); strings.Contains(got, "binary profile verify secret") ||
+		strings.Contains(got, "fixture: binary profile verify secret") {
+		t.Fatalf("profiles verify leaked prompt/response: %s", got)
+	}
+
 	sessions := exec.CommandContext(t.Context(), ratchetBin, "acp", "client", "sessions", "list")
 	sessions.Dir = repoRoot
 	sessions.Env = env
