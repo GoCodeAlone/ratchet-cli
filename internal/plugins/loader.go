@@ -83,6 +83,7 @@ func DefaultDir() string {
 // returns all discovered capabilities aggregated in a LoadResult.
 // Daemon tools are started using ctx; cancel ctx to terminate them.
 func (l *Loader) LoadAll(ctx context.Context) (*LoadResult, error) {
+	disabled := disabledPluginSet()
 	entries, err := os.ReadDir(l.pluginDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -97,6 +98,9 @@ func (l *Loader) LoadAll(ctx context.Context) (*LoadResult, error) {
 
 	for _, entry := range entries {
 		if !entry.IsDir() {
+			continue
+		}
+		if disabled[entry.Name()] {
 			continue
 		}
 		pluginDir := filepath.Join(l.pluginDir, entry.Name())
@@ -115,6 +119,7 @@ func (l *Loader) LoadAll(ctx context.Context) (*LoadResult, error) {
 // LoadSkills scans installed plugins and returns only skill capabilities. It is
 // intentionally passive: tool daemons and MCP discovery are not started.
 func (l *Loader) LoadSkills() ([]skills.Skill, error) {
+	disabled := disabledPluginSet()
 	entries, err := os.ReadDir(l.pluginDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -125,6 +130,9 @@ func (l *Loader) LoadSkills() ([]skills.Skill, error) {
 	var result []skills.Skill
 	for _, entry := range entries {
 		if !entry.IsDir() {
+			continue
+		}
+		if disabled[entry.Name()] {
 			continue
 		}
 		pluginDir := filepath.Join(l.pluginDir, entry.Name())
@@ -151,6 +159,20 @@ func (l *Loader) LoadSkills() ([]skills.Skill, error) {
 		result = append(result, loaded...)
 	}
 	return result, nil
+}
+
+func disabledPluginSet() map[string]bool {
+	reg, err := Load()
+	if err != nil {
+		return nil
+	}
+	disabled := make(map[string]bool)
+	for name, entry := range reg.Plugins {
+		if !entry.Enabled {
+			disabled[name] = true
+		}
+	}
+	return disabled
 }
 
 // loadPlugin loads a single plugin's capabilities into result.
