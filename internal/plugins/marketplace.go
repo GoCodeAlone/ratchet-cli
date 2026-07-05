@@ -83,6 +83,9 @@ func (r *MarketplaceRegistry) Add(source MarketplaceSource) error {
 	if source.Name == "" {
 		return fmt.Errorf("marketplace name is required")
 	}
+	if strings.ContainsAny(source.Name, "/|") {
+		return fmt.Errorf("marketplace name %q cannot contain '/' or '|'", source.Name)
+	}
 	if source.Source == "" {
 		return fmt.Errorf("marketplace source is required")
 	}
@@ -122,8 +125,14 @@ func (r *MarketplaceRegistry) Save() error {
 		return fmt.Errorf("write marketplace registry temp file: %w", err)
 	}
 	if err := os.Rename(tmp, r.filePath); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("replace marketplace registry: %w", err)
+		if removeErr := os.Remove(r.filePath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			_ = os.Remove(tmp)
+			return fmt.Errorf("remove old marketplace registry: %w", removeErr)
+		}
+		if retryErr := os.Rename(tmp, r.filePath); retryErr != nil {
+			_ = os.Remove(tmp)
+			return fmt.Errorf("replace marketplace registry: %w", retryErr)
+		}
 	}
 	return nil
 }
@@ -179,6 +188,10 @@ func LoadMarketplaceCatalogFromSource(ctx context.Context, source string) (*Mark
 }
 
 func InstallFromMarketplace(ctx context.Context, pluginRef string) error {
+	return installFromMarketplace(ctx, pluginRef, true)
+}
+
+func installFromMarketplace(ctx context.Context, pluginRef string, enabled bool) error {
 	pluginName, marketplaceName, ok := strings.Cut(pluginRef, "@")
 	if !ok || strings.TrimSpace(pluginName) == "" || strings.TrimSpace(marketplaceName) == "" {
 		return fmt.Errorf("invalid marketplace plugin ref %q: expected name@marketplace", pluginRef)
@@ -212,7 +225,7 @@ func InstallFromMarketplace(ctx context.Context, pluginRef string) error {
 	}
 	installedEntry.Source = marketplaceRegistrySource(marketplaceName, entry)
 	installedEntry.Version = entry.Version
-	installedEntry.Enabled = true
+	installedEntry.Enabled = enabled
 	return installed.Put(entry.Name, installedEntry)
 }
 
@@ -230,7 +243,7 @@ func UpdateInstalledPlugin(ctx context.Context, name string) error {
 		if !ok {
 			return fmt.Errorf("invalid marketplace source for %q", name)
 		}
-		return InstallFromMarketplace(ctx, pluginName+"@"+marketplaceName)
+		return installFromMarketplace(ctx, pluginName+"@"+marketplaceName, entry.Enabled)
 	}
 	if err := installFromSource(ctx, entry.Source); err != nil {
 		return err
@@ -308,7 +321,7 @@ func isHTTPSource(source string) bool {
 func isGitHubShorthand(source string) bool {
 	parts := strings.Split(source, "/")
 	return len(parts) == 2 && parts[0] != "" && parts[1] != "" &&
-		!strings.ContainsAny(source, `\:.~`)
+		!strings.ContainsAny(source, `\:.~@`)
 }
 
 func isLocalPluginSource(source string) bool {
@@ -376,6 +389,9 @@ func validateMarketplaceCatalog(catalog MarketplaceCatalog) (*MarketplaceCatalog
 		entry.Version = strings.TrimSpace(entry.Version)
 		if entry.Name == "" {
 			return nil, fmt.Errorf("marketplace catalog plugin %d missing name", i)
+		}
+		if strings.ContainsAny(entry.Name, "/|") {
+			return nil, fmt.Errorf("marketplace catalog plugin %q cannot contain '/' or '|'", entry.Name)
 		}
 		if entry.Source == "" {
 			return nil, fmt.Errorf("marketplace catalog plugin %q missing source", entry.Name)

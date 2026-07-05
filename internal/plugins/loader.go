@@ -164,6 +164,7 @@ func (l *Loader) LoadSkills() ([]skills.Skill, error) {
 func disabledPluginSet() map[string]bool {
 	reg, err := Load()
 	if err != nil {
+		log.Printf("plugins: disabled registry state unavailable: %v", err)
 		return nil
 	}
 	disabled := make(map[string]bool)

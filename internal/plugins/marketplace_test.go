@@ -52,6 +52,12 @@ func TestMarketplaceRegistryRejectsInvalidSource(t *testing.T) {
 	if err := store.Add(MarketplaceSource{Name: "empty", Source: ""}); err == nil {
 		t.Fatal("expected blank marketplace source to fail")
 	}
+	if err := store.Add(MarketplaceSource{Name: "bad/name", Source: "owner/repo"}); err == nil {
+		t.Fatal("expected marketplace name with slash to fail")
+	}
+	if err := store.Add(MarketplaceSource{Name: "bad|name", Source: "owner/repo"}); err == nil {
+		t.Fatal("expected marketplace name with pipe to fail")
+	}
 }
 
 func TestMarketplaceCatalogLoadsAndValidatesEntries(t *testing.T) {
@@ -93,6 +99,26 @@ func TestMarketplaceCatalogRejectsMalformedEntries(t *testing.T) {
 	}
 	if _, err := LoadMarketplaceCatalog(path); err == nil {
 		t.Fatal("expected missing source to fail")
+	}
+}
+
+func TestMarketplaceCatalogRejectsAmbiguousEntryNames(t *testing.T) {
+	for _, name := range []string{"bad/name", "bad|name"} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "marketplace.json")
+			if err := os.WriteFile(path, []byte(`{"plugins":[{"name":"`+name+`","version":"1.0.0","source":"local:/plugin"}]}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := LoadMarketplaceCatalog(path); err == nil {
+				t.Fatal("expected ambiguous catalog plugin name to fail")
+			}
+		})
+	}
+}
+
+func TestIsGitHubShorthandRejectsRefs(t *testing.T) {
+	if isGitHubShorthand("owner/repo@v1") {
+		t.Fatal("owner/repo@v1 should not be treated as a GitHub shorthand")
 	}
 }
 

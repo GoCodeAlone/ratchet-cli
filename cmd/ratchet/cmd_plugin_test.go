@@ -163,6 +163,48 @@ func TestExecutePluginUpdatePreservesDisabledState(t *testing.T) {
 	}
 }
 
+func TestExecutePluginMarketplaceUpdatePreservesDisabledState(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	src := setupPluginFixture(t, "market-disabled", "1.0.0")
+	catalog := filepath.Join(home, "marketplace.json")
+	writeMarketplaceCatalog(t, catalog, "market-disabled", "1.0.0", src)
+
+	var out bytes.Buffer
+	if err := executePlugin([]string{"marketplace", "add", "local", catalog}, &out); err != nil {
+		t.Fatalf("marketplace add: %v", err)
+	}
+	if err := executePlugin([]string{"install", "market-disabled@local"}, &out); err != nil {
+		t.Fatalf("install marketplace plugin: %v", err)
+	}
+	if err := executePlugin([]string{"disable", "market-disabled"}, &out); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	src2 := setupPluginFixture(t, "market-disabled", "1.1.0")
+	if err := os.RemoveAll(src); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(src2, src); err != nil {
+		t.Fatal(err)
+	}
+	writeMarketplaceCatalog(t, catalog, "market-disabled", "1.1.0", src)
+	if err := executePlugin([]string{"update", "market-disabled"}, &out); err != nil {
+		t.Fatalf("update marketplace plugin: %v", err)
+	}
+
+	reg, err := plugins.Load()
+	if err != nil {
+		t.Fatalf("load registry: %v", err)
+	}
+	entry, _ := reg.Get("market-disabled")
+	if entry.Enabled {
+		t.Fatal("disabled marketplace plugin became enabled after update")
+	}
+	if entry.Version != "1.1.0" {
+		t.Fatalf("version after update = %q, want 1.1.0", entry.Version)
+	}
+}
+
 func setupPluginFixture(t *testing.T, name, version string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -180,4 +222,12 @@ func setupPluginFixture(t *testing.T, name, version string) string {
 		t.Fatal(err)
 	}
 	return dir
+}
+
+func writeMarketplaceCatalog(t *testing.T, path, name, version, source string) {
+	t.Helper()
+	body := `{"plugins":[{"name":"` + name + `","version":"` + version + `","source":"local:` + filepath.ToSlash(source) + `"}]}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
