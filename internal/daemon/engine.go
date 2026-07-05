@@ -100,17 +100,6 @@ func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error
 	// Tool registry and MCP discovery are populated by plugin reload.
 	ec.ToolRegistry = ratchetplugin.NewToolRegistry()
 	ec.MCPDiscoverer = mcp.NewDiscoverer(ec.ToolRegistry)
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("mcp: discover panic: %v", r)
-			}
-		}()
-		result := ec.MCPDiscoverer.Discover()
-		for cli, tools := range result.Registered {
-			log.Printf("mcp: discovered %s (%d tools)", cli, len(tools))
-		}
-	}()
 
 	// Actor system (non-fatal on error; actors are optional middleware).
 	actors, err := NewActorManager(ctx, db)
@@ -152,17 +141,7 @@ func (ec *EngineContext) ReloadPlugins(ctx context.Context) (*PluginReloadSummar
 		newRegistry.Register(t)
 	}
 	newDiscoverer := mcp.NewDiscoverer(newRegistry)
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("mcp: discover panic: %v", r)
-			}
-		}()
-		result := newDiscoverer.Discover()
-		for cli, tools := range result.Registered {
-			log.Printf("mcp: discovered %s (%d tools)", cli, len(tools))
-		}
-	}()
+	discoverMCP(newDiscoverer)
 
 	hookConfig, _ := hooks.LoadWithOptions(hooks.LoadOptions{SkipProject: true})
 	if hookConfig == nil {
@@ -204,6 +183,18 @@ func (ec *EngineContext) ReloadPlugins(ctx context.Context) (*PluginReloadSummar
 		Hooks:    hookCount,
 		Daemons:  len(pluginResult.Daemons),
 	}, nil
+}
+
+func discoverMCP(discoverer *mcp.Discoverer) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("mcp: discover panic: %v", r)
+		}
+	}()
+	result := discoverer.Discover()
+	for cli, tools := range result.Registered {
+		log.Printf("mcp: discovered %s (%d tools)", cli, len(tools))
+	}
 }
 
 func (ec *EngineContext) Close() {
