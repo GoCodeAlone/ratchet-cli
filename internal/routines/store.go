@@ -208,15 +208,36 @@ func (s *Store) Save() error {
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return fmt.Errorf("write routines temp file: %w", err)
 	}
-	if err := os.Rename(tmp, s.filePath); err != nil {
-		if removeErr := os.Remove(s.filePath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+	if err := replaceFile(s.filePath, tmp); err != nil {
+		return fmt.Errorf("replace routines store: %w", err)
+	}
+	return nil
+}
+
+func replaceFile(path, tmp string) error {
+	if err := os.Rename(tmp, path); err == nil {
+		return nil
+	}
+	backup := path + ".bak"
+	_ = os.Remove(backup)
+	backupCreated := false
+	if err := os.Rename(path, backup); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
 			_ = os.Remove(tmp)
-			return fmt.Errorf("remove old routines store: %w", removeErr)
+			return err
 		}
-		if retryErr := os.Rename(tmp, s.filePath); retryErr != nil {
-			_ = os.Remove(tmp)
-			return fmt.Errorf("replace routines store: %w", retryErr)
+	} else {
+		backupCreated = true
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		if backupCreated {
+			_ = os.Rename(backup, path)
 		}
+		_ = os.Remove(tmp)
+		return err
+	}
+	if backupCreated {
+		_ = os.Remove(backup)
 	}
 	return nil
 }

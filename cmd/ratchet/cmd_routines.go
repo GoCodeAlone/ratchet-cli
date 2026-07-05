@@ -125,11 +125,12 @@ func printRoutine(w io.Writer, def routines.Definition) {
 }
 
 func truncateRoutineText(s string, max int) string {
-	if len(s) <= max {
+	runes := []rune(s)
+	if len(runes) <= max {
 		return s
 	}
 	if max <= 1 {
-		return s[:max]
+		return string(runes[:max])
 	}
-	return s[:max-1] + "."
+	return string(runes[:max-1]) + "."
 }

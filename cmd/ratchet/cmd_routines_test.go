@@ -79,3 +79,13 @@ func TestExecuteRoutinesRunRecordsVisibleRun(t *testing.T) {
 		t.Fatalf("store did not persist visible run state: %s", data)
 	}
 }
+
+func TestTruncateRoutineTextPreservesUTF8(t *testing.T) {
+	got := truncateRoutineText("alpha 状態確認", 9)
+	if strings.ContainsRune(got, '\uFFFD') {
+		t.Fatalf("truncated string contains replacement rune: %q", got)
+	}
+	if got != "alpha 状態." {
+		t.Fatalf("truncateRoutineText = %q", got)
+	}
+}

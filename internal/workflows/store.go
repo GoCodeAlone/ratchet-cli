@@ -218,15 +218,36 @@ func (s *Store) Save() error {
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return fmt.Errorf("write workflows temp file: %w", err)
 	}
-	if err := os.Rename(tmp, s.filePath); err != nil {
-		if removeErr := os.Remove(s.filePath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+	if err := replaceFile(s.filePath, tmp); err != nil {
+		return fmt.Errorf("replace workflows store: %w", err)
+	}
+	return nil
+}
+
+func replaceFile(path, tmp string) error {
+	if err := os.Rename(tmp, path); err == nil {
+		return nil
+	}
+	backup := path + ".bak"
+	_ = os.Remove(backup)
+	backupCreated := false
+	if err := os.Rename(path, backup); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
 			_ = os.Remove(tmp)
-			return fmt.Errorf("remove old workflows store: %w", removeErr)
+			return err
 		}
-		if retryErr := os.Rename(tmp, s.filePath); retryErr != nil {
-			_ = os.Remove(tmp)
-			return fmt.Errorf("replace workflows store: %w", retryErr)
+	} else {
+		backupCreated = true
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		if backupCreated {
+			_ = os.Rename(backup, path)
 		}
+		_ = os.Remove(tmp)
+		return err
+	}
+	if backupCreated {
+		_ = os.Remove(backup)
 	}
 	return nil
 }
@@ -253,10 +274,12 @@ func validateGraph(def Definition) error {
 		}
 	}
 	for _, edge := range def.Edges {
-		if _, ok := seen[edge.From]; !ok {
+		from := strings.TrimSpace(edge.From)
+		to := strings.TrimSpace(edge.To)
+		if _, ok := seen[from]; !ok {
 			return fmt.Errorf("workflow %q edge references missing from node %q", def.Name, edge.From)
 		}
-		if _, ok := seen[edge.To]; !ok {
+		if _, ok := seen[to]; !ok {
 			return fmt.Errorf("workflow %q edge references missing to node %q", def.Name, edge.To)
 		}
 	}

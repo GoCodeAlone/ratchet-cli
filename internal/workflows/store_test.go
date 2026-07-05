@@ -98,3 +98,20 @@ func TestStoreRejectsExecutableWorkflowNodes(t *testing.T) {
 		}
 	}
 }
+
+func TestStoreNormalizesEdgeEndpoints(t *testing.T) {
+	store, err := Load(filepath.Join(t.TempDir(), "workflows.json"))
+	if err != nil {
+		t.Fatalf("load store: %v", err)
+	}
+	if _, err := store.Install(Definition{
+		Name: "trimmed-edges",
+		Nodes: []Node{
+			{ID: "start", Type: "prompt", Prompt: "start"},
+			{ID: "next", Type: "prompt", Prompt: "next"},
+		},
+		Edges: []Edge{{From: "start ", To: " next"}},
+	}); err != nil {
+		t.Fatalf("install workflow with padded edge endpoints: %v", err)
+	}
+}
