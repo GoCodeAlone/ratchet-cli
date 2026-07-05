@@ -98,6 +98,12 @@ ratchet plugin install agent-tools@local
 ratchet plugin disable agent-tools
                             # Keep a plugin installed but skip loading it
 ratchet plugin reload       # Reload installed plugin capabilities in the daemon
+ratchet routines add --schedule 15m --prompt "summarize status"
+                            # Create a visible scheduled prompt routine
+ratchet routines run ID     # Record a manual routine run without hidden workers
+ratchet workflows install workflow.yaml
+                            # Install a declarative workflow definition
+ratchet workflows run NAME  # Record a visible workflow run without node execution
 ratchet skill list          # List user, project, and plugin skills
 ```
 
@@ -159,8 +165,18 @@ enabling, or disabling plugins to refresh daemon skills, hooks, commands,
 tools, MCP declarations, ACP profiles, and plugin daemons without restarting
 ratchet. Marketplace catalogs are metadata, not trust: project/plugin hooks
 still require hash review before execution. Plugin autoupdate policy, managed
-hooks, visible routines, and dynamic workflow run primitives remain deferred to
-the runtime extension lifecycle plan.
+hooks, JavaScript workflow execution, API/GitHub workflow triggers, and hidden
+background autonomy remain deferred to the runtime extension lifecycle plan.
+
+Visible routines are local definitions plus run records. Use
+`ratchet routines add`, `list`, `show`, `run`, `pause`, `resume`, and `remove`
+to manage scheduled prompt intent under `~/.ratchet/routines`; `run` records a
+manual run for auditability and does not start a hidden daemon worker. Visible
+workflows are local declarative graph definitions plus bounded run records. Use
+`ratchet workflows install`, `list`, `show`, `run`, `stop`, and `resume` to
+record workflow lifecycle state under `~/.ratchet/workflows`; this slice
+validates JSON/YAML definitions and rejects shell/JavaScript executable node
+types instead of running source code.
 
 ACP launch profiles are reviewed launch specs for explicit foreground ACP
 client commands. Use `ratchet acp client profiles list`, `add`, `install`,
@@ -180,9 +196,9 @@ See [docs/policy-matrix.md](docs/policy-matrix.md) for the Policy Matrix
 covering static config trust rules, runtime trust rules, persistent trust
 grants, permission prompts, explicit ACP client watch/drain, partial
 sandbox/path/network controls, hook trust, plugin marketplace lifecycle,
-plugin reload, ACP launch profiles, retro evidence, and deferred daemon
-background drain, plugin autoupdate, routines, dynamic workflows, and extension
-SDK work.
+plugin reload, visible routines/workflows, ACP launch profiles, retro evidence,
+and deferred daemon background drain, plugin autoupdate, workflow source
+execution/triggers, and extension SDK work.
 
 The ACP client queue persists prompt text under the user's XDG state directory.
 Do not use `--no-wait` for prompts that should not be written to local disk.

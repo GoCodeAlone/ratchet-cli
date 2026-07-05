@@ -72,6 +72,10 @@ func main() {
 		handleProject(filteredArgs[1:])
 	case "plugin":
 		handlePlugin(filteredArgs[1:])
+	case "routines":
+		handleRoutines(filteredArgs[1:])
+	case "workflows":
+		handleWorkflows(filteredArgs[1:])
 	case "skill":
 		handleSkill(filteredArgs[1:])
 	case "model":
@@ -166,6 +170,8 @@ Commands:
   blackboard       Shared daemon blackboard
   retro            Analyze optional retro evidence
   plugin           Manage plugins, marketplaces, enable/disable, and reload
+  routines         Manage visible scheduled prompt routines
+  workflows        Manage visible declarative workflow run records
   skill            Manage skills
   config           Configuration
   acp              Run as ACP agent (stdio JSON-RPC)

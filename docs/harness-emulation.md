@@ -236,7 +236,10 @@ chat turn, `ratchet plugin marketplace add|list|update|remove` manages reviewed
 catalog sources, `ratchet plugin install <name>@<marketplace>` installs catalog
 entries, `ratchet plugin enable|disable` controls loader participation, and
 `ratchet plugin reload` refreshes installed plugin capabilities without a
-daemon restart. Managed hooks, plugin autoupdate, routines, dynamic workflows,
+daemon restart. `ratchet routines add|list|show|run|pause|resume|remove` and
+`ratchet workflows install|list|show|run|stop|resume` persist visible local
+definitions and run records without hidden workers or JavaScript/shell
+execution. Managed hooks, plugin autoupdate, workflow source execution/triggers,
 broader extension hooks, and the TypeScript extension SDK remain deferred to the
 runtime extension lifecycle plan.
 
