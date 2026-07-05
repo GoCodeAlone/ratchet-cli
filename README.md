@@ -91,6 +91,12 @@ ratchet retro analyze --evidence ~/.ratchet/retro/evidence.jsonl --session ID
 ratchet provider list       # List providers
 ratchet team start "task"   # Start agent team
 ratchet hooks list --cwd .  # Review lifecycle hooks before trusting them
+ratchet plugin marketplace add local ./marketplace.json
+                            # Add a plugin marketplace catalog
+ratchet plugin install agent-tools@local
+                            # Install a plugin from a reviewed marketplace
+ratchet plugin disable agent-tools
+                            # Keep a plugin installed but skip loading it
 ratchet plugin reload       # Reload installed plugin capabilities in the daemon
 ratchet skill list          # List user, project, and plugin skills
 ```
@@ -144,14 +150,17 @@ Installed plugin skills are available through `ratchet skill list` and
 `ratchet skill show <name>`. Plugin skills are also exposed to chat turns
 through a compact index, and full skill text is injected only when explicitly
 referenced by name, such as `$autodev:using-autodev` or `/plugin:skill`. Use
-`ratchet plugin reload` after installing or updating plugins to refresh daemon
-skills, hooks, commands, tools, MCP declarations, ACP profiles, and plugin
-daemons without restarting ratchet.
-
-Marketplace-backed install/update, plugin enable/disable, autoupdate policy,
-visible routines, and dynamic workflow run primitives are designed in
-`docs/plans/2026-07-05-ratchet-runtime-extension-lifecycle-design.md` and remain
-the next implementation slices.
+`ratchet plugin marketplace add|list|update|remove` to manage reviewed catalog
+sources, `ratchet plugin install <name>@<marketplace>` to install a catalog
+entry, `ratchet plugin update <name|--all>` to refresh installed plugins, and
+`ratchet plugin enable|disable <name>` to control loader participation without
+deleting files. Use `ratchet plugin reload` after installing, updating,
+enabling, or disabling plugins to refresh daemon skills, hooks, commands,
+tools, MCP declarations, ACP profiles, and plugin daemons without restarting
+ratchet. Marketplace catalogs are metadata, not trust: project/plugin hooks
+still require hash review before execution. Plugin autoupdate policy, managed
+hooks, visible routines, and dynamic workflow run primitives remain deferred to
+the runtime extension lifecycle plan.
 
 ACP launch profiles are reviewed launch specs for explicit foreground ACP
 client commands. Use `ratchet acp client profiles list`, `add`, `install`,
@@ -170,9 +179,10 @@ response text, or env values. The TypeScript extension SDK remains deferred.
 See [docs/policy-matrix.md](docs/policy-matrix.md) for the Policy Matrix
 covering static config trust rules, runtime trust rules, persistent trust
 grants, permission prompts, explicit ACP client watch/drain, partial
-sandbox/path/network controls, hook trust, plugin reload, ACP launch profiles,
-retro evidence, and deferred daemon background drain, marketplaces, routines,
-dynamic workflows, and extension SDK work.
+sandbox/path/network controls, hook trust, plugin marketplace lifecycle,
+plugin reload, ACP launch profiles, retro evidence, and deferred daemon
+background drain, plugin autoupdate, routines, dynamic workflows, and extension
+SDK work.
 
 The ACP client queue persists prompt text under the user's XDG state directory.
 Do not use `--no-wait` for prompts that should not be written to local disk.

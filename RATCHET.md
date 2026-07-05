@@ -23,6 +23,8 @@ ratchet daemon status       # Check daemon
 ratchet provider list       # List providers
 ratchet acp                 # Run as an ACP stdio agent
 ratchet mcp daemon          # Run daemon-backed MCP tools
+ratchet plugin marketplace list
+                            # Review configured plugin marketplaces
 ratchet config show         # Show configuration, including retro settings
 ```
 

@@ -11,10 +11,34 @@ import (
 
 // RegistryEntry records an installed plugin.
 type RegistryEntry struct {
-	Source      string    `json:"source"`       // "github:org/repo" or "local:/path"
+	Source      string    `json:"source"` // "github:org/repo" or "local:/path"
 	Version     string    `json:"version"`
 	InstalledAt time.Time `json:"installed_at"`
 	Path        string    `json:"path"`
+	Enabled     bool      `json:"enabled"`
+}
+
+func (e *RegistryEntry) UnmarshalJSON(data []byte) error {
+	var aux struct {
+		Source      string    `json:"source"`
+		Version     string    `json:"version"`
+		InstalledAt time.Time `json:"installed_at"`
+		Path        string    `json:"path"`
+		Enabled     *bool     `json:"enabled"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	e.Source = aux.Source
+	e.Version = aux.Version
+	e.InstalledAt = aux.InstalledAt
+	e.Path = aux.Path
+	if aux.Enabled == nil {
+		e.Enabled = true
+	} else {
+		e.Enabled = *aux.Enabled
+	}
+	return nil
 }
 
 // Registry tracks installed plugins in ~/.ratchet/plugins/registry.json.
@@ -74,6 +98,21 @@ func (r *Registry) Save() error {
 
 // Add inserts or replaces a plugin entry and saves.
 func (r *Registry) Add(name string, entry RegistryEntry) error {
+	entry.Enabled = true
+	return r.Put(name, entry)
+}
+
+func (r *Registry) Put(name string, entry RegistryEntry) error {
+	r.Plugins[name] = entry
+	return r.Save()
+}
+
+func (r *Registry) SetEnabled(name string, enabled bool) error {
+	entry, ok := r.Plugins[name]
+	if !ok {
+		return fmt.Errorf("plugin %q not installed", name)
+	}
+	entry.Enabled = enabled
 	r.Plugins[name] = entry
 	return r.Save()
 }

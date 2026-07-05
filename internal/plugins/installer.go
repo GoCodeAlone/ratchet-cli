@@ -77,6 +77,7 @@ func InstallFromGitHub(ctx context.Context, repo string) error {
 		Version:     m.Version,
 		InstalledAt: time.Now(),
 		Path:        destDir,
+		Enabled:     true,
 	})
 }
 
@@ -109,6 +110,7 @@ func InstallFromLocal(src string) error {
 		Version:     m.Version,
 		InstalledAt: time.Now(),
 		Path:        destDir,
+		Enabled:     true,
 	})
 }
 
