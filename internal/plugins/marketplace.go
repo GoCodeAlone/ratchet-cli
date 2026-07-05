@@ -149,9 +149,7 @@ func LoadMarketplaceCatalogFromSource(ctx context.Context, source string) (*Mark
 	if isHTTPSource(source) {
 		return loadMarketplaceCatalogURL(ctx, source)
 	}
-	if strings.HasPrefix(source, "file://") {
-		source = strings.TrimPrefix(source, "file://")
-	}
+	source = strings.TrimPrefix(source, "file://")
 	if isGitHubShorthand(source) {
 		catalog, err := loadMarketplaceCatalogURL(ctx, "https://raw.githubusercontent.com/"+source+"/HEAD/.ratchet-plugin/marketplace.json")
 		if err == nil {
