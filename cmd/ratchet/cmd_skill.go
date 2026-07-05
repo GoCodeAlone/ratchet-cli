@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/GoCodeAlone/ratchet-cli/internal/plugins"
 	"github.com/GoCodeAlone/ratchet-cli/internal/skills"
 )
 
@@ -15,20 +16,24 @@ func handleSkill(args []string) {
 	}
 	switch args[0] {
 	case "list":
-		discovered := skills.Discover(wd)
+		discovered := discoverCLISkills(wd)
 		if len(discovered) == 0 {
 			fmt.Println("No skills found.")
 			return
 		}
 		for _, s := range discovered {
-			fmt.Printf("%-20s %s\n", s.Name, s.Path)
+			source := s.Source
+			if source == "" {
+				source = "-"
+			}
+			fmt.Printf("%-28s %-8s %s\n", s.Name, source, s.Path)
 		}
 	case "show":
 		if len(args) < 2 {
 			fmt.Println("Usage: ratchet skill show <name>")
 			return
 		}
-		discovered := skills.Discover(wd)
+		discovered := discoverCLISkills(wd)
 		for _, s := range discovered {
 			if s.Name == args[1] {
 				fmt.Println(s.Content)
@@ -40,4 +45,17 @@ func handleSkill(args []string) {
 	default:
 		fmt.Printf("unknown skill command: %s\n", args[0])
 	}
+}
+
+func discoverCLISkills(wd string) []skills.Skill {
+	pluginSkills := loadPluginSkills()
+	return skills.Merge(pluginSkills, skills.NamespacedAliases(pluginSkills), skills.Discover(wd))
+}
+
+func loadPluginSkills() []skills.Skill {
+	result, err := plugins.NewLoader(plugins.DefaultDir()).LoadSkills()
+	if err != nil {
+		return nil
+	}
+	return result
 }

@@ -22,9 +22,11 @@ func (ec *EngineContext) RunHooks(ctx context.Context, event hooks.Event, data m
 	}
 
 	cfg := &hooks.HookConfig{Hooks: make(map[hooks.Event][]hooks.Hook)}
+	ec.ExtensionMu.RLock()
 	if ec.Hooks != nil {
 		cfg.Hooks[event] = append(cfg.Hooks[event], ec.Hooks.Hooks[event]...)
 	}
+	ec.ExtensionMu.RUnlock()
 	if workDir := ec.hookWorkingDir(ctx, data); workDir != "" {
 		projectCfg, err := hooks.LoadWithOptions(hooks.LoadOptions{
 			WorkingDir: workDir,

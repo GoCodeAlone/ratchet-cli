@@ -74,6 +74,11 @@ func pluginsDir() string {
 	return filepath.Join(home, ".ratchet", "plugins")
 }
 
+// DefaultDir returns the default plugin installation directory.
+func DefaultDir() string {
+	return pluginsDir()
+}
+
 // LoadAll scans pluginDir for plugin directories, parses their manifests, and
 // returns all discovered capabilities aggregated in a LoadResult.
 // Daemon tools are started using ctx; cancel ctx to terminate them.
@@ -107,18 +112,72 @@ func (l *Loader) LoadAll(ctx context.Context) (*LoadResult, error) {
 	return result, nil
 }
 
+// LoadSkills scans installed plugins and returns only skill capabilities. It is
+// intentionally passive: tool daemons and MCP discovery are not started.
+func (l *Loader) LoadSkills() ([]skills.Skill, error) {
+	entries, err := os.ReadDir(l.pluginDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read plugins dir: %w", err)
+	}
+	var result []skills.Skill
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		pluginDir := filepath.Join(l.pluginDir, entry.Name())
+		m, err := LoadManifest(pluginDir)
+		if err != nil {
+			continue
+		}
+		if m.Capabilities.Skills == "" {
+			continue
+		}
+		skillsPath, err := resolveCapabilityPath(pluginDir, m.Capabilities.Skills)
+		if err != nil {
+			return nil, fmt.Errorf("load plugin %s skills: %w", m.Name, err)
+		}
+		loaded, err := loadSkills(skillsPath)
+		if err != nil {
+			return nil, fmt.Errorf("load plugin %s skills: %w", m.Name, err)
+		}
+		for i := range loaded {
+			loaded[i].Source = "plugin"
+			loaded[i].PluginName = m.Name
+			loaded[i].PluginVersion = m.Version
+		}
+		result = append(result, loaded...)
+	}
+	return result, nil
+}
+
 // loadPlugin loads a single plugin's capabilities into result.
 func (l *Loader) loadPlugin(ctx context.Context, pluginDir string, m *Manifest, result *LoadResult) error {
 	if m.Capabilities.Skills != "" {
-		s, err := loadSkills(filepath.Join(pluginDir, m.Capabilities.Skills))
+		skillsPath, err := resolveCapabilityPath(pluginDir, m.Capabilities.Skills)
 		if err != nil {
 			return fmt.Errorf("skills: %w", err)
+		}
+		s, err := loadSkills(skillsPath)
+		if err != nil {
+			return fmt.Errorf("skills: %w", err)
+		}
+		for i := range s {
+			s[i].Source = "plugin"
+			s[i].PluginName = m.Name
+			s[i].PluginVersion = m.Version
 		}
 		result.Skills = append(result.Skills, s...)
 	}
 
 	if m.Capabilities.Agents != "" {
-		a, err := loadAgents(filepath.Join(pluginDir, m.Capabilities.Agents))
+		agentsPath, err := resolveCapabilityPath(pluginDir, m.Capabilities.Agents)
+		if err != nil {
+			return fmt.Errorf("agents: %w", err)
+		}
+		a, err := loadAgents(agentsPath)
 		if err != nil {
 			return fmt.Errorf("agents: %w", err)
 		}
@@ -126,7 +185,11 @@ func (l *Loader) loadPlugin(ctx context.Context, pluginDir string, m *Manifest, 
 	}
 
 	if m.Capabilities.Commands != "" {
-		c, err := loadCommands(filepath.Join(pluginDir, m.Capabilities.Commands))
+		commandsPath, err := resolveCapabilityPath(pluginDir, m.Capabilities.Commands)
+		if err != nil {
+			return fmt.Errorf("commands: %w", err)
+		}
+		c, err := loadCommands(commandsPath)
 		if err != nil {
 			return fmt.Errorf("commands: %w", err)
 		}
@@ -156,7 +219,11 @@ func (l *Loader) loadPlugin(ctx context.Context, pluginDir string, m *Manifest, 
 	}
 
 	if m.Capabilities.Tools != "" {
-		tools, daemons, err := loadTools(ctx, filepath.Join(pluginDir, m.Capabilities.Tools))
+		toolsPath, err := resolveCapabilityPath(pluginDir, m.Capabilities.Tools)
+		if err != nil {
+			return fmt.Errorf("tools: %w", err)
+		}
+		tools, daemons, err := loadTools(ctx, toolsPath)
 		if err != nil {
 			return fmt.Errorf("tools: %w", err)
 		}
@@ -165,7 +232,11 @@ func (l *Loader) loadPlugin(ctx context.Context, pluginDir string, m *Manifest, 
 	}
 
 	if m.Capabilities.MCP != "" {
-		mc, err := loadMCPConfig(m.Name, pluginDir, filepath.Join(pluginDir, m.Capabilities.MCP))
+		mcpPath, err := resolveCapabilityPath(pluginDir, m.Capabilities.MCP)
+		if err != nil {
+			return fmt.Errorf("mcp: %w", err)
+		}
+		mc, err := loadMCPConfig(m.Name, pluginDir, mcpPath)
 		if err != nil {
 			return fmt.Errorf("mcp: %w", err)
 		}

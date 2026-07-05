@@ -32,6 +32,27 @@ const (
 	OnToolCall          Event = "on-tool-call"
 	OnPermissionRequest Event = "on-permission-request"
 
+	SessionStart       Event = "session-start"
+	SessionEnd         Event = "session-end"
+	UserPromptSubmit   Event = "user-prompt-submit"
+	Stop               Event = "stop"
+	StopFailure        Event = "stop-failure"
+	PreToolUse         Event = "pre-tool-use"
+	PostToolUse        Event = "post-tool-use"
+	PostToolUseFailure Event = "post-tool-use-failure"
+	PermissionRequest  Event = "permission-request"
+	PermissionDenied   Event = "permission-denied"
+	PreCompact         Event = "pre-compact"
+	PostCompact        Event = "post-compact"
+	SubagentStart      Event = "subagent-start"
+	SubagentStop       Event = "subagent-stop"
+	WorkflowStart      Event = "workflow-start"
+	WorkflowStop       Event = "workflow-stop"
+	WorkflowFailure    Event = "workflow-failure"
+	Notification       Event = "notification"
+	ConfigChange       Event = "config-change"
+	FileChanged        Event = "file-changed"
+
 	// Plan lifecycle
 	PrePlan  Event = "pre-plan"
 	PostPlan Event = "post-plan"
@@ -56,6 +77,14 @@ var AllEvents = []Event{
 	PreSession, PostSession,
 	PreCommit, PostCommit,
 	OnError, OnToolCall, OnPermissionRequest,
+	SessionStart, SessionEnd,
+	UserPromptSubmit, Stop, StopFailure,
+	PreToolUse, PostToolUse, PostToolUseFailure,
+	PermissionRequest, PermissionDenied,
+	PreCompact, PostCompact,
+	SubagentStart, SubagentStop,
+	WorkflowStart, WorkflowStop, WorkflowFailure,
+	Notification, ConfigChange, FileChanged,
 	PrePlan, PostPlan,
 	PreFleet, PostFleet,
 	OnAgentSpawn, OnAgentComplete,

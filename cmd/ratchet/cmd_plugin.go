@@ -7,12 +7,13 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/GoCodeAlone/ratchet-cli/internal/client"
 	"github.com/GoCodeAlone/ratchet-cli/internal/plugins"
 )
 
 func handlePlugin(args []string) {
 	if len(args) == 0 {
-		fmt.Println("Usage: ratchet plugin <list|install|remove>")
+		fmt.Println("Usage: ratchet plugin <list|install|remove|reload>")
 		return
 	}
 	switch args[0] {
@@ -58,6 +59,21 @@ func handlePlugin(args []string) {
 			os.Exit(1)
 		}
 		fmt.Printf("Removed plugin: %s\n", args[1])
+	case "reload":
+		c, err := client.EnsureDaemon()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		defer c.Close()
+		statuses, err := c.RequestPluginReload(context.Background())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		for status := range statuses {
+			fmt.Printf("%s: %s\n", status.GetStatus(), status.GetMessage())
+		}
 	default:
 		fmt.Printf("unknown plugin command: %s\n", args[0])
 	}

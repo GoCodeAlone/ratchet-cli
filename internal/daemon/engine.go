@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 
 	"path/filepath"
 
@@ -36,6 +37,7 @@ type EngineContext struct {
 	Actors           *ActorManager
 	Hooks            *hooks.HookConfig
 	Debug            bool // enable request/response debug logging to ~/.ratchet/debug.log
+	ExtensionMu      sync.RWMutex
 	// Plugin-contributed capabilities
 	PluginSkills   []skills.Skill
 	PluginAgents   []agent.AgentDefinition
@@ -95,41 +97,9 @@ func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error
 		return secretProvider
 	})
 
-	// Tool registry
+	// Tool registry and MCP discovery are populated by plugin reload.
 	ec.ToolRegistry = ratchetplugin.NewToolRegistry()
-
-	// MCP CLI discovery (runs in background; errors are non-fatal)
 	ec.MCPDiscoverer = mcp.NewDiscoverer(ec.ToolRegistry)
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("mcp: discover panic: %v", r)
-			}
-		}()
-		result := ec.MCPDiscoverer.Discover()
-		for cli, tools := range result.Registered {
-			log.Printf("mcp: discovered %s (%d tools)", cli, len(tools))
-		}
-	}()
-
-	// Load external plugins from ~/.ratchet/plugins/ and wire capabilities.
-	pluginLoader := plugins.NewLoader(filepath.Join(DataDir(), "plugins"))
-	pluginResult, pluginErr := pluginLoader.LoadAll(ctx)
-	if pluginErr != nil {
-		log.Printf("warning: plugin loading: %v", pluginErr)
-	} else {
-		// Register plugin tools with the tool registry.
-		for _, t := range pluginResult.Tools {
-			ec.ToolRegistry.Register(t)
-		}
-		// Store skills, agents, commands for later query.
-		ec.PluginSkills = pluginResult.Skills
-		ec.PluginAgents = pluginResult.Agents
-		ec.PluginCommands = pluginResult.Commands
-		log.Printf("plugins: %d skills, %d agents, %d commands, %d tools loaded",
-			len(pluginResult.Skills), len(pluginResult.Agents),
-			len(pluginResult.Commands), len(pluginResult.Tools))
-	}
 
 	// Actor system (non-fatal on error; actors are optional middleware).
 	actors, err := NewActorManager(ctx, db)
@@ -139,21 +109,92 @@ func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error
 		ec.Actors = actors
 	}
 
-	// Hooks config (non-fatal; hooks are optional). Project hooks are loaded
-	// per event from the event/session working directory.
-	ec.Hooks, _ = hooks.LoadWithOptions(hooks.LoadOptions{SkipProject: true})
-	if ec.Hooks == nil {
-		ec.Hooks = &hooks.HookConfig{Hooks: make(map[hooks.Event][]hooks.Hook)}
-	}
-	// Merge plugin-contributed hooks.
-	if pluginErr == nil {
-		for event, hookList := range pluginResult.Hooks.Hooks {
-			ec.Hooks.Hooks[event] = append(ec.Hooks.Hooks[event], hookList...)
-		}
+	if summary, err := ec.ReloadPlugins(ctx); err != nil {
+		log.Printf("warning: plugin loading: %v", err)
+	} else {
+		log.Printf("plugins: %d skills, %d agents, %d commands, %d tools loaded",
+			summary.Skills, summary.Agents, summary.Commands, summary.Tools)
 	}
 
 	log.Println("engine context initialized")
 	return ec, nil
+}
+
+type PluginReloadSummary struct {
+	Skills   int
+	Agents   int
+	Commands int
+	Tools    int
+	Hooks    int
+	Daemons  int
+}
+
+func (ec *EngineContext) ReloadPlugins(ctx context.Context) (*PluginReloadSummary, error) {
+	pluginLoader := plugins.NewLoader(filepath.Join(DataDir(), "plugins"))
+	pluginResult, err := pluginLoader.LoadAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	newRegistry := ratchetplugin.NewToolRegistry()
+	for _, t := range pluginResult.Tools {
+		newRegistry.Register(t)
+	}
+	newDiscoverer := mcp.NewDiscoverer(newRegistry)
+	discoverMCP(newDiscoverer)
+
+	hookConfig, _ := hooks.LoadWithOptions(hooks.LoadOptions{SkipProject: true})
+	if hookConfig == nil {
+		hookConfig = &hooks.HookConfig{Hooks: make(map[hooks.Event][]hooks.Hook)}
+	}
+	if pluginResult.Hooks != nil {
+		for event, hookList := range pluginResult.Hooks.Hooks {
+			hookConfig.Hooks[event] = append(hookConfig.Hooks[event], hookList...)
+		}
+	}
+
+	hookCount := 0
+	for _, hookList := range hookConfig.Hooks {
+		hookCount += len(hookList)
+	}
+
+	ec.ExtensionMu.Lock()
+	oldDaemons := ec.PluginDaemons
+	ec.ToolRegistry = newRegistry
+	ec.MCPDiscoverer = newDiscoverer
+	ec.PluginSkills = pluginResult.Skills
+	ec.PluginAgents = pluginResult.Agents
+	ec.PluginCommands = pluginResult.Commands
+	ec.PluginDaemons = pluginResult.Daemons
+	ec.Hooks = hookConfig
+	ec.ExtensionMu.Unlock()
+
+	for _, d := range oldDaemons {
+		if err := d.Stop(); err != nil {
+			log.Printf("stop old plugin daemon: %v", err)
+		}
+	}
+
+	return &PluginReloadSummary{
+		Skills:   len(pluginResult.Skills),
+		Agents:   len(pluginResult.Agents),
+		Commands: len(pluginResult.Commands),
+		Tools:    len(pluginResult.Tools),
+		Hooks:    hookCount,
+		Daemons:  len(pluginResult.Daemons),
+	}, nil
+}
+
+func discoverMCP(discoverer *mcp.Discoverer) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("mcp: discover panic: %v", r)
+		}
+	}()
+	result := discoverer.Discover()
+	for cli, tools := range result.Registered {
+		log.Printf("mcp: discovered %s (%d tools)", cli, len(tools))
+	}
 }
 
 func (ec *EngineContext) Close() {

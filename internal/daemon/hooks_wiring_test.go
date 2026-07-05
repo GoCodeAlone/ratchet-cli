@@ -175,6 +175,35 @@ func TestHooks_OnTokenLimit(t *testing.T) {
 	waitFor(t, func() bool { return fired(hooks.OnTokenLimit) }, 2*time.Second, "OnTokenLimit hook")
 }
 
+func TestHooks_ChatTurnLifecycle(t *testing.T) {
+	hc, fired := hookRecorder(t, hooks.UserPromptSubmit, hooks.PreCommand, hooks.Stop, hooks.PostCommand)
+	h := newE2EHarness(t)
+	h.Svc.engine.Hooks = hc
+	session := h.createSession(t, "e2e-mock")
+
+	stream, err := h.Client.SendMessage(context.Background(), &pb.SendMessageReq{
+		SessionId: session.Id,
+		Content:   "hello hooks",
+	})
+	if err != nil {
+		t.Fatalf("SendMessage: %v", err)
+	}
+	for {
+		ev, err := stream.Recv()
+		if err != nil {
+			break
+		}
+		if _, ok := ev.Event.(*pb.ChatEvent_Complete); ok {
+			break
+		}
+	}
+
+	waitFor(t, func() bool { return fired(hooks.UserPromptSubmit) }, time.Second, "UserPromptSubmit hook")
+	waitFor(t, func() bool { return fired(hooks.PreCommand) }, time.Second, "PreCommand hook")
+	waitFor(t, func() bool { return fired(hooks.Stop) }, time.Second, "Stop hook")
+	waitFor(t, func() bool { return fired(hooks.PostCommand) }, time.Second, "PostCommand hook")
+}
+
 func TestHooks_ProjectHookRequiresTrustForSessionWorkdir(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
