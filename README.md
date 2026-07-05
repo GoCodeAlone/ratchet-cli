@@ -71,6 +71,8 @@ ratchet acp client profiles list
                             # List local ACP launch profiles and plugin templates
 ratchet acp client profiles add local --command ./agent --trust
                             # Save a reviewed reusable ACP launch profile
+ratchet acp client profiles verify local --json
+                            # Verify a trusted ACP profile without printing prompt/response text
 ratchet acp client status ID
                             # Show ACP client session status
 ratchet acp client cancel ID
@@ -139,8 +141,11 @@ over profile names, and profile names cannot shadow built-ins. Trusted profiles
 can be used with `--agent <name>` for `exec`, `drain`, `watch`, `compare`, and
 `flow run`; untrusted profiles are listed but refused at execution time.
 Plugin-distributed profile templates can be installed into the local profile
-store, then reviewed or trusted like local profiles. The TypeScript extension
-SDK remains deferred.
+store, then reviewed or trusted like local profiles. Use
+`ratchet acp client profiles verify <name> [--json]` as a credential-free CI
+contract check for trusted profiles; it reports session id, stop reason,
+command fingerprint, and response byte count without printing prompt text,
+response text, or env values. The TypeScript extension SDK remains deferred.
 
 See [docs/policy-matrix.md](docs/policy-matrix.md) for the Policy Matrix
 covering static config trust rules, runtime trust rules, persistent trust

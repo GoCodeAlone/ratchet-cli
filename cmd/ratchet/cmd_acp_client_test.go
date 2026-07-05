@@ -385,6 +385,115 @@ func TestACPClientProfilesRejectBuiltinShadowing(t *testing.T) {
 	}
 }
 
+func TestACPClientProfilesVerifyParse(t *testing.T) {
+	cmd, err := parseACPClientCommand([]string{"profiles", "verify", "fixture", "--prompt", "ping", "--timeout", "5s", "--json"})
+	if err != nil {
+		t.Fatalf("parse verify: %v", err)
+	}
+	if cmd.kind != acpClientCommandProfiles || cmd.profiles.kind != acpClientProfilesVerify {
+		t.Fatalf("command = %#v", cmd)
+	}
+	if cmd.profiles.name != "fixture" || cmd.profiles.prompt != "ping" || cmd.profiles.timeout != 5*time.Second || !cmd.profiles.json {
+		t.Fatalf("profiles verify command = %#v", cmd.profiles)
+	}
+}
+
+func TestACPClientProfilesVerifyRequiresName(t *testing.T) {
+	_, err := parseACPClientCommand([]string{"profiles", "verify", "--json"})
+	if err == nil || !strings.Contains(err.Error(), "usage: ratchet acp client profiles verify <name>") {
+		t.Fatalf("verify missing name error = %v", err)
+	}
+}
+
+func TestExecuteACPClientProfilesVerifyTrustedProfileRedactsOutput(t *testing.T) {
+	setupDefaultACPProfile(t, "fixture", true)
+	runner := &fakeACPClientExecRunner{
+		result: acpclient.Result{
+			SessionID:  acpsdk.SessionId("fixture-session"),
+			StopReason: acpsdk.StopReasonEndTurn,
+			Text:       "secret response body",
+		},
+	}
+	var out bytes.Buffer
+	err := executeACPClientProfilesVerify(t.Context(), acpClientProfilesCommand{
+		name:    "fixture",
+		prompt:  "secret prompt body",
+		timeout: time.Second,
+		json:    true,
+	}, runner, &out)
+	if err != nil {
+		t.Fatalf("execute verify: %v", err)
+	}
+	if !runner.called {
+		t.Fatal("runner was not called")
+	}
+	if runner.spec.Command != "/tmp/fixture-acp" || runner.prompt != "secret prompt body" {
+		t.Fatalf("runner spec/prompt = %#v / %q", runner.spec, runner.prompt)
+	}
+	var payload struct {
+		Name               string `json:"name"`
+		Status             string `json:"status"`
+		CommandFingerprint string `json:"commandFingerprint"`
+		ACPSessionID       string `json:"acpSessionId"`
+		StopReason         string `json:"stopReason"`
+		TextBytes          int    `json:"textBytes"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("decode verify output %q: %v", out.String(), err)
+	}
+	if payload.Name != "fixture" || payload.Status != "ok" || payload.ACPSessionID != "fixture-session" ||
+		payload.StopReason != "end_turn" || payload.TextBytes != len("secret response body") ||
+		payload.CommandFingerprint == "" {
+		t.Fatalf("payload = %#v", payload)
+	}
+	if strings.Contains(out.String(), "secret prompt body") || strings.Contains(out.String(), "secret response body") {
+		t.Fatalf("verify output leaked prompt/response: %s", out.String())
+	}
+}
+
+func TestExecuteACPClientProfilesVerifyHumanOutputIncludesFingerprint(t *testing.T) {
+	setupDefaultACPProfile(t, "fixture", true)
+	runner := &fakeACPClientExecRunner{
+		result: acpclient.Result{
+			SessionID:  acpsdk.SessionId("fixture-session"),
+			StopReason: acpsdk.StopReasonEndTurn,
+			Text:       "human secret response",
+		},
+	}
+	var out bytes.Buffer
+	err := executeACPClientProfilesVerify(t.Context(), acpClientProfilesCommand{
+		name:    "fixture",
+		prompt:  "human secret prompt",
+		timeout: time.Second,
+	}, runner, &out)
+	if err != nil {
+		t.Fatalf("execute verify: %v", err)
+	}
+	got := out.String()
+	wantFingerprint := runner.spec.Fingerprint()
+	if !strings.Contains(got, "fingerprint="+wantFingerprint) {
+		t.Fatalf("human output = %q, want fingerprint %s", got, wantFingerprint)
+	}
+	if strings.Contains(got, "human secret prompt") || strings.Contains(got, "human secret response") {
+		t.Fatalf("verify human output leaked prompt/response: %s", got)
+	}
+}
+
+func TestExecuteACPClientProfilesVerifyRejectsUntrustedProfile(t *testing.T) {
+	setupDefaultACPProfile(t, "fixture", false)
+	runner := &fakeACPClientExecRunner{}
+	err := executeACPClientProfilesVerify(t.Context(), acpClientProfilesCommand{
+		name:    "fixture",
+		timeout: time.Second,
+	}, runner, io.Discard)
+	if !errors.Is(err, acpclient.ErrUnknownAgent) {
+		t.Fatalf("verify untrusted profile error = %v, want ErrUnknownAgent", err)
+	}
+	if runner.called {
+		t.Fatal("runner was called for untrusted profile")
+	}
+}
+
 func TestParseACPClientArchiveSessionCommands(t *testing.T) {
 	exportCmd, err := parseACPClientCommand([]string{"sessions", "export", "s-export", "--output", "archive.json", "--history", "raw", "--json"})
 	if err != nil {
