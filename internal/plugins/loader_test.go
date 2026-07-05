@@ -123,6 +123,42 @@ func TestLoadSkillsOnlyDoesNotLoadTools(t *testing.T) {
 	}
 }
 
+func TestLoadSkillsRejectsEscapedPath(t *testing.T) {
+	pluginsBase := t.TempDir()
+	pluginDir := filepath.Join(pluginsBase, "skill-plugin")
+	manifest := `{"name":"skill-plugin","version":"1.0.0","description":"test","author":{"name":"test"},"capabilities":{"skills":"../outside-skills"}}`
+	writeJSON(t, filepath.Join(pluginDir, ".ratchet-plugin", "plugin.json"), manifest)
+	if err := os.MkdirAll(filepath.Join(pluginsBase, "outside-skills", "hello"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginsBase, "outside-skills", "hello", "SKILL.md"), []byte("# Hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := NewLoader(pluginsBase).LoadSkills()
+	if err == nil {
+		t.Fatal("expected escaped skills path to fail")
+	}
+}
+
+func TestLoadAllRejectsEscapedSkillPath(t *testing.T) {
+	pluginsBase := t.TempDir()
+	pluginDir := filepath.Join(pluginsBase, "skill-plugin")
+	manifest := `{"name":"skill-plugin","version":"1.0.0","description":"test","author":{"name":"test"},"capabilities":{"skills":"../outside-skills"}}`
+	writeJSON(t, filepath.Join(pluginDir, ".ratchet-plugin", "plugin.json"), manifest)
+	if err := os.MkdirAll(filepath.Join(pluginsBase, "outside-skills", "hello"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginsBase, "outside-skills", "hello", "SKILL.md"), []byte("# Hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := NewLoader(pluginsBase).LoadAll(context.Background())
+	if err == nil {
+		t.Fatal("expected escaped skills path to fail")
+	}
+}
+
 func TestLoadAllCommands(t *testing.T) {
 	pluginsBase := t.TempDir()
 	pluginDir := filepath.Join(pluginsBase, "cmd-plugin")

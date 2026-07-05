@@ -102,7 +102,7 @@ func hookPromptData(sessionID, workingDir, prompt string) map[string]string {
 		"session_id":        sessionID,
 		"working_dir":       workingDir,
 		"prompt_sha256":     fmt.Sprintf("%x", sum[:]),
-		"prompt_bytes":      fmt.Sprintf("%d", len([]byte(prompt))),
+		"prompt_bytes":      fmt.Sprintf("%d", len(prompt)),
 		"prompt_rune_count": fmt.Sprintf("%d", len([]rune(prompt))),
 	}
 }

@@ -182,7 +182,7 @@ func SelectForPrompt(available []Skill, userPrompt string) []Skill {
 	return selected
 }
 
-var skillTokenRE = regexp.MustCompile(`[$/]?([A-Za-z0-9_.-]+(?::[A-Za-z0-9_.-]+)?)`)
+var skillTokenRE = regexp.MustCompile(`(?:^|[^A-Za-z0-9_.:-])[$/]([A-Za-z0-9_.-]+(?::[A-Za-z0-9_.-]+)?)`)
 
 func promptTokens(prompt string) []string {
 	matches := skillTokenRE.FindAllStringSubmatch(prompt, -1)

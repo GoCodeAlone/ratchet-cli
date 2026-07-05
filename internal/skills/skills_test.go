@@ -99,3 +99,17 @@ func TestInjectForPromptDoesNotInjectUnmentionedSkillContent(t *testing.T) {
 		t.Fatalf("expected skill index entry, got:\n%s", result)
 	}
 }
+
+func TestInjectForPromptRequiresExplicitSkillPrefix(t *testing.T) {
+	available := []Skill{{Name: "prompt", Content: "do not inject for plain words"}}
+
+	result := InjectForPrompt("base", available, "ordinary prompt")
+	if strings.Contains(result, "### prompt") || strings.Contains(result, "do not inject for plain words") {
+		t.Fatalf("unexpected plain-word skill injection:\n%s", result)
+	}
+
+	result = InjectForPrompt("base", available, "run /prompt")
+	if !strings.Contains(result, "### prompt") || !strings.Contains(result, "do not inject for plain words") {
+		t.Fatalf("expected slash skill injection:\n%s", result)
+	}
+}
