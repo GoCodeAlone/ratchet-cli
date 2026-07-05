@@ -1,22 +1,33 @@
-# Runtime Extension Lifecycle Alignment
+### Alignment Report
 
-**Verdict:** PASS
+**Status:** PASS
 
-| requirement | coverage |
-|---|---|
-| Support skills, plugins, and hooks so autodev can function | T3-T5 first PR injects explicit plugin skills, reloads plugins, and wires hook callsites. |
-| Marketplace support and marketplace updating | T1-T2 add catalog registry and update commands. |
-| Plugin updating and hook updating | T2 updates installed plugin copies; T3 reloads updated hooks into daemon runtime while preserving hook hash trust. |
-| Dynamic reloading | T3 daemon reload primitive. |
-| Optional autoupdating per marketplace/plugin | T1-T2 registry includes marketplace and plugin autoupdate flags. |
-| Mimic Claude/Codex hook breadth | Design adds session, prompt, tool, permission, compact, stop/failure, agent/workflow, notification/config/file events. |
-| Dynamic workflows | T7 lays workflow definitions/runs over existing sessions/fleet/team primitives. |
-| Scheduled tasks/routines | T6 adds visible persisted routines and due-run checks. |
-| Messaging bridge | T8 places schema/projection in messaging-core and keeps transport in Workflow messaging plugins. |
+**Coverage:**
 
-## Scope Lock
+| Design Requirement | Plan Task(s) | Status |
+|---|---|---|
+| Marketplace registry, update policy, install by marketplace, enable/disable, reload visibility | Task 1, Task 2, Task 3 | Covered |
+| Plugin skill discovery, namespacing, and explicit prompt injection | Task 4 | Covered |
+| Hook parity for prompt/tool/permission/compact/stop/failure lifecycle points | Task 5 | Covered |
+| Visible routines over existing cron/session primitives without hidden background autonomy | Task 6 | Covered |
+| Dynamic workflow primitive over existing orchestration with JavaScript runtime deferred | Task 7 | Covered |
+| Blackboard/messaging bridge keeps delivery in Workflow messaging plugins | Task 8, Task 9 | Covered |
+| Docs, policy, security, rollback, and no direct messaging credentials | Task 9 | Covered |
 
-Locked first PR: daemon reload, plugin skills in CLI/prompt, hook parity callsites, docs/tests.
+**Scope Check:**
 
-Deferred by design: marketplace registry/update, routines/workflows, and messaging-core bridge. They remain required follow-up PRs, not optional backlog.
+| Plan Task | Design Requirement | Status |
+|---|---|---|
+| Task 1 | Marketplace registry core | Justified |
+| Task 2 | Plugin CLI lifecycle | Justified |
+| Task 3 | Daemon reload | Justified |
+| Task 4 | Skill runtime integration | Justified |
+| Task 5 | Hook parity slice | Justified |
+| Task 6 | Routine primitive | Justified |
+| Task 7 | Workflow primitive | Justified |
+| Task 8 | Messaging bridge contract | Justified |
+| Task 9 | Docs and policy | Justified |
 
+**Manifest Check:** `plan-scope-check.sh --plan docs/plans/2026-07-05-ratchet-runtime-extension-lifecycle.md` returned PASS.
+
+**Drift Items:** None.
