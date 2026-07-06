@@ -26,33 +26,43 @@ type Report struct {
 
 // CollectOptions allows tests and future callers to inject local discovery.
 type CollectOptions struct {
-	Version      string
-	Commit       string
-	Date         string
-	DaemonStatus string
-	Executable   func() (string, error)
-	WorkingDir   func() (string, error)
-	HomeDir      func() (string, error)
-	StateHome    string
+	Version           string
+	Commit            string
+	Date              string
+	DaemonStatus      string
+	Executable        func() (string, error)
+	ResolveExecutable func(string) (string, error)
+	WorkingDir        func() (string, error)
+	HomeDir           func() (string, error)
+	StateHome         string
 }
 
 // Collect builds a Report without starting daemons or reading credentials.
 func Collect(version, commit, date, daemonStatus string) Report {
 	return CollectWithOptions(CollectOptions{
-		Version:      version,
-		Commit:       commit,
-		Date:         date,
-		DaemonStatus: daemonStatus,
-		Executable:   os.Executable,
-		WorkingDir:   os.Getwd,
-		HomeDir:      os.UserHomeDir,
-		StateHome:    os.Getenv("XDG_STATE_HOME"),
+		Version:           version,
+		Commit:            commit,
+		Date:              date,
+		DaemonStatus:      daemonStatus,
+		Executable:        os.Executable,
+		ResolveExecutable: filepath.EvalSymlinks,
+		WorkingDir:        os.Getwd,
+		HomeDir:           os.UserHomeDir,
+		StateHome:         os.Getenv("XDG_STATE_HOME"),
 	})
 }
 
 // CollectWithOptions builds a Report with injectable local discovery functions.
 func CollectWithOptions(opts CollectOptions) Report {
 	exe, exeErr := callDiscovery(opts.Executable)
+	if exe != "" {
+		resolved, resolveErr := resolveExecutable(exe, opts.ResolveExecutable)
+		if resolveErr != nil {
+			exeErr = errorsJoin(exeErr, fmt.Errorf("resolve executable symlink: %w", resolveErr))
+		} else if resolved != "" {
+			exe = resolved
+		}
+	}
 	wd, wdErr := callDiscovery(opts.WorkingDir)
 	home, homeErr := callDiscovery(opts.HomeDir)
 	dataDir, configPath := ratchetDataPaths(home)
@@ -150,6 +160,24 @@ func appendDiscoveryWarning(report *Report, label string, err error) {
 		return
 	}
 	report.Warnings = append(report.Warnings, fmt.Sprintf("%s discovery failed: %v", label, err))
+}
+
+func resolveExecutable(path string, resolver func(string) (string, error)) (string, error) {
+	if resolver == nil {
+		return path, nil
+	}
+	return resolver(path)
+}
+
+func errorsJoin(existing, next error) error {
+	switch {
+	case existing == nil:
+		return next
+	case next == nil:
+		return existing
+	default:
+		return fmt.Errorf("%v; %w", existing, next)
+	}
 }
 
 func valueOrUnknown(value string) string {

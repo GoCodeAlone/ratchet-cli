@@ -87,3 +87,34 @@ func TestCollectWarningsWhenLocalPathDiscoveryFails(t *testing.T) {
 		}
 	}
 }
+
+func TestCollectClassifiesResolvedHomebrewFormulaSymlink(t *testing.T) {
+	report := CollectWithOptions(CollectOptions{
+		Version:      "0.30.9",
+		Commit:       "abc123",
+		Date:         "2026-07-06T00:00:00Z",
+		DaemonStatus: "daemon is not running",
+		Executable: func() (string, error) {
+			return "/opt/homebrew/bin/ratchet", nil
+		},
+		ResolveExecutable: func(path string) (string, error) {
+			if path != "/opt/homebrew/bin/ratchet" {
+				t.Fatalf("resolver path = %q", path)
+			}
+			return "/opt/homebrew/Cellar/ratchet-cli/0.30.9/bin/ratchet", nil
+		},
+		WorkingDir: func() (string, error) {
+			return "/tmp/work", nil
+		},
+		HomeDir: func() (string, error) {
+			return "/tmp/home", nil
+		},
+	})
+
+	if !strings.Contains(strings.ToLower(report.Install), "homebrew formula") {
+		t.Fatalf("install = %q, want Homebrew Formula", report.Install)
+	}
+	if report.Executable != "/opt/homebrew/Cellar/ratchet-cli/0.30.9/bin/ratchet" {
+		t.Fatalf("executable = %q", report.Executable)
+	}
+}
