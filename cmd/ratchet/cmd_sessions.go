@@ -18,6 +18,9 @@ import (
 )
 
 const daemonSessionExportSchema = "ratchet.session-export.v1"
+const daemonSessionExportUsage = "Usage: ratchet sessions export <id> --output <path> [--json]"
+
+var errDaemonSessionExportUsage = errors.New("usage: ratchet sessions export <id> --output <path> [--json]")
 
 type sessionsClient interface {
 	Close() error
@@ -211,8 +214,8 @@ func handleSessions(args []string) {
 		}
 	case "export":
 		if err := executeDaemonSessionExport(context.Background(), c, args[1:], os.Stdout); err != nil {
-			if strings.HasPrefix(err.Error(), "Usage:") {
-				fmt.Println(err)
+			if errors.Is(err, errDaemonSessionExportUsage) {
+				fmt.Println(daemonSessionExportUsage)
 				return
 			}
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -230,7 +233,7 @@ func printSessionsUsage() {
 func executeDaemonSessionExport(ctx context.Context, c sessionsClient, args []string, w interface{ Write([]byte) (int, error) }) error {
 	sessionID, output, jsonOut, ok := parseDaemonSessionExportArgs(args)
 	if !ok {
-		return errors.New("Usage: ratchet sessions export <id> --output <path> [--json]")
+		return errDaemonSessionExportUsage
 	}
 	tree, err := c.GetSessionTree(ctx, sessionID)
 	if err != nil {
