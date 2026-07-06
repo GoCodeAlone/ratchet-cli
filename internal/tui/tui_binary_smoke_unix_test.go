@@ -87,6 +87,7 @@ func TestTUIBinarySmoke(t *testing.T) {
 		s.clear()
 		switch row.Keys {
 		case "ctrl+b":
+			// Covered in TestTUIBinarySmokeSessionTreeShortcut to keep tree navigation in a fresh PTY session.
 			continue
 		case "ctrl+s":
 			s.sendCtrl('s')
