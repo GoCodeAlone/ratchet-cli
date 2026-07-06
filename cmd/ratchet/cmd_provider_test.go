@@ -176,7 +176,7 @@ func TestProviderSettingsJSON(t *testing.T) {
 }
 
 func TestBedrockProviderSettingsDefaultsRegion(t *testing.T) {
-	settings, err := bedrockProviderSettings(" AKIAEXAMPLE ", "", " token ")
+	settings, err := bedrockProviderSettings(" AKIAEXAMPLE ", "")
 	if err != nil {
 		t.Fatalf("bedrockProviderSettings: %v", err)
 	}
@@ -186,13 +186,13 @@ func TestBedrockProviderSettingsDefaultsRegion(t *testing.T) {
 	if settings["region"] != "us-east-1" {
 		t.Fatalf("region = %q", settings["region"])
 	}
-	if settings["session_token"] != "token" {
-		t.Fatalf("session_token = %q", settings["session_token"])
+	if _, ok := settings["session_token"]; ok {
+		t.Fatalf("session_token should not be stored in settings: %#v", settings)
 	}
 }
 
 func TestPromptBedrockProviderCredentials(t *testing.T) {
-	scanner := bufio.NewScanner(strings.NewReader("AKIAEXAMPLE\nus-west-2\ntoken\n"))
+	scanner := bufio.NewScanner(strings.NewReader("AKIAEXAMPLE\nus-west-2\n"))
 	apiKey, settings, err := promptBedrockProviderCredentials(scanner, &strings.Builder{}, func(label string) (string, error) {
 		if label != "AWS secret access key" {
 			t.Fatalf("label = %q", label)
@@ -205,13 +205,16 @@ func TestPromptBedrockProviderCredentials(t *testing.T) {
 	if apiKey != "secret" {
 		t.Fatalf("apiKey = %q", apiKey)
 	}
-	if settings["access_key_id"] != "AKIAEXAMPLE" || settings["region"] != "us-west-2" || settings["session_token"] != "token" {
+	if settings["access_key_id"] != "AKIAEXAMPLE" || settings["region"] != "us-west-2" {
 		t.Fatalf("settings = %#v", settings)
+	}
+	if _, ok := settings["session_token"]; ok {
+		t.Fatalf("session_token should not be stored in settings: %#v", settings)
 	}
 }
 
 func TestPromptBedrockProviderCredentialsRequiresSecret(t *testing.T) {
-	scanner := bufio.NewScanner(strings.NewReader("AKIAEXAMPLE\nus-west-2\n\n"))
+	scanner := bufio.NewScanner(strings.NewReader("AKIAEXAMPLE\nus-west-2\n"))
 	_, _, err := promptBedrockProviderCredentials(scanner, &strings.Builder{}, func(string) (string, error) {
 		return " ", nil
 	})

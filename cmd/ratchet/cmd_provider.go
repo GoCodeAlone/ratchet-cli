@@ -735,26 +735,16 @@ func promptBedrockProviderCredentials(scanner *bufio.Scanner, out io.Writer, pro
 	}
 	region := scanner.Text()
 
-	fmt.Fprint(out, "AWS session token (optional): ")
-	if !scanner.Scan() {
-		if scanErr := scanner.Err(); scanErr != nil {
-			return "", nil, scanErr
-		}
-		return "", nil, io.EOF
-	}
-	sessionToken := scanner.Text()
-
-	settings, err := bedrockProviderSettings(accessKeyID, region, sessionToken)
+	settings, err := bedrockProviderSettings(accessKeyID, region)
 	if err != nil {
 		return "", nil, err
 	}
 	return secretAccessKey, settings, nil
 }
 
-func bedrockProviderSettings(accessKeyID, region, sessionToken string) (map[string]string, error) {
+func bedrockProviderSettings(accessKeyID, region string) (map[string]string, error) {
 	accessKeyID = strings.TrimSpace(accessKeyID)
 	region = strings.TrimSpace(region)
-	sessionToken = strings.TrimSpace(sessionToken)
 	if accessKeyID == "" {
 		return nil, fmt.Errorf("AWS access key ID is required")
 	}
@@ -764,9 +754,6 @@ func bedrockProviderSettings(accessKeyID, region, sessionToken string) (map[stri
 	settings := map[string]string{
 		"access_key_id": accessKeyID,
 		"region":        region,
-	}
-	if sessionToken != "" {
-		settings["session_token"] = sessionToken
 	}
 	return settings, nil
 }

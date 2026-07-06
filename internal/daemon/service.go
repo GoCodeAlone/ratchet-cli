@@ -619,8 +619,12 @@ func normalizeProviderSettings(settings string) (string, error) {
 	if err := json.Unmarshal([]byte(settings), &decoded); err != nil {
 		return "", err
 	}
-	if _, ok := decoded.(map[string]any); !ok {
+	settingsObject, ok := decoded.(map[string]any)
+	if !ok {
 		return "", fmt.Errorf("must be a JSON object")
+	}
+	if len(settingsObject) == 0 {
+		return "{}", nil
 	}
 	return settings, nil
 }

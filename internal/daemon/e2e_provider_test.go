@@ -222,9 +222,10 @@ func TestE2EAddProviderStoresSettings(t *testing.T) {
 	}
 
 	_, err = h.Client.AddProvider(ctx, &pb.AddProviderReq{
-		Alias: "bedrock",
-		Type:  "anthropic_bedrock",
-		Model: "anthropic.claude-opus-4-20250514-v1:0",
+		Alias:    "bedrock",
+		Type:     "anthropic_bedrock",
+		Model:    "anthropic.claude-opus-4-20250514-v1:0",
+		Settings: `{ }`,
 	})
 	if err != nil {
 		t.Fatalf("AddProvider update: %v", err)
