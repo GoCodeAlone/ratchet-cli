@@ -90,10 +90,8 @@ func TestTUIBinarySmoke(t *testing.T) {
 			// Covered in TestTUIBinarySmokeSessionTreeShortcut to keep tree navigation in a fresh PTY session.
 			continue
 		case "ctrl+s":
-			s.sendCtrl('s')
-			s.waitFor("Sessions", 8*time.Second)
-			s.sendCtrl('s')
-			s.waitFor("Message ratchet", 8*time.Second)
+			// Covered in TestTUIBinarySmokeSidebarShortcut to keep sidebar navigation in a fresh PTY session.
+			continue
 		case "ctrl+t":
 			s.sendCtrl('t')
 			s.waitFor("Team View", 8*time.Second)
@@ -115,6 +113,48 @@ func TestTUIBinarySmoke(t *testing.T) {
 	assertNoInstructionOrHookSurface(t, s.snapshot(), red)
 	s.clear()
 	s.submitSlash("/exit")
+	s.waitExit(5 * time.Second)
+}
+
+func TestTUIBinarySmokeSidebarShortcut(t *testing.T) {
+	if raceEnabled {
+		t.Skip("TUI binary PTY smoke is disabled under -race")
+	}
+	root := tuiRepoRoot(t)
+	tempRoot := t.TempDir()
+	home := filepath.Join(tempRoot, "home")
+	state := filepath.Join(tempRoot, "state")
+	work := filepath.Join(tempRoot, "work")
+	bin := filepath.Join(tempRoot, "ratchet-tui-smoke")
+	for _, dir := range []string{home, state, work} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	red := harnessredact.New(home, root, tempRoot, filepath.Join(tempRoot, "ratchet.sock"), bin).String
+	build := exec.CommandContext(context.Background(), "go", "build", "-tags", "tui_smoke", "-o", bin, "./cmd/ratchet-tui-smoke")
+	build.Dir = root
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build smoke binary: %v\n%s", err, red(string(out)))
+	}
+
+	env := []string{
+		"HOME=" + home,
+		"USERPROFILE=" + home,
+		"XDG_STATE_HOME=" + state,
+	}
+	s := startTUITestPTY(t, bin, work, env, red)
+	if match, _ := s.waitForAny([]string{"press any key", "Message ratchet"}, 6*time.Second); match == "press any key" {
+		s.send(" ")
+	}
+	s.waitFor("Message ratchet", 6*time.Second)
+	s.clear()
+	s.sendCtrl('s')
+	s.waitFor("Sessions", 8*time.Second)
+	s.sendCtrl('s')
+	s.waitFor("Message ratchet", 8*time.Second)
+	assertNoInstructionOrHookSurface(t, s.snapshot(), red)
+	s.sendCtrl('c')
 	s.waitExit(5 * time.Second)
 }
 
