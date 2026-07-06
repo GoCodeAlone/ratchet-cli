@@ -195,6 +195,65 @@ func TestE2EAddProviderWithoutKey_NoSecret(t *testing.T) {
 	}
 }
 
+func TestE2EAddProviderStoresSettings(t *testing.T) {
+	h := newE2EHarness(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	_, err := h.Client.AddProvider(ctx, &pb.AddProviderReq{
+		Alias:    "bedrock",
+		Type:     "anthropic_bedrock",
+		Model:    "anthropic.claude-sonnet-4-20250514-v1:0",
+		ApiKey:   "secret",
+		Settings: `{"region":"us-west-2","access_key_id":"AKIAEXAMPLE"}`,
+	})
+	if err != nil {
+		t.Fatalf("AddProvider: %v", err)
+	}
+
+	var settings string
+	if err := h.DB.QueryRowContext(ctx,
+		`SELECT settings FROM llm_providers WHERE alias = ?`, "bedrock",
+	).Scan(&settings); err != nil {
+		t.Fatalf("query settings: %v", err)
+	}
+	if settings != `{"region":"us-west-2","access_key_id":"AKIAEXAMPLE"}` {
+		t.Fatalf("settings = %q", settings)
+	}
+
+	_, err = h.Client.AddProvider(ctx, &pb.AddProviderReq{
+		Alias: "bedrock",
+		Type:  "anthropic_bedrock",
+		Model: "anthropic.claude-opus-4-20250514-v1:0",
+	})
+	if err != nil {
+		t.Fatalf("AddProvider update: %v", err)
+	}
+	if err := h.DB.QueryRowContext(ctx,
+		`SELECT settings FROM llm_providers WHERE alias = ?`, "bedrock",
+	).Scan(&settings); err != nil {
+		t.Fatalf("query updated settings: %v", err)
+	}
+	if settings != `{"region":"us-west-2","access_key_id":"AKIAEXAMPLE"}` {
+		t.Fatalf("settings after update = %q", settings)
+	}
+}
+
+func TestE2EAddProviderRejectsInvalidSettings(t *testing.T) {
+	h := newE2EHarness(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	_, err := h.Client.AddProvider(ctx, &pb.AddProviderReq{
+		Alias:    "bad-settings",
+		Type:     "anthropic_bedrock",
+		Settings: `["not","an","object"]`,
+	})
+	if err == nil {
+		t.Fatal("expected invalid settings error")
+	}
+}
+
 // TestE2EStaleMigration_KeylessTypesGetEmptySecretName verifies the initDB
 // migration that clears stale secret_name values for ollama/llama_cpp rows that
 // were inserted before the fix. We inject a stale row directly into the DB

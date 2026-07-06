@@ -13,7 +13,12 @@ import (
 
 // PromptAPIKey prompts the user for an API key (hidden input).
 func PromptAPIKey(providerType string) (string, error) {
-	fmt.Printf("Enter %s API key: ", providerType)
+	return PromptSecret(fmt.Sprintf("Enter %s API key", providerType))
+}
+
+// PromptSecret prompts the user for a secret value (hidden input).
+func PromptSecret(label string) (string, error) {
+	fmt.Printf("%s: ", label)
 	key, err := term.ReadPassword(int(syscall.Stdin))
 	fmt.Println()
 	if err != nil {

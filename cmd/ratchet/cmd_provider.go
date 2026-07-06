@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -72,7 +73,8 @@ func handleProvider(args []string) {
 		}
 		// Parse --model flag from remaining args.
 		model, modelSet := parseProviderModelFlag(args)
-		var apiKey, baseURL string
+		var apiKey, baseURL, settingsJSON string
+		var settings map[string]string
 		scanner := bufio.NewScanner(os.Stdin)
 		switch providerType {
 		case "ollama":
@@ -121,6 +123,17 @@ func handleProvider(args []string) {
 		case "openai_chatgpt":
 			fmt.Println("Use: ratchet provider setup openai-chatgpt")
 			return
+		case "anthropic_bedrock":
+			apiKey, settings, err = promptBedrockProviderCredentials(scanner, os.Stdout, providerauth.PromptSecret)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+			settingsJSON, err = providerSettingsJSON(settings)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
 		default:
 			apiKey, err = providerauth.PromptAPIKey(providerType)
 			if err != nil {
@@ -137,7 +150,7 @@ func handleProvider(args []string) {
 		}
 		if !modelSet && model == "" {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			selected, selectErr := promptProviderModelSelection(ctx, providerType, apiKey, baseURL, scanner, os.Stdout, wfprovider.ListModels)
+			selected, selectErr := promptProviderModelSelection(ctx, providerType, apiKey, baseURL, settings, scanner, os.Stdout, wfprovider.ListModelsWithSettings)
 			cancel()
 			if selectErr != nil {
 				fmt.Fprintf(os.Stderr, "model selection failed: %v\n", selectErr)
@@ -146,11 +159,12 @@ func handleProvider(args []string) {
 			model = selected
 		}
 		p, err := c.AddProvider(context.Background(), &pb.AddProviderReq{
-			Alias:   alias,
-			Type:    providerType,
-			Model:   model,
-			ApiKey:  apiKey,
-			BaseUrl: baseURL,
+			Alias:    alias,
+			Type:     providerType,
+			Model:    model,
+			ApiKey:   apiKey,
+			BaseUrl:  baseURL,
+			Settings: settingsJSON,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -298,7 +312,7 @@ func handleOpenAIChatGPTSetup(args []string) {
 	scanner := bufio.NewScanner(os.Stdin)
 	if !opts.modelSet {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		model, selectErr := promptProviderModelSelection(ctx, "openai_chatgpt", tokenBundle, "", scanner, os.Stdout, wfprovider.ListModels)
+		model, selectErr := promptProviderModelSelection(ctx, "openai_chatgpt", tokenBundle, "", nil, scanner, os.Stdout, wfprovider.ListModelsWithSettings)
 		cancel()
 		if selectErr != nil {
 			fmt.Fprintf(os.Stderr, "model selection failed: %v\n", selectErr)
@@ -689,10 +703,99 @@ func promptModelSelection(models []wfprovider.ModelInfo, scanner *bufio.Scanner)
 	return models[0].ID
 }
 
-type providerModelLister func(context.Context, string, string, string) ([]wfprovider.ModelInfo, error)
+type providerModelLister func(context.Context, string, string, string, map[string]string) ([]wfprovider.ModelInfo, error)
 
-func promptProviderModelSelection(ctx context.Context, providerType, apiKey, baseURL string, scanner *bufio.Scanner, out io.Writer, list providerModelLister) (string, error) {
-	models, err := list(ctx, providerType, apiKey, baseURL)
+type providerSecretPrompter func(string) (string, error)
+
+func promptBedrockProviderCredentials(scanner *bufio.Scanner, out io.Writer, promptSecret providerSecretPrompter) (string, map[string]string, error) {
+	fmt.Fprint(out, "AWS access key ID: ")
+	if !scanner.Scan() {
+		if scanErr := scanner.Err(); scanErr != nil {
+			return "", nil, scanErr
+		}
+		return "", nil, io.EOF
+	}
+	accessKeyID := scanner.Text()
+
+	secretAccessKey, err := promptSecret("AWS secret access key")
+	if err != nil {
+		return "", nil, err
+	}
+	secretAccessKey = strings.TrimSpace(secretAccessKey)
+	if secretAccessKey == "" {
+		return "", nil, fmt.Errorf("AWS secret access key is required")
+	}
+
+	fmt.Fprint(out, "AWS region [us-east-1]: ")
+	if !scanner.Scan() {
+		if scanErr := scanner.Err(); scanErr != nil {
+			return "", nil, scanErr
+		}
+		return "", nil, io.EOF
+	}
+	region := scanner.Text()
+
+	fmt.Fprint(out, "AWS session token (optional): ")
+	if !scanner.Scan() {
+		if scanErr := scanner.Err(); scanErr != nil {
+			return "", nil, scanErr
+		}
+		return "", nil, io.EOF
+	}
+	sessionToken := scanner.Text()
+
+	settings, err := bedrockProviderSettings(accessKeyID, region, sessionToken)
+	if err != nil {
+		return "", nil, err
+	}
+	return secretAccessKey, settings, nil
+}
+
+func bedrockProviderSettings(accessKeyID, region, sessionToken string) (map[string]string, error) {
+	accessKeyID = strings.TrimSpace(accessKeyID)
+	region = strings.TrimSpace(region)
+	sessionToken = strings.TrimSpace(sessionToken)
+	if accessKeyID == "" {
+		return nil, fmt.Errorf("AWS access key ID is required")
+	}
+	if region == "" {
+		region = "us-east-1"
+	}
+	settings := map[string]string{
+		"access_key_id": accessKeyID,
+		"region":        region,
+	}
+	if sessionToken != "" {
+		settings["session_token"] = sessionToken
+	}
+	return settings, nil
+}
+
+func providerSettingsJSON(settings map[string]string) (string, error) {
+	if len(settings) == 0 {
+		return "", nil
+	}
+	clean := make(map[string]string, len(settings))
+	for k, v := range settings {
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
+		if k == "" || v == "" {
+			continue
+		}
+		clean[k] = v
+	}
+	if len(clean) == 0 {
+		return "", nil
+	}
+	data, err := json.Marshal(clean)
+	if err != nil {
+		return "", fmt.Errorf("marshal provider settings: %w", err)
+	}
+	return string(data), nil
+}
+
+func promptProviderModelSelection(ctx context.Context, providerType, apiKey, baseURL string, settings map[string]string, scanner *bufio.Scanner, out io.Writer, list providerModelLister) (string, error) {
+	models, err := list(ctx, providerType, apiKey, baseURL, settings)
 	if err != nil || len(models) == 0 {
 		if err != nil {
 			fmt.Fprintf(out, "could not list models for %s: %v\n", providerType, err)

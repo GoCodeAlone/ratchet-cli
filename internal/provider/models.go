@@ -13,3 +13,8 @@ type ModelInfo = wfprovider.ModelInfo
 func ListModels(ctx context.Context, providerType, apiKey, baseURL string) ([]ModelInfo, error) {
 	return wfprovider.ListModels(ctx, providerType, apiKey, baseURL)
 }
+
+// ListModelsWithSettings fetches available models with provider-specific discovery settings.
+func ListModelsWithSettings(ctx context.Context, providerType, apiKey, baseURL string, settings map[string]string) ([]ModelInfo, error) {
+	return wfprovider.ListModelsWithSettings(ctx, providerType, apiKey, baseURL, settings)
+}
