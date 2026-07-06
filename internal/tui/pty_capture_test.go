@@ -31,7 +31,8 @@ func TestStartTUITestPTYDisablesSoftwareFlowControl(t *testing.T) {
 	}
 
 	s := startTUITestPTY(t, script, dir, nil, func(text string) string { return text })
-	out := strings.ToLower(s.waitExit(5 * time.Second))
+	out := strings.ToLower(s.waitFor("-ixon", 5*time.Second))
+	s.waitExit(5 * time.Second)
 	if hasSttyFlag(out, "-ixon") {
 		return
 	}
