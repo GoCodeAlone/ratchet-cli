@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -13,9 +14,28 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"golang.org/x/term"
 )
 
 var tuiANSI = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\].*?\x07|\x1b[=>]|\r`)
+
+func TestStartTUITestPTYDisablesSoftwareFlowControl(t *testing.T) {
+	if _, err := exec.LookPath("stty"); err != nil {
+		t.Skipf("stty not available: %v", err)
+	}
+	dir := t.TempDir()
+	script := filepath.Join(dir, "show-stty")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nstty -a\n"), 0700); err != nil {
+		t.Fatalf("write stty script: %v", err)
+	}
+
+	s := startTUITestPTY(t, script, dir, nil, func(text string) string { return text })
+	out := strings.ToLower(s.waitExit(5 * time.Second))
+	if strings.Contains(out, " -ixon") || strings.Contains(out, ";-ixon") {
+		return
+	}
+	t.Fatalf("expected PTY software flow control to be disabled; stty output:\n%s", out)
+}
 
 type tuiPTY struct {
 	t      *testing.T
@@ -40,6 +60,9 @@ func startTUITestPTY(t *testing.T, bin string, dir string, env []string, red fun
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 42, Cols: 120})
 	if err != nil {
 		t.Fatalf("start pty: %v", err)
+	}
+	if _, err := term.MakeRaw(int(ptmx.Fd())); err != nil {
+		t.Fatalf("set pty raw mode: %v", err)
 	}
 	waitCh := make(chan error, 1)
 	s := &tuiPTY{t: t, ptmx: ptmx, cmd: cmd, waitCh: waitCh, red: red, alive: true}
