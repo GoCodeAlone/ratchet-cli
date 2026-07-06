@@ -28,7 +28,7 @@
 |------|-------|-------|--------|
 | 1 | Prove Windows startup and expose policy matrix | Task 1, Task 2, Task 3, Task 4 | feat/windows-policy-surface |
 
-**Status:** Locked 2026-07-06T03:59:49Z
+**Status:** Complete 2026-07-06T04:42:26Z
 
 ## Task 1: Guard Windows Command Startup CI
 
