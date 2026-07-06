@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -17,6 +18,82 @@ import (
 	wfprovider "github.com/GoCodeAlone/workflow-plugin-agent/provider"
 )
 
+type providerSetupGuide struct {
+	Alias              string `json:"alias"`
+	ProviderType       string `json:"provider_type"`
+	InstallHint        string `json:"install_hint"`
+	AuthHint           string `json:"auth_hint"`
+	SetupCommand       string `json:"setup_command"`
+	ModelBehavior      string `json:"model_behavior"`
+	CredentialBoundary string `json:"credential_boundary"`
+}
+
+var providerSetupGuides = []providerSetupGuide{
+	{
+		Alias:              "ollama",
+		ProviderType:       "ollama",
+		InstallHint:        "Install and start Ollama locally.",
+		AuthHint:           "No API key required.",
+		SetupCommand:       "ratchet provider setup ollama",
+		ModelBehavior:      "Lists local Ollama models when available; prompts for a model otherwise.",
+		CredentialBoundary: "Local Ollama endpoint only; no secret value is stored.",
+	},
+	{
+		Alias:              "openai-chatgpt",
+		ProviderType:       "openai_chatgpt",
+		InstallHint:        "No separate CLI required.",
+		AuthHint:           "Uses OpenAI device-code auth or a Codex auth import.",
+		SetupCommand:       "ratchet provider setup openai-chatgpt",
+		ModelBehavior:      "Defaults to the ChatGPT subscription coding model unless --model is provided.",
+		CredentialBoundary: "Stores the local OAuth token bundle through the daemon provider store; command output never prints token values.",
+	},
+	{
+		Alias:              "claude-code",
+		ProviderType:       "claude_code",
+		InstallHint:        "Install Claude Code and ensure `claude` is on PATH.",
+		AuthHint:           "Run Claude Code's native login flow.",
+		SetupCommand:       "ratchet provider setup claude-code",
+		ModelBehavior:      "Model selection remains owned by Claude Code.",
+		CredentialBoundary: "Ratchet stores command metadata only; Claude Code owns credentials.",
+	},
+	{
+		Alias:              "copilot-cli",
+		ProviderType:       "copilot_cli",
+		InstallHint:        "Install GitHub Copilot CLI and ensure `copilot` is on PATH.",
+		AuthHint:           "Run Copilot's native login flow.",
+		SetupCommand:       "ratchet provider setup copilot-cli",
+		ModelBehavior:      "Model selection remains owned by Copilot CLI.",
+		CredentialBoundary: "Ratchet stores command metadata only; Copilot owns credentials.",
+	},
+	{
+		Alias:              "codex-cli",
+		ProviderType:       "codex_cli",
+		InstallHint:        "Install Codex CLI and ensure `codex` is on PATH.",
+		AuthHint:           "Run Codex's native login flow.",
+		SetupCommand:       "ratchet provider setup codex-cli",
+		ModelBehavior:      "Model selection remains owned by Codex CLI.",
+		CredentialBoundary: "Ratchet stores command metadata only; Codex owns credentials.",
+	},
+	{
+		Alias:              "gemini-cli",
+		ProviderType:       "gemini_cli",
+		InstallHint:        "Install Gemini CLI and ensure `gemini` is on PATH.",
+		AuthHint:           "Run Gemini CLI's native login flow or configure Gemini-supported env.",
+		SetupCommand:       "ratchet provider setup gemini-cli",
+		ModelBehavior:      "Model selection remains owned by Gemini CLI.",
+		CredentialBoundary: "Ratchet stores command metadata only; Gemini CLI owns credentials.",
+	},
+	{
+		Alias:              "cursor-cli",
+		ProviderType:       "cursor_cli",
+		InstallHint:        "Install Cursor CLI and ensure `cursor-cli` is on PATH.",
+		AuthHint:           "Run Cursor's native login flow.",
+		SetupCommand:       "ratchet provider setup cursor-cli",
+		ModelBehavior:      "Model selection remains owned by Cursor CLI.",
+		CredentialBoundary: "Ratchet stores command metadata only; Cursor owns credentials.",
+	},
+}
+
 func handleProvider(args []string) {
 	if len(args) == 0 {
 		fmt.Println("Usage: ratchet provider <add|list|test|remove|default|setup|discover>")
@@ -29,10 +106,14 @@ func handleProvider(args []string) {
 		return
 	case "setup":
 		if len(args) < 2 {
-			fmt.Println("Usage: ratchet provider setup <ollama|openai-chatgpt|claude-code|copilot-cli|codex-cli|gemini-cli|cursor-cli>")
+			fmt.Println("Usage: ratchet provider setup <list|guide|ollama|openai-chatgpt|claude-code|copilot-cli|codex-cli|gemini-cli|cursor-cli>")
 			return
 		}
 		switch args[1] {
+		case "list":
+			printProviderSetupGuideList(args[2:], os.Stdout)
+		case "guide":
+			printProviderSetupGuide(args[2:], os.Stdout, os.Stderr)
 		case "ollama":
 			handleOllamaSetup(args[2:])
 		case "openai-chatgpt":
@@ -213,6 +294,55 @@ func handleProvider(args []string) {
 	default:
 		fmt.Printf("unknown provider command: %s\n", args[0])
 	}
+}
+
+func printProviderSetupGuideList(args []string, w io.Writer) {
+	if hasJSONFlag(args) {
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(providerSetupGuides)
+		return
+	}
+	fmt.Fprintf(w, "%-18s %-16s %s\n", "ALIAS", "TYPE", "SETUP")
+	for _, guide := range providerSetupGuides {
+		fmt.Fprintf(w, "%-18s %-16s %s\n", guide.Alias, guide.ProviderType, guide.SetupCommand)
+	}
+}
+
+func printProviderSetupGuide(args []string, w io.Writer, errw io.Writer) {
+	if len(args) == 0 {
+		fmt.Fprintln(errw, "Usage: ratchet provider setup guide <provider> [--json]")
+		return
+	}
+	alias := args[0]
+	for _, guide := range providerSetupGuides {
+		if guide.Alias != alias {
+			continue
+		}
+		if hasJSONFlag(args[1:]) {
+			enc := json.NewEncoder(w)
+			enc.SetIndent("", "  ")
+			_ = enc.Encode(guide)
+			return
+		}
+		fmt.Fprintf(w, "%s (%s)\n", guide.Alias, guide.ProviderType)
+		fmt.Fprintf(w, "Install: %s\n", guide.InstallHint)
+		fmt.Fprintf(w, "Auth: %s\n", guide.AuthHint)
+		fmt.Fprintf(w, "Setup: %s\n", guide.SetupCommand)
+		fmt.Fprintf(w, "Model: %s\n", guide.ModelBehavior)
+		fmt.Fprintf(w, "Credentials: %s\n", guide.CredentialBoundary)
+		return
+	}
+	fmt.Fprintf(errw, "unknown provider setup guide: %s\n", alias)
+}
+
+func hasJSONFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "--json" {
+			return true
+		}
+	}
+	return false
 }
 
 type openAIChatGPTSetupOptions struct {

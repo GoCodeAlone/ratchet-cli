@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
@@ -13,6 +16,8 @@ import (
 	"github.com/GoCodeAlone/ratchet-cli/internal/tui"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+const daemonSessionExportSchema = "ratchet.session-export.v1"
 
 type sessionsClient interface {
 	Close() error
@@ -24,6 +29,24 @@ type sessionsClient interface {
 	GetSessionTree(context.Context, string) (*pb.SessionList, error)
 	ListSessionCompactions(context.Context, string) (*pb.SessionCompactionList, error)
 	UpdateSessionSummary(context.Context, string, string) (*pb.Session, error)
+}
+
+type daemonSessionExportBundle struct {
+	Schema      string                 `json:"schema"`
+	ExportedBy  string                 `json:"exported_by"`
+	ExportedAt  string                 `json:"exported_at"`
+	Session     *pb.Session            `json:"session"`
+	Tree        []*pb.Session          `json:"tree"`
+	Messages    []*pb.HistoryMessage   `json:"messages"`
+	Compactions []*pb.CompactionRecord `json:"compactions"`
+}
+
+type daemonSessionExportSummary struct {
+	Output      string `json:"output"`
+	SessionID   string `json:"session_id"`
+	Tree        int    `json:"tree"`
+	Messages    int    `json:"messages"`
+	Compactions int    `json:"compactions"`
 }
 
 var ensureSessionsClient = func() (sessionsClient, error) {
@@ -186,13 +209,106 @@ func handleSessions(args []string) {
 				record.Summary,
 			)
 		}
+	case "export":
+		if err := executeDaemonSessionExport(context.Background(), c, args[1:], os.Stdout); err != nil {
+			fmt.Println(err)
+			return
+		}
 	default:
 		fmt.Printf("unknown sessions command: %s\n", args[0])
 	}
 }
 
 func printSessionsUsage() {
-	fmt.Println("Usage: ratchet sessions <list|kill|history|clone|fork|tree|browse|summary|compactions>")
+	fmt.Println("Usage: ratchet sessions <list|kill|history|clone|fork|tree|browse|summary|compactions|export>")
+}
+
+func executeDaemonSessionExport(ctx context.Context, c sessionsClient, args []string, w interface{ Write([]byte) (int, error) }) error {
+	sessionID, output, jsonOut, ok := parseDaemonSessionExportArgs(args)
+	if !ok {
+		return errors.New("Usage: ratchet sessions export <id> --output <path> [--json]")
+	}
+	tree, err := c.GetSessionTree(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("export session tree: %w", err)
+	}
+	history, err := c.ListSessionMessages(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("export session history: %w", err)
+	}
+	compactions, err := c.ListSessionCompactions(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("export session compactions: %w", err)
+	}
+	session := findSessionInTree(sessionID, tree.Sessions)
+	if session == nil {
+		return fmt.Errorf("session %q not found in tree", sessionID)
+	}
+	bundle := daemonSessionExportBundle{
+		Schema:      daemonSessionExportSchema,
+		ExportedBy:  "ratchet-cli",
+		ExportedAt:  time.Now().UTC().Format(time.RFC3339),
+		Session:     session,
+		Tree:        tree.Sessions,
+		Messages:    history.Messages,
+		Compactions: compactions.Records,
+	}
+	data, err := json.MarshalIndent(bundle, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode session export: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(output), 0o755); err != nil {
+		return fmt.Errorf("create export dir: %w", err)
+	}
+	if err := os.WriteFile(output, append(data, '\n'), 0o600); err != nil {
+		return fmt.Errorf("write session export: %w", err)
+	}
+	summary := daemonSessionExportSummary{
+		Output:      output,
+		SessionID:   sessionID,
+		Tree:        len(bundle.Tree),
+		Messages:    len(bundle.Messages),
+		Compactions: len(bundle.Compactions),
+	}
+	if jsonOut {
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(summary)
+	}
+	fmt.Fprintf(w, "Exported session %s to %s (%d tree sessions, %d messages, %d compactions)\n",
+		sessionID, output, summary.Tree, summary.Messages, summary.Compactions)
+	return nil
+}
+
+func parseDaemonSessionExportArgs(args []string) (sessionID, output string, jsonOut bool, ok bool) {
+	if len(args) < 3 {
+		return "", "", false, false
+	}
+	sessionID = args[0]
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--output", "-o":
+			if i+1 >= len(args) {
+				return "", "", false, false
+			}
+			output = args[i+1]
+			i++
+		case "--json":
+			jsonOut = true
+		default:
+			return "", "", false, false
+		}
+	}
+	return sessionID, output, jsonOut, sessionID != "" && output != ""
+}
+
+func findSessionInTree(sessionID string, sessions []*pb.Session) *pb.Session {
+	for _, session := range sessions {
+		if session.GetId() == sessionID {
+			return session
+		}
+	}
+	return nil
 }
 
 func parseForkArgs(args []string) (sessionID, messageID string, ok bool) {
