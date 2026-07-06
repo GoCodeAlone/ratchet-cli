@@ -74,10 +74,11 @@ func (s StatusBar) View(t theme.Theme) string {
 
 func statusBarHints(width int) string {
 	candidates := []string{
-		"Ctrl+B tree  Ctrl+S sessions  Ctrl+T team  Ctrl+J jobs  Ctrl+H thinking  Ctrl+C quit ",
-		"Ctrl+B tree  Ctrl+S sessions  Ctrl+J jobs  Ctrl+C quit ",
-		"Ctrl+S sessions  Ctrl+B tree  Ctrl+C quit ",
-		"Ctrl+C quit ",
+		"Ctrl+B tree  Ctrl+S sessions  Ctrl+T team  Ctrl+J jobs  Ctrl+H thinking  Ctrl+C quit",
+		"Ctrl+B tree  Ctrl+S sessions  Ctrl+J jobs  Ctrl+C quit",
+		"Ctrl+S close Ctrl+C quit Esc",
+		"Ctrl+S close Ctrl+C quit",
+		"Ctrl+C quit",
 		"quit",
 	}
 	if width <= 0 {

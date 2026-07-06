@@ -143,14 +143,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.width = msg.Width
 		a.height = msg.Height
 		a.ready = true
-		// Propagate size to chat if active (header takes 1 line)
-		if a.page == pageChat {
-			chatHeight := a.height - 1
-			if chatHeight < 1 {
-				chatHeight = 1
-			}
-			a.chat.SetSize(a.width, chatHeight)
-		}
+		a.relayoutChat()
 		if a.page == pageSessionTree {
 			a.sessionTree = a.sessionTree.SetSize(a.width, a.height-1)
 		}
@@ -173,6 +166,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					a.showSidebar = false
 					a.showTeam = false
 					a.showJobs = false
+					a.relayoutChat()
 				}
 			case "ctrl+b":
 				return a.openSessionTree()
@@ -182,12 +176,14 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					a.showTeam = false
 					a.showJobs = false
 				}
+				a.relayoutChat()
 			case "ctrl+t":
 				a.showTeam = !a.showTeam
 				if a.showTeam {
 					a.showSidebar = false
 					a.showJobs = false
 				}
+				a.relayoutChat()
 			case "ctrl+j":
 				a.showJobs = !a.showJobs
 				if a.showJobs {
@@ -195,6 +191,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					a.showTeam = false
 					cmds = append(cmds, a.jobPanel.Init())
 				}
+				a.relayoutChat()
 			}
 		}
 
@@ -449,10 +446,7 @@ func (a App) View() tea.View {
 		var body string
 		switch {
 		case a.showSidebar:
-			sidebarWidth := 30
-			if a.width > 0 && sidebarWidth > a.width/3 {
-				sidebarWidth = a.width / 3
-			}
+			sidebarWidth := a.sidebarWidth()
 			sidebarView := a.sidebar.SetSize(sidebarWidth, a.height-3).View(a.theme)
 			chatView := a.chat.View(a.theme)
 			body = joinColumns(sidebarView, chatView, sidebarWidth, a.width)
@@ -496,6 +490,41 @@ func (a App) renderHeader() string {
 	}
 
 	return header
+}
+
+func (a *App) relayoutChat() {
+	if a.page != pageChat {
+		return
+	}
+	width, height := a.chatLayoutSize()
+	a.chat.SetSize(width, height)
+}
+
+func (a App) chatLayoutSize() (int, int) {
+	width := a.width
+	height := a.height - 1
+	if a.showSidebar {
+		width = a.width - a.sidebarWidth() - 1
+		height = a.height - 3
+	}
+	if width < 1 {
+		width = 1
+	}
+	if height < 1 {
+		height = 1
+	}
+	return width, height
+}
+
+func (a App) sidebarWidth() int {
+	sidebarWidth := 30
+	if a.width > 0 && sidebarWidth > a.width/3 {
+		sidebarWidth = a.width / 3
+	}
+	if sidebarWidth < 1 {
+		return 1
+	}
+	return sidebarWidth
 }
 
 // joinColumns renders two column strings side by side.

@@ -278,6 +278,15 @@ func providerTest(alias string, c *client.Client) *Result {
 }
 
 func modelCmd(args []string, c *client.Client) *Result {
+	if len(args) > 0 {
+		switch strings.ToLower(args[0]) {
+		case "add", "setup":
+			return &Result{
+				Lines:                []string{fmt.Sprintf("Opening provider setup wizard from /model %s...", strings.ToLower(args[0]))},
+				NavigateToOnboarding: true,
+			}
+		}
+	}
 	if c == nil {
 		return modelHelpLines("Not connected to daemon.")
 	}
@@ -294,7 +303,7 @@ func modelCmd(args []string, c *client.Client) *Result {
 		for _, p := range resp.Providers {
 			lines = append(lines, modelProviderLine(p))
 		}
-		lines = append(lines, "", "Actions:", "  /model <alias> <model-name>  Change a provider model", "  /provider add                 Add another provider", "  /provider default <alias>     Switch the default provider")
+		lines = append(lines, "", "Actions:", "  /model add                   Add another provider", "  /model <alias> <model-name>  Change a provider model", "  /provider default <alias>    Switch the default provider", "  /provider add                Open the provider setup wizard")
 		return &Result{Lines: lines}
 	}
 
@@ -333,6 +342,7 @@ func modelHelpLines(reason string) *Result {
 		"",
 		"Model and provider actions:",
 		"  /model                       Show configured providers and models",
+		"  /model add                   Add another provider in the setup wizard",
 		"  /model <alias> <model-name>  Change a provider model",
 		"  /provider add                Add another provider in the setup wizard",
 		"  /provider default <alias>    Switch the default provider",
@@ -365,14 +375,14 @@ func agentsCmd(c *client.Client) *Result {
 
 func sessionsCmd(c *client.Client) *Result {
 	if c == nil {
-		return &Result{Lines: []string{"Not connected to daemon"}}
+		return sessionHelpLines("Not connected to daemon")
 	}
 	resp, err := c.ListSessions(context.Background())
 	if err != nil {
 		return &Result{Lines: []string{fmt.Sprintf("Error: %v", err)}}
 	}
 	if len(resp.Sessions) == 0 {
-		return &Result{Lines: []string{"No sessions."}}
+		return sessionHelpLines("No sessions.")
 	}
 	lines := []string{"Sessions:", ""}
 	for _, s := range resp.Sessions {
@@ -382,7 +392,31 @@ func sessionsCmd(c *client.Client) *Result {
 		}
 		lines = append(lines, fmt.Sprintf("  %-10s %-10s %s", id, s.Status, s.Name))
 	}
+	lines = append(lines, sessionActionLines()...)
 	return &Result{Lines: lines}
+}
+
+func sessionHelpLines(reason string) *Result {
+	lines := []string{reason}
+	lines = append(lines, sessionActionLines()...)
+	return &Result{Lines: lines}
+}
+
+func sessionActionLines() []string {
+	return []string{
+		"",
+		"Session window actions:",
+		"  Ctrl+S                       Open sidebar; Enter switch; d kill",
+		"  Ctrl+B or /tree              Browse the branch tree for this session",
+		"  /sessions                    Refresh this list",
+		"",
+		"CLI equivalents:",
+		"  ratchet sessions list",
+		"  ratchet sessions browse <id>",
+		"  ratchet sessions clone <id>",
+		"  ratchet sessions fork <id> --at <message-id>",
+		"  ratchet sessions export <id> --output session.export.json",
+	}
 }
 
 // cronCreate creates a new cron job with a duration-style schedule (used by /loop).
