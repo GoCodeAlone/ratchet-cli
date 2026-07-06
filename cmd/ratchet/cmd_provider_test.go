@@ -2,9 +2,11 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"runtime"
 	"strings"
@@ -13,6 +15,99 @@ import (
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 	wfprovider "github.com/GoCodeAlone/workflow-plugin-agent/provider"
 )
+
+func TestProviderSetupListOutputsKnownGuides(t *testing.T) {
+	out := captureStdout(t, func() {
+		handleProvider([]string{"setup", "list"})
+	})
+	for _, want := range []string{"ALIAS", "openai-chatgpt", "codex-cli", "ratchet provider setup openai-chatgpt"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("setup list output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestProviderSetupListJSON(t *testing.T) {
+	out := captureStdout(t, func() {
+		handleProvider([]string{"setup", "list", "--json"})
+	})
+	var rows []providerSetupGuide
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("unmarshal setup list: %v\n%s", err, out)
+	}
+	if len(rows) < 7 {
+		t.Fatalf("guide count = %d, want at least 7", len(rows))
+	}
+	if rows[0].Alias == "" || rows[0].SetupCommand == "" || rows[0].CredentialBoundary == "" {
+		t.Fatalf("first guide missing fields: %+v", rows[0])
+	}
+}
+
+func TestProviderSetupGuideJSON(t *testing.T) {
+	out := captureStdout(t, func() {
+		handleProvider([]string{"setup", "guide", "openai-chatgpt", "--json"})
+	})
+	var guide providerSetupGuide
+	if err := json.Unmarshal([]byte(out), &guide); err != nil {
+		t.Fatalf("unmarshal setup guide: %v\n%s", err, out)
+	}
+	if guide.Alias != "openai-chatgpt" {
+		t.Fatalf("alias = %q", guide.Alias)
+	}
+	if !strings.Contains(guide.AuthHint, "device") {
+		t.Fatalf("auth hint = %q", guide.AuthHint)
+	}
+}
+
+func TestProviderSetupListJSONPropagatesEncodeError(t *testing.T) {
+	err := printProviderSetupGuideList([]string{"--json"}, errWriter{})
+	if err == nil {
+		t.Fatal("expected encode error")
+	}
+}
+
+func TestProviderSetupGuideJSONPropagatesEncodeError(t *testing.T) {
+	err := printProviderSetupGuide([]string{"openai-chatgpt", "--json"}, errWriter{}, io.Discard)
+	if err == nil {
+		t.Fatal("expected encode error")
+	}
+}
+
+func TestProviderSetupGuideUnknownAlias(t *testing.T) {
+	out := captureStderr(t, func() {
+		handleProvider([]string{"setup", "guide", "missing"})
+	})
+	if !strings.Contains(out, "unknown provider setup guide") {
+		t.Fatalf("stderr = %q", out)
+	}
+}
+
+type errWriter struct{}
+
+func (errWriter) Write([]byte) (int, error) {
+	return 0, errors.New("write failed")
+}
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stderr
+	os.Stderr = w
+	defer func() {
+		os.Stderr = old
+		r.Close()
+	}()
+
+	fn()
+
+	w.Close()
+	var buf bytes.Buffer
+	_, _ = buf.ReadFrom(r)
+	return buf.String()
+}
 
 func TestPromptYesNo_Yes(t *testing.T) {
 	for _, input := range []string{"y\n", "Y\n", "yes\n", "YES\n", "\n"} {

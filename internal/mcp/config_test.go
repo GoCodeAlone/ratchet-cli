@@ -94,6 +94,85 @@ func TestWriteGenericMCPConfig(t *testing.T) {
 	}
 }
 
+func TestWriteZedMCPConfig(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, ".zed", "settings.json")
+
+	err := WriteZedMCPConfig(configPath, "ratchet", ZedMCPServerEntry{
+		Command: "ratchet",
+		Args:    []string{"mcp", "daemon"},
+		Env:     map[string]string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config ZedMCPConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := config.ContextServers["ratchet"]
+	if !ok {
+		t.Fatal("missing ratchet context server")
+	}
+	if entry.Command != "ratchet" {
+		t.Fatalf("command = %q, want ratchet", entry.Command)
+	}
+	if got := len(entry.Args); got != 2 || entry.Args[0] != "mcp" || entry.Args[1] != "daemon" {
+		t.Fatalf("args = %#v, want [mcp daemon]", entry.Args)
+	}
+	if entry.Env == nil {
+		t.Fatal("env map should be present for Zed MCP config")
+	}
+}
+
+func TestWriteZedMCPConfigMergesExistingSettings(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, ".zed", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := `{"theme":"Ayu Dark","context_servers":{"other":{"command":"other","args":[],"env":{}}}}`
+	if err := os.WriteFile(configPath, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := WriteZedMCPConfig(configPath, "ratchet", ZedMCPServerEntry{
+		Command: "ratchet",
+		Args:    []string{"mcp", "daemon"},
+		Env:     map[string]string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if raw["theme"] != "Ayu Dark" {
+		t.Fatalf("theme was not preserved: %#v", raw["theme"])
+	}
+	servers, ok := raw["context_servers"].(map[string]any)
+	if !ok {
+		t.Fatalf("context_servers missing or wrong type: %#v", raw["context_servers"])
+	}
+	if _, ok := servers["other"]; !ok {
+		t.Fatal("existing context server was clobbered")
+	}
+	if _, ok := servers["ratchet"]; !ok {
+		t.Fatal("ratchet context server not added")
+	}
+}
+
 func TestRemoveMCPConfig(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, ".claude", "mcp.json")

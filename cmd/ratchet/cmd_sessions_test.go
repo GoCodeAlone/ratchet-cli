@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -129,6 +132,67 @@ func TestHandleSessionsBrowseValidatesID(t *testing.T) {
 
 	if !strings.Contains(out, "Usage: ratchet sessions browse <id>") {
 		t.Fatalf("missing browse usage:\n%s", out)
+	}
+}
+
+func TestHandleSessionsExportWritesSensitiveBundle(t *testing.T) {
+	fake := &fakeSessionsClient{
+		history: &pb.SessionHistory{Messages: []*pb.HistoryMessage{
+			{Id: "msg-1", Role: "user", Content: "secret prompt", Timestamp: timestamppb.Now()},
+			{Id: "msg-2", Role: "assistant", Content: "secret response", Timestamp: timestamppb.Now()},
+		}},
+		tree: &pb.SessionList{Sessions: []*pb.Session{
+			{Id: "sess-1", RootId: "sess-1", Status: "active", Provider: "mock", WorkingDir: "/tmp/project", BranchSummary: "root"},
+			{Id: "fork-1", ParentId: "sess-1", RootId: "sess-1", Status: "done", Provider: "mock", WorkingDir: "/tmp/project", BranchSummary: "fork"},
+		}},
+		compactions: &pb.SessionCompactionList{Records: []*pb.CompactionRecord{
+			{Id: "comp-1", Reason: "manual", Summary: "compact summary", MessagesRemoved: 2, MessagesKept: 1, CreatedAt: timestamppb.Now()},
+		}},
+	}
+	withFakeSessionsClient(t, fake)
+	outPath := filepath.Join(t.TempDir(), "session.json")
+
+	stdout := captureStdout(t, func() {
+		handleSessions([]string{"export", "sess-1", "--output", outPath, "--json"})
+	})
+	if strings.Contains(stdout, "secret prompt") || strings.Contains(stdout, "secret response") {
+		t.Fatalf("stdout leaked message content:\n%s", stdout)
+	}
+
+	info, err := os.Stat(outPath)
+	if err != nil {
+		t.Fatalf("stat export: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("mode = %v, want 0600", got)
+	}
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read export: %v", err)
+	}
+	var bundle daemonSessionExportBundle
+	if err := json.Unmarshal(data, &bundle); err != nil {
+		t.Fatalf("unmarshal export: %v\n%s", err, data)
+	}
+	if bundle.Schema != "ratchet.session-export.v1" || bundle.Session.Id != "sess-1" {
+		t.Fatalf("bundle identity = %q/%q", bundle.Schema, bundle.Session.Id)
+	}
+	if len(bundle.Tree) != 2 || len(bundle.Messages) != 2 || len(bundle.Compactions) != 1 {
+		t.Fatalf("bundle counts tree=%d messages=%d compactions=%d", len(bundle.Tree), len(bundle.Messages), len(bundle.Compactions))
+	}
+	if !strings.Contains(stdout, `"messages": 2`) {
+		t.Fatalf("json summary missing message count:\n%s", stdout)
+	}
+}
+
+func TestHandleSessionsExportRequiresOutput(t *testing.T) {
+	fake := &fakeSessionsClient{tree: &pb.SessionList{}}
+	withFakeSessionsClient(t, fake)
+	out := captureStdout(t, func() {
+		handleSessions([]string{"export", "sess-1"})
+	})
+	if !strings.Contains(out, "Usage: ratchet sessions export") {
+		t.Fatalf("missing usage:\n%s", out)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	acpbridge "github.com/GoCodeAlone/ratchet-cli/internal/acp"
@@ -23,6 +24,8 @@ func runACPWithArgs(args []string) error {
 		switch {
 		case args[0] == "client":
 			return handleACPClient(args[1:])
+		case args[0] == "config":
+			return handleACPConfig(args[1:])
 		case isHelpArg(args[0]):
 			printACPUsage(os.Stdout)
 			return nil
@@ -66,7 +69,51 @@ func printACPUsage(w io.Writer) {
 Commands:
   (default)   Run ratchet as an ACP agent over stdio JSON-RPC
   client      Spawn and control external ACP-compatible agents
+  config      Write client configuration snippets
 
 Run 'ratchet acp client --help' for client commands.
+Run 'ratchet acp config zed [.zed/settings.json]' to add ratchet as a Zed custom ACP agent.
 `)
+}
+
+func handleACPConfig(args []string) error {
+	if len(args) == 0 || isHelpArg(args[0]) {
+		fmt.Println("Usage: ratchet acp config zed [path]")
+		return nil
+	}
+
+	format := args[0]
+	path := ""
+	if len(args) > 1 {
+		path = args[1]
+	}
+	if path == "" {
+		path = defaultACPConfigPath(format)
+	}
+
+	switch format {
+	case "zed":
+		err := acpbridge.WriteZedACPConfig(path, "ratchet", acpbridge.ZedACPAgentServer{
+			Type:    "custom",
+			Command: "ratchet",
+			Args:    []string{"acp"},
+			Env:     map[string]string{},
+		})
+		if err != nil {
+			return fmt.Errorf("write zed ACP config: %w", err)
+		}
+	default:
+		return fmt.Errorf("unknown acp config format: %s", format)
+	}
+	fmt.Printf("wrote %s ACP config: %s\n", format, path)
+	return nil
+}
+
+func defaultACPConfigPath(format string) string {
+	switch format {
+	case "zed":
+		return filepath.Join(".zed", "settings.json")
+	default:
+		return "acp.json"
+	}
 }

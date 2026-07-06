@@ -113,24 +113,16 @@ func (c mcpDaemonClient) DirectMessage(teamID, toAgent, content string) error {
 
 func handleMCPConfig(args []string) {
 	if len(args) == 0 {
-		fmt.Println("Usage: ratchet mcp config <claude|copilot|generic> [path] [blackboard|daemon]")
+		fmt.Println("Usage: ratchet mcp config <claude|copilot|generic|zed> [path] [blackboard|daemon]")
 		return
 	}
-	format := args[0]
-	target := "daemon"
-	if len(args) > 2 {
-		target = args[2]
-	}
+	format, path, target := parseMCPConfigArgs(args)
 	entry, err := mcpConfigEntry(target)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 
-	path := ""
-	if len(args) > 1 {
-		path = args[1]
-	}
 	if path == "" {
 		path = defaultMCPConfigPath(format)
 	}
@@ -143,6 +135,12 @@ func handleMCPConfig(args []string) {
 		err = mcp.WriteCopilotMCPConfig(path, serverName, entry)
 	case "generic":
 		err = mcp.WriteGenericMCPConfig(path, serverName, entry)
+	case "zed":
+		err = mcp.WriteZedMCPConfig(path, serverName, mcp.ZedMCPServerEntry{
+			Command: entry.Command,
+			Args:    entry.Args,
+			Env:     map[string]string{},
+		})
 	default:
 		fmt.Fprintf(os.Stderr, "unknown mcp config format: %s\n", format)
 		os.Exit(1)
@@ -152,6 +150,22 @@ func handleMCPConfig(args []string) {
 		os.Exit(1)
 	}
 	fmt.Printf("wrote %s MCP config: %s\n", format, path)
+}
+
+func parseMCPConfigArgs(args []string) (format, path, target string) {
+	format = args[0]
+	target = "daemon"
+	if len(args) > 1 {
+		if isMCPTarget(args[1]) {
+			target = args[1]
+			return format, "", target
+		}
+		path = args[1]
+	}
+	if len(args) > 2 {
+		target = args[2]
+	}
+	return format, path, target
 }
 
 func mcpConfigEntry(target string) (mcp.MCPServerEntry, error) {
@@ -174,7 +188,13 @@ func defaultMCPConfigPath(format string) string {
 			return filepath.Join(home, ".copilot", "mcp-config.json")
 		}
 		return filepath.Join(".copilot", "mcp-config.json")
+	case "zed":
+		return filepath.Join(".zed", "settings.json")
 	default:
 		return "mcp.json"
 	}
+}
+
+func isMCPTarget(value string) bool {
+	return value == "blackboard" || value == "daemon"
 }
