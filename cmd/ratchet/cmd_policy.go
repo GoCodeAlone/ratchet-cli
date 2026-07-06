@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 )
 
 const policyMatrixSource = "docs/policy-matrix.md"
@@ -94,7 +95,7 @@ var policyMatrixRows = []policyMatrixRow{
 		Layer:  "Retro/self-improvement",
 		Owner:  "internal/retro and local project evidence routing",
 		Status: "partial",
-		Rule:   "Retro analysis and handoff instructions are opt-in and do not mutate config or open upstream PRs.",
+		Rule:   "Retro analysis, handoff instructions, and bundles are opt-in and do not mutate config or open upstream PRs.",
 	},
 	{
 		Layer:  "Blackboard notification-event export",
@@ -169,48 +170,74 @@ func runPolicyMatrix(args []string, w io.Writer) error {
 		return nil
 	}
 	var jsonOut bool
+	var statusFilter string
 	fs := flag.NewFlagSet("ratchet policy matrix", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.BoolVar(&jsonOut, "json", false, "emit JSON")
+	fs.StringVar(&statusFilter, "status", "", "filter by status")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("usage: ratchet policy matrix [--json]")
+		return fmt.Errorf("usage: ratchet policy matrix [--status status] [--json]")
+	}
+	rows, err := filterPolicyMatrixRows(statusFilter)
+	if err != nil {
+		return err
 	}
 	if jsonOut {
 		payload := struct {
 			Source string            `json:"source"`
+			Status string            `json:"status,omitempty"`
 			Rows   []policyMatrixRow `json:"rows"`
 		}{
 			Source: policyMatrixSource,
-			Rows:   policyMatrixRows,
+			Status: strings.TrimSpace(statusFilter),
+			Rows:   rows,
 		}
 		return json.NewEncoder(w).Encode(payload)
 	}
 	fmt.Fprintln(w, "Ratchet policy matrix")
 	fmt.Fprintf(w, "Source: %s\n\n", policyMatrixSource)
 	fmt.Fprintf(w, "%-36s %-18s %s\n", "LAYER", "STATUS", "RULE")
-	for _, row := range policyMatrixRows {
+	for _, row := range rows {
 		fmt.Fprintf(w, "%-36s %-18s %s\n", row.Layer, row.Status, row.Rule)
 	}
 	return nil
+}
+
+func filterPolicyMatrixRows(status string) ([]policyMatrixRow, error) {
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return policyMatrixRows, nil
+	}
+	rows := make([]policyMatrixRow, 0)
+	for _, row := range policyMatrixRows {
+		if row.Status == status {
+			rows = append(rows, row)
+		}
+	}
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("unknown policy matrix status %q", status)
+	}
+	return rows, nil
 }
 
 func printPolicyUsage(w io.Writer) {
 	fmt.Fprint(w, `Usage: ratchet policy <command>
 
 Commands:
-  matrix [--json]  Show supported, partial, explicit-operator, and deferred policy layers
+  matrix [--status status] [--json]  Show supported, partial, explicit-operator, and deferred policy layers
 `)
 }
 
 func printPolicyMatrixUsage(w io.Writer) {
-	fmt.Fprint(w, `Usage: ratchet policy matrix [--json]
+	fmt.Fprint(w, `Usage: ratchet policy matrix [--status status] [--json]
 
 Show supported, partial, explicit-operator, and deferred policy layers from docs/policy-matrix.md.
 
 Flags:
+  --status status  Filter by supported, partial, explicit-operator, or deferred
   --json  Emit JSON
 `)
 }

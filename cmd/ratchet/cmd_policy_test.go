@@ -70,6 +70,45 @@ func TestRunPolicyMatrixJSON(t *testing.T) {
 	}
 }
 
+func TestRunPolicyMatrixStatusFilterText(t *testing.T) {
+	var stdout bytes.Buffer
+	if err := runPolicy([]string{"matrix", "--status", "deferred"}, &stdout); err != nil {
+		t.Fatalf("runPolicy matrix --status deferred: %v", err)
+	}
+	out := stdout.String()
+	for _, want := range []string{"Background drain", "Managed hooks", "deferred"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("filtered policy matrix missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Static config trust rules") || strings.Contains(out, "supported") {
+		t.Fatalf("filtered policy matrix included non-deferred rows:\n%s", out)
+	}
+}
+
+func TestRunPolicyMatrixStatusFilterJSON(t *testing.T) {
+	var stdout bytes.Buffer
+	if err := runPolicy([]string{"matrix", "--status", "partial", "--json"}, &stdout); err != nil {
+		t.Fatalf("runPolicy matrix --status partial --json: %v", err)
+	}
+	var payload struct {
+		Source string            `json:"source"`
+		Status string            `json:"status,omitempty"`
+		Rows   []policyMatrixRow `json:"rows"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("decode filtered matrix json %q: %v", stdout.String(), err)
+	}
+	if payload.Status != "partial" || len(payload.Rows) == 0 {
+		t.Fatalf("payload = %#v", payload)
+	}
+	for _, row := range payload.Rows {
+		if row.Status != "partial" {
+			t.Fatalf("filtered row has status %q: %#v", row.Status, row)
+		}
+	}
+}
+
 func TestRunPolicyMatrixRejectsUnknownArgs(t *testing.T) {
 	var stdout bytes.Buffer
 	if err := runPolicy([]string{"matrix", "--format", "yaml"}, &stdout); err == nil {
@@ -77,6 +116,9 @@ func TestRunPolicyMatrixRejectsUnknownArgs(t *testing.T) {
 	}
 	if err := runPolicy([]string{"unknown"}, &stdout); err == nil {
 		t.Fatal("runPolicy accepted unknown subcommand")
+	}
+	if err := runPolicy([]string{"matrix", "--status", "unknown"}, &stdout); err == nil {
+		t.Fatal("runPolicy accepted unknown status")
 	}
 }
 
@@ -87,7 +129,7 @@ func TestRunPolicyMatrixHelp(t *testing.T) {
 			t.Fatalf("runPolicy matrix %s: %v", flag, err)
 		}
 		out := stdout.String()
-		for _, want := range []string{"Usage: ratchet policy matrix [--json]", "partial", "explicit-operator"} {
+		for _, want := range []string{"Usage: ratchet policy matrix [--status status] [--json]", "--status status", "partial", "explicit-operator"} {
 			if !strings.Contains(out, want) {
 				t.Fatalf("help for %s missing %q:\n%s", flag, want, out)
 			}

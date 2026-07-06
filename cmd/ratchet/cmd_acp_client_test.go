@@ -398,10 +398,30 @@ func TestACPClientProfilesVerifyParse(t *testing.T) {
 	}
 }
 
+func TestACPClientProfilesVerifyAllParse(t *testing.T) {
+	cmd, err := parseACPClientCommand([]string{"profiles", "verify", "--all", "--prompt", "ping", "--timeout", "5s", "--json"})
+	if err != nil {
+		t.Fatalf("parse verify --all: %v", err)
+	}
+	if cmd.kind != acpClientCommandProfiles || cmd.profiles.kind != acpClientProfilesVerify {
+		t.Fatalf("command = %#v", cmd)
+	}
+	if !cmd.profiles.all || cmd.profiles.name != "" || cmd.profiles.prompt != "ping" || cmd.profiles.timeout != 5*time.Second || !cmd.profiles.json {
+		t.Fatalf("profiles verify --all command = %#v", cmd.profiles)
+	}
+}
+
 func TestACPClientProfilesVerifyRequiresName(t *testing.T) {
 	_, err := parseACPClientCommand([]string{"profiles", "verify", "--json"})
 	if err == nil || !strings.Contains(err.Error(), "usage: ratchet acp client profiles verify <name>") {
 		t.Fatalf("verify missing name error = %v", err)
+	}
+}
+
+func TestACPClientProfilesVerifyRejectsNameWithAll(t *testing.T) {
+	_, err := parseACPClientCommand([]string{"profiles", "verify", "fixture", "--all"})
+	if err == nil || !strings.Contains(err.Error(), "usage: ratchet acp client profiles verify <name>|--all") {
+		t.Fatalf("verify name with --all error = %v", err)
 	}
 }
 
@@ -491,6 +511,84 @@ func TestExecuteACPClientProfilesVerifyRejectsUntrustedProfile(t *testing.T) {
 	}
 	if runner.called {
 		t.Fatal("runner was called for untrusted profile")
+	}
+}
+
+func TestExecuteACPClientProfilesVerifyAllReportsTrustedAndSkippedProfiles(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	store, err := acpclient.NewDefaultProfileStore()
+	if err != nil {
+		t.Fatalf("NewDefaultProfileStore: %v", err)
+	}
+	for _, profile := range []acpclient.Profile{
+		{
+			Name:    "trusted",
+			Spec:    acpclient.AgentSpec{Name: "trusted", Command: "/tmp/trusted-acp", Args: []string{"--stdio"}, EnvKeys: []string{"SECRET_TOKEN"}},
+			Trusted: true,
+		},
+		{
+			Name:    "untrusted",
+			Spec:    acpclient.AgentSpec{Name: "untrusted", Command: "/tmp/untrusted-acp"},
+			Trusted: false,
+		},
+	} {
+		if err := store.Add(profile); err != nil {
+			t.Fatalf("Add profile %s: %v", profile.Name, err)
+		}
+	}
+	runner := &fakeACPClientExecRunner{
+		result: acpclient.Result{
+			SessionID:  acpsdk.SessionId("trusted-session"),
+			StopReason: acpsdk.StopReasonEndTurn,
+			Text:       "secret response",
+		},
+	}
+	var out bytes.Buffer
+	err = executeACPClientProfilesVerifyWithStore(t.Context(), store, acpClientProfilesCommand{
+		all:     true,
+		prompt:  "secret prompt",
+		timeout: time.Second,
+		json:    true,
+	}, runner, &out)
+	if err != nil {
+		t.Fatalf("execute verify --all: %v", err)
+	}
+	if len(runner.calls) != 1 || runner.calls[0].spec.Name != "trusted" || runner.calls[0].prompt != "secret prompt" {
+		t.Fatalf("runner calls = %#v", runner.calls)
+	}
+	var payload struct {
+		Results []struct {
+			Name               string `json:"name"`
+			Status             string `json:"status"`
+			CommandFingerprint string `json:"commandFingerprint,omitempty"`
+			ACPSessionID       string `json:"acpSessionId,omitempty"`
+			StopReason         string `json:"stopReason,omitempty"`
+			TextBytes          int    `json:"textBytes,omitempty"`
+			Error              string `json:"error,omitempty"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("decode verify --all output %q: %v", out.String(), err)
+	}
+	if len(payload.Results) != 2 {
+		t.Fatalf("results len = %d, want 2: %#v", len(payload.Results), payload.Results)
+	}
+	byName := map[string]string{}
+	for _, result := range payload.Results {
+		byName[result.Name] = result.Status
+		if result.Name == "trusted" && (result.ACPSessionID != "trusted-session" || result.CommandFingerprint == "" || result.TextBytes != len("secret response")) {
+			t.Fatalf("trusted result = %#v", result)
+		}
+	}
+	if byName["trusted"] != "ok" || byName["untrusted"] != "skipped_untrusted" {
+		t.Fatalf("statuses = %#v, payload = %#v", byName, payload.Results)
+	}
+	for _, leaked := range []string{"secret prompt", "secret response", "SECRET_TOKEN"} {
+		if strings.Contains(out.String(), leaked) {
+			t.Fatalf("verify --all leaked %q: %s", leaked, out.String())
+		}
 	}
 }
 
@@ -1918,6 +2016,13 @@ type fakeACPClientExecRunner struct {
 	prompt string
 	result acpclient.Result
 	err    error
+	calls  []fakeACPClientExecCall
+}
+
+type fakeACPClientExecCall struct {
+	spec   acpclient.AgentSpec
+	opts   acpclient.RunOptions
+	prompt string
 }
 
 func (r *fakeACPClientExecRunner) RunPrompt(_ context.Context, spec acpclient.AgentSpec, opts acpclient.RunOptions, prompt string) (acpclient.Result, error) {
@@ -1925,6 +2030,7 @@ func (r *fakeACPClientExecRunner) RunPrompt(_ context.Context, spec acpclient.Ag
 	r.spec = spec
 	r.opts = opts
 	r.prompt = prompt
+	r.calls = append(r.calls, fakeACPClientExecCall{spec: spec, opts: opts, prompt: prompt})
 	return r.result, r.err
 }
 

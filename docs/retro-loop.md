@@ -66,6 +66,18 @@ The Markdown output contains findings, upstream instructions, and local actions.
 It is still reporting-only and should be reviewed before any upstream issue or
 PR is filed.
 
+Use `ratchet retro bundle` when the handoff should be a portable local
+directory:
+
+```sh
+ratchet retro bundle --evidence ~/.ratchet/retro/evidence.jsonl --session SESSION_ID --output retro-bundle
+```
+
+The bundle contains derived `analysis.json`, `instructions.md`, and
+`manifest.json` files. It does not copy raw evidence JSONL, mutate local config,
+contact GitHub, or open a PR. Treat the bundle as sensitive local context until
+its summarized findings have been reviewed.
+
 ## Local Improvement Example
 
 Evidence:

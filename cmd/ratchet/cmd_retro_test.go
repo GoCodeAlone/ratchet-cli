@@ -139,6 +139,96 @@ func TestHandleRetroInstructionsWritesMarkdown(t *testing.T) {
 	}
 }
 
+func TestHandleRetroBundleWritesPortableHandoff(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := config.DefaultConfig()
+	cfg.Retro.Enabled = true
+	cfg.Retro.LocalChanges = true
+	cfg.Retro.UpstreamInstructions = true
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save config: %v", err)
+	}
+	evidence := writeRetroEvidenceFixture(t, []retro.Event{
+		{Timestamp: time.Date(2026, 7, 4, 11, 0, 0, 0, time.UTC), SessionID: "bundle-session", Kind: retro.EventTestFailure, Message: "go test ./cmd/ratchet", Project: retro.ProjectRatchetCLI},
+		{Timestamp: time.Date(2026, 7, 4, 11, 1, 0, 0, time.UTC), SessionID: "other-session", Kind: retro.EventPermissionDenied, Command: "secret command", Project: retro.ProjectLocalConfig},
+	})
+	outDir := filepath.Join(t.TempDir(), "retro-bundle")
+	var stdout bytes.Buffer
+
+	if err := runRetro(context.Background(), []string{"bundle", "--evidence", evidence, "--session", "bundle-session", "--output", outDir}, &stdout); err != nil {
+		t.Fatalf("runRetro bundle: %v", err)
+	}
+
+	for _, name := range []string{"analysis.json", "instructions.md", "manifest.json"} {
+		if _, err := os.Stat(filepath.Join(outDir, name)); err != nil {
+			t.Fatalf("bundle missing %s: %v", name, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "evidence.jsonl")); !os.IsNotExist(err) {
+		t.Fatalf("bundle should not copy raw evidence, stat err=%v", err)
+	}
+	analysisData, err := os.ReadFile(filepath.Join(outDir, "analysis.json"))
+	if err != nil {
+		t.Fatalf("read analysis: %v", err)
+	}
+	var analysis retroAnalyzeOutput
+	if err := json.Unmarshal(analysisData, &analysis); err != nil {
+		t.Fatalf("decode analysis %q: %v", string(analysisData), err)
+	}
+	if analysis.SessionID != "bundle-session" || len(analysis.Findings) != 1 || !strings.Contains(analysis.Findings[0].Evidence, "go test ./cmd/ratchet") {
+		t.Fatalf("analysis = %#v", analysis)
+	}
+	instructions, err := os.ReadFile(filepath.Join(outDir, "instructions.md"))
+	if err != nil {
+		t.Fatalf("read instructions: %v", err)
+	}
+	if !strings.Contains(string(instructions), "bundle-session") || strings.Contains(string(instructions), "secret command") {
+		t.Fatalf("instructions were not session-scoped:\n%s", string(instructions))
+	}
+	manifestData, err := os.ReadFile(filepath.Join(outDir, "manifest.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var manifest struct {
+		SessionID            string   `json:"session_id,omitempty"`
+		Files                []string `json:"files"`
+		Findings             int      `json:"findings"`
+		LocalActions         int      `json:"local_actions"`
+		UpstreamInstructions int      `json:"upstream_instructions"`
+		RawEvidenceCopied    bool     `json:"raw_evidence_copied"`
+		CreatedAt            string   `json:"created_at"`
+	}
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
+		t.Fatalf("decode manifest %q: %v", string(manifestData), err)
+	}
+	if manifest.SessionID != "bundle-session" || manifest.Findings != 1 || manifest.RawEvidenceCopied || manifest.CreatedAt == "" {
+		t.Fatalf("manifest = %#v", manifest)
+	}
+	for _, want := range []string{"analysis.json", "instructions.md", "manifest.json"} {
+		found := false
+		for _, got := range manifest.Files {
+			found = found || got == want
+		}
+		if !found {
+			t.Fatalf("manifest files missing %q: %#v", want, manifest.Files)
+		}
+	}
+	if !strings.Contains(stdout.String(), "wrote retro bundle") {
+		t.Fatalf("stdout missing write confirmation: %q", stdout.String())
+	}
+}
+
+func TestHandleRetroBundleRequiresOutput(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	evidence := writeRetroEvidenceFixture(t, nil)
+	var stdout bytes.Buffer
+
+	err := runRetro(context.Background(), []string{"bundle", "--evidence", evidence}, &stdout)
+	if err == nil || !strings.Contains(err.Error(), "usage: ratchet retro bundle") {
+		t.Fatalf("runRetro bundle without output error = %v", err)
+	}
+}
+
 func TestRetroInstructionsMarkdownNormalizesMultilineItems(t *testing.T) {
 	out := renderRetroInstructionsMarkdown(retroAnalyzeOutput{
 		SessionID: "multi",
@@ -203,7 +293,7 @@ func TestHandleRetroUsageMentionsInstructions(t *testing.T) {
 	var stdout bytes.Buffer
 
 	err := runRetro(context.Background(), nil, &stdout)
-	if err == nil || !strings.Contains(err.Error(), "<analyze|instructions>") {
+	if err == nil || !strings.Contains(err.Error(), "<analyze|instructions|bundle>") {
 		t.Fatalf("runRetro usage error = %v", err)
 	}
 }
