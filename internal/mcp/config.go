@@ -29,6 +29,18 @@ type GenericMCPConfig struct {
 	Servers map[string]MCPServerEntry `json:"servers"`
 }
 
+// ZedMCPServerEntry describes one custom MCP context server in Zed settings.
+type ZedMCPServerEntry struct {
+	Command string            `json:"command"`
+	Args    []string          `json:"args"`
+	Env     map[string]string `json:"env"`
+}
+
+// ZedMCPConfig is the MCP-related subset of Zed settings.
+type ZedMCPConfig struct {
+	ContextServers map[string]ZedMCPServerEntry `json:"context_servers"`
+}
+
 // WriteMCPConfig merges a server entry into a Claude Code-format MCP config file.
 // Creates the file and parent directories if they don't exist.
 func WriteMCPConfig(path, serverName string, entry MCPServerEntry) error {
@@ -88,6 +100,41 @@ func WriteGenericMCPConfig(path, serverName string, entry MCPServerEntry) error 
 	config.Servers[serverName] = entry
 
 	return writeJSON(path, config)
+}
+
+// WriteZedMCPConfig merges a server entry into Zed's settings.json context_servers map.
+func WriteZedMCPConfig(path, serverName string, entry ZedMCPServerEntry) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+
+	raw := map[string]json.RawMessage{}
+	if data, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return fmt.Errorf("parse config: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("read config: %w", err)
+	}
+
+	servers := map[string]ZedMCPServerEntry{}
+	if data, ok := raw["context_servers"]; ok {
+		if err := json.Unmarshal(data, &servers); err != nil {
+			return fmt.Errorf("parse context_servers: %w", err)
+		}
+	}
+	if entry.Env == nil {
+		entry.Env = map[string]string{}
+	}
+	servers[serverName] = entry
+
+	data, err := json.Marshal(servers)
+	if err != nil {
+		return fmt.Errorf("encode context_servers: %w", err)
+	}
+	raw["context_servers"] = data
+
+	return writeJSON(path, raw)
 }
 
 // RemoveMCPConfig removes a server entry from a Claude Code-format MCP config.
