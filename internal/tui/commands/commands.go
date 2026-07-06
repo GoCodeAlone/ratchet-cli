@@ -282,7 +282,7 @@ func modelCmd(args []string, c *client.Client) *Result {
 		switch strings.ToLower(args[0]) {
 		case "add", "setup":
 			return &Result{
-				Lines:                []string{"Opening provider setup wizard from /model add..."},
+				Lines:                []string{fmt.Sprintf("Opening provider setup wizard from /model %s...", strings.ToLower(args[0]))},
 				NavigateToOnboarding: true,
 			}
 		}
@@ -414,7 +414,7 @@ func sessionActionLines() []string {
 		"  ratchet sessions list",
 		"  ratchet sessions browse <id>",
 		"  ratchet sessions clone <id>",
-		"  ratchet sessions fork <id> --at <message_id>",
+		"  ratchet sessions fork <id> --at <message-id>",
 		"  ratchet sessions export <id> --output session.export.json",
 	}
 }

@@ -203,11 +203,20 @@ func TestAppSidebarKeepsShortcutHintsVisible(t *testing.T) {
 	model, _ = app.Update(ctrlKey('s'))
 	app = model.(App)
 
+	if width, _ := app.chatLayoutSize(); width != 47 {
+		t.Fatalf("chat width with sidebar = %d, want 47", width)
+	}
 	view := app.View().Content
 	for _, want := range []string{"Sessions", "Ctrl+S close", "Ctrl+C quit", "Ctrl+B tree"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("sidebar view missing %q:\n%s", want, view)
 		}
+	}
+
+	model, _ = app.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	app = model.(App)
+	if width, _ := app.chatLayoutSize(); width != 72 {
+		t.Fatalf("chat width after closing sidebar = %d, want 72", width)
 	}
 }
 

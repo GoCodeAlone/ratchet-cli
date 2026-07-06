@@ -129,6 +129,20 @@ func TestParseModelAddNavigatesToProviderSetup(t *testing.T) {
 	}
 }
 
+func TestParseModelSetupUsesMatchingOutput(t *testing.T) {
+	result := Parse("/model setup", nil)
+	if result == nil {
+		t.Fatal("expected result for /model setup")
+	}
+	if !result.NavigateToOnboarding {
+		t.Fatal("expected /model setup to navigate to provider setup")
+	}
+	joined := strings.Join(result.Lines, "\n")
+	if !strings.Contains(joined, "/model setup") || strings.Contains(joined, "/model add...") {
+		t.Fatalf("/model setup output mismatch:\n%s", joined)
+	}
+}
+
 func TestParseModelOneArgShowsProviderAndModelActions(t *testing.T) {
 	result := Parse("/model anthropic", nil)
 	if result == nil {
@@ -180,7 +194,7 @@ func TestParseSessionsNoClient(t *testing.T) {
 		t.Fatal("expected result for /sessions")
 	}
 	joined := strings.Join(result.Lines, "\n")
-	for _, want := range []string{"Not connected to daemon", "Ctrl+S", "Enter switch", "d kill", "Ctrl+B", "ratchet sessions browse"} {
+	for _, want := range []string{"Not connected to daemon", "Ctrl+S", "Enter switch", "d kill", "Ctrl+B", "ratchet sessions browse", "--at <message-id>"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("/sessions help missing %q:\n%s", want, joined)
 		}

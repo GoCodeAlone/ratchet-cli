@@ -78,7 +78,6 @@ func statusBarHints(width int) string {
 		"Ctrl+B tree  Ctrl+S sessions  Ctrl+J jobs  Ctrl+C quit",
 		"Ctrl+S close Ctrl+C quit Esc",
 		"Ctrl+S close Ctrl+C quit",
-		"Ctrl+S Ctrl+C quit",
 		"Ctrl+C quit",
 		"quit",
 	}
