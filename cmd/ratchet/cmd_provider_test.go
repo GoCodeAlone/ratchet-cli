@@ -67,6 +67,48 @@ func TestPromptYesNo_EOF(t *testing.T) {
 	}
 }
 
+func TestParseOpenAIChatGPTSetupArgs(t *testing.T) {
+	got := parseOpenAIChatGPTSetupArgs([]string{"--model", "gpt-5-codex", "--from-codex", "/tmp/auth.json", "--no-browser"})
+	if got.model != "gpt-5-codex" {
+		t.Fatalf("model = %q", got.model)
+	}
+	if got.fromCodex != "/tmp/auth.json" {
+		t.Fatalf("fromCodex = %q", got.fromCodex)
+	}
+	if !got.noBrowser {
+		t.Fatal("noBrowser = false")
+	}
+}
+
+func TestParseOpenAIChatGPTSetupArgsDefaults(t *testing.T) {
+	got := parseOpenAIChatGPTSetupArgs([]string{"--from-codex"})
+	if got.model != "gpt-5-codex" {
+		t.Fatalf("model = %q", got.model)
+	}
+	if got.fromCodex == "" || !strings.HasSuffix(got.fromCodex, ".codex/auth.json") {
+		t.Fatalf("fromCodex = %q", got.fromCodex)
+	}
+}
+
+func TestOpenAIChatGPTAddProviderReq(t *testing.T) {
+	req := openAIChatGPTAddProviderReq("gpt-5-codex", `{"access_token":"token","refresh_token":"refresh"}`, true)
+	if req.Alias != "openai-chatgpt" {
+		t.Fatalf("Alias = %q", req.Alias)
+	}
+	if req.Type != "openai_chatgpt" {
+		t.Fatalf("Type = %q", req.Type)
+	}
+	if req.Model != "gpt-5-codex" {
+		t.Fatalf("Model = %q", req.Model)
+	}
+	if req.ApiKey == "" {
+		t.Fatal("ApiKey token bundle is empty")
+	}
+	if !req.IsDefault {
+		t.Fatal("IsDefault = false")
+	}
+}
+
 func TestOllamaInstallCommand_Darwin(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("darwin-only test")

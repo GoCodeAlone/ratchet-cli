@@ -55,6 +55,14 @@ ratchet "summarize this repo" # Start chat with an initial prompt
 ratchet -p "write a test"     # One-shot prompt mode
 ```
 
+Configure providers with `ratchet provider setup`. For ChatGPT subscription
+access, sign in with OpenAI device-code auth:
+
+```sh
+ratchet provider setup openai-chatgpt
+ratchet provider setup openai-chatgpt --from-codex ~/.codex/auth.json
+```
+
 On first interactive use, ratchet starts or connects to its local daemon and
 opens the TUI. The daemon owns persisted sessions, team state, blackboard
 entries, trust grants, plugin state, routines, and workflow records. Most data
