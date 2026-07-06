@@ -30,7 +30,9 @@
 |------|-------|-------|--------|
 | 1 | Add harness readiness utilities | Task 1, Task 2, Task 3, Task 4, Task 5 | feat/harness-readiness |
 
-**Status:** Implemented 2026-07-06T06:05:00Z
+**Status:** Complete 2026-07-06T06:46:14Z
+
+**Completion evidence:** PR #118 merged at `a67d4bb`; local `go test ./... -count=1` passed after review fixes; merge-commit CI, CodeQL, and release workflow passed; release `v0.30.14` published Linux, macOS, Windows, and checksum assets.
 
 ## Task 1: Plan Lock and Baseline
 
