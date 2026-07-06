@@ -118,3 +118,33 @@ func TestCollectClassifiesResolvedHomebrewFormulaSymlink(t *testing.T) {
 		t.Fatalf("executable = %q", report.Executable)
 	}
 }
+
+func TestCollectWarnsWhenExecutableSymlinkResolutionFails(t *testing.T) {
+	resolveErr := errors.New("readlink denied")
+	report := CollectWithOptions(CollectOptions{
+		Version:      "0.30.9",
+		Commit:       "abc123",
+		Date:         "2026-07-06T00:00:00Z",
+		DaemonStatus: "daemon is not running",
+		Executable: func() (string, error) {
+			return "/opt/homebrew/bin/ratchet", nil
+		},
+		ResolveExecutable: func(string) (string, error) {
+			return "", resolveErr
+		},
+		WorkingDir: func() (string, error) {
+			return "/tmp/work", nil
+		},
+		HomeDir: func() (string, error) {
+			return "/tmp/home", nil
+		},
+	})
+
+	if report.Executable != "/opt/homebrew/bin/ratchet" {
+		t.Fatalf("executable = %q, want original symlink path", report.Executable)
+	}
+	joined := strings.Join(report.Warnings, "\n")
+	if !strings.Contains(joined, "resolve executable symlink") || !strings.Contains(joined, resolveErr.Error()) {
+		t.Fatalf("warnings missing resolver failure: %#v", report.Warnings)
+	}
+}

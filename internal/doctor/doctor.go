@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -58,7 +59,7 @@ func CollectWithOptions(opts CollectOptions) Report {
 	if exe != "" {
 		resolved, resolveErr := resolveExecutable(exe, opts.ResolveExecutable)
 		if resolveErr != nil {
-			exeErr = errorsJoin(exeErr, fmt.Errorf("resolve executable symlink: %w", resolveErr))
+			exeErr = errors.Join(exeErr, fmt.Errorf("resolve executable symlink: %w", resolveErr))
 		} else if resolved != "" {
 			exe = resolved
 		}
@@ -167,17 +168,6 @@ func resolveExecutable(path string, resolver func(string) (string, error)) (stri
 		return path, nil
 	}
 	return resolver(path)
-}
-
-func errorsJoin(existing, next error) error {
-	switch {
-	case existing == nil:
-		return next
-	case next == nil:
-		return existing
-	default:
-		return fmt.Errorf("%v; %w", existing, next)
-	}
 }
 
 func valueOrUnknown(value string) string {
