@@ -164,6 +164,10 @@ func runPolicy(args []string, w io.Writer) error {
 }
 
 func runPolicyMatrix(args []string, w io.Writer) error {
+	if len(args) == 1 && (args[0] == "-h" || args[0] == "--help") {
+		printPolicyMatrixUsage(w)
+		return nil
+	}
 	var jsonOut bool
 	fs := flag.NewFlagSet("ratchet policy matrix", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -198,5 +202,15 @@ func printPolicyUsage(w io.Writer) {
 
 Commands:
   matrix [--json]  Show supported, partial, explicit-operator, and deferred policy layers
+`)
+}
+
+func printPolicyMatrixUsage(w io.Writer) {
+	fmt.Fprint(w, `Usage: ratchet policy matrix [--json]
+
+Show supported, partial, explicit-operator, and deferred policy layers from docs/policy-matrix.md.
+
+Flags:
+  --json  Emit JSON
 `)
 }

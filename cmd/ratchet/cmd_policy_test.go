@@ -79,3 +79,18 @@ func TestRunPolicyMatrixRejectsUnknownArgs(t *testing.T) {
 		t.Fatal("runPolicy accepted unknown subcommand")
 	}
 }
+
+func TestRunPolicyMatrixHelp(t *testing.T) {
+	for _, flag := range []string{"-h", "--help"} {
+		var stdout bytes.Buffer
+		if err := runPolicy([]string{"matrix", flag}, &stdout); err != nil {
+			t.Fatalf("runPolicy matrix %s: %v", flag, err)
+		}
+		out := stdout.String()
+		for _, want := range []string{"Usage: ratchet policy matrix [--json]", "partial", "explicit-operator"} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("help for %s missing %q:\n%s", flag, want, out)
+			}
+		}
+	}
+}

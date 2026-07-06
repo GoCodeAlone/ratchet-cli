@@ -171,7 +171,7 @@ Commands:
   agent            Manage agent definitions
   team             Multi-agent orchestration
   trust            Manage runtime trust rules and persistent grants
-  policy           Show supported and deferred policy surfaces
+  policy           Show supported, partial, explicit-operator, and deferred policy surfaces
   hooks            Review and trust lifecycle hooks
   blackboard       Shared daemon blackboard
   retro            Analyze optional retro evidence
