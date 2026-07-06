@@ -241,7 +241,7 @@ func renderRetroInstructionsMarkdown(output retroAnalyzeOutput) string {
 		fmt.Fprintln(&b, "- none")
 	} else {
 		for _, finding := range output.Findings {
-			fmt.Fprintf(&b, "- %s: %s\n", finding.Pattern, finding.Evidence)
+			fmt.Fprintf(&b, "- %s: %s\n", markdownListText(finding.Pattern), markdownListText(finding.Evidence))
 		}
 	}
 	fmt.Fprintln(&b)
@@ -250,7 +250,7 @@ func renderRetroInstructionsMarkdown(output retroAnalyzeOutput) string {
 		fmt.Fprintln(&b, "- none")
 	} else {
 		for _, instruction := range output.UpstreamInstructions {
-			fmt.Fprintf(&b, "- %s\n", instruction)
+			fmt.Fprintf(&b, "- %s\n", markdownListText(instruction))
 		}
 	}
 	fmt.Fprintln(&b)
@@ -259,8 +259,12 @@ func renderRetroInstructionsMarkdown(output retroAnalyzeOutput) string {
 		fmt.Fprintln(&b, "- none")
 	} else {
 		for _, action := range output.LocalActions {
-			fmt.Fprintf(&b, "- %s\n", action)
+			fmt.Fprintf(&b, "- %s\n", markdownListText(action))
 		}
 	}
 	return b.String()
+}
+
+func markdownListText(value string) string {
+	return strings.Join(strings.Fields(value), " ")
 }

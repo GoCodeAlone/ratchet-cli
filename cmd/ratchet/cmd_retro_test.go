@@ -139,6 +139,29 @@ func TestHandleRetroInstructionsWritesMarkdown(t *testing.T) {
 	}
 }
 
+func TestRetroInstructionsMarkdownNormalizesMultilineItems(t *testing.T) {
+	out := renderRetroInstructionsMarkdown(retroAnalyzeOutput{
+		SessionID: "multi",
+		Findings: []retroAnalyzeFinding{{
+			Pattern:  "runtime error",
+			Evidence: "first line\nsecond line",
+		}},
+		UpstreamInstructions: []string{"submit PR\nwith regression"},
+		LocalActions:         []string{"rerun\nfocused test"},
+	})
+
+	for _, bad := range []string{"- runtime error: first line\nsecond line", "- submit PR\nwith regression", "- rerun\nfocused test"} {
+		if strings.Contains(out, bad) {
+			t.Fatalf("markdown contains multiline list item %q:\n%s", bad, out)
+		}
+	}
+	for _, want := range []string{"- runtime error: first line second line", "- submit PR with regression", "- rerun focused test"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("markdown missing normalized item %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestHandleRetroAnalyzeDisabledConfigSuppressesRoutes(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if err := config.DefaultConfig().Save(); err != nil {

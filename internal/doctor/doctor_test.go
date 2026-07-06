@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -56,5 +57,33 @@ func TestReportIncludesCredentialFreeHealthFields(t *testing.T) {
 	}
 	if strings.Contains(joined, "provider") || strings.Contains(joined, "token") {
 		t.Fatalf("doctor report should stay credential-free:\n%s", joined)
+	}
+}
+
+func TestCollectWarningsWhenLocalPathDiscoveryFails(t *testing.T) {
+	report := CollectWithOptions(CollectOptions{
+		Version:      "dev",
+		Commit:       "unknown",
+		Date:         "unknown",
+		DaemonStatus: "daemon is not running",
+		Executable: func() (string, error) {
+			return "", errors.New("executable unavailable")
+		},
+		WorkingDir: func() (string, error) {
+			return "", errors.New("working directory unavailable")
+		},
+		HomeDir: func() (string, error) {
+			return "", errors.New("home unavailable")
+		},
+	})
+
+	if report.ConfigPath != "" || report.DataDir != "" || report.StateDir != "" {
+		t.Fatalf("paths should stay empty without home/state roots: %#v", report)
+	}
+	joined := strings.Join(report.Warnings, "\n")
+	for _, want := range []string{"executable unavailable", "working directory unavailable", "home unavailable"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("warnings missing %q: %#v", want, report.Warnings)
+		}
 	}
 }

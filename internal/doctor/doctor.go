@@ -24,26 +24,55 @@ type Report struct {
 	Warnings     []string `json:"warnings,omitempty"`
 }
 
+// CollectOptions allows tests and future callers to inject local discovery.
+type CollectOptions struct {
+	Version      string
+	Commit       string
+	Date         string
+	DaemonStatus string
+	Executable   func() (string, error)
+	WorkingDir   func() (string, error)
+	HomeDir      func() (string, error)
+	StateHome    string
+}
+
 // Collect builds a Report without starting daemons or reading credentials.
 func Collect(version, commit, date, daemonStatus string) Report {
-	exe, _ := os.Executable()
-	wd, _ := os.Getwd()
-	home, _ := os.UserHomeDir()
-	dataDir := filepath.Join(home, ".ratchet")
-	stateDir := ratchetStateDir(home)
-	report := Report{
+	return CollectWithOptions(CollectOptions{
 		Version:      version,
 		Commit:       commit,
 		Date:         date,
+		DaemonStatus: daemonStatus,
+		Executable:   os.Executable,
+		WorkingDir:   os.Getwd,
+		HomeDir:      os.UserHomeDir,
+		StateHome:    os.Getenv("XDG_STATE_HOME"),
+	})
+}
+
+// CollectWithOptions builds a Report with injectable local discovery functions.
+func CollectWithOptions(opts CollectOptions) Report {
+	exe, exeErr := callDiscovery(opts.Executable)
+	wd, wdErr := callDiscovery(opts.WorkingDir)
+	home, homeErr := callDiscovery(opts.HomeDir)
+	dataDir, configPath := ratchetDataPaths(home)
+	stateDir := ratchetStateDir(home, opts.StateHome)
+	report := Report{
+		Version:      opts.Version,
+		Commit:       opts.Commit,
+		Date:         opts.Date,
 		Executable:   exe,
 		Install:      InstallSummary(exe),
 		HomeDir:      home,
 		WorkingDir:   wd,
-		ConfigPath:   filepath.Join(dataDir, "config.yaml"),
+		ConfigPath:   configPath,
 		DataDir:      dataDir,
 		StateDir:     stateDir,
-		DaemonStatus: daemonStatus,
+		DaemonStatus: opts.DaemonStatus,
 	}
+	appendDiscoveryWarning(&report, "executable", exeErr)
+	appendDiscoveryWarning(&report, "working directory", wdErr)
+	appendDiscoveryWarning(&report, "home directory", homeErr)
 	if strings.Contains(strings.ToLower(report.Install), "homebrew formula") {
 		report.Warnings = append(report.Warnings, "Homebrew cask is preferred; Formula is kept for compatibility with older installs.")
 	}
@@ -91,11 +120,36 @@ func (r Report) TextLines() []string {
 	return lines
 }
 
-func ratchetStateDir(home string) string {
-	if state := os.Getenv("XDG_STATE_HOME"); state != "" {
-		return filepath.Join(state, "ratchet")
+func ratchetDataPaths(home string) (dataDir, configPath string) {
+	if home == "" {
+		return "", ""
+	}
+	dataDir = filepath.Join(home, ".ratchet")
+	return dataDir, filepath.Join(dataDir, "config.yaml")
+}
+
+func ratchetStateDir(home, stateHome string) string {
+	if stateHome != "" {
+		return filepath.Join(stateHome, "ratchet")
+	}
+	if home == "" {
+		return ""
 	}
 	return filepath.Join(home, ".local", "state", "ratchet")
+}
+
+func callDiscovery(fn func() (string, error)) (string, error) {
+	if fn == nil {
+		return "", nil
+	}
+	return fn()
+}
+
+func appendDiscoveryWarning(report *Report, label string, err error) {
+	if report == nil || err == nil {
+		return
+	}
+	report.Warnings = append(report.Warnings, fmt.Sprintf("%s discovery failed: %v", label, err))
 }
 
 func valueOrUnknown(value string) string {
