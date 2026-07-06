@@ -26,7 +26,7 @@ func TestStartTUITestPTYDisablesSoftwareFlowControl(t *testing.T) {
 	}
 	dir := t.TempDir()
 	script := filepath.Join(dir, "show-stty")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nstty -a\n"), 0700); err != nil {
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nsleep 1\nstty -a\n"), 0700); err != nil {
 		t.Fatalf("write stty script: %v", err)
 	}
 

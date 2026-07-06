@@ -2419,6 +2419,7 @@ type AddProviderReq struct {
 	BaseUrl       string                 `protobuf:"bytes,5,opt,name=base_url,json=baseUrl,proto3" json:"base_url,omitempty"`
 	MaxTokens     int32                  `protobuf:"varint,6,opt,name=max_tokens,json=maxTokens,proto3" json:"max_tokens,omitempty"`
 	IsDefault     bool                   `protobuf:"varint,7,opt,name=is_default,json=isDefault,proto3" json:"is_default,omitempty"`
+	Settings      string                 `protobuf:"bytes,8,opt,name=settings,proto3" json:"settings,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2500,6 +2501,13 @@ func (x *AddProviderReq) GetIsDefault() bool {
 		return x.IsDefault
 	}
 	return false
+}
+
+func (x *AddProviderReq) GetSettings() string {
+	if x != nil {
+		return x.Settings
+	}
+	return ""
 }
 
 type Provider struct {
@@ -7130,7 +7138,7 @@ const file_internal_proto_ratchet_proto_rawDesc = "" +
 	"\ftool_call_id\x18\x04 \x01(\tR\n" +
 	"toolCallId\x128\n" +
 	"\ttimestamp\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\x12\x0e\n" +
-	"\x02id\x18\x06 \x01(\tR\x02id\"\xc2\x01\n" +
+	"\x02id\x18\x06 \x01(\tR\x02id\"\xde\x01\n" +
 	"\x0eAddProviderReq\x12\x14\n" +
 	"\x05alias\x18\x01 \x01(\tR\x05alias\x12\x12\n" +
 	"\x04type\x18\x02 \x01(\tR\x04type\x12\x14\n" +
@@ -7140,7 +7148,8 @@ const file_internal_proto_ratchet_proto_rawDesc = "" +
 	"\n" +
 	"max_tokens\x18\x06 \x01(\x05R\tmaxTokens\x12\x1d\n" +
 	"\n" +
-	"is_default\x18\a \x01(\bR\tisDefault\"\x84\x01\n" +
+	"is_default\x18\a \x01(\bR\tisDefault\x12\x1a\n" +
+	"\bsettings\x18\b \x01(\tR\bsettings\"\x84\x01\n" +
 	"\bProvider\x12\x14\n" +
 	"\x05alias\x18\x01 \x01(\tR\x05alias\x12\x12\n" +
 	"\x04type\x18\x02 \x01(\tR\x04type\x12\x14\n" +

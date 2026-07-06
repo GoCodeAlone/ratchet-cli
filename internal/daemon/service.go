@@ -563,6 +563,11 @@ func (s *Service) AddProvider(ctx context.Context, req *pb.AddProviderReq) (*pb.
 		maxTokens = 4096
 	}
 
+	settings, err := normalizeProviderSettings(req.Settings)
+	if err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "invalid provider settings: %v", err)
+	}
+
 	// Upsert: insert or update if alias already exists.
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO llm_providers (id, alias, type, model, secret_name, base_url, max_tokens, settings, is_default)
@@ -572,9 +577,10 @@ func (s *Service) AddProvider(ctx context.Context, req *pb.AddProviderReq) (*pb.
 		   model = excluded.model,
 		   secret_name = CASE WHEN excluded.secret_name = '' THEN secret_name ELSE excluded.secret_name END,
 		   base_url = CASE WHEN excluded.base_url = '' THEN base_url ELSE excluded.base_url END,
+		   settings = CASE WHEN excluded.settings = '{}' THEN settings ELSE excluded.settings END,
 		   max_tokens = excluded.max_tokens,
 		   is_default = excluded.is_default`,
-		id, req.Alias, req.Type, req.Model, secretName, req.BaseUrl, maxTokens, "{}", isDefault,
+		id, req.Alias, req.Type, req.Model, secretName, req.BaseUrl, maxTokens, settings, isDefault,
 	); err != nil {
 		return nil, status.Errorf(codes.Internal, "insert provider: %v", err)
 	}
@@ -602,6 +608,25 @@ func (s *Service) AddProvider(ctx context.Context, req *pb.AddProviderReq) (*pb.
 		BaseUrl:   req.BaseUrl,
 		IsDefault: req.IsDefault,
 	}, nil
+}
+
+func normalizeProviderSettings(settings string) (string, error) {
+	settings = strings.TrimSpace(settings)
+	if settings == "" {
+		return "{}", nil
+	}
+	var decoded any
+	if err := json.Unmarshal([]byte(settings), &decoded); err != nil {
+		return "", err
+	}
+	settingsObject, ok := decoded.(map[string]any)
+	if !ok {
+		return "", fmt.Errorf("must be a JSON object")
+	}
+	if len(settingsObject) == 0 {
+		return "{}", nil
+	}
+	return settings, nil
 }
 
 func validProviderAliasForSecret(alias string) bool {

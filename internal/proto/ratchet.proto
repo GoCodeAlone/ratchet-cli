@@ -245,6 +245,7 @@ message AddProviderReq {
   string base_url = 5;
   int32 max_tokens = 6;
   bool is_default = 7;
+  string settings = 8;
 }
 
 message Provider {

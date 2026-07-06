@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"runtime"
@@ -150,6 +151,78 @@ func TestOpenAIChatGPTAddProviderReq(t *testing.T) {
 	}
 }
 
+func TestProviderSettingsJSON(t *testing.T) {
+	settingsJSON, err := providerSettingsJSON(map[string]string{
+		"region":        "us-west-2",
+		"access_key_id": "AKIAEXAMPLE",
+		"session_token": "",
+	})
+	if err != nil {
+		t.Fatalf("providerSettingsJSON: %v", err)
+	}
+	var settings map[string]string
+	if err := json.Unmarshal([]byte(settingsJSON), &settings); err != nil {
+		t.Fatalf("settings JSON is invalid: %v", err)
+	}
+	if settings["region"] != "us-west-2" {
+		t.Fatalf("region = %q", settings["region"])
+	}
+	if settings["access_key_id"] != "AKIAEXAMPLE" {
+		t.Fatalf("access_key_id = %q", settings["access_key_id"])
+	}
+	if _, ok := settings["session_token"]; ok {
+		t.Fatalf("empty session_token should be omitted: %#v", settings)
+	}
+}
+
+func TestBedrockProviderSettingsDefaultsRegion(t *testing.T) {
+	settings, err := bedrockProviderSettings(" AKIAEXAMPLE ", "")
+	if err != nil {
+		t.Fatalf("bedrockProviderSettings: %v", err)
+	}
+	if settings["access_key_id"] != "AKIAEXAMPLE" {
+		t.Fatalf("access_key_id = %q", settings["access_key_id"])
+	}
+	if settings["region"] != "us-east-1" {
+		t.Fatalf("region = %q", settings["region"])
+	}
+	if _, ok := settings["session_token"]; ok {
+		t.Fatalf("session_token should not be stored in settings: %#v", settings)
+	}
+}
+
+func TestPromptBedrockProviderCredentials(t *testing.T) {
+	scanner := bufio.NewScanner(strings.NewReader("AKIAEXAMPLE\nus-west-2\n"))
+	apiKey, settings, err := promptBedrockProviderCredentials(scanner, &strings.Builder{}, func(label string) (string, error) {
+		if label != "AWS secret access key" {
+			t.Fatalf("label = %q", label)
+		}
+		return " secret ", nil
+	})
+	if err != nil {
+		t.Fatalf("promptBedrockProviderCredentials: %v", err)
+	}
+	if apiKey != "secret" {
+		t.Fatalf("apiKey = %q", apiKey)
+	}
+	if settings["access_key_id"] != "AKIAEXAMPLE" || settings["region"] != "us-west-2" {
+		t.Fatalf("settings = %#v", settings)
+	}
+	if _, ok := settings["session_token"]; ok {
+		t.Fatalf("session_token should not be stored in settings: %#v", settings)
+	}
+}
+
+func TestPromptBedrockProviderCredentialsRequiresSecret(t *testing.T) {
+	scanner := bufio.NewScanner(strings.NewReader("AKIAEXAMPLE\nus-west-2\n"))
+	_, _, err := promptBedrockProviderCredentials(scanner, &strings.Builder{}, func(string) (string, error) {
+		return " ", nil
+	})
+	if err == nil {
+		t.Fatal("expected missing secret error")
+	}
+}
+
 func TestPromptProviderModelSelectionDefaultsToFirstEnumeratedModel(t *testing.T) {
 	scanner := bufio.NewScanner(strings.NewReader("\n"))
 	model, err := promptProviderModelSelection(
@@ -157,9 +230,16 @@ func TestPromptProviderModelSelectionDefaultsToFirstEnumeratedModel(t *testing.T
 		"openai",
 		"api-key",
 		"",
+		map[string]string{"region": "us-east-1"},
 		scanner,
 		&strings.Builder{},
-		func(context.Context, string, string, string) ([]wfprovider.ModelInfo, error) {
+		func(_ context.Context, providerType, apiKey, baseURL string, settings map[string]string) ([]wfprovider.ModelInfo, error) {
+			if providerType != "openai" || apiKey != "api-key" || baseURL != "" {
+				t.Fatalf("unexpected lister args: %q %q %q", providerType, apiKey, baseURL)
+			}
+			if settings["region"] != "us-east-1" {
+				t.Fatalf("settings not passed to lister: %#v", settings)
+			}
 			return []wfprovider.ModelInfo{
 				{ID: "gpt-5.5", Name: "GPT-5.5"},
 				{ID: "gpt-5.4-mini", Name: "GPT-5.4-Mini"},
@@ -181,9 +261,10 @@ func TestPromptProviderModelSelectionSupportsCustomModel(t *testing.T) {
 		"openai",
 		"api-key",
 		"",
+		nil,
 		scanner,
 		&strings.Builder{},
-		func(context.Context, string, string, string) ([]wfprovider.ModelInfo, error) {
+		func(context.Context, string, string, string, map[string]string) ([]wfprovider.ModelInfo, error) {
 			return []wfprovider.ModelInfo{
 				{ID: "gpt-5.5", Name: "GPT-5.5"},
 				{ID: "gpt-5.4-mini", Name: "GPT-5.4-Mini"},
@@ -206,9 +287,10 @@ func TestPromptProviderModelSelectionPromptsManualWhenEnumerationFails(t *testin
 		"anthropic_bedrock",
 		"",
 		"",
+		nil,
 		scanner,
 		&out,
-		func(context.Context, string, string, string) ([]wfprovider.ModelInfo, error) {
+		func(context.Context, string, string, string, map[string]string) ([]wfprovider.ModelInfo, error) {
 			return nil, errors.New("no dynamic catalog")
 		},
 	)
