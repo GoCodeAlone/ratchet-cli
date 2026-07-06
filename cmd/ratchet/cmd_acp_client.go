@@ -150,6 +150,7 @@ type acpClientProfilesCommand struct {
 	cwd     string
 	trust   bool
 	json    bool
+	all     bool
 	prompt  string
 	timeout time.Duration
 }
@@ -579,27 +580,38 @@ func parseACPClientProfilesInstall(args []string, output io.Writer) (acpClientPr
 }
 
 func parseACPClientProfilesVerify(args []string, output io.Writer) (acpClientProfilesCommand, error) {
-	if len(args) == 0 || strings.TrimSpace(args[0]) == "" || strings.HasPrefix(args[0], "-") {
-		return acpClientProfilesCommand{}, errors.New("usage: ratchet acp client profiles verify <name> [--prompt text] [--timeout duration] [--json]")
-	}
 	cmd := acpClientProfilesCommand{
 		kind:    acpClientProfilesVerify,
-		name:    args[0],
 		prompt:  defaultACPProfileVerifyPrompt,
 		timeout: 30 * time.Second,
+	}
+	if len(args) > 0 && strings.TrimSpace(args[0]) != "" && !strings.HasPrefix(args[0], "-") {
+		cmd.name = args[0]
+		args = args[1:]
 	}
 	fs := flag.NewFlagSet("ratchet acp client profiles verify", flag.ContinueOnError)
 	fs.SetOutput(output)
 	fs.StringVar(&cmd.prompt, "prompt", cmd.prompt, "verification prompt")
 	fs.DurationVar(&cmd.timeout, "timeout", cmd.timeout, "verification timeout")
 	fs.BoolVar(&cmd.json, "json", false, "emit JSON")
-	if err := fs.Parse(args[1:]); err != nil {
+	fs.BoolVar(&cmd.all, "all", false, "verify all local ACP profiles")
+	if err := fs.Parse(args); err != nil {
 		return acpClientProfilesCommand{}, err
 	}
-	if len(fs.Args()) > 0 {
-		return acpClientProfilesCommand{}, errors.New("usage: ratchet acp client profiles verify <name> [--prompt text] [--timeout duration] [--json]")
+	positionals := fs.Args()
+	switch {
+	case cmd.all && cmd.name == "" && len(positionals) == 0:
+		return cmd, nil
+	case cmd.all || cmd.name != "" && len(positionals) > 0:
+		return acpClientProfilesCommand{}, errors.New("usage: ratchet acp client profiles verify <name>|--all [--prompt text] [--timeout duration] [--json]")
+	case len(positionals) == 1 && strings.TrimSpace(positionals[0]) != "":
+		cmd.name = positionals[0]
+		return cmd, nil
+	case cmd.name != "":
+		return cmd, nil
+	default:
+		return acpClientProfilesCommand{}, errors.New("usage: ratchet acp client profiles verify <name>|--all [--prompt text] [--timeout duration] [--json]")
 	}
-	return cmd, nil
 }
 
 func parseACPClientExec(args []string, output io.Writer) (acpClientExecOptions, error) {
@@ -1063,7 +1075,7 @@ Commands:
   compare    Run one prompt serially across multiple ACP agents
   flow       Run JSON ACP client flows
   profiles   Manage local ACP launch profiles
-             Subcommands: list, add, install, trust, remove, verify
+             Subcommands: list, add, install, trust, remove, verify [name|--all]
   sessions   List or inspect ACP client sessions
              Subcommands: list, show, history (alias for show), export, import, events
   queue      List queued prompts for an ACP client session
@@ -1138,13 +1150,32 @@ func executeACPClientProfiles(store *acpclient.ProfileStore, cmd acpClientProfil
 		fmt.Fprintf(w, "Removed ACP profile %s\n", cmd.name)
 		return nil
 	case acpClientProfilesVerify:
-		return executeACPClientProfilesVerify(context.Background(), cmd, defaultACPClientExecRunner{}, w)
+		return executeACPClientProfilesVerifyWithStore(context.Background(), store, cmd, defaultACPClientExecRunner{}, w)
 	default:
 		return fmt.Errorf("unknown acp client profiles command: %s", cmd.kind)
 	}
 }
 
+type acpClientProfileVerifyResult struct {
+	Name               string `json:"name"`
+	Status             string `json:"status"`
+	CommandFingerprint string `json:"commandFingerprint,omitempty"`
+	ACPSessionID       string `json:"acpSessionId,omitempty"`
+	StopReason         string `json:"stopReason,omitempty"`
+	TextBytes          int    `json:"textBytes,omitempty"`
+	Error              string `json:"error,omitempty"`
+	err                error  `json:"-"`
+}
+
 func executeACPClientProfilesVerify(ctx context.Context, cmd acpClientProfilesCommand, runner acpClientExecRunner, w io.Writer) error {
+	store, err := acpclient.NewDefaultProfileStore()
+	if err != nil {
+		return err
+	}
+	return executeACPClientProfilesVerifyWithStore(ctx, store, cmd, runner, w)
+}
+
+func executeACPClientProfilesVerifyWithStore(ctx context.Context, store *acpclient.ProfileStore, cmd acpClientProfilesCommand, runner acpClientExecRunner, w io.Writer) error {
 	timeout := cmd.timeout
 	if timeout <= 0 {
 		timeout = 30 * time.Second
@@ -1153,46 +1184,95 @@ func executeACPClientProfilesVerify(ctx context.Context, cmd acpClientProfilesCo
 	if prompt == "" {
 		prompt = defaultACPProfileVerifyPrompt
 	}
-	reg, err := defaultACPClientRegistry()
+	profiles, err := store.List()
 	if err != nil {
 		return err
 	}
+	reg, err := acpclient.DefaultRegistry().WithProfiles(profiles)
+	if err != nil {
+		return err
+	}
+	if cmd.all {
+		results := make([]acpClientProfileVerifyResult, 0, len(profiles))
+		failed := 0
+		for _, profile := range profiles {
+			if !profile.Trusted {
+				results = append(results, acpClientProfileVerifyResult{Name: profile.Name, Status: "skipped_untrusted"})
+				continue
+			}
+			result := runACPClientProfileVerify(ctx, reg, profile.Name, timeout, prompt, runner)
+			if result.Status == "error" {
+				failed++
+			}
+			results = append(results, result)
+		}
+		if cmd.json {
+			if err := json.NewEncoder(w).Encode(struct {
+				Results []acpClientProfileVerifyResult `json:"results"`
+			}{Results: results}); err != nil {
+				return err
+			}
+			if failed > 0 {
+				return fmt.Errorf("one or more ACP profiles failed verification: %d", failed)
+			}
+			return nil
+		}
+		for _, result := range results {
+			if result.Status == "ok" {
+				fmt.Fprintf(w, "verified ACP profile %s session=%s stop=%s fingerprint=%s text_bytes=%d\n",
+					result.Name, result.ACPSessionID, result.StopReason, result.CommandFingerprint, result.TextBytes)
+				continue
+			}
+			if result.Error != "" {
+				fmt.Fprintf(w, "profile %s status=%s error=%s\n", result.Name, result.Status, result.Error)
+			} else {
+				fmt.Fprintf(w, "profile %s status=%s\n", result.Name, result.Status)
+			}
+		}
+		if failed > 0 {
+			return fmt.Errorf("one or more ACP profiles failed verification: %d", failed)
+		}
+		return nil
+	}
+	result := runACPClientProfileVerify(ctx, reg, cmd.name, timeout, prompt, runner)
+	if result.Status != "ok" {
+		if result.err != nil {
+			return result.err
+		}
+		return errors.New(result.Error)
+	}
+	if cmd.json {
+		return json.NewEncoder(w).Encode(result)
+	}
+	fmt.Fprintf(w, "verified ACP profile %s session=%s stop=%s fingerprint=%s text_bytes=%d\n",
+		result.Name, result.ACPSessionID, result.StopReason, result.CommandFingerprint, result.TextBytes)
+	return nil
+}
+
+func runACPClientProfileVerify(ctx context.Context, reg acpclient.Registry, name string, timeout time.Duration, prompt string, runner acpClientExecRunner) acpClientProfileVerifyResult {
 	runOpts := acpclient.RunOptions{
-		Agent:   cmd.name,
+		Agent:   name,
 		Cwd:     ".",
 		Timeout: timeout,
 	}
 	spec, err := reg.Resolve(runOpts)
 	if err != nil {
-		return err
+		return acpClientProfileVerifyResult{Name: name, Status: "error", Error: err.Error(), err: err}
 	}
 	verifyCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	result, err := runner.RunPrompt(verifyCtx, spec, runOpts, prompt)
 	if err != nil {
-		return err
+		return acpClientProfileVerifyResult{Name: spec.Name, Status: "error", CommandFingerprint: spec.Fingerprint(), Error: err.Error(), err: err}
 	}
-	payload := struct {
-		Name               string `json:"name"`
-		Status             string `json:"status"`
-		CommandFingerprint string `json:"commandFingerprint"`
-		ACPSessionID       string `json:"acpSessionId"`
-		StopReason         string `json:"stopReason"`
-		TextBytes          int    `json:"textBytes"`
-	}{
+	return acpClientProfileVerifyResult{
 		Name:               spec.Name,
 		Status:             "ok",
 		CommandFingerprint: spec.Fingerprint(),
 		ACPSessionID:       string(result.SessionID),
 		StopReason:         string(result.StopReason),
-		TextBytes:          len([]byte(result.Text)),
+		TextBytes:          len(result.Text),
 	}
-	if cmd.json {
-		return json.NewEncoder(w).Encode(payload)
-	}
-	fmt.Fprintf(w, "verified ACP profile %s session=%s stop=%s fingerprint=%s text_bytes=%d\n",
-		payload.Name, payload.ACPSessionID, payload.StopReason, payload.CommandFingerprint, payload.TextBytes)
-	return nil
 }
 
 func executeACPClientProfilesList(store *acpclient.ProfileStore, jsonOut bool, w io.Writer) error {

@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/config"
 	"github.com/GoCodeAlone/ratchet-cli/internal/retro"
@@ -41,6 +43,12 @@ type retroInstructionsOptions struct {
 	OutputPath   string
 }
 
+type retroBundleOptions struct {
+	EvidencePath string
+	SessionID    string
+	OutputDir    string
+}
+
 var exitProcess = os.Exit
 
 func handleRetro(args []string) {
@@ -52,7 +60,7 @@ func handleRetro(args []string) {
 
 func runRetro(ctx context.Context, args []string, w io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: ratchet retro <analyze|instructions> --evidence <evidence.jsonl> [--session ID]")
+		return errors.New("usage: ratchet retro <analyze|instructions|bundle> --evidence <evidence.jsonl> [--session ID]")
 	}
 	switch args[0] {
 	case "analyze":
@@ -67,6 +75,12 @@ func runRetro(ctx context.Context, args []string, w io.Writer) error {
 			return err
 		}
 		return executeRetroInstructions(ctx, opts, w)
+	case "bundle":
+		opts, err := parseRetroBundleArgs(args[1:])
+		if err != nil {
+			return err
+		}
+		return executeRetroBundle(ctx, opts, w)
 	default:
 		return fmt.Errorf("unknown retro command %q", args[0])
 	}
@@ -136,6 +150,74 @@ func executeRetroInstructions(ctx context.Context, opts retroInstructionsOptions
 		return fmt.Errorf("write retro instructions: %w", err)
 	}
 	_, err = fmt.Fprintf(w, "wrote retro instructions: %s\n", opts.OutputPath)
+	return err
+}
+
+func parseRetroBundleArgs(args []string) (retroBundleOptions, error) {
+	var opts retroBundleOptions
+	fs := flag.NewFlagSet("ratchet retro bundle", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.StringVar(&opts.EvidencePath, "evidence", "", "retro evidence JSONL file")
+	fs.StringVar(&opts.SessionID, "session", "", "session id to analyze")
+	fs.StringVar(&opts.OutputDir, "output", "", "write bundle to this directory")
+	if err := fs.Parse(args); err != nil {
+		return retroBundleOptions{}, err
+	}
+	if opts.EvidencePath == "" || opts.OutputDir == "" {
+		return retroBundleOptions{}, errors.New("usage: ratchet retro bundle --evidence <evidence.jsonl> [--session ID] --output <dir>")
+	}
+	if fs.NArg() != 0 {
+		return retroBundleOptions{}, errors.New("usage: ratchet retro bundle --evidence <evidence.jsonl> [--session ID] --output <dir>")
+	}
+	return opts, nil
+}
+
+func executeRetroBundle(ctx context.Context, opts retroBundleOptions, w io.Writer) error {
+	output, err := buildRetroAnalyzeOutput(ctx, opts.EvidencePath, opts.SessionID)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(opts.OutputDir, 0700); err != nil {
+		return fmt.Errorf("create retro bundle: %w", err)
+	}
+	analysis, err := json.MarshalIndent(output, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode retro analysis: %w", err)
+	}
+	analysis = append(analysis, '\n')
+	if err := os.WriteFile(filepath.Join(opts.OutputDir, "analysis.json"), analysis, 0600); err != nil {
+		return fmt.Errorf("write retro bundle analysis: %w", err)
+	}
+	instructions := renderRetroInstructionsMarkdown(output)
+	if err := os.WriteFile(filepath.Join(opts.OutputDir, "instructions.md"), []byte(instructions), 0600); err != nil {
+		return fmt.Errorf("write retro bundle instructions: %w", err)
+	}
+	manifest := struct {
+		SessionID            string    `json:"session_id,omitempty"`
+		CreatedAt            time.Time `json:"created_at"`
+		Files                []string  `json:"files"`
+		Findings             int       `json:"findings"`
+		LocalActions         int       `json:"local_actions"`
+		UpstreamInstructions int       `json:"upstream_instructions"`
+		RawEvidenceCopied    bool      `json:"raw_evidence_copied"`
+	}{
+		SessionID:            output.SessionID,
+		CreatedAt:            time.Now().UTC(),
+		Files:                []string{"analysis.json", "instructions.md", "manifest.json"},
+		Findings:             len(output.Findings),
+		LocalActions:         len(output.LocalActions),
+		UpstreamInstructions: len(output.UpstreamInstructions),
+		RawEvidenceCopied:    false,
+	}
+	manifestData, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode retro bundle manifest: %w", err)
+	}
+	manifestData = append(manifestData, '\n')
+	if err := os.WriteFile(filepath.Join(opts.OutputDir, "manifest.json"), manifestData, 0600); err != nil {
+		return fmt.Errorf("write retro bundle manifest: %w", err)
+	}
+	_, err = fmt.Fprintf(w, "wrote retro bundle: %s\n", opts.OutputDir)
 	return err
 }
 

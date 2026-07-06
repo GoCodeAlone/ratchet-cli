@@ -100,7 +100,10 @@ launch profiles let reviewed local or
 plugin-distributed launch specs feed `--agent` for explicit foreground ACP
 client commands; built-ins win over profile names and untrusted profiles are
 refused at execution time. `ratchet acp client profiles verify <name>` gives CI
-a redacted trusted-profile proof without printing prompt or response text. JSON
+a redacted trusted-profile proof without printing prompt or response text, and
+`ratchet acp client profiles verify --all --json` reports all trusted local
+profile checks plus skipped untrusted profiles without printing prompts,
+responses, or env values. JSON
 v1 action nodes run local commands only with
 `--allow shell`; node cwd escapes require `--allow outside-cwd`, and run bundles
 may contain sensitive local command output. `flow replay` is read-only and does
@@ -162,13 +165,14 @@ disk.
 | compare commands | Supported | `ratchet acp client compare --save --command <agent-a> --command <agent-b> "prompt"` runs agents serially, emits table or JSON rows, and persists `compare.json` plus per-agent `events.ndjson` files when `--save` is set. Binary smoke proves compare through the built CLI and fixture ACP agent. |
 | flow commands | Supported | `ratchet acp client flow run flow.json --input-json '{"task":"x"}' --command <agent> --allow shell` runs JSON v1 flows with `acp`, `compute`, `action`, and `checkpoint` nodes, template prompts, shared ACP session handles, JSON output, and Go-native ACPX durable replay bundles. `ratchet acp client flow replay <run-dir> --json` validates and summarizes both legacy ratchet bundles and upstream-shaped ACPX durable bundles through the shared `workflow-plugin-acpx` runtime, including `manifest.json`, `flow.json`, `trace.ndjson`, projections, artifacts, and session event links without contacting agents or executing actions. Action nodes require `--allow shell`; cwd escapes require `--allow outside-cwd`; action stdout/stderr is sensitive local command output. Ratchet does not execute `.flow.ts` files or embed a TypeScript ACPX runtime. |
 | ACP launch profiles | Supported with local trust | `ratchet acp client profiles list`, `add`, `install`, `trust`, and `remove` manage reviewed launch specs under ratchet state. Profiles store command metadata and env key names only. Built-in ACP agents win over profile names, profile names cannot shadow built-ins, and only trusted profiles resolve through `--agent` for `exec`, `drain`, `watch`, `compare`, and `flow run`. Plugin `acpProfiles` templates are copied locally before use. |
-| ACP profile verify | Supported | `ratchet acp client profiles verify <name> [--json]` resolves a trusted profile, runs a small ACP prompt, and emits redacted metadata: session id, stop reason, command fingerprint, and response byte count. It does not print prompt text, response text, or env values. |
+| ACP profile verify | Supported | `ratchet acp client profiles verify <name> [--json]` resolves a trusted profile, runs a small ACP prompt, and emits redacted metadata: session id, stop reason, command fingerprint, and response byte count. `ratchet acp client profiles verify --all --json` verifies trusted profiles and reports untrusted profiles as skipped. Neither form prints prompt text, response text, or env values. |
 
 ### ACP client examples
 
 ```sh
 ratchet acp client profiles list
 ratchet acp client profiles add local-agent --command ./agent --arg --stdio --trust
+ratchet acp client profiles verify --all --json
 ratchet acp client exec --agent local-agent "Review this patch"
 
 ratchet acp client sessions export work --output work.archive.json
@@ -256,5 +260,6 @@ Scriptable equivalents are available through `ratchet trust list`,
 The broader Policy Matrix lives in [docs/policy-matrix.md](policy-matrix.md),
 including the explicit watch/drain boundary, sensitive local policy metadata
 warning, hook trust, ACP launch profiles, and deferred background drain and
-extension SDK boundaries. `ratchet policy matrix` and
-`ratchet policy matrix --json` expose a read-only CLI view of that matrix.
+extension SDK boundaries. `ratchet policy matrix`,
+`ratchet policy matrix --json`, and `ratchet policy matrix --status deferred`
+expose a read-only CLI view of that matrix.

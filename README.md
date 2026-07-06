@@ -143,11 +143,13 @@ Reviewed ACP launch profiles make repeated client runs safer:
 ratchet acp client profiles list
 ratchet acp client profiles add local --command ./agent --trust
 ratchet acp client profiles verify local --json
+ratchet acp client profiles verify --all --json
 ```
 
 Profiles store command, args, cwd, and env key names only, never secret values.
 Use `ratchet acp client profiles verify` as a credential-free CI contract check
-for trusted profiles.
+for trusted profiles. `--all` verifies trusted profiles and reports untrusted
+profiles as skipped without printing prompts, responses, or env values.
 
 ### Archives, Compare, And Flow Replay
 
@@ -214,6 +216,7 @@ ratchet workflows install workflow.yaml
 ratchet workflows run NAME
 ratchet retro analyze --evidence ~/.ratchet/retro/evidence.jsonl --session ID
 ratchet retro instructions --evidence ~/.ratchet/retro/evidence.jsonl --session ID --output instructions.md
+ratchet retro bundle --evidence ~/.ratchet/retro/evidence.jsonl --session ID --output retro-bundle
 ```
 
 Project and plugin hooks are skipped until their descriptor hash is trusted.
@@ -234,7 +237,9 @@ executable node types instead of running source code.
 Retro analysis is reporting-only. It reads local evidence, summarizes findings,
 and can emit local-action or upstream-PR instructions according to config.
 `ratchet retro instructions` writes those findings as a Markdown handoff for
-review before any PR is opened; it does not edit config or open PRs.
+review before any PR is opened; `ratchet retro bundle` writes derived
+`analysis.json`, `instructions.md`, and `manifest.json` files for local handoff.
+Neither command edits config, opens PRs, or copies raw evidence into a bundle.
 
 ## Harness Modes
 
@@ -274,8 +279,9 @@ static config trust rules, runtime trust rules, persistent trust grants,
 permission prompts, ACP client queue/drain, hook trust, extension hooks,
 sandbox/path/network controls, retro evidence, action nodes, background drain,
 managed hooks, workflow source execution, and extension SDK work. Run
-`ratchet policy matrix` or `ratchet policy matrix --json` for a read-only CLI
-view of the same supported, partial, explicit-operator, and deferred layers.
+`ratchet policy matrix`, `ratchet policy matrix --json`, or
+`ratchet policy matrix --status deferred --json` for a read-only CLI view of
+the same supported, partial, explicit-operator, and deferred layers.
 
 ## Development
 
