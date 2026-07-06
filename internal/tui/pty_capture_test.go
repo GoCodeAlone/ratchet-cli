@@ -52,8 +52,12 @@ type tuiPTY struct {
 
 func startTUITestPTY(t *testing.T, bin string, dir string, env []string, red func(string) string) *tuiPTY {
 	t.Helper()
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skipf("sh not available for PTY setup: %v", err)
+	}
 	// Disable software flow control inside the slave PTY before exec so Ctrl+S reaches Bubble Tea.
-	cmd := exec.Command("sh", "-c", "stty -ixon -ixoff 2>/dev/null || true; exec \"$1\"", "tui-pty", bin)
+	cmd := exec.Command(sh, "-c", "stty -ixon -ixoff 2>/dev/null || true; exec \"$1\"", "tui-pty", bin)
 	if dir != "" {
 		cmd.Dir = dir
 	}
