@@ -18,9 +18,10 @@ import (
 )
 
 const daemonSessionExportSchema = "ratchet.session-export.v1"
-const daemonSessionExportUsage = "Usage: ratchet sessions export <id> --output <path> [--json]"
+const daemonSessionJSONLSchema = "ratchet.session-jsonl.v1"
+const daemonSessionExportUsage = "Usage: ratchet sessions export <id> --output <path> [--format bundle|jsonl] [--json]"
 
-var errDaemonSessionExportUsage = errors.New("usage: ratchet sessions export <id> --output <path> [--json]")
+var errDaemonSessionExportUsage = errors.New("usage: ratchet sessions export <id> --output <path> [--format bundle|jsonl] [--json]")
 
 type sessionsClient interface {
 	Close() error
@@ -44,9 +45,17 @@ type daemonSessionExportBundle struct {
 	Compactions []*pb.CompactionRecord `json:"compactions"`
 }
 
+type daemonSessionJSONLRecord struct {
+	Schema     string          `json:"schema"`
+	Type       string          `json:"type"`
+	ExportedAt string          `json:"exported_at"`
+	Data       json.RawMessage `json:"data"`
+}
+
 type daemonSessionExportSummary struct {
 	Output      string `json:"output"`
 	SessionID   string `json:"session_id"`
+	Format      string `json:"format"`
 	Tree        int    `json:"tree"`
 	Messages    int    `json:"messages"`
 	Compactions int    `json:"compactions"`
@@ -231,7 +240,7 @@ func printSessionsUsage() {
 }
 
 func executeDaemonSessionExport(ctx context.Context, c sessionsClient, args []string, w interface{ Write([]byte) (int, error) }) error {
-	sessionID, output, jsonOut, ok := parseDaemonSessionExportArgs(args)
+	sessionID, output, format, jsonOut, ok := parseDaemonSessionExportArgs(args)
 	if !ok {
 		return errDaemonSessionExportUsage
 	}
@@ -260,9 +269,9 @@ func executeDaemonSessionExport(ctx context.Context, c sessionsClient, args []st
 		Messages:    history.Messages,
 		Compactions: compactions.Records,
 	}
-	data, err := json.MarshalIndent(bundle, "", "  ")
+	data, err := encodeDaemonSessionExport(bundle, format)
 	if err != nil {
-		return fmt.Errorf("encode session export: %w", err)
+		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(output), 0o755); err != nil {
 		return fmt.Errorf("create export dir: %w", err)
@@ -273,6 +282,7 @@ func executeDaemonSessionExport(ctx context.Context, c sessionsClient, args []st
 	summary := daemonSessionExportSummary{
 		Output:      output,
 		SessionID:   sessionID,
+		Format:      format,
 		Tree:        len(bundle.Tree),
 		Messages:    len(bundle.Messages),
 		Compactions: len(bundle.Compactions),
@@ -282,31 +292,117 @@ func executeDaemonSessionExport(ctx context.Context, c sessionsClient, args []st
 		enc.SetIndent("", "  ")
 		return enc.Encode(summary)
 	}
-	fmt.Fprintf(w, "Exported session %s to %s (%d tree sessions, %d messages, %d compactions)\n",
-		sessionID, output, summary.Tree, summary.Messages, summary.Compactions)
+	fmt.Fprintf(w, "Exported session %s to %s as %s (%d tree sessions, %d messages, %d compactions)\n",
+		sessionID, output, summary.Format, summary.Tree, summary.Messages, summary.Compactions)
 	return nil
 }
 
-func parseDaemonSessionExportArgs(args []string) (sessionID, output string, jsonOut bool, ok bool) {
+func parseDaemonSessionExportArgs(args []string) (sessionID, output, format string, jsonOut bool, ok bool) {
 	if len(args) < 3 {
-		return "", "", false, false
+		return "", "", "", false, false
 	}
 	sessionID = args[0]
+	format = "bundle"
 	for i := 1; i < len(args); i++ {
 		switch args[i] {
 		case "--output", "-o":
 			if i+1 >= len(args) {
-				return "", "", false, false
+				return "", "", "", false, false
 			}
 			output = args[i+1]
+			i++
+		case "--format":
+			if i+1 >= len(args) {
+				return "", "", "", false, false
+			}
+			format = args[i+1]
 			i++
 		case "--json":
 			jsonOut = true
 		default:
-			return "", "", false, false
+			return "", "", "", false, false
 		}
 	}
-	return sessionID, output, jsonOut, sessionID != "" && output != ""
+	switch format {
+	case "bundle", "jsonl":
+	default:
+		return "", "", "", false, false
+	}
+	return sessionID, output, format, jsonOut, sessionID != "" && output != ""
+}
+
+func encodeDaemonSessionExport(bundle daemonSessionExportBundle, format string) ([]byte, error) {
+	switch format {
+	case "bundle":
+		data, err := json.MarshalIndent(bundle, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("encode session export: %w", err)
+		}
+		return data, nil
+	case "jsonl":
+		data, err := encodeDaemonSessionJSONL(bundle)
+		if err != nil {
+			return nil, fmt.Errorf("encode session jsonl export: %w", err)
+		}
+		return data, nil
+	default:
+		return nil, errDaemonSessionExportUsage
+	}
+}
+
+func encodeDaemonSessionJSONL(bundle daemonSessionExportBundle) ([]byte, error) {
+	var b strings.Builder
+	if err := appendDaemonSessionJSONLRecord(&b, "export", bundle.ExportedAt, struct {
+		ExportedBy  string `json:"exported_by"`
+		SessionID   string `json:"session_id"`
+		Tree        int    `json:"tree"`
+		Messages    int    `json:"messages"`
+		Compactions int    `json:"compactions"`
+	}{
+		ExportedBy:  bundle.ExportedBy,
+		SessionID:   bundle.Session.GetId(),
+		Tree:        len(bundle.Tree),
+		Messages:    len(bundle.Messages),
+		Compactions: len(bundle.Compactions),
+	}); err != nil {
+		return nil, err
+	}
+	for _, session := range bundle.Tree {
+		if err := appendDaemonSessionJSONLRecord(&b, "session", bundle.ExportedAt, session); err != nil {
+			return nil, err
+		}
+	}
+	for _, message := range bundle.Messages {
+		if err := appendDaemonSessionJSONLRecord(&b, "message", bundle.ExportedAt, message); err != nil {
+			return nil, err
+		}
+	}
+	for _, compaction := range bundle.Compactions {
+		if err := appendDaemonSessionJSONLRecord(&b, "compaction", bundle.ExportedAt, compaction); err != nil {
+			return nil, err
+		}
+	}
+	return []byte(strings.TrimSuffix(b.String(), "\n")), nil
+}
+
+func appendDaemonSessionJSONLRecord(b *strings.Builder, recordType, exportedAt string, data any) error {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("marshal %s jsonl data: %w", recordType, err)
+	}
+	record := daemonSessionJSONLRecord{
+		Schema:     daemonSessionJSONLSchema,
+		Type:       recordType,
+		ExportedAt: exportedAt,
+		Data:       raw,
+	}
+	line, err := json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("marshal %s jsonl record: %w", recordType, err)
+	}
+	b.Write(line)
+	b.WriteByte('\n')
+	return nil
 }
 
 func findSessionInTree(sessionID string, sessions []*pb.Session) *pb.Session {

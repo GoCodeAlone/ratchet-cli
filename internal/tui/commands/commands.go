@@ -416,6 +416,7 @@ func sessionActionLines() []string {
 		"  ratchet sessions clone <id>",
 		"  ratchet sessions fork <id> --at <message-id>",
 		"  ratchet sessions export <id> --output session.export.json",
+		"  ratchet sessions export <id> --format jsonl --output session.export.jsonl",
 	}
 }
 

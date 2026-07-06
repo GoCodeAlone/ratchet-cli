@@ -113,13 +113,16 @@ ratchet sessions fork SESSION_ID --at MESSAGE_ID
 ratchet sessions tree SESSION_ID
 ratchet sessions browse SESSION_ID
 ratchet sessions export SESSION_ID --output session.export.json
+ratchet sessions export SESSION_ID --format jsonl --output session.export.jsonl
 ```
 
 Use the tree/browser commands when you want to branch an investigation without
 losing visible history. `ratchet sessions export` writes a daemon session
 bundle with tree metadata, messages, and compaction records for local handoff or
-audit. The bundle is written with user-only permissions and may contain prompts,
-responses, summaries, local paths, and model metadata.
+audit. Use `--format jsonl` when another harness needs line-oriented session,
+message, and compaction records. Export files are written with user-only
+permissions and may contain prompts, responses, summaries, local paths, and
+model metadata.
 
 ### ACP Agent And ACP Client
 
