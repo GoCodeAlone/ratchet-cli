@@ -172,6 +172,12 @@ func helpCmd() *Result {
 		"  /trust revoke \"pattern\" [--scope scope]  Revoke persistent grant",
 		"  /trust reset               Reset to config defaults",
 		"  /exit                      Quit ratchet",
+		"",
+		"Recovery shortcuts:",
+		"  Ctrl+C quit  Esc close panel/cancel stream  Ctrl+S sessions",
+		"  Ctrl+B tree  Ctrl+J jobs  Ctrl+T team",
+		"Model setup:",
+		"  Run /model for providers and model changes; /provider add opens setup",
 	}}
 }
 
@@ -286,11 +292,7 @@ func modelCmd(args []string, c *client.Client) *Result {
 			return modelHelpLines("No providers configured.")
 		}
 		for _, p := range resp.Providers {
-			marker := "  "
-			if p.IsDefault {
-				marker = "> "
-			}
-			lines = append(lines, fmt.Sprintf("%s%-12s %s", marker, p.Alias, p.Model))
+			lines = append(lines, modelProviderLine(p))
 		}
 		lines = append(lines, "", "Actions:", "  /model <alias> <model-name>  Change a provider model", "  /provider add                 Add another provider", "  /provider default <alias>     Switch the default provider")
 		return &Result{Lines: lines}
@@ -307,6 +309,24 @@ func modelCmd(args []string, c *client.Client) *Result {
 	return &Result{Lines: []string{fmt.Sprintf("Updated %s model to %s", args[0], args[1])}}
 }
 
+func modelProviderLine(p *pb.Provider) string {
+	marker := "  "
+	defaultLabel := ""
+	if p.GetIsDefault() {
+		marker = "> "
+		defaultLabel = " default"
+	}
+	providerType := p.GetType()
+	if providerType == "" {
+		providerType = "unknown"
+	}
+	model := p.GetModel()
+	if model == "" {
+		model = "-"
+	}
+	return fmt.Sprintf("%s%-12s type=%-10s model=%s%s", marker, p.GetAlias(), providerType, model, defaultLabel)
+}
+
 func modelHelpLines(reason string) *Result {
 	return &Result{Lines: []string{
 		reason,
@@ -318,8 +338,10 @@ func modelHelpLines(reason string) *Result {
 		"  /provider default <alias>    Switch the default provider",
 		"",
 		"CLI equivalents:",
+		"  ratchet provider list",
 		"  ratchet provider add",
 		"  ratchet provider default <alias>",
+		"  ratchet provider test <alias>",
 	}}
 }
 

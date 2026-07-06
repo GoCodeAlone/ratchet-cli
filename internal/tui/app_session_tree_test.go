@@ -159,6 +159,42 @@ func TestAppEscClosesJobPanel(t *testing.T) {
 	}
 }
 
+func TestAppEscClosesSidebar(t *testing.T) {
+	app := readyChatApp(t, "root-session-12345678")
+	model, _ := app.Update(ctrlKey('s'))
+	app = model.(App)
+	if !app.showSidebar {
+		t.Fatal("ctrl+s did not open sidebar")
+	}
+
+	model, _ = app.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	app = model.(App)
+	if app.showSidebar {
+		t.Fatal("esc did not close sidebar")
+	}
+	if app.page != pageChat {
+		t.Fatalf("page = %v, want pageChat", app.page)
+	}
+}
+
+func TestAppEscClosesTeamPanel(t *testing.T) {
+	app := readyChatApp(t, "root-session-12345678")
+	model, _ := app.Update(ctrlKey('t'))
+	app = model.(App)
+	if !app.showTeam {
+		t.Fatal("ctrl+t did not open team panel")
+	}
+
+	model, _ = app.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	app = model.(App)
+	if app.showTeam {
+		t.Fatal("esc did not close team panel")
+	}
+	if app.page != pageChat {
+		t.Fatalf("page = %v, want pageChat", app.page)
+	}
+}
+
 func TestAppSidebarKeepsShortcutHintsVisible(t *testing.T) {
 	app := readyChatApp(t, "root-session-12345678")
 	model, _ := app.Update(tea.WindowSizeMsg{Width: 72, Height: 24})
