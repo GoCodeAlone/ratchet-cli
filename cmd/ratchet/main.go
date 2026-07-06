@@ -52,6 +52,8 @@ func main() {
 	switch filteredArgs[0] {
 	case "daemon":
 		handleDaemon(filteredArgs[1:])
+	case "doctor":
+		handleDoctor(filteredArgs[1:])
 	case "sessions":
 		handleSessions(filteredArgs[1:])
 	case "provider":
@@ -160,6 +162,7 @@ Commands:
   -p "prompt"      One-shot programmatic mode
 
   daemon           Manage background daemon
+  doctor           Print credential-free local diagnostics
   sessions         Manage sessions
   model            Manage local models (list, pull)
   provider         Manage AI providers

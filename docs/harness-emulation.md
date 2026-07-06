@@ -11,6 +11,7 @@ possible.
 |---|---|---|---|---|
 | TUI | `ratchet` | daemon gRPC + Bubble Tea UI | Supported | Release-shaped startup smoke builds untagged `ratchet`, reaches onboarding/provider setup, and shuts the daemon down by RPC; Unix PTY binary smoke drives the build-tagged test-only TUI binary through slash commands and shortcuts. |
 | one-shot | `ratchet -p "prompt"` | daemon session + default provider | Supported when provider configured | CLI binary smoke covers command dispatch; mock provider roundtrip covers daemon path. |
+| doctor | `ratchet doctor [--json]` | local executable/config/state path inspection plus daemon status files | Supported credential-free | `TestRunDoctorJSON`; `TestHarnessSmokeVersionHelpAndDaemonStatus`. |
 | daemon | `ratchet daemon status` | pid/socket state under `~/.ratchet` | Supported | `TestHarnessSmokeVersionHelpAndDaemonStatus`. |
 | blackboard | `ratchet blackboard write coordination status ready` / `ratchet blackboard read coordination status` / `ratchet blackboard export [section] --jsonl` / `ratchet blackboard export [section] --workflow-messaging --jsonl` | daemon gRPC `BlackboardWrite`/`BlackboardRead`/`BlackboardList` | Supported for same-device, daemon-scoped volatile local coordination data across separate terminal invocations, local notification-event export, and Workflow `step.messaging_send` handoff metadata | `TestHarnessSmokeBlackboardCLI`; blackboard export command tests. |
 | session lineage | `ratchet sessions history`, `ratchet sessions clone`, `ratchet sessions fork`, `ratchet sessions tree`, `ratchet sessions browse`, `ratchet sessions summary`, `ratchet sessions compactions` | daemon gRPC session history/clone/fork/tree/summary/compaction APIs plus Bubble Tea session tree browser | Supported for separate fork/clone sessions, branch summaries, persisted compaction records, archive session links, and Pi-style in-place branch navigation through `ctrl+b`, `/tree`, and `sessions browse` | `TestSessionLineageHistoryCloneForkTreeRPC`; `TestCompactionRecordRPC`; `TestHandleSessionsHistoryCloneForkTree`; `TestAppCtrlBOpensSessionTreeBrowser`; `TestParseTreeRequestsSessionTreeNavigation`; `TestHandleSessionsBrowseRunsInjectedBrowser`. |
@@ -27,6 +28,7 @@ Use a throwaway home to avoid touching a real `~/.ratchet`:
 tmp_home="$(mktemp -d)"
 HOME="$tmp_home" ratchet version
 HOME="$tmp_home" ratchet help
+HOME="$tmp_home" ratchet doctor --json
 HOME="$tmp_home" ratchet daemon status
 ```
 

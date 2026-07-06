@@ -48,6 +48,7 @@ arm64. Windows installer packages are not published yet.
 ratchet                       # Start the interactive TUI
 ratchet --version             # Print the CLI version and exit
 ratchet help                  # Show top-level commands
+ratchet doctor                # Print local diagnostics without credentials
 ratchet daemon status         # Check the local daemon
 ratchet provider list         # List configured providers
 ratchet "summarize this repo" # Start chat with an initial prompt
@@ -70,9 +71,13 @@ ratchet
 Useful TUI controls:
 
 - `ctrl+b` or `/tree`: open the session branch tree.
-- `ctrl+s`: open the session sidebar.
+- `ctrl+s`: open the session sidebar; use arrow keys to choose a session,
+  `Enter` to switch, and `d` to kill the highlighted session.
 - `ctrl+t`: open team view.
 - `ctrl+j`: open the jobs panel.
+- `ctrl+c`: quit.
+- `/model`: show configured providers and models, including actions for
+  changing a model or adding another provider.
 - `/mode <mode>`: switch trust mode (`conservative`, `permissive`, `locked`,
   `sandbox`, or `custom`).
 - `/trust list`, `/trust allow`, `/trust deny`, `/trust grants`, and
@@ -200,6 +205,7 @@ ratchet routines run ID
 ratchet workflows install workflow.yaml
 ratchet workflows run NAME
 ratchet retro analyze --evidence ~/.ratchet/retro/evidence.jsonl --session ID
+ratchet retro instructions --evidence ~/.ratchet/retro/evidence.jsonl --session ID --output instructions.md
 ```
 
 Project and plugin hooks are skipped until their descriptor hash is trusted.
@@ -218,8 +224,9 @@ workflows run` records workflow lifecycle state and rejects shell/JavaScript
 executable node types instead of running source code.
 
 Retro analysis is reporting-only. It reads local evidence, summarizes findings,
-and can emit local-action or upstream-PR instructions according to config; it
-does not edit config or open PRs.
+and can emit local-action or upstream-PR instructions according to config.
+`ratchet retro instructions` writes those findings as a Markdown handoff for
+review before any PR is opened; it does not edit config or open PRs.
 
 ## Harness Modes
 
@@ -227,6 +234,7 @@ does not edit config or open PRs.
 |---|---|---|
 | TUI | `ratchet` | Starts a daemon-backed interactive session. |
 | one-shot | `ratchet -p "prompt"` | Uses the configured default provider. |
+| doctor | `HOME="$(mktemp -d)" ratchet doctor --json` | Prints credential-free local install, path, and daemon diagnostics. |
 | daemon | `HOME="$(mktemp -d)" ratchet daemon status` | Runs credential-free when pointed at a temp home. |
 | blackboard | `ratchet blackboard write coordination status ready` / `ratchet blackboard read coordination status` / `ratchet blackboard export [section] --jsonl` / `ratchet blackboard export [section] --workflow-messaging --jsonl` | Shares daemon-scoped volatile local coordination data and exports local notification-event records plus Workflow messaging handoff metadata. |
 | ACP | `ratchet acp` | Exposes ratchet over ACP stdio JSON-RPC. |

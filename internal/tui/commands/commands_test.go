@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -90,6 +91,25 @@ func TestParseModelNoClient(t *testing.T) {
 	}
 	if len(result.Lines) == 0 {
 		t.Error("expected output for /model without client")
+	}
+	joined := strings.Join(result.Lines, "\n")
+	for _, want := range []string{"/provider add", "/model <alias> <model-name>", "ratchet provider add"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("/model without daemon missing %q:\n%s", want, joined)
+		}
+	}
+}
+
+func TestParseModelOneArgShowsProviderAndModelActions(t *testing.T) {
+	result := Parse("/model anthropic", nil)
+	if result == nil {
+		t.Fatal("expected result for /model <alias>")
+	}
+	joined := strings.Join(result.Lines, "\n")
+	for _, want := range []string{"/model <alias> <model-name>", "/provider add", "/provider default"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("/model one-arg help missing %q:\n%s", want, joined)
+		}
 	}
 }
 

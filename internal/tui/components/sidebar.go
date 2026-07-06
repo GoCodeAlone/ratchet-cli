@@ -122,7 +122,7 @@ func (s SidebarModel) View(t theme.Theme) string {
 			style = style.Foreground(t.Foreground)
 		}
 		if i == s.cursor {
-			style = style.Background(t.Secondary)
+			style = style.Background(t.Primary).Foreground(lipgloss.Color("#FFFFFF")).Bold(true)
 		}
 
 		line := style.Width(s.width - 2).Render(
@@ -139,10 +139,11 @@ func (s SidebarModel) View(t theme.Theme) string {
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, lipgloss.NewStyle().
+	helpStyle := lipgloss.NewStyle().
 		Foreground(t.Muted).
-		Padding(0, 1).
-		Render("↑↓ navigate  Enter: switch  d: kill"))
+		Padding(0, 1)
+	lines = append(lines, helpStyle.Render("↑↓ navigate  Enter switch"))
+	lines = append(lines, helpStyle.Render("d kill  Ctrl+B tree"))
 
 	return strings.Join(lines, "\n")
 }

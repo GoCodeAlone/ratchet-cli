@@ -106,6 +106,62 @@ func TestHandleRetroAnalyzeJSON(t *testing.T) {
 	}
 }
 
+func TestHandleRetroInstructionsWritesMarkdown(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cfg := config.DefaultConfig()
+	cfg.Retro.Enabled = true
+	cfg.Retro.UpstreamInstructions = true
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save config: %v", err)
+	}
+	evidence := writeRetroEvidenceFixture(t, []retro.Event{
+		{Timestamp: time.Date(2026, 7, 4, 11, 0, 0, 0, time.UTC), SessionID: "handoff-session", Kind: retro.EventTestFailure, Message: "go test ./cmd/ratchet", Project: retro.ProjectRatchetCLI},
+	})
+	outPath := filepath.Join(t.TempDir(), "instructions.md")
+	var stdout bytes.Buffer
+
+	if err := runRetro(context.Background(), []string{"instructions", "--evidence", evidence, "--session", "handoff-session", "--output", outPath}, &stdout); err != nil {
+		t.Fatalf("runRetro instructions: %v", err)
+	}
+
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read instructions: %v", err)
+	}
+	out := string(data)
+	for _, want := range []string{"# Ratchet Retro PR Instructions", "handoff-session", "go test ./cmd/ratchet", "ratchet-cli PR instruction:"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("retro instructions missing %q:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(stdout.String(), "wrote retro instructions") {
+		t.Fatalf("stdout missing write confirmation: %q", stdout.String())
+	}
+}
+
+func TestRetroInstructionsMarkdownNormalizesMultilineItems(t *testing.T) {
+	out := renderRetroInstructionsMarkdown(retroAnalyzeOutput{
+		SessionID: "multi",
+		Findings: []retroAnalyzeFinding{{
+			Pattern:  "runtime error",
+			Evidence: "first line\nsecond line",
+		}},
+		UpstreamInstructions: []string{"submit PR\nwith regression"},
+		LocalActions:         []string{"rerun\nfocused test"},
+	})
+
+	for _, bad := range []string{"- runtime error: first line\nsecond line", "- submit PR\nwith regression", "- rerun\nfocused test"} {
+		if strings.Contains(out, bad) {
+			t.Fatalf("markdown contains multiline list item %q:\n%s", bad, out)
+		}
+	}
+	for _, want := range []string{"- runtime error: first line second line", "- submit PR with regression", "- rerun focused test"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("markdown missing normalized item %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestHandleRetroAnalyzeDisabledConfigSuppressesRoutes(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if err := config.DefaultConfig().Save(); err != nil {
@@ -139,6 +195,16 @@ func TestHandleRetroAnalyzeMissingEvidence(t *testing.T) {
 	err := runRetro(context.Background(), []string{"analyze", "--evidence", filepath.Join(t.TempDir(), "missing.jsonl")}, &stdout)
 	if err == nil || !strings.Contains(err.Error(), "read retro evidence") {
 		t.Fatalf("runRetro missing evidence error = %v", err)
+	}
+}
+
+func TestHandleRetroUsageMentionsInstructions(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	var stdout bytes.Buffer
+
+	err := runRetro(context.Background(), nil, &stdout)
+	if err == nil || !strings.Contains(err.Error(), "<analyze|instructions>") {
+		t.Fatalf("runRetro usage error = %v", err)
 	}
 }
 
