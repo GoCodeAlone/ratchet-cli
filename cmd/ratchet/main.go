@@ -64,6 +64,8 @@ func main() {
 		handleTeam(filteredArgs[1:])
 	case "trust":
 		handleTrust(filteredArgs[1:])
+	case "policy":
+		handlePolicy(filteredArgs[1:])
 	case "hooks":
 		handleHooks(filteredArgs[1:])
 	case "blackboard":
@@ -169,6 +171,7 @@ Commands:
   agent            Manage agent definitions
   team             Multi-agent orchestration
   trust            Manage runtime trust rules and persistent grants
+  policy           Show supported and deferred policy surfaces
   hooks            Review and trust lifecycle hooks
   blackboard       Shared daemon blackboard
   retro            Analyze optional retro evidence

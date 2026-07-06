@@ -33,6 +33,7 @@ func TestCLIHelpSlashSurfaceMatchesCommandSpec(t *testing.T) {
 		"blackboard       Shared daemon blackboard",
 		"doctor           Print credential-free local diagnostics",
 		"retro            Analyze optional retro evidence",
+		"policy           Show supported and deferred policy surfaces",
 		"/mode <mode>",
 		"/trust allow \"pattern\" [--scope scope]",
 		"/trust persist allow \"pattern\" [--scope scope]",
