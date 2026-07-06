@@ -592,6 +592,37 @@ func TestExecuteACPClientProfilesVerifyAllReportsTrustedAndSkippedProfiles(t *te
 	}
 }
 
+func TestExecuteACPClientProfilesVerifyAllReturnsErrorWhenTrustedProfileFails(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	store, err := acpclient.NewDefaultProfileStore()
+	if err != nil {
+		t.Fatalf("NewDefaultProfileStore: %v", err)
+	}
+	if err := store.Add(acpclient.Profile{
+		Name:    "trusted",
+		Spec:    acpclient.AgentSpec{Name: "trusted", Command: "/tmp/trusted-acp"},
+		Trusted: true,
+	}); err != nil {
+		t.Fatalf("Add profile: %v", err)
+	}
+	runner := &fakeACPClientExecRunner{err: errors.New("fixture verify failed")}
+	var out bytes.Buffer
+
+	err = executeACPClientProfilesVerifyWithStore(t.Context(), store, acpClientProfilesCommand{
+		all:     true,
+		timeout: time.Second,
+		json:    true,
+	}, runner, &out)
+	if err == nil || !strings.Contains(err.Error(), "one or more ACP profiles failed verification") {
+		t.Fatalf("verify --all error = %v", err)
+	}
+	if !strings.Contains(out.String(), `"status":"error"`) || !strings.Contains(out.String(), "fixture verify failed") {
+		t.Fatalf("verify --all did not emit failure summary: %s", out.String())
+	}
+}
+
 func TestParseACPClientArchiveSessionCommands(t *testing.T) {
 	exportCmd, err := parseACPClientCommand([]string{"sessions", "export", "s-export", "--output", "archive.json", "--history", "raw", "--json"})
 	if err != nil {

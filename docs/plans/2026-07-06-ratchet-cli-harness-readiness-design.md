@@ -25,7 +25,7 @@ Source: workspace `docs/design-guidance.md`; ratchet-cli `docs/policy-matrix.md`
 
 ## Architecture
 
-`profiles verify --all` stays in `cmd/ratchet` and reuses the existing profile store, default registry, trusted-profile resolution, verification prompt runner, timeout behavior, fingerprinting, and redacted output shape. It skips untrusted profiles by reporting them as `skipped_untrusted`; it only launches trusted profiles. JSON output is an array of result records suitable for credential-free CI.
+`profiles verify --all` stays in `cmd/ratchet` and reuses the existing profile store, default registry, trusted-profile resolution, verification prompt runner, timeout behavior, fingerprinting, and redacted output shape. It skips untrusted profiles by reporting them as `skipped_untrusted`; it only launches trusted profiles. JSON output is an object with a `results` array suitable for credential-free CI, and the command exits non-zero when any trusted profile reports `status: "error"`.
 
 `policy matrix --status` filters the existing in-memory matrix rows. The Markdown matrix remains the source of truth and the command remains read-only static metadata, not a policy evaluator.
 

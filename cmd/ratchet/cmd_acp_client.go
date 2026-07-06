@@ -1194,18 +1194,28 @@ func executeACPClientProfilesVerifyWithStore(ctx context.Context, store *acpclie
 	}
 	if cmd.all {
 		results := make([]acpClientProfileVerifyResult, 0, len(profiles))
+		failed := 0
 		for _, profile := range profiles {
 			if !profile.Trusted {
 				results = append(results, acpClientProfileVerifyResult{Name: profile.Name, Status: "skipped_untrusted"})
 				continue
 			}
 			result := runACPClientProfileVerify(ctx, reg, profile.Name, timeout, prompt, runner)
+			if result.Status == "error" {
+				failed++
+			}
 			results = append(results, result)
 		}
 		if cmd.json {
-			return json.NewEncoder(w).Encode(struct {
+			if err := json.NewEncoder(w).Encode(struct {
 				Results []acpClientProfileVerifyResult `json:"results"`
-			}{Results: results})
+			}{Results: results}); err != nil {
+				return err
+			}
+			if failed > 0 {
+				return fmt.Errorf("one or more ACP profiles failed verification: %d", failed)
+			}
+			return nil
 		}
 		for _, result := range results {
 			if result.Status == "ok" {
@@ -1218,6 +1228,9 @@ func executeACPClientProfilesVerifyWithStore(ctx context.Context, store *acpclie
 			} else {
 				fmt.Fprintf(w, "profile %s status=%s\n", result.Name, result.Status)
 			}
+		}
+		if failed > 0 {
+			return fmt.Errorf("one or more ACP profiles failed verification: %d", failed)
 		}
 		return nil
 	}
@@ -1258,7 +1271,7 @@ func runACPClientProfileVerify(ctx context.Context, reg acpclient.Registry, name
 		CommandFingerprint: spec.Fingerprint(),
 		ACPSessionID:       string(result.SessionID),
 		StopReason:         string(result.StopReason),
-		TextBytes:          len([]byte(result.Text)),
+		TextBytes:          len(result.Text),
 	}
 }
 
