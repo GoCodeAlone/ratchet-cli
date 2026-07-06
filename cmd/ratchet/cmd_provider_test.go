@@ -101,6 +101,36 @@ func TestParseOpenAIChatGPTSetupArgsDefaults(t *testing.T) {
 	}
 }
 
+func TestParseOpenAIChatGPTSetupArgsEmptyModelPrompts(t *testing.T) {
+	got := parseOpenAIChatGPTSetupArgs([]string{"--model", "  "})
+	if got.model != "" {
+		t.Fatalf("model = %q", got.model)
+	}
+	if got.modelSet {
+		t.Fatal("modelSet = true")
+	}
+}
+
+func TestParseProviderModelFlagEmptyModelPrompts(t *testing.T) {
+	model, modelSet := parseProviderModelFlag([]string{"add", "openai", "alias", "--model", "  "})
+	if model != "" {
+		t.Fatalf("model = %q", model)
+	}
+	if modelSet {
+		t.Fatal("modelSet = true")
+	}
+}
+
+func TestParseProviderModelFlagSet(t *testing.T) {
+	model, modelSet := parseProviderModelFlag([]string{"add", "openai", "alias", "--model", "gpt-5.5"})
+	if model != "gpt-5.5" {
+		t.Fatalf("model = %q", model)
+	}
+	if !modelSet {
+		t.Fatal("modelSet = false")
+	}
+}
+
 func TestOpenAIChatGPTAddProviderReq(t *testing.T) {
 	req := openAIChatGPTAddProviderReq("gpt-5-codex", `{"access_token":"token","refresh_token":"refresh"}`, true)
 	if req.Alias != "openai-chatgpt" {
@@ -235,6 +265,31 @@ func TestEnsureCompatibleConnectedDaemonReloadsVersionMismatch(t *testing.T) {
 	}
 	if connects != 2 || reloads != 1 || !oldClient.closed {
 		t.Fatalf("connects=%d reloads=%d oldClosed=%v", connects, reloads, oldClient.closed)
+	}
+}
+
+func TestEnsureCompatibleConnectedDaemonKeepsExistingDaemonWhenReloadFails(t *testing.T) {
+	oldClient := &fakeCompatibleDaemon{resp: &pb.VersionCheckResp{Compatible: true, ReloadRecommended: true, Message: "version mismatch"}}
+	connects := 0
+
+	got, err := ensureCompatibleConnectedDaemon(
+		func() (*fakeCompatibleDaemon, error) {
+			connects++
+			return oldClient, nil
+		},
+		func() error {
+			return errors.New("reload denied")
+		},
+		&strings.Builder{},
+	)
+	if err != nil {
+		t.Fatalf("ensureCompatibleConnectedDaemon: %v", err)
+	}
+	if got != oldClient {
+		t.Fatal("expected existing daemon client")
+	}
+	if connects != 1 || oldClient.closed {
+		t.Fatalf("connects=%d oldClosed=%v", connects, oldClient.closed)
 	}
 }
 

@@ -71,14 +71,7 @@ func handleProvider(args []string) {
 			alias = args[2]
 		}
 		// Parse --model flag from remaining args.
-		var model string
-		modelSet := false
-		for i := 1; i < len(args); i++ {
-			if args[i] == "--model" && i+1 < len(args) {
-				model = args[i+1]
-				modelSet = true
-			}
-		}
+		model, modelSet := parseProviderModelFlag(args)
 		var apiKey, baseURL string
 		scanner := bufio.NewScanner(os.Stdin)
 		switch providerType {
@@ -235,8 +228,8 @@ func parseOpenAIChatGPTSetupArgs(args []string) openAIChatGPTSetupOptions {
 		switch args[i] {
 		case "--model":
 			if i+1 < len(args) {
-				opts.model = args[i+1]
-				opts.modelSet = true
+				opts.model = strings.TrimSpace(args[i+1])
+				opts.modelSet = opts.model != ""
 				i++
 			}
 		case "--from-codex":
@@ -250,6 +243,16 @@ func parseOpenAIChatGPTSetupArgs(args []string) openAIChatGPTSetupOptions {
 		}
 	}
 	return opts
+}
+
+func parseProviderModelFlag(args []string) (string, bool) {
+	for i := 1; i < len(args); i++ {
+		if args[i] == "--model" && i+1 < len(args) {
+			model := strings.TrimSpace(args[i+1])
+			return model, model != ""
+		}
+	}
+	return "", false
 }
 
 func handleOpenAIChatGPTSetup(args []string) {

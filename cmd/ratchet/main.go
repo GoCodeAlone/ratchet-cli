@@ -143,11 +143,11 @@ func ensureCompatibleConnectedDaemon[T compatibleDaemon](connect func() (T, erro
 			fmt.Fprintf(stderr, "warning: %s\n", resp.Message)
 		} else if resp.ReloadRecommended {
 			fmt.Fprintf(stderr, "daemon version mismatch (%s). Reloading daemon...\n", resp.Message)
-			c.Close()
 			if reloadErr := reload(); reloadErr != nil {
-				var zero T
-				return zero, fmt.Errorf("reload daemon: %w", reloadErr)
+				fmt.Fprintf(stderr, "reload failed: %v — continuing with existing daemon\n", reloadErr)
+				return c, nil
 			}
+			c.Close()
 			c, err = connect()
 			if err != nil {
 				var zero T
