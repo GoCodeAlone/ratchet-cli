@@ -209,30 +209,41 @@ func handleProvider(args []string) {
 		case "openai_chatgpt":
 			fmt.Println("Use: ratchet provider setup openai-chatgpt")
 			return
-		case "anthropic_bedrock":
+		case "bedrock", "anthropic_bedrock":
 			apiKey, settings, err = promptBedrockProviderCredentials(scanner, os.Stdout, providerauth.PromptSecret)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
 				os.Exit(1)
 			}
-			settingsJSON, err = providerSettingsJSON(settings)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
-			}
 		default:
-			apiKey, err = providerauth.PromptAPIKey(providerType)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
-			}
-			if providerType == "custom" || providerType == "openai" {
-				baseURL, err = providerauth.PromptBaseURL("")
+			if providerType == "custom" {
+				settings, err = promptCustomProviderCompatibility(scanner, os.Stdout)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "error: %v\n", err)
 					os.Exit(1)
 				}
 			}
+			apiKey, err = providerauth.PromptAPIKey(providerType)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+			if providerPromptsBaseURL(providerType) {
+				baseURL, err = providerauth.PromptBaseURL("")
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "error: %v\n", err)
+					os.Exit(1)
+				}
+				if providerRequiresBaseURL(providerType) && strings.TrimSpace(baseURL) == "" {
+					fmt.Fprintf(os.Stderr, "error: %s requires a base URL\n", providerType)
+					os.Exit(1)
+				}
+			}
+		}
+		settingsJSON, err = providerSettingsJSON(settings)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
 		}
 		if !modelSet && model == "" {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -891,6 +902,46 @@ func bedrockProviderSettings(accessKeyID, region string) (map[string]string, err
 		"region":        region,
 	}
 	return settings, nil
+}
+
+func providerPromptsBaseURL(providerType string) bool {
+	switch providerType {
+	case "custom", "openai", "openai_compatible", "anthropic_compatible":
+		return true
+	default:
+		return false
+	}
+}
+
+func providerRequiresBaseURL(providerType string) bool {
+	switch providerType {
+	case "custom", "openai_compatible", "anthropic_compatible":
+		return true
+	default:
+		return false
+	}
+}
+
+func promptCustomProviderCompatibility(scanner *bufio.Scanner, out io.Writer) (map[string]string, error) {
+	fmt.Fprintln(out, "API compatibility:")
+	fmt.Fprintln(out, "  1. OpenAI-compatible /v1/chat/completions")
+	fmt.Fprintln(out, "  2. Anthropic-compatible /v1/messages")
+	fmt.Fprint(out, "Select [1]: ")
+	if !scanner.Scan() {
+		if scanErr := scanner.Err(); scanErr != nil {
+			return nil, scanErr
+		}
+		return map[string]string{"api_compat": "openai"}, nil
+	}
+	choice := strings.TrimSpace(scanner.Text())
+	switch strings.ToLower(choice) {
+	case "", "1", "openai", "openai_compatible":
+		return map[string]string{"api_compat": "openai"}, nil
+	case "2", "anthropic", "anthropic_compatible":
+		return map[string]string{"api_compat": "anthropic"}, nil
+	default:
+		return nil, fmt.Errorf("invalid API compatibility selection %q", choice)
+	}
 }
 
 func providerSettingsJSON(settings map[string]string) (string, error) {
