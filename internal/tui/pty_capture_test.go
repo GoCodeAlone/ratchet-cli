@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/creack/pty"
 	"golang.org/x/term"
@@ -31,7 +32,7 @@ func TestStartTUITestPTYDisablesSoftwareFlowControl(t *testing.T) {
 
 	s := startTUITestPTY(t, script, dir, nil, func(text string) string { return text })
 	out := strings.ToLower(s.waitExit(5 * time.Second))
-	if strings.Contains(out, " -ixon") || strings.Contains(out, ";-ixon") {
+	if hasSttyFlag(out, "-ixon") {
 		return
 	}
 	t.Fatalf("expected PTY software flow control to be disabled; stty output:\n%s", out)
@@ -61,14 +62,14 @@ func startTUITestPTY(t *testing.T, bin string, dir string, env []string, red fun
 	if err != nil {
 		t.Fatalf("start pty: %v", err)
 	}
-	if _, err := term.MakeRaw(int(ptmx.Fd())); err != nil {
-		t.Fatalf("set pty raw mode: %v", err)
-	}
 	waitCh := make(chan error, 1)
 	s := &tuiPTY{t: t, ptmx: ptmx, cmd: cmd, waitCh: waitCh, red: red, alive: true}
 	go func() { waitCh <- cmd.Wait() }()
-	go s.readLoop()
+	var oldState *term.State
 	t.Cleanup(func() {
+		if oldState != nil {
+			_ = term.Restore(int(ptmx.Fd()), oldState)
+		}
 		_ = ptmx.Close()
 		s.mu.Lock()
 		alive := s.alive
@@ -84,6 +85,11 @@ func startTUITestPTY(t *testing.T, bin string, dir string, env []string, red fun
 			}
 		}
 	})
+	oldState, err = term.MakeRaw(int(ptmx.Fd()))
+	if err != nil {
+		t.Fatalf("set pty raw mode: %v", err)
+	}
+	go s.readLoop()
 	return s
 }
 
@@ -218,4 +224,15 @@ func envKey(kv string) string {
 		return kv[:i]
 	}
 	return kv
+}
+
+func hasSttyFlag(output string, flag string) bool {
+	for _, token := range strings.FieldsFunc(output, func(r rune) bool {
+		return unicode.IsSpace(r) || r == ';'
+	}) {
+		if token == flag {
+			return true
+		}
+	}
+	return false
 }
