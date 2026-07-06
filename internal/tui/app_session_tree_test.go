@@ -204,7 +204,7 @@ func TestAppSidebarKeepsShortcutHintsVisible(t *testing.T) {
 	app = model.(App)
 
 	view := app.View().Content
-	for _, want := range []string{"Sessions", "Ctrl+B tree", "quit"} {
+	for _, want := range []string{"Sessions", "Ctrl+S close", "Ctrl+C quit", "Ctrl+B tree"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("sidebar view missing %q:\n%s", want, view)
 		}

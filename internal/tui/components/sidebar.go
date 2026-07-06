@@ -97,7 +97,7 @@ func (s SidebarModel) View(t theme.Theme) string {
 		Foreground(t.Primary).
 		Bold(true).
 		Padding(0, 1).
-		Render("Sessions")
+		Render(fmt.Sprintf("Sessions (%d)", len(s.sessions)))
 
 	lines := []string{title, strings.Repeat("─", s.width)}
 
@@ -113,20 +113,22 @@ func (s SidebarModel) View(t theme.Theme) string {
 			name = id
 		}
 
-		indicator := "  "
+		cursorMarker := " "
+		currentMarker := " "
 		style := lipgloss.NewStyle().Padding(0, 1)
 		if sess.Id == s.currentID {
-			indicator = "● "
+			currentMarker = "●"
 			style = style.Foreground(t.Primary)
 		} else {
 			style = style.Foreground(t.Foreground)
 		}
 		if i == s.cursor {
+			cursorMarker = ">"
 			style = style.Background(t.Primary).Foreground(lipgloss.Color("#FFFFFF")).Bold(true)
 		}
 
 		line := style.Width(s.width - 2).Render(
-			fmt.Sprintf("%s%s [%s]", indicator, name, status),
+			fmt.Sprintf("%s%s %s [%s]", cursorMarker, currentMarker, name, status),
 		)
 		lines = append(lines, line)
 	}
@@ -142,9 +144,26 @@ func (s SidebarModel) View(t theme.Theme) string {
 	helpStyle := lipgloss.NewStyle().
 		Foreground(t.Muted).
 		Padding(0, 1)
-	lines = append(lines, helpStyle.Render("↑↓ navigate  Enter switch"))
-	lines = append(lines, helpStyle.Render("d kill  Esc close"))
-	lines = append(lines, helpStyle.Render("Ctrl+S close  Ctrl+B tree"))
+	for _, line := range sidebarHelpLines(s.width) {
+		lines = append(lines, helpStyle.Render(line))
+	}
 
 	return strings.Join(lines, "\n")
+}
+
+func sidebarHelpLines(width int) []string {
+	if width <= 24 {
+		return []string{
+			"Enter switch",
+			"d kill Esc close",
+			"Ctrl+S close Ctrl+C quit",
+			"Ctrl+B tree",
+		}
+	}
+	return []string{
+		"↑↓ navigate  Enter switch",
+		"d kill  Esc close",
+		"Ctrl+S close  Ctrl+C quit",
+		"Ctrl+B tree",
+	}
 }

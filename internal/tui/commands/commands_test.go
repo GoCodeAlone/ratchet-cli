@@ -108,10 +108,24 @@ func TestParseModelNoClient(t *testing.T) {
 		t.Error("expected output for /model without client")
 	}
 	joined := strings.Join(result.Lines, "\n")
-	for _, want := range []string{"/provider add", "/model <alias> <model-name>", "ratchet provider add", "ratchet provider list", "ratchet provider test <alias>"} {
+	for _, want := range []string{"/model add", "/provider add", "/model <alias> <model-name>", "ratchet provider add", "ratchet provider list", "ratchet provider test <alias>"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("/model without daemon missing %q:\n%s", want, joined)
 		}
+	}
+}
+
+func TestParseModelAddNavigatesToProviderSetup(t *testing.T) {
+	result := Parse("/model add", nil)
+	if result == nil {
+		t.Fatal("expected result for /model add")
+	}
+	if !result.NavigateToOnboarding {
+		t.Fatal("expected /model add to navigate to provider setup")
+	}
+	joined := strings.Join(result.Lines, "\n")
+	if !strings.Contains(joined, "provider setup") {
+		t.Fatalf("/model add output should explain provider setup:\n%s", joined)
 	}
 }
 
@@ -121,7 +135,7 @@ func TestParseModelOneArgShowsProviderAndModelActions(t *testing.T) {
 		t.Fatal("expected result for /model <alias>")
 	}
 	joined := strings.Join(result.Lines, "\n")
-	for _, want := range []string{"/model <alias> <model-name>", "/provider add", "/provider default"} {
+	for _, want := range []string{"/model add", "/model <alias> <model-name>", "/provider add", "/provider default"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("/model one-arg help missing %q:\n%s", want, joined)
 		}
@@ -165,14 +179,11 @@ func TestParseSessionsNoClient(t *testing.T) {
 	if result == nil {
 		t.Fatal("expected result for /sessions")
 	}
-	found := false
-	for _, line := range result.Lines {
-		if line == "Not connected to daemon" {
-			found = true
+	joined := strings.Join(result.Lines, "\n")
+	for _, want := range []string{"Not connected to daemon", "Ctrl+S", "Enter switch", "d kill", "Ctrl+B", "ratchet sessions browse"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("/sessions help missing %q:\n%s", want, joined)
 		}
-	}
-	if !found {
-		t.Errorf("expected 'Not connected to daemon', got %v", result.Lines)
 	}
 }
 

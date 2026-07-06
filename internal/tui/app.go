@@ -453,8 +453,18 @@ func (a App) View() tea.View {
 			if a.width > 0 && sidebarWidth > a.width/3 {
 				sidebarWidth = a.width / 3
 			}
+			chatWidth := a.width - sidebarWidth - 1
+			if chatWidth < 1 {
+				chatWidth = 1
+			}
+			chatHeight := a.height - 3
+			if chatHeight < 1 {
+				chatHeight = 1
+			}
 			sidebarView := a.sidebar.SetSize(sidebarWidth, a.height-3).View(a.theme)
-			chatView := a.chat.View(a.theme)
+			chat := a.chat
+			chat.SetSize(chatWidth, chatHeight)
+			chatView := chat.View(a.theme)
 			body = joinColumns(sidebarView, chatView, sidebarWidth, a.width)
 		case a.showTeam:
 			teamView := a.team.SetSize(a.width, a.height-3).View(a.theme)

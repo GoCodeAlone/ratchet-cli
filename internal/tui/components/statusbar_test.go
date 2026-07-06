@@ -33,3 +33,14 @@ func TestStatusBarHintsKeepQuitActionReadableWhenNarrow(t *testing.T) {
 		}
 	}
 }
+
+func TestStatusBarHintsPrioritizePanelRecoveryKeys(t *testing.T) {
+	for _, width := range []int{24, 32, 40} {
+		hints := statusBarHints(width)
+		for _, want := range []string{"Ctrl+S", "Ctrl+C", "quit"} {
+			if !strings.Contains(hints, want) {
+				t.Fatalf("status hints for width %d missing %q: %q", width, want, hints)
+			}
+		}
+	}
+}
