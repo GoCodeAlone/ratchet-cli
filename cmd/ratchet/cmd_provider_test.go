@@ -318,6 +318,47 @@ func TestPromptBedrockProviderCredentialsRequiresSecret(t *testing.T) {
 	}
 }
 
+func TestProviderBaseURLPromptPolicy(t *testing.T) {
+	for _, providerType := range []string{"custom", "openai", "openai_compatible", "anthropic_compatible"} {
+		if !providerPromptsBaseURL(providerType) {
+			t.Fatalf("%s should prompt for base URL", providerType)
+		}
+	}
+	for _, providerType := range []string{"custom", "openai_compatible", "anthropic_compatible"} {
+		if !providerRequiresBaseURL(providerType) {
+			t.Fatalf("%s should require base URL", providerType)
+		}
+	}
+	if providerRequiresBaseURL("openai") {
+		t.Fatal("openai should allow the default upstream URL")
+	}
+	if providerPromptsBaseURL("bedrock") {
+		t.Fatal("bedrock should use AWS region/settings rather than base URL by default")
+	}
+}
+
+func TestPromptCustomProviderCompatibilityDefaultsOpenAI(t *testing.T) {
+	scanner := bufio.NewScanner(strings.NewReader("\n"))
+	settings, err := promptCustomProviderCompatibility(scanner, &strings.Builder{})
+	if err != nil {
+		t.Fatalf("promptCustomProviderCompatibility: %v", err)
+	}
+	if settings["api_compat"] != "openai" {
+		t.Fatalf("settings = %#v", settings)
+	}
+}
+
+func TestPromptCustomProviderCompatibilitySupportsAnthropic(t *testing.T) {
+	scanner := bufio.NewScanner(strings.NewReader("2\n"))
+	settings, err := promptCustomProviderCompatibility(scanner, &strings.Builder{})
+	if err != nil {
+		t.Fatalf("promptCustomProviderCompatibility: %v", err)
+	}
+	if settings["api_compat"] != "anthropic" {
+		t.Fatalf("settings = %#v", settings)
+	}
+}
+
 func TestPromptProviderModelSelectionDefaultsToFirstEnumeratedModel(t *testing.T) {
 	scanner := bufio.NewScanner(strings.NewReader("\n"))
 	model, err := promptProviderModelSelection(
