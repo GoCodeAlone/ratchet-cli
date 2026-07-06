@@ -86,6 +86,7 @@ func TestHarnessEmulationDocsCoverPolicyMatrixLayers(t *testing.T) {
 		"ratchet blackboard export [section] --jsonl",
 		"daemon-scoped volatile",
 		"sensitive local coordination data",
+		"ratchet policy matrix",
 		"workflow-plugin-messaging-core",
 		"workflow-plugin-slack",
 		"workflow-plugin-discord",
@@ -141,6 +142,7 @@ func TestHarnessDocsDescribeTUIBinaryEvidenceBoundaries(t *testing.T) {
 	for _, forbidden := range []string{
 		"full release TUI PTY proof",
 		"packaged release `ratchet.exe` runtime is proven",
+		"packaged release `ratchet.exe` runtime remains deferred",
 	} {
 		if strings.Contains(publicDocs, forbidden) {
 			t.Fatalf("public docs overclaim deferred evidence with %q", forbidden)
@@ -171,7 +173,8 @@ func TestHarnessDocsDescribeTUIBinaryEvidenceBoundaries(t *testing.T) {
 		"tap preflight",
 		"tap postcheck",
 		"generated-cask publish",
-		"packaged release `ratchet.exe` runtime remains deferred",
+		"Windows command binary startup smoke",
+		"full packaged release `ratchet.exe` TUI/installer runtime remains deferred",
 	} {
 		for _, doc := range releaseEvidenceDocs {
 			if !containsWords(doc.body, required) {

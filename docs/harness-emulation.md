@@ -60,10 +60,12 @@ The TUI binary evidence has explicit boundaries:
   Windows runner;
 - Windows cross-build/package archive inspection remains release artifact
   proof for the packaged Windows archives;
+- Windows command binary startup smoke builds and runs native `ratchet.exe`
+  `--version` and `help` on a hosted Windows runner;
 - GoReleaser snapshot release-check, draft release asset postcheck, tap
   preflight, generated-cask publish, and tap postcheck gates verify release
   archives and Homebrew cask updates before the GitHub release is made public;
-- packaged release `ratchet.exe` runtime remains deferred.
+- full packaged release `ratchet.exe` TUI/installer runtime remains deferred.
 
 ```sh
 go test ./cmd/ratchet -run 'StartupSmoke|VersionHelpAndDaemonStatus' -count=1
@@ -254,4 +256,5 @@ Scriptable equivalents are available through `ratchet trust list`,
 The broader Policy Matrix lives in [docs/policy-matrix.md](policy-matrix.md),
 including the explicit watch/drain boundary, sensitive local policy metadata
 warning, hook trust, ACP launch profiles, and deferred background drain and
-extension SDK boundaries.
+extension SDK boundaries. `ratchet policy matrix` and
+`ratchet policy matrix --json` expose a read-only CLI view of that matrix.

@@ -40,9 +40,11 @@ Release safety is covered by the GoReleaser snapshot release-check, draft
 release asset postcheck, tap preflight, generated-cask publish, and tap
 postcheck gates; the GitHub release stays draft until the generated Homebrew
 cask is pushed and verified. Windows ConPTY smoke covers the test-only
-`ratchet-tui-smoke` binary; packaged release `ratchet.exe` runtime remains
-deferred.
+`ratchet-tui-smoke` binary. Windows command binary startup smoke builds and
+runs native `ratchet.exe` `--version` and `help`; full packaged release
+`ratchet.exe` TUI/installer runtime remains deferred.
 
 Harness evidence boundaries live in [docs/harness-emulation.md](docs/harness-emulation.md);
 policy and deferred automation boundaries live in
-[docs/policy-matrix.md](docs/policy-matrix.md).
+[docs/policy-matrix.md](docs/policy-matrix.md). `ratchet policy matrix` gives
+a read-only CLI view of those boundaries.
