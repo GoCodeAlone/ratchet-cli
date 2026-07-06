@@ -60,4 +60,4 @@ No plugin-level change yet. If another ratchet-cli PR misses nested command help
 
 | Guidance file | Change | Reason |
 |---|---|---|
-| workspace `docs/design-guidance.md` | no change | This was a one-off CLI test coverage miss, not a durable cross-project constraint. |
+| `docs/design-guidance.md` | no change | This was a one-off CLI test coverage miss, not a durable cross-project constraint. |
