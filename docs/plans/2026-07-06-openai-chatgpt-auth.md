@@ -31,7 +31,7 @@
 | 1 | workflow-plugin-agent: add OpenAI ChatGPT provider | Task 1, Task 2 | feat/openai-chatgpt-auth |
 | 2 | ratchet-cli: expose OpenAI ChatGPT setup | Task 3, Task 4 | feat/openai-chatgpt-auth |
 
-**Status:** Draft
+**Status:** Locked 2026-07-06T04:04:12Z
 
 ## Integration Matrix
 
