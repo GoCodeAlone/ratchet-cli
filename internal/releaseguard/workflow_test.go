@@ -60,6 +60,16 @@ func TestCIWindowsBuildUsesRunnerTemp(t *testing.T) {
 	requireRun(t, job, "Build Windows binaries", "$RUNNER_TEMP")
 	requireRun(t, job, "Build Windows binaries", "GOOS=windows GOARCH=amd64")
 	requireRun(t, job, "Build Windows binaries", "GOOS=windows GOARCH=arm64")
+
+	smoke := requireJob(t, workflow, "windows-release-smoke")
+	if smoke.RunsOn != "windows-2025" {
+		t.Fatalf("windows-release-smoke runs-on = %q, want windows-2025", smoke.RunsOn)
+	}
+	requireRun(t, smoke, "Build and run Windows command binary", "$env:RUNNER_TEMP")
+	requireRun(t, smoke, "Build and run Windows command binary", "ratchet.exe")
+	requireRun(t, smoke, "Build and run Windows command binary", "go build -o $exe ./cmd/ratchet")
+	requireRun(t, smoke, "Build and run Windows command binary", "& $exe --version")
+	requireRun(t, smoke, "Build and run Windows command binary", "& $exe help")
 }
 
 func TestCITUISmokeAndTapPreflightJobs(t *testing.T) {
