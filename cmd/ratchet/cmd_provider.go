@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
@@ -11,7 +12,6 @@ import (
 	"time"
 
 	acpbridge "github.com/GoCodeAlone/ratchet-cli/internal/acp"
-	"github.com/GoCodeAlone/ratchet-cli/internal/client"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 	providerauth "github.com/GoCodeAlone/ratchet-cli/internal/provider"
 	wfprovider "github.com/GoCodeAlone/workflow-plugin-agent/provider"
@@ -53,7 +53,7 @@ func handleProvider(args []string) {
 		return
 	}
 
-	c, err := client.EnsureDaemon()
+	c, err := ensureProviderDaemon()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -72,12 +72,15 @@ func handleProvider(args []string) {
 		}
 		// Parse --model flag from remaining args.
 		var model string
+		modelSet := false
 		for i := 1; i < len(args); i++ {
 			if args[i] == "--model" && i+1 < len(args) {
 				model = args[i+1]
+				modelSet = true
 			}
 		}
 		var apiKey, baseURL string
+		scanner := bufio.NewScanner(os.Stdin)
 		switch providerType {
 		case "ollama":
 			// No API key needed for Ollama
@@ -98,7 +101,6 @@ func handleProvider(args []string) {
 						fmt.Printf("  %d. %s\n", i+1, m.Name)
 					}
 					fmt.Print("Select [1]: ")
-					scanner := bufio.NewScanner(os.Stdin)
 					if scanner.Scan() {
 						choice := strings.TrimSpace(scanner.Text())
 						idx := 0
@@ -139,6 +141,16 @@ func handleProvider(args []string) {
 					os.Exit(1)
 				}
 			}
+		}
+		if !modelSet && model == "" {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			selected, selectErr := promptProviderModelSelection(ctx, providerType, apiKey, baseURL, scanner, os.Stdout, wfprovider.ListModels)
+			cancel()
+			if selectErr != nil {
+				fmt.Fprintf(os.Stderr, "model selection failed: %v\n", selectErr)
+				os.Exit(1)
+			}
+			model = selected
 		}
 		p, err := c.AddProvider(context.Background(), &pb.AddProviderReq{
 			Alias:   alias,
@@ -212,17 +224,19 @@ func handleProvider(args []string) {
 
 type openAIChatGPTSetupOptions struct {
 	model     string
+	modelSet  bool
 	fromCodex string
 	noBrowser bool
 }
 
 func parseOpenAIChatGPTSetupArgs(args []string) openAIChatGPTSetupOptions {
-	opts := openAIChatGPTSetupOptions{model: "gpt-5-codex"}
+	opts := openAIChatGPTSetupOptions{}
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--model":
 			if i+1 < len(args) {
 				opts.model = args[i+1]
+				opts.modelSet = true
 				i++
 			}
 		case "--from-codex":
@@ -278,15 +292,26 @@ func handleOpenAIChatGPTSetup(args []string) {
 		tokenBundle = result.Token
 	}
 
+	scanner := bufio.NewScanner(os.Stdin)
+	if !opts.modelSet {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		model, selectErr := promptProviderModelSelection(ctx, "openai_chatgpt", tokenBundle, "", scanner, os.Stdout, wfprovider.ListModels)
+		cancel()
+		if selectErr != nil {
+			fmt.Fprintf(os.Stderr, "model selection failed: %v\n", selectErr)
+			os.Exit(1)
+		}
+		opts.model = model
+	}
+
 	fmt.Println("Registering provider with ratchet...")
-	c, err := client.EnsureDaemon()
+	c, err := ensureProviderDaemon()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "daemon error: %v\n", err)
 		os.Exit(1)
 	}
 	defer func() { _ = c.Close() }()
 
-	scanner := bufio.NewScanner(os.Stdin)
 	isDefault := promptYesNo("Set as default provider?", scanner)
 	p, err := c.AddProvider(context.Background(), openAIChatGPTAddProviderReq(opts.model, tokenBundle, isDefault))
 	if err != nil {
@@ -428,7 +453,7 @@ func handleOllamaSetup(args []string) {
 
 	// 5. Ensure daemon running and register provider.
 	fmt.Println("\nRegistering provider with ratchet...")
-	c, err := client.EnsureDaemon()
+	c, err := ensureProviderDaemon()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "daemon error: %v\n", err)
 		os.Exit(1)
@@ -599,7 +624,7 @@ func handleCLIToolSetup(providerType, binary, alias string, _ []string) {
 
 	// 3. Register provider with daemon.
 	fmt.Println("Registering provider with ratchet...")
-	c, err := client.EnsureDaemon()
+	c, err := ensureProviderDaemon()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "daemon error: %v\n", err)
 		os.Exit(1)
@@ -659,6 +684,73 @@ func promptModelSelection(models []wfprovider.ModelInfo, scanner *bufio.Scanner)
 		}
 	}
 	return models[0].ID
+}
+
+type providerModelLister func(context.Context, string, string, string) ([]wfprovider.ModelInfo, error)
+
+func promptProviderModelSelection(ctx context.Context, providerType, apiKey, baseURL string, scanner *bufio.Scanner, out io.Writer, list providerModelLister) (string, error) {
+	models, err := list(ctx, providerType, apiKey, baseURL)
+	if err != nil || len(models) == 0 {
+		if err != nil {
+			fmt.Fprintf(out, "could not list models for %s: %v\n", providerType, err)
+		} else {
+			fmt.Fprintf(out, "could not list models for %s: no models returned\n", providerType)
+		}
+		fmt.Fprint(out, "Model ID: ")
+		if !scanner.Scan() {
+			if scanErr := scanner.Err(); scanErr != nil {
+				return "", scanErr
+			}
+			return "", io.EOF
+		}
+		model := strings.TrimSpace(scanner.Text())
+		if model == "" {
+			return "", fmt.Errorf("model ID is required")
+		}
+		return model, nil
+	}
+
+	fmt.Fprintln(out, "Available models:")
+	for i, m := range models {
+		name := m.Name
+		if name == "" {
+			name = m.ID
+		}
+		fmt.Fprintf(out, "  %d. %s\n", i+1, name)
+	}
+	customChoice := len(models) + 1
+	fmt.Fprintf(out, "  %d. Custom (enter model ID)\n", customChoice)
+	fmt.Fprint(out, "Select [1]: ")
+	if !scanner.Scan() {
+		if scanErr := scanner.Err(); scanErr != nil {
+			return "", scanErr
+		}
+		return models[0].ID, nil
+	}
+	choice := strings.TrimSpace(scanner.Text())
+	if choice == "" {
+		return models[0].ID, nil
+	}
+	var idx int
+	if _, scanErr := fmt.Sscanf(choice, "%d", &idx); scanErr != nil || idx < 1 || idx > customChoice {
+		return "", fmt.Errorf("invalid model selection %q", choice)
+	}
+	if idx <= len(models) {
+		return models[idx-1].ID, nil
+	}
+
+	fmt.Fprint(out, "Model ID: ")
+	if !scanner.Scan() {
+		if scanErr := scanner.Err(); scanErr != nil {
+			return "", scanErr
+		}
+		return "", io.EOF
+	}
+	model := strings.TrimSpace(scanner.Text())
+	if model == "" {
+		return "", fmt.Errorf("model ID is required")
+	}
+	return model, nil
 }
 
 func handleProviderDiscover() {
