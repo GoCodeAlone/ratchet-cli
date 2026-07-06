@@ -253,8 +253,10 @@ through a ConPTY-backed TUI startup, mocked chat turn, slash help, and clean
 exit. GoReleaser snapshot release-check, draft release asset postcheck, tap
 preflight, generated-cask publish, and tap postcheck gates verify release
 artifacts and the Homebrew cask path before the GitHub release is made public.
-Windows cross-build/package archive inspection is release artifact proof;
-packaged release `ratchet.exe` runtime remains deferred.
+Windows cross-build/package archive inspection is release artifact proof, and
+Windows command binary startup smoke builds and runs native `ratchet.exe`
+`--version` and `help` on a hosted Windows runner. The full packaged release
+`ratchet.exe` TUI/installer runtime remains deferred.
 
 See [docs/harness-emulation.md](docs/harness-emulation.md) for credential-free
 mock provider recipes, [docs/competitor-parity.md](docs/competitor-parity.md)
@@ -263,7 +265,9 @@ for the dated source-backed parity matrix, and
 static config trust rules, runtime trust rules, persistent trust grants,
 permission prompts, ACP client queue/drain, hook trust, extension hooks,
 sandbox/path/network controls, retro evidence, action nodes, background drain,
-managed hooks, workflow source execution, and extension SDK work.
+managed hooks, workflow source execution, and extension SDK work. Run
+`ratchet policy matrix` or `ratchet policy matrix --json` for a read-only CLI
+view of the same supported, partial, explicit-operator, and deferred layers.
 
 ## Development
 
