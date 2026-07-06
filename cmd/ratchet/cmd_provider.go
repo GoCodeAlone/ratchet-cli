@@ -29,12 +29,14 @@ func handleProvider(args []string) {
 		return
 	case "setup":
 		if len(args) < 2 {
-			fmt.Println("Usage: ratchet provider setup <ollama|claude-code|copilot-cli|codex-cli|gemini-cli|cursor-cli>")
+			fmt.Println("Usage: ratchet provider setup <ollama|openai-chatgpt|claude-code|copilot-cli|codex-cli|gemini-cli|cursor-cli>")
 			return
 		}
 		switch args[1] {
 		case "ollama":
 			handleOllamaSetup(args[2:])
+		case "openai-chatgpt":
+			handleOpenAIChatGPTSetup(args[2:])
 		case "claude-code":
 			handleCLIToolSetup("claude_code", "claude", "claude", args[2:])
 		case "copilot-cli":
@@ -121,6 +123,9 @@ func handleProvider(args []string) {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
 				os.Exit(1)
 			}
+		case "openai_chatgpt":
+			fmt.Println("Use: ratchet provider setup openai-chatgpt")
+			return
 		default:
 			apiKey, err = providerauth.PromptAPIKey(providerType)
 			if err != nil {
@@ -202,6 +207,108 @@ func handleProvider(args []string) {
 		fmt.Printf("Set default provider: %s\n", args[1])
 	default:
 		fmt.Printf("unknown provider command: %s\n", args[0])
+	}
+}
+
+type openAIChatGPTSetupOptions struct {
+	model     string
+	fromCodex string
+	noBrowser bool
+}
+
+func parseOpenAIChatGPTSetupArgs(args []string) openAIChatGPTSetupOptions {
+	opts := openAIChatGPTSetupOptions{model: "gpt-5-codex"}
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--model":
+			if i+1 < len(args) {
+				opts.model = args[i+1]
+				i++
+			}
+		case "--from-codex":
+			opts.fromCodex = providerauth.DefaultCodexAuthPath()
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "--") {
+				opts.fromCodex = args[i+1]
+				i++
+			}
+		case "--no-browser":
+			opts.noBrowser = true
+		}
+	}
+	return opts
+}
+
+func handleOpenAIChatGPTSetup(args []string) {
+	opts := parseOpenAIChatGPTSetupArgs(args)
+	fmt.Println("=== OpenAI ChatGPT Setup ===")
+	fmt.Println("This uses ChatGPT account credentials for local CLI/IDE use.")
+	fmt.Println("Device codes are phishing targets. Never share the code outside the OpenAI page.")
+
+	var tokenBundle string
+	var err error
+	if opts.fromCodex != "" {
+		tokenBundle, err = providerauth.LoadCodexAuth(opts.fromCodex)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "import Codex auth failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("✓ Imported Codex auth from %s\n", opts.fromCodex)
+	} else {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+		defer cancel()
+		deviceResp, err := providerauth.StartOpenAIChatGPTDeviceFlow(ctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "start device flow failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("\nOpen %s and enter code: %s\n", deviceResp.VerificationURI, deviceResp.UserCode)
+		if !opts.noBrowser {
+			if err := providerauth.OpenBrowserURL(deviceResp.VerificationURI); err != nil {
+				fmt.Fprintf(os.Stderr, "could not open browser: %v\n", err)
+			}
+		}
+		fmt.Print("Waiting for authorization... ")
+		result := <-providerauth.PollOpenAIChatGPTDeviceFlow(ctx, deviceResp.DeviceCode, deviceResp.UserCode, deviceResp.Interval)
+		if result.Err != nil {
+			fmt.Printf("FAIL\n")
+			fmt.Fprintf(os.Stderr, "poll device flow failed: %v\n", result.Err)
+			os.Exit(1)
+		}
+		fmt.Printf("OK\n")
+		tokenBundle = result.Token
+	}
+
+	fmt.Println("Registering provider with ratchet...")
+	c, err := client.EnsureDaemon()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "daemon error: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() { _ = c.Close() }()
+
+	scanner := bufio.NewScanner(os.Stdin)
+	isDefault := promptYesNo("Set as default provider?", scanner)
+	p, err := c.AddProvider(context.Background(), openAIChatGPTAddProviderReq(opts.model, tokenBundle, isDefault))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "add provider failed: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("✓ Provider registered: %s (%s)\n", p.Alias, p.Type)
+	if isDefault {
+		fmt.Printf("✓ Default provider set to: %s\n", p.Alias)
+	}
+
+	fmt.Printf("\n=== Setup complete ===\nProvider: openai-chatgpt  Model: %s\n", opts.model)
+	fmt.Println("Run 'ratchet provider test openai-chatgpt' to verify the connection.")
+}
+
+func openAIChatGPTAddProviderReq(model, tokenBundle string, isDefault bool) *pb.AddProviderReq {
+	return &pb.AddProviderReq{
+		Alias:     "openai-chatgpt",
+		Type:      "openai_chatgpt",
+		Model:     model,
+		ApiKey:    tokenBundle,
+		IsDefault: isDefault,
 	}
 }
 
