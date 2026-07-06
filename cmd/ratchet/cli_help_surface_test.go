@@ -31,6 +31,7 @@ func TestCLIHelpSlashSurfaceMatchesCommandSpec(t *testing.T) {
 	}
 	for _, required := range []string{
 		"blackboard       Shared daemon blackboard",
+		"doctor           Print credential-free local diagnostics",
 		"retro            Analyze optional retro evidence",
 		"/mode <mode>",
 		"/trust allow \"pattern\" [--scope scope]",

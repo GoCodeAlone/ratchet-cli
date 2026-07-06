@@ -273,7 +273,7 @@ func providerTest(alias string, c *client.Client) *Result {
 
 func modelCmd(args []string, c *client.Client) *Result {
 	if c == nil {
-		return &Result{Lines: []string{"Not connected to daemon"}}
+		return modelHelpLines("Not connected to daemon.")
 	}
 	resp, err := c.ListProviders(context.Background())
 	if err != nil {
@@ -282,6 +282,9 @@ func modelCmd(args []string, c *client.Client) *Result {
 
 	if len(args) == 0 {
 		lines := []string{"Current providers and models:", ""}
+		if len(resp.Providers) == 0 {
+			return modelHelpLines("No providers configured.")
+		}
 		for _, p := range resp.Providers {
 			marker := "  "
 			if p.IsDefault {
@@ -289,15 +292,12 @@ func modelCmd(args []string, c *client.Client) *Result {
 			}
 			lines = append(lines, fmt.Sprintf("%s%-12s %s", marker, p.Alias, p.Model))
 		}
-		lines = append(lines, "", "Use /model <alias> <model-name> to change a provider's model.")
+		lines = append(lines, "", "Actions:", "  /model <alias> <model-name>  Change a provider model", "  /provider add                 Add another provider", "  /provider default <alias>     Switch the default provider")
 		return &Result{Lines: lines}
 	}
 
 	if len(args) == 1 {
-		return &Result{Lines: []string{
-			"To switch model, use: /model <alias> <model-name>",
-			"Use /model to see available providers and their current models.",
-		}}
+		return modelHelpLines(fmt.Sprintf("Missing model name for provider %q.", args[0]))
 	}
 
 	// /model <alias> <model-name>
@@ -305,6 +305,22 @@ func modelCmd(args []string, c *client.Client) *Result {
 		return &Result{Lines: []string{fmt.Sprintf("Error: %v", err)}}
 	}
 	return &Result{Lines: []string{fmt.Sprintf("Updated %s model to %s", args[0], args[1])}}
+}
+
+func modelHelpLines(reason string) *Result {
+	return &Result{Lines: []string{
+		reason,
+		"",
+		"Model and provider actions:",
+		"  /model                       Show configured providers and models",
+		"  /model <alias> <model-name>  Change a provider model",
+		"  /provider add                Add another provider in the setup wizard",
+		"  /provider default <alias>    Switch the default provider",
+		"",
+		"CLI equivalents:",
+		"  ratchet provider add",
+		"  ratchet provider default <alias>",
+	}}
 }
 
 func agentsCmd(c *client.Client) *Result {

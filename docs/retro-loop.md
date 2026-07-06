@@ -54,6 +54,18 @@ output emits the same sections for scripts. `retro.enabled` still gates routing:
 with the default disabled config, findings are shown but local actions and
 upstream instructions are empty.
 
+Use `ratchet retro instructions` when an agent needs to pass a PR-ready handoff
+to a human or another harness without opening the PR itself:
+
+```sh
+ratchet retro instructions --evidence ~/.ratchet/retro/evidence.jsonl --session SESSION_ID
+ratchet retro instructions --evidence ~/.ratchet/retro/evidence.jsonl --session SESSION_ID --output instructions.md
+```
+
+The Markdown output contains findings, upstream instructions, and local actions.
+It is still reporting-only and should be reviewed before any upstream issue or
+PR is filed.
+
 ## Local Improvement Example
 
 Evidence:
@@ -98,3 +110,4 @@ PR. For third-party harness gaps, it should emit instructions only.
 3. The analyzer loads the events and produces compact findings.
 4. Routing separates local config actions, ratchet-cli PR instructions, and
    third-party-only instructions.
+5. Optional Markdown instructions can be written for review or PR handoff.

@@ -24,3 +24,12 @@ func TestStatusBarHintsFitNarrowWidth(t *testing.T) {
 		}
 	}
 }
+
+func TestStatusBarHintsKeepQuitActionReadableWhenNarrow(t *testing.T) {
+	for _, width := range []int{6, 8, 12} {
+		hints := strings.ToLower(statusBarHints(width))
+		if !strings.Contains(hints, "quit") {
+			t.Fatalf("status hints for width %d = %q, want visible quit action", width, hints)
+		}
+	}
+}

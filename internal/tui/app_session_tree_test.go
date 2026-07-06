@@ -159,6 +159,22 @@ func TestAppEscClosesJobPanel(t *testing.T) {
 	}
 }
 
+func TestAppSidebarKeepsShortcutHintsVisible(t *testing.T) {
+	app := readyChatApp(t, "root-session-12345678")
+	model, _ := app.Update(tea.WindowSizeMsg{Width: 72, Height: 24})
+	app = model.(App)
+
+	model, _ = app.Update(ctrlKey('s'))
+	app = model.(App)
+
+	view := app.View().Content
+	for _, want := range []string{"Sessions", "Ctrl+B tree", "quit"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("sidebar view missing %q:\n%s", want, view)
+		}
+	}
+}
+
 func TestAppSidebarSelectionRebuildsChatAndUpdatesMarker(t *testing.T) {
 	app := readyChatApp(t, "root-session-12345678")
 	app.sidebar = components.NewSidebar([]*pb.Session{
