@@ -14,10 +14,10 @@ possible.
 | doctor | `ratchet doctor [--json]` | local executable/config/state path inspection plus daemon status files | Supported credential-free | `TestRunDoctorJSON`; `TestHarnessSmokeVersionHelpAndDaemonStatus`. |
 | daemon | `ratchet daemon status` | pid/socket state under `~/.ratchet` | Supported | `TestHarnessSmokeVersionHelpAndDaemonStatus`. |
 | blackboard | `ratchet blackboard write coordination status ready` / `ratchet blackboard read coordination status` / `ratchet blackboard export [section] --jsonl` / `ratchet blackboard export [section] --workflow-messaging --jsonl` | daemon gRPC `BlackboardWrite`/`BlackboardRead`/`BlackboardList` | Supported for same-device, daemon-scoped volatile local coordination data across separate terminal invocations, local notification-event export, and Workflow `step.messaging_send` handoff metadata | `TestHarnessSmokeBlackboardCLI`; blackboard export command tests. |
-| session lineage | `ratchet sessions history`, `ratchet sessions clone`, `ratchet sessions fork`, `ratchet sessions tree`, `ratchet sessions browse`, `ratchet sessions summary`, `ratchet sessions compactions` | daemon gRPC session history/clone/fork/tree/summary/compaction APIs plus Bubble Tea session tree browser | Supported for separate fork/clone sessions, branch summaries, persisted compaction records, archive session links, and Pi-style in-place branch navigation through `ctrl+b`, `/tree`, and `sessions browse` | `TestSessionLineageHistoryCloneForkTreeRPC`; `TestCompactionRecordRPC`; `TestHandleSessionsHistoryCloneForkTree`; `TestAppCtrlBOpensSessionTreeBrowser`; `TestParseTreeRequestsSessionTreeNavigation`; `TestHandleSessionsBrowseRunsInjectedBrowser`. |
-| ACP | `ratchet acp` | ACP stdio JSON-RPC agent wrapping daemon service | Supported for initialize/new/load/prompt/cancel/model/mode | `TestACPStdioPromptSmoke`; `TestHarnessSmokeInitializeNewAndLoadSession`; `TestParityNewSessionIDCanBeLoaded`. |
+| session lineage | `ratchet sessions history`, `ratchet sessions clone`, `ratchet sessions fork`, `ratchet sessions tree`, `ratchet sessions browse`, `ratchet sessions summary`, `ratchet sessions compactions`, `ratchet sessions export` | daemon gRPC session history/clone/fork/tree/summary/compaction/export APIs plus Bubble Tea session tree browser | Supported for separate fork/clone sessions, branch summaries, persisted compaction records, archive session links, daemon session export bundles, and Pi-style in-place branch navigation through `ctrl+b`, `/tree`, and `sessions browse` | `TestSessionLineageHistoryCloneForkTreeRPC`; `TestCompactionRecordRPC`; `TestHandleSessionsHistoryCloneForkTree`; `TestHandleSessionsExportWritesSensitiveBundle`; `TestAppCtrlBOpensSessionTreeBrowser`; `TestParseTreeRequestsSessionTreeNavigation`; `TestHandleSessionsBrowseRunsInjectedBrowser`. |
+| ACP | `ratchet acp` / `ratchet acp config zed` | ACP stdio JSON-RPC agent wrapping daemon service plus Zed settings writer | Supported for initialize/new/load/prompt/cancel/model/mode and custom Zed ACP agent config | `TestACPStdioPromptSmoke`; `TestHarnessSmokeInitializeNewAndLoadSession`; `TestParityNewSessionIDCanBeLoaded`; `TestWriteZedACPConfig`; `TestRunACPConfigZedWritesSettings`. |
 | ACP client | `ratchet acp client exec --command <agent> "prompt"` | typed `acp-go-sdk` client over child-process stdio plus local JSON state under XDG state | Supported for one-shot exec, persisted session metadata, sessions list/show/status, multi-prompt FIFO `--no-wait` queue, explicit queue inspection/drain, cooperative cancel requests, ratchet-cli archive v1 export/import with raw ACPX event logs, `sessions events`, saved compare bundles, Go-native ACPX flow replay bundles, `flow replay`, trusted ACP launch profiles, and `ratchet acp client profiles verify` redacted profile checks | `TestACPClientExecBinarySmoke`; `TestDrainQueueAgainstFixtureProcessReusesSession`; `TestClientRunPromptAgainstFixtureProcess`; `TestSessionStoreLoadsMissingFileAndPersistsRecords`; profile command, archive, compare, and flow replay tests. |
-| MCP | `ratchet mcp blackboard` / `ratchet mcp daemon` | stdio JSON-RPC blackboard or daemon server | Supported for standalone blackboard plus daemon session/project/blackboard/team status tools | `TestHarnessSmokeJSONRPCInitializeToolsListAndCall`; `TestDaemonMCPToolCallsUseDaemonClient`. |
+| MCP | `ratchet mcp blackboard` / `ratchet mcp daemon` / `ratchet mcp config zed` | stdio JSON-RPC blackboard or daemon server plus config writers | Supported for standalone blackboard plus daemon session/project/blackboard/team status tools and Zed/Claude/Copilot/generic config entries | `TestHarnessSmokeJSONRPCInitializeToolsListAndCall`; `TestDaemonMCPToolCallsUseDaemonClient`; `TestWriteZedMCPConfig`; `TestHandleMCPConfigZedWritesSettings`. |
 | team | `ratchet team start "task"` | daemon team manager / mesh executor | Supported when provider configured | Existing team and mesh tests cover service behavior. |
 
 ## Temp Home Mock Provider Smoke
@@ -84,7 +84,8 @@ go test ./internal/acp -run TestACPStdioPromptSmoke -count=1
 The dated source-backed matrix lives in
 [competitor-parity.md](competitor-parity.md). The snapshot was refreshed on
 2026-07-02 from current Zed, ACP, Pi, Codex, Claude Code, Hermes, OpenClaw, and
-ACPX sources. ratchet-cli now supports Windows release artifacts, ACP prompt stdio
+ACPX sources, with Zed ACP/MCP hosted docs checked again on 2026-07-06.
+ratchet-cli now supports Windows release artifacts, ACP prompt stdio
 smoke, reviewable hook trust controls, headless ACP client
 exec/session/status/cancel primitives with
 multi-prompt FIFO queue/watch/drain,
@@ -118,6 +119,10 @@ records with `messaging.text` for downstream Workflow messaging plugins; add
 notification-event JSON/JSONL exports and supply the target `channel`. Outbound
 Discord, Slack, Teams, email, webhook, or other service delivery stays in the
 existing messaging-core and channel plugins rather than built into ratchet-cli.
+`ratchet provider setup list` and `ratchet provider setup guide <provider>` give
+humans and automation a provider onboarding path before the TUI is usable.
+`ratchet acp config zed` and `ratchet mcp config zed` merge ratchet into Zed's
+custom agent and MCP settings without writing provider secrets.
 The
 v0.25.0 release line keeps Windows
 amd64/arm64 zip artifacts in the GoReleaser output while adding raw event
@@ -142,6 +147,7 @@ deferred.
 | plan updates | Partial | Chat event conversion supports plan proposed/step update events. |
 | session model | Supported | `SetSessionModel` updates the ratchet session model; `TestParitySetSessionModelUpdatesSession`. |
 | session mode | Supported in-memory | `SetSessionMode` validates known sessions and records the ACP mode for the agent process; daemon-wide persistence is deferred. |
+| Zed custom agent config | Supported | `ratchet acp config zed [.zed/settings.json]`; `TestWriteZedACPConfig`; `TestRunACPConfigZedWritesSettings`. |
 | session list/resume/close/delete | Deferred | `acp-go-sdk v0.6.3` exposes no agent methods for these schema-v2 lifecycle operations. |
 | HTTP/SSE MCP via ACP | Deferred | Agent capabilities intentionally do not advertise HTTP/SSE MCP support. |
 
@@ -213,6 +219,7 @@ ratchet acp client watch work \
 | Claude Code config | Supported | `WriteMCPConfig` tests. |
 | Copilot config | Supported | `WriteCopilotMCPConfig` API and `ratchet mcp config copilot`. |
 | generic MCP config | Supported | `WriteGenericMCPConfig` and `ratchet mcp config generic`. |
+| Zed config | Supported | `WriteZedMCPConfig` and `ratchet mcp config zed [.zed/settings.json] [blackboard\|daemon]`. |
 | daemon-backed blackboard | Supported | Unary daemon API added for MCP reads, writes, and lists; `TestBlackboardRPCReadWriteList`. |
 | daemon-backed team tools | Supported | Team list/status/message are daemon-backed. Direct messages require an active running team; completed teams reject new messages. |
 

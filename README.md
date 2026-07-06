@@ -59,9 +59,16 @@ Configure providers with `ratchet provider setup`. For ChatGPT subscription
 access, sign in with OpenAI device-code auth:
 
 ```sh
+ratchet provider setup list
+ratchet provider setup guide openai-chatgpt
 ratchet provider setup openai-chatgpt
 ratchet provider setup openai-chatgpt --from-codex ~/.codex/auth.json
 ```
+
+Use `ratchet provider setup list --json` and
+`ratchet provider setup guide <provider> --json` when another harness or CI
+needs machine-readable install, auth, and verification steps without scraping
+the interactive setup command.
 
 On first interactive use, ratchet starts or connects to its local daemon and
 opens the TUI. The daemon owns persisted sessions, team state, blackboard
@@ -105,10 +112,14 @@ ratchet sessions clone SESSION_ID
 ratchet sessions fork SESSION_ID --at MESSAGE_ID
 ratchet sessions tree SESSION_ID
 ratchet sessions browse SESSION_ID
+ratchet sessions export SESSION_ID --output session.export.json
 ```
 
 Use the tree/browser commands when you want to branch an investigation without
-losing visible history.
+losing visible history. `ratchet sessions export` writes a daemon session
+bundle with tree metadata, messages, and compaction records for local handoff or
+audit. The bundle is written with user-only permissions and may contain prompts,
+responses, summaries, local paths, and model metadata.
 
 ### ACP Agent And ACP Client
 
@@ -116,7 +127,13 @@ Ratchet can run as an ACP stdio agent:
 
 ```sh
 ratchet acp
+ratchet acp config zed
 ```
+
+`ratchet acp config zed [.zed/settings.json]` merges a custom `ratchet` ACP
+agent entry into Zed settings without changing model credentials or provider
+auth. Zed launches ratchet over ACP; ratchet still owns its native provider
+configuration.
 
 It can also drive another ACP agent as a client:
 
@@ -176,6 +193,22 @@ JSON v1 flows support `acp`, `compute`, and action nodes. Action nodes require
 `--allow outside-cwd`. Action stdout/stderr in run bundles is sensitive local
 command output. Ratchet does not execute `.flow.ts` files, and ACPX TypeScript
 flow runtime compatibility remains deferred.
+
+### MCP Config
+
+Ratchet can emit MCP client config snippets:
+
+```sh
+ratchet mcp config claude
+ratchet mcp config copilot
+ratchet mcp config generic mcp.json daemon
+ratchet mcp config zed .zed/settings.json daemon
+ratchet mcp config zed blackboard
+```
+
+The Zed writer adds a `context_servers.ratchet` entry to `.zed/settings.json`
+using Zed's custom MCP server shape. These commands write command metadata only;
+they do not write API keys or provider secrets.
 
 ### Blackboard And Messaging Handoff
 
@@ -251,8 +284,10 @@ Neither command edits config, opens PRs, or copies raw evidence into a bundle.
 | daemon | `HOME="$(mktemp -d)" ratchet daemon status` | Runs credential-free when pointed at a temp home. |
 | blackboard | `ratchet blackboard write coordination status ready` / `ratchet blackboard read coordination status` / `ratchet blackboard export [section] --jsonl` / `ratchet blackboard export [section] --workflow-messaging --jsonl` | Shares daemon-scoped volatile local coordination data and exports local notification-event records plus Workflow messaging handoff metadata. |
 | ACP | `ratchet acp` | Exposes ratchet over ACP stdio JSON-RPC. |
+| ACP config | `ratchet acp config zed` | Writes a Zed custom ACP agent settings entry. |
 | ACP client | `ratchet acp client exec --command ./agent "prompt"` | Drives an external ACP agent over stdio, including persisted sessions, FIFO queue, explicit watch/drain, archive export/import, raw ACPX event logs, compare bundles, flow replay bundles, and ACP launch profiles. |
 | MCP | `ratchet mcp blackboard` / `ratchet mcp daemon` | Exposes blackboard or daemon-backed session/project/blackboard/team MCP tools over stdio. |
+| MCP config | `ratchet mcp config zed` | Writes Zed, Claude Code, Copilot, or generic MCP config entries. |
 | team | `ratchet team start "task"` | Uses daemon team orchestration with configured providers. |
 
 TUI binary evidence is split by boundary. The release-shaped startup smoke
