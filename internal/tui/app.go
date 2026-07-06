@@ -168,6 +168,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "ctrl+d":
 				return a, tea.Quit
+			case "esc":
+				if a.showSidebar || a.showTeam || a.showJobs {
+					a.showSidebar = false
+					a.showTeam = false
+					a.showJobs = false
+				}
 			case "ctrl+b":
 				return a.openSessionTree()
 			case "ctrl+s":

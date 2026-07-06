@@ -3,6 +3,8 @@ package commands
 import (
 	"strings"
 	"testing"
+
+	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 )
 
 func TestParseNonCommand(t *testing.T) {
@@ -27,6 +29,19 @@ func TestParseHelp(t *testing.T) {
 	}
 	if len(result.Lines) == 0 {
 		t.Error("expected help output lines")
+	}
+}
+
+func TestParseHelpEndsWithRecoveryCues(t *testing.T) {
+	result := Parse("/help", nil)
+	if result == nil {
+		t.Fatal("expected result for /help")
+	}
+	tail := strings.Join(result.Lines[max(0, len(result.Lines)-8):], "\n")
+	for _, want := range []string{"Ctrl+C", "Esc", "Ctrl+S", "/model", "/provider add"} {
+		if !strings.Contains(tail, want) {
+			t.Fatalf("help tail missing %q:\n%s", want, tail)
+		}
 	}
 }
 
@@ -93,7 +108,7 @@ func TestParseModelNoClient(t *testing.T) {
 		t.Error("expected output for /model without client")
 	}
 	joined := strings.Join(result.Lines, "\n")
-	for _, want := range []string{"/provider add", "/model <alias> <model-name>", "ratchet provider add"} {
+	for _, want := range []string{"/provider add", "/model <alias> <model-name>", "ratchet provider add", "ratchet provider list", "ratchet provider test <alias>"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("/model without daemon missing %q:\n%s", want, joined)
 		}
@@ -109,6 +124,21 @@ func TestParseModelOneArgShowsProviderAndModelActions(t *testing.T) {
 	for _, want := range []string{"/model <alias> <model-name>", "/provider add", "/provider default"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("/model one-arg help missing %q:\n%s", want, joined)
+		}
+	}
+}
+
+func TestModelProviderLineShowsTypeModelAndDefault(t *testing.T) {
+	line := modelProviderLine(&pb.Provider{
+		Alias:     "work",
+		Type:      "anthropic",
+		Model:     "claude-sonnet",
+		IsDefault: true,
+	})
+
+	for _, want := range []string{"> work", "type=anthropic", "model=claude-sonnet", "default"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("provider line missing %q: %s", want, line)
 		}
 	}
 }

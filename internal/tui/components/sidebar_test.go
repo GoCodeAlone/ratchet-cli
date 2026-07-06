@@ -34,7 +34,7 @@ func TestSidebarHelpExplainsSessionManagement(t *testing.T) {
 
 	view := sidebar.View(theme.Dark())
 
-	for _, want := range []string{"Enter switch", "d kill", "Ctrl+B tree"} {
+	for _, want := range []string{"Enter switch", "d kill", "Esc close", "Ctrl+S close", "Ctrl+B tree"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("sidebar help missing %q:\n%s", want, view)
 		}

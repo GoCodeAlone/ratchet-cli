@@ -143,7 +143,8 @@ func (s SidebarModel) View(t theme.Theme) string {
 		Foreground(t.Muted).
 		Padding(0, 1)
 	lines = append(lines, helpStyle.Render("↑↓ navigate  Enter switch"))
-	lines = append(lines, helpStyle.Render("d kill  Ctrl+B tree"))
+	lines = append(lines, helpStyle.Render("d kill  Esc close"))
+	lines = append(lines, helpStyle.Render("Ctrl+S close  Ctrl+B tree"))
 
 	return strings.Join(lines, "\n")
 }
