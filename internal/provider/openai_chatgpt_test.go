@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 )
 
@@ -38,12 +39,22 @@ func TestLoadCodexAuth(t *testing.T) {
 	}
 }
 
+func TestLoadCodexAuthRequiresRefreshToken(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(path, []byte(`{"tokens":{"access_token":"access-token"}}`), 0o600); err != nil {
+		t.Fatalf("write auth.json: %v", err)
+	}
+	if _, err := LoadCodexAuth(path); err == nil {
+		t.Fatal("LoadCodexAuth succeeded without refresh_token")
+	}
+}
+
 func TestOpenAIChatGPTDeviceClientFlow(t *testing.T) {
-	var sawUserCodeReq, sawPollReq, sawExchangeReq bool
+	var sawUserCodeReq, sawPollReq, sawExchangeReq atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/accounts/deviceauth/usercode":
-			sawUserCodeReq = true
+			sawUserCodeReq.Store(true)
 			var req map[string]string
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatalf("decode usercode request: %v", err)
@@ -54,7 +65,7 @@ func TestOpenAIChatGPTDeviceClientFlow(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"device_auth_id":"dev-123","usercode":"USER-CODE","interval":"1"}`))
 		case "/api/accounts/deviceauth/token":
-			sawPollReq = true
+			sawPollReq.Store(true)
 			var req map[string]string
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatalf("decode poll request: %v", err)
@@ -65,7 +76,7 @@ func TestOpenAIChatGPTDeviceClientFlow(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"authorization_code":"auth-code","code_challenge":"challenge","code_verifier":"verifier"}`))
 		case "/oauth/token":
-			sawExchangeReq = true
+			sawExchangeReq.Store(true)
 			if err := r.ParseForm(); err != nil {
 				t.Fatalf("parse form: %v", err)
 			}
@@ -115,8 +126,8 @@ func TestOpenAIChatGPTDeviceClientFlow(t *testing.T) {
 	if tokens.AccessToken != "access-token" || tokens.RefreshToken != "refresh-token" {
 		t.Fatalf("tokens = %+v", tokens)
 	}
-	if !sawUserCodeReq || !sawPollReq || !sawExchangeReq {
-		t.Fatalf("requests seen: usercode=%v poll=%v exchange=%v", sawUserCodeReq, sawPollReq, sawExchangeReq)
+	if !sawUserCodeReq.Load() || !sawPollReq.Load() || !sawExchangeReq.Load() {
+		t.Fatalf("requests seen: usercode=%v poll=%v exchange=%v", sawUserCodeReq.Load(), sawPollReq.Load(), sawExchangeReq.Load())
 	}
 }
 

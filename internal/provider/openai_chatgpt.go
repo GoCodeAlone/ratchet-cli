@@ -78,8 +78,8 @@ func LoadCodexAuth(path string) (string, error) {
 	if err := json.Unmarshal(raw, &wrapper); err != nil {
 		return "", fmt.Errorf("parse Codex auth file: %w", err)
 	}
-	if wrapper.Tokens.AccessToken == "" && wrapper.Tokens.RefreshToken == "" {
-		return "", fmt.Errorf("Codex auth file does not contain ChatGPT tokens")
+	if wrapper.Tokens.RefreshToken == "" {
+		return "", fmt.Errorf("codex auth file does not contain a ChatGPT refresh_token")
 	}
 	return marshalOpenAIChatGPTTokenBundle(wrapper.Tokens)
 }
