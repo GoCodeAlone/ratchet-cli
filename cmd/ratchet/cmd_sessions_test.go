@@ -185,6 +185,72 @@ func TestHandleSessionsExportWritesSensitiveBundle(t *testing.T) {
 	}
 }
 
+func TestHandleSessionsExportWritesJSONLRecords(t *testing.T) {
+	fake := &fakeSessionsClient{
+		history: &pb.SessionHistory{Messages: []*pb.HistoryMessage{
+			{Id: "msg-1", Role: "user", Content: "secret prompt", Timestamp: timestamppb.Now()},
+			{Id: "msg-2", Role: "assistant", Content: "secret response", Timestamp: timestamppb.Now()},
+		}},
+		tree: &pb.SessionList{Sessions: []*pb.Session{
+			{Id: "sess-1", RootId: "sess-1", Status: "active", Provider: "mock", WorkingDir: "/tmp/project", BranchSummary: "root"},
+			{Id: "fork-1", ParentId: "sess-1", RootId: "sess-1", Status: "done", Provider: "mock", WorkingDir: "/tmp/project", BranchSummary: "fork"},
+		}},
+		compactions: &pb.SessionCompactionList{Records: []*pb.CompactionRecord{
+			{Id: "comp-1", SessionId: "sess-1", Reason: "manual", Summary: "compact summary", MessagesRemoved: 2, MessagesKept: 1, CreatedAt: timestamppb.Now()},
+		}},
+	}
+	withFakeSessionsClient(t, fake)
+	outPath := filepath.Join(t.TempDir(), "session.jsonl")
+
+	stdout := captureStdout(t, func() {
+		handleSessions([]string{"export", "sess-1", "--output", outPath, "--format", "jsonl", "--json"})
+	})
+	if strings.Contains(stdout, "secret prompt") || strings.Contains(stdout, "secret response") {
+		t.Fatalf("stdout leaked message content:\n%s", stdout)
+	}
+
+	info, err := os.Stat(outPath)
+	if err != nil {
+		t.Fatalf("stat export: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("mode = %v, want 0600", got)
+	}
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read export: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 6 {
+		t.Fatalf("jsonl line count = %d, want 6\n%s", len(lines), data)
+	}
+	var types []string
+	for _, line := range lines {
+		var rec struct {
+			Schema string          `json:"schema"`
+			Type   string          `json:"type"`
+			Data   json.RawMessage `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("unmarshal jsonl line %q: %v", line, err)
+		}
+		if rec.Schema != "ratchet.session-jsonl.v1" {
+			t.Fatalf("schema = %q, want ratchet.session-jsonl.v1", rec.Schema)
+		}
+		if len(rec.Data) == 0 {
+			t.Fatalf("missing data for type %q", rec.Type)
+		}
+		types = append(types, rec.Type)
+	}
+	wantTypes := strings.Join([]string{"export", "session", "session", "message", "message", "compaction"}, ",")
+	if got := strings.Join(types, ","); got != wantTypes {
+		t.Fatalf("record types = %s, want %s", got, wantTypes)
+	}
+	if !strings.Contains(stdout, `"format": "jsonl"`) || !strings.Contains(stdout, `"messages": 2`) {
+		t.Fatalf("json summary missing format or message count:\n%s", stdout)
+	}
+}
+
 func TestHandleSessionsExportRequiresOutput(t *testing.T) {
 	fake := &fakeSessionsClient{tree: &pb.SessionList{}}
 	withFakeSessionsClient(t, fake)
