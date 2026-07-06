@@ -111,9 +111,15 @@ func handleProvider(args []string) {
 		}
 		switch args[1] {
 		case "list":
-			printProviderSetupGuideList(args[2:], os.Stdout)
+			if err := printProviderSetupGuideList(args[2:], os.Stdout); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
 		case "guide":
-			printProviderSetupGuide(args[2:], os.Stdout, os.Stderr)
+			if err := printProviderSetupGuide(args[2:], os.Stdout, os.Stderr); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
 		case "ollama":
 			handleOllamaSetup(args[2:])
 		case "openai-chatgpt":
@@ -296,23 +302,23 @@ func handleProvider(args []string) {
 	}
 }
 
-func printProviderSetupGuideList(args []string, w io.Writer) {
+func printProviderSetupGuideList(args []string, w io.Writer) error {
 	if hasJSONFlag(args) {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		_ = enc.Encode(providerSetupGuides)
-		return
+		return enc.Encode(providerSetupGuides)
 	}
 	fmt.Fprintf(w, "%-18s %-16s %s\n", "ALIAS", "TYPE", "SETUP")
 	for _, guide := range providerSetupGuides {
 		fmt.Fprintf(w, "%-18s %-16s %s\n", guide.Alias, guide.ProviderType, guide.SetupCommand)
 	}
+	return nil
 }
 
-func printProviderSetupGuide(args []string, w io.Writer, errw io.Writer) {
+func printProviderSetupGuide(args []string, w io.Writer, errw io.Writer) error {
 	if len(args) == 0 {
 		fmt.Fprintln(errw, "Usage: ratchet provider setup guide <provider> [--json]")
-		return
+		return nil
 	}
 	alias := args[0]
 	for _, guide := range providerSetupGuides {
@@ -322,8 +328,7 @@ func printProviderSetupGuide(args []string, w io.Writer, errw io.Writer) {
 		if hasJSONFlag(args[1:]) {
 			enc := json.NewEncoder(w)
 			enc.SetIndent("", "  ")
-			_ = enc.Encode(guide)
-			return
+			return enc.Encode(guide)
 		}
 		fmt.Fprintf(w, "%s (%s)\n", guide.Alias, guide.ProviderType)
 		fmt.Fprintf(w, "Install: %s\n", guide.InstallHint)
@@ -331,9 +336,10 @@ func printProviderSetupGuide(args []string, w io.Writer, errw io.Writer) {
 		fmt.Fprintf(w, "Setup: %s\n", guide.SetupCommand)
 		fmt.Fprintf(w, "Model: %s\n", guide.ModelBehavior)
 		fmt.Fprintf(w, "Credentials: %s\n", guide.CredentialBoundary)
-		return
+		return nil
 	}
 	fmt.Fprintf(errw, "unknown provider setup guide: %s\n", alias)
+	return nil
 }
 
 func hasJSONFlag(args []string) bool {

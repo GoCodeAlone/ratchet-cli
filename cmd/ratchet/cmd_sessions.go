@@ -211,8 +211,12 @@ func handleSessions(args []string) {
 		}
 	case "export":
 		if err := executeDaemonSessionExport(context.Background(), c, args[1:], os.Stdout); err != nil {
-			fmt.Println(err)
-			return
+			if strings.HasPrefix(err.Error(), "Usage:") {
+				fmt.Println(err)
+				return
+			}
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
 		}
 	default:
 		fmt.Printf("unknown sessions command: %s\n", args[0])

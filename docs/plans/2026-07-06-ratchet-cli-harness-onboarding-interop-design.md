@@ -101,9 +101,10 @@ a `ratchet` custom `agent_servers` entry:
 }
 ```
 
-MCP config merges a Zed `context_servers.ratchet` entry with a command object
-for `ratchet mcp daemon` or `ratchet mcp blackboard`. This follows Zed's native
-shape instead of reusing Claude/Copilot/generic MCP shapes.
+MCP config merges a Zed `context_servers.ratchet` entry with Zed's custom
+server fields: `command: "ratchet"`, `args: ["mcp", "<target>"]`, and `env`.
+This follows Zed's native shape instead of reusing Claude/Copilot/generic MCP
+shapes.
 
 ## Security Review
 
@@ -135,7 +136,7 @@ Release impact is normal ratchet-cli binary/archive publication after merge.
 - Zed custom ACP agent config remains `agent_servers.<id>` with `type:
   "custom"`, command, args, and env fields.
 - Zed local MCP settings accept project `.zed/settings.json` with
-  `context_servers.<id>.command.path/args/env` and `settings`.
+  `context_servers.<id>.command`, `args`, and `env` for stdio custom servers.
 - Daemon session export is useful without import in this slice; import/share
   links remain later work.
 - Session export consumers can handle protobuf-shaped JSON field names if

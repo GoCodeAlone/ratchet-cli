@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"runtime"
 	"strings"
@@ -58,6 +59,20 @@ func TestProviderSetupGuideJSON(t *testing.T) {
 	}
 }
 
+func TestProviderSetupListJSONPropagatesEncodeError(t *testing.T) {
+	err := printProviderSetupGuideList([]string{"--json"}, errWriter{})
+	if err == nil {
+		t.Fatal("expected encode error")
+	}
+}
+
+func TestProviderSetupGuideJSONPropagatesEncodeError(t *testing.T) {
+	err := printProviderSetupGuide([]string{"openai-chatgpt", "--json"}, errWriter{}, io.Discard)
+	if err == nil {
+		t.Fatal("expected encode error")
+	}
+}
+
 func TestProviderSetupGuideUnknownAlias(t *testing.T) {
 	out := captureStderr(t, func() {
 		handleProvider([]string{"setup", "guide", "missing"})
@@ -65,6 +80,12 @@ func TestProviderSetupGuideUnknownAlias(t *testing.T) {
 	if !strings.Contains(out, "unknown provider setup guide") {
 		t.Fatalf("stderr = %q", out)
 	}
+}
+
+type errWriter struct{}
+
+func (errWriter) Write([]byte) (int, error) {
+	return 0, errors.New("write failed")
 }
 
 func captureStderr(t *testing.T, fn func()) string {
