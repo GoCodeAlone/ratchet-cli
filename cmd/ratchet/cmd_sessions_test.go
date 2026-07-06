@@ -220,7 +220,14 @@ func TestHandleSessionsExportWritesJSONLRecords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read export: %v", err)
 	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if !strings.HasSuffix(string(data), "\n") {
+		t.Fatalf("jsonl export missing trailing newline:\n%s", data)
+	}
+	body := strings.TrimSuffix(string(data), "\n")
+	if strings.HasSuffix(body, "\n") {
+		t.Fatalf("jsonl export has extra blank trailing line:\n%s", data)
+	}
+	lines := strings.Split(body, "\n")
 	if len(lines) != 6 {
 		t.Fatalf("jsonl line count = %d, want 6\n%s", len(lines), data)
 	}

@@ -382,13 +382,13 @@ func encodeDaemonSessionJSONL(bundle daemonSessionExportBundle) ([]byte, error) 
 			return nil, err
 		}
 	}
-	return []byte(b.String()), nil
+	return []byte(strings.TrimSuffix(b.String(), "\n")), nil
 }
 
 func appendDaemonSessionJSONLRecord(b *strings.Builder, recordType, exportedAt string, data any) error {
 	raw, err := json.Marshal(data)
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal %s jsonl data: %w", recordType, err)
 	}
 	record := daemonSessionJSONLRecord{
 		Schema:     daemonSessionJSONLSchema,
@@ -398,7 +398,7 @@ func appendDaemonSessionJSONLRecord(b *strings.Builder, recordType, exportedAt s
 	}
 	line, err := json.Marshal(record)
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal %s jsonl record: %w", recordType, err)
 	}
 	b.Write(line)
 	b.WriteByte('\n')
