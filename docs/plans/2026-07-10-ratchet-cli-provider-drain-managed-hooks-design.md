@@ -504,3 +504,15 @@ and client compile-contract test.
 Scope: no manifest change; Task 4 and PR 2 are unchanged.
 Evidence: removing the generated contract makes both named tests fail on the
 missing RPC/types; restoring it makes the focused command pass.
+
+### Backport 2026-07-10: Durable timestamp and harness invariants
+
+Cause: binding `time.Time` directly produced SQLite text that `unixepoch()`
+read as `NULL`; the existing E2E harness and redactor test also assumed legacy
+alias-stable secret labels.
+Change: persist operation/retry deadlines as RFC3339, assert non-null operation
+timestamps through the RPC, initialize the real operation manager in the shared
+harness, and derive redactor labels from the committed provider pointer.
+Scope: no manifest change; Task 4B files/staging now name both shared tests.
+Evidence: the focused 4B suite and `go test ./internal/daemon -count=1` pass;
+removing the durable manager makes the named tests fail at compile time.

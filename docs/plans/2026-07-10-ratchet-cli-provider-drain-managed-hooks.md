@@ -339,6 +339,8 @@ git commit -m "refactor(provider): drive CLI from catalog"
 - Create: `internal/daemon/lock_windows_test.go`
 - Modify: `internal/daemon/service.go`
 - Modify: `internal/daemon/integration_test.go`
+- Modify: `internal/daemon/testharness_test.go`
+- Modify: `internal/daemon/secret_redactor_test.go`
 - Modify: `internal/client/client.go`
 - Create: `internal/client/provider_save_test.go`
 - Modify: `cmd/ratchet/cmd_provider.go`
@@ -471,8 +473,8 @@ holding a worker slot. Terminal operations retain 24 hours. Rerun the red
 command to PASS and commit `feat(provider): make saves durable`.
 
 ```bash
-gofmt -w internal/daemon/engine.go internal/daemon/service.go internal/daemon/integration_test.go internal/daemon/provider_operations.go internal/daemon/provider_operations_test.go internal/daemon/provider_cleanup.go internal/daemon/provider_cleanup_test.go
-git add internal/daemon/engine.go internal/daemon/service.go internal/daemon/integration_test.go internal/daemon/provider_operations.go internal/daemon/provider_operations_test.go internal/daemon/provider_cleanup.go internal/daemon/provider_cleanup_test.go
+gofmt -w internal/daemon/engine.go internal/daemon/service.go internal/daemon/integration_test.go internal/daemon/testharness_test.go internal/daemon/secret_redactor_test.go internal/daemon/provider_operations.go internal/daemon/provider_operations_test.go internal/daemon/provider_cleanup.go internal/daemon/provider_cleanup_test.go
+git add internal/daemon/engine.go internal/daemon/service.go internal/daemon/integration_test.go internal/daemon/testharness_test.go internal/daemon/secret_redactor_test.go internal/daemon/provider_operations.go internal/daemon/provider_operations_test.go internal/daemon/provider_cleanup.go internal/daemon/provider_cleanup_test.go
 git commit -m "feat(provider): make saves durable"
 ```
 
