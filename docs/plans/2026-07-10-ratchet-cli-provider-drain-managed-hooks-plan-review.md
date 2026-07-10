@@ -342,3 +342,65 @@ bidirectional compatibility lifecycle; verifier retained outside reverted code.
 **Verdict reasoning:** FAIL; P19-P21 are resolved, but P22 transferred the
 event-history defect to future PRs and P23-P25 exposed incomplete/vacuous
 rollback proof. Task 5 now addresses all four findings for Cycle 7.
+
+## Cycle 7: Durable Provider Saves
+
+**Status:** FAIL
+
+**Findings (Critical):** none.
+
+**Findings (Important):**
+
+- `P26` Permanent CI used an unanchored, non-verbose selector, so deleting or
+  renaming the test could pass with zero matches. _Resolution: CI and local
+  proof now use the exact anchored verbose selector, capture a fresh transcript,
+  and require the named PASS line; releaseguard enforces all three._
+- `P27` Cleanup rows did not prove physical deletion from the file secret
+  provider. _Resolution: the mixed-version harness now requires exact provider
+  key inventories after re-upgrade and after the final durable save._
+
+**Findings (Minor):**
+
+- `P28` Asynchronous cleanup assertions lacked bounded convergence and could
+  become sleeps. _Resolution: Task 5 requires a named deadline-bounded poll of
+  terminal rows plus exact secret inventory with metadata-only diagnostics._
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Clean | Go, secrets/Redactor reuse, Windows, real-consumer proof, release checks, and closeout remain covered. |
+| Assumptions under attack | Finding | P26 rejects zero-match success; P27 rejects journal state as physical deletion proof. |
+| Repo-precedent conflicts | Finding | P26 extends releaseguard from workflow text to an execution assertion. |
+| Artifact-class precedent | Clean | Runtime fixtures and production binaries remain test-owned. |
+| YAGNI violations | Clean | The compatibility lifecycle directly exercises the accepted rollback contract. |
+| Missing failure modes | Finding | P27/P28 cover retained secrets and cleanup that never converges. |
+| Security / privacy at architecture level | Finding | P27 closes secret-at-rest retirement proof. |
+| Infrastructure impact | Finding | P26 prevents a vacuous permanent merge gate. |
+| Multi-component validation | Finding | P27 adds the final physical secret-store boundary. |
+| Declared integration proof | Finding | Exact `FileProvider.List` inventory now proves the declared integration. |
+| Contributed UI rendering proof | Clean | PTY/ConPTY still drives the actual wizard and durable submission. |
+| Rollback story | Clean | The named proof runs before its owning commit is reverted. |
+| Simpler alternative not considered | Finding | Exact secret inventory is simpler than inferring deletion from cleanup rows. |
+| User-intent drift | Finding | P26/P27 weakened autonomous release and secret-safe rollback. |
+| Existence / runtime-validity | Clean | The pinned SHA remains reachable, ancestral, and pre-RPC. |
+| Over/under-decomposition | Clean | Manifest remains 11 tasks and 4 PRs. |
+| Verification-class mismatch | Finding | P26/P27 add non-vacuous execution and storage-side-effect proof. |
+| Auth/authz chain composition | Clean | No new network authz chain is introduced. |
+| Hidden serial dependencies | Finding | P28 requires convergence before transition/shutdown. |
+| Missing rollback wiring | Clean | Stop, proof, lock release, revert, and rebuild are ordered. |
+| Missing integration proof | Finding | P27 closes physical deletion coverage. |
+| Missing declared integration matrix | Finding | Exact inventory now supports the cleanup claim. |
+| Missing contributed UI route proof | Clean | The real shell and provider content remain exercised. |
+| Infrastructure verification mismatch | Finding | Releaseguard now requires proof that the named test ran. |
+| Plugin-loader runtime layout | Clean | No external plugin executable is added. |
+| Config-validation schema rules | Clean | Schema upgrade/failure/repeat and old-binary compatibility remain covered. |
+| Identifier / naming-convention match | Clean | SHA, operation, RPC, command, and environment names remain consistent. |
+| Planned-code compile-validity | Clean | Proto and test checkpoint order remain valid. |
+
+**Alternatives:** machine-readable `go test -json`; exact secret inventory;
+deadline-bounded cleanup convergence helper.
+
+**Verdict reasoning:** FAIL; P22-P25 are resolved, but P26 still allowed a
+vacuous CI success and P27 left physical secret retirement unproved. Task 5 now
+addresses P26-P28 for Cycle 8.

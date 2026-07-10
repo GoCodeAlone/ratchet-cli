@@ -688,7 +688,13 @@ clean stop, the current binary restarts, resolves the parent-written active
 secret, journals and retires only the now-unreferenced v2 version, and performs
 one more durable save that retires the legacy key without exposing any sentinel.
 Assert provider pointers, operation states, active credentials, and cleanup rows
-after each transition. Cleanup always removes the temporary worktree.
+after each transition. Use a named bounded convergence helper, not sleeps, to
+poll terminal cleanup rows and `secrets.Provider.List`; on timeout print only
+row/classification and key-name diagnostics. After re-upgrade, require the
+original v2 key absent and the active legacy key to be the only provider key.
+After the final durable save, require the legacy key absent and the final active
+v2 key to be the only provider key. Cleanup always removes the temporary
+worktree.
 
 Update `tui-smoke` checkout to `fetch-depth: 0`. Keep the restart proof
 evergreen on every event and use the verified pre-RPC compatibility revision for
@@ -701,7 +707,11 @@ or PR base: stacked and future PR bases can already contain the RPC.
 - name: Run production provider downgrade smoke
   env:
     RATCHET_DOWNGRADE_BASE_SHA: 8cb5602166ffe529a0f05101dff583bad0919415
-  run: go test ./cmd/ratchet -run 'HarnessSmokeDurableProviderDowngrade' -count=1 -timeout=12m
+  run: |
+    go test -v ./cmd/ratchet -run '^TestHarnessSmokeDurableProviderDowngrade$' -count=1 -timeout=12m \
+      | tee /tmp/ratchet-provider-downgrade.log
+    grep -F -- '--- PASS: TestHarnessSmokeDurableProviderDowngrade' \
+      /tmp/ratchet-provider-downgrade.log
 ```
 
 The `windows-conpty-smoke` job must retain the Task 4 exact `DaemonLock` and
@@ -711,6 +721,8 @@ both production commands, the exact pinned `RATCHET_DOWNGRADE_BASE_SHA`, and bot
 Windows commands. It must reject `github.event.before` and
 `github.event.pull_request.base.sha` so later events cannot silently move the
 compatibility boundary to a revision that already contains `CommitProviderSave`.
+It must also require the anchored verbose test selector, transcript capture, and
+exact PASS-line assertion so a renamed or deleted test cannot satisfy CI.
 
 **Step 3: Update human documentation and guards**
 
@@ -728,7 +740,10 @@ go test ./internal/tui -run 'ProviderSetup|TUIBinarySmoke' -count=1 -timeout=12m
 go test ./cmd/ratchet -run HarnessEmulationDocs -count=1
 go test ./cmd/ratchet -run 'HarnessSmokeDurableProvider' -count=1 -timeout=12m
 RATCHET_DOWNGRADE_BASE_SHA=8cb5602166ffe529a0f05101dff583bad0919415 \
-  go test -v ./cmd/ratchet -run '^TestHarnessSmokeDurableProviderDowngrade$' -count=1 -timeout=12m
+  go test -v ./cmd/ratchet -run '^TestHarnessSmokeDurableProviderDowngrade$' -count=1 -timeout=12m \
+    | tee /tmp/ratchet-provider-downgrade.log
+grep -F -- '--- PASS: TestHarnessSmokeDurableProviderDowngrade' \
+  /tmp/ratchet-provider-downgrade.log
 go test ./...
 go vet ./...
 golangci-lint run --new-from-rev=origin/master
