@@ -246,6 +246,7 @@ message AddProviderReq {
   int32 max_tokens = 6;
   bool is_default = 7;
   string settings = 8;
+  string operation_id = 9;
 }
 
 message Provider {
@@ -254,6 +255,7 @@ message Provider {
   string model = 3;
   string base_url = 4;
   bool is_default = 5;
+  string operation_id = 6;
 }
 
 message ProviderList {

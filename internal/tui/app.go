@@ -151,7 +151,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+c" {
 			if a.page == pageOnboarding {
-				a.onboarding.Cancel()
+				if a.onboarding.RequestQuit() {
+					return a, nil
+				}
 			}
 			return a, tea.Quit
 		}
@@ -222,6 +224,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(a.providers) > 0 {
 			return a.transitionToChat()
 		}
+		return a, tea.Quit
+
+	case pages.OnboardingQuitMsg:
+		a.recordProvider(msg.Provider)
 		return a, tea.Quit
 
 	case pages.NavigateToOnboardingMsg:

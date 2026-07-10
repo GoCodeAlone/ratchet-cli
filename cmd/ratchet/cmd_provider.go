@@ -155,6 +155,7 @@ func handleProvider(args []string) {
 			BaseUrl:  input.BaseURL,
 			Settings: settingsJSON,
 		})
+		p, err = validateAddedProvider(p, err)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
@@ -162,6 +163,7 @@ func handleProvider(args []string) {
 		fmt.Printf("Added provider: %s (%s)\n", p.Alias, p.Type)
 	case "list":
 		resp, err := c.ListProviders(context.Background())
+		resp, err = validateProviderList(resp, err)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
@@ -184,6 +186,7 @@ func handleProvider(args []string) {
 			return
 		}
 		resp, err := c.TestProvider(context.Background(), args[1])
+		resp, err = validateProviderTestResult(resp, err)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
@@ -372,6 +375,7 @@ func handleOpenAIChatGPTSetup(args []string) {
 
 	isDefault := promptYesNo("Set as default provider?", scanner)
 	p, err := c.AddProvider(context.Background(), openAIChatGPTAddProviderReq(opts.model, tokenBundle, isDefault))
+	p, err = validateAddedProvider(p, err)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "add provider failed: %v\n", err)
 		os.Exit(1)
@@ -525,6 +529,7 @@ func handleOllamaSetup(args []string) {
 		BaseUrl:   "http://localhost:11434",
 		IsDefault: true,
 	})
+	p, err = validateAddedProvider(p, err)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "add provider failed: %v\n", err)
 		os.Exit(1)
@@ -534,6 +539,7 @@ func handleOllamaSetup(args []string) {
 	// 6. Test connection.
 	fmt.Print("Testing connection... ")
 	result, err := c.TestProvider(ctx, "ollama")
+	result, err = validateProviderTestResult(result, err)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "test failed: %v\n", err)
 		return
@@ -699,6 +705,7 @@ func handleCLIToolSetup(entry providerauth.SetupEntry, _ []string) {
 		Type:    providerType,
 		BaseUrl: workDir,
 	})
+	p, err = validateAddedProvider(p, err)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "add provider failed: %v\n", err)
 		os.Exit(1)
@@ -715,6 +722,36 @@ func handleCLIToolSetup(entry providerauth.SetupEntry, _ []string) {
 	}
 
 	fmt.Printf("\n=== Setup complete ===\nRun 'ratchet' to start chatting via %s.\n", providerAlias)
+}
+
+func validateAddedProvider(provider *pb.Provider, err error) (*pb.Provider, error) {
+	if err != nil {
+		return nil, err
+	}
+	if provider == nil {
+		return nil, fmt.Errorf("daemon returned no provider")
+	}
+	return provider, nil
+}
+
+func validateProviderTestResult(result *pb.TestProviderResult, err error) (*pb.TestProviderResult, error) {
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, fmt.Errorf("daemon returned no provider test result")
+	}
+	return result, nil
+}
+
+func validateProviderList(list *pb.ProviderList, err error) (*pb.ProviderList, error) {
+	if err != nil {
+		return nil, err
+	}
+	if list == nil {
+		return nil, fmt.Errorf("daemon returned no provider list")
+	}
+	return list, nil
 }
 
 // promptModelSelection prints a numbered list of models and returns the selected model ID.

@@ -144,6 +144,7 @@ func TestAppEscClosesSessionTreeWithoutChangingSession(t *testing.T) {
 func TestAppOnboardingCancelReturnsExistingProviderToChat(t *testing.T) {
 	app := readyChatApp(t, "root-session-12345678")
 	app.page = pageOnboarding
+	app.providers = nil
 	app.providers = []*pb.Provider{{Alias: "existing", Type: "anthropic"}}
 
 	model, _ := app.Update(pages.OnboardingCancelledMsg{})
@@ -174,6 +175,19 @@ func TestAppOnboardingCancelRetainsProviderSavedByWizard(t *testing.T) {
 	app = model.(App)
 	if cmd == nil || app.page != pageChat || len(app.providers) != 1 || app.providers[0] != provider {
 		t.Fatalf("saved cancel state = cmd:%v page:%v providers:%v", cmd, app.page, app.providers)
+	}
+}
+
+func TestAppOnboardingQuitRetainsCommittedProvider(t *testing.T) {
+	app := readyChatApp(t, "root-session-12345678")
+	app.page = pageOnboarding
+	app.providers = nil
+	provider := &pb.Provider{Alias: "configured", Type: "anthropic", IsDefault: true}
+
+	model, cmd := app.Update(pages.OnboardingQuitMsg{Provider: provider})
+	app = model.(App)
+	if cmd == nil || cmd() != (tea.QuitMsg{}) || len(app.providers) != 1 || app.providers[0] != provider {
+		t.Fatalf("quit state = cmd:%v providers:%v", cmd, app.providers)
 	}
 }
 

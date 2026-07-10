@@ -17,6 +17,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 	providerauth "github.com/GoCodeAlone/ratchet-cli/internal/provider"
@@ -949,6 +951,164 @@ func TestOnboardingProviderAddHasDeadline(t *testing.T) {
 	}
 }
 
+func TestOnboardingAmbiguousAddReconcilesMatchingOperation(t *testing.T) {
+	var operationID string
+	deps := testOnboardingDeps()
+	deps.addProvider = func(_ context.Context, req *pb.AddProviderReq) (*pb.Provider, error) {
+		operationID = req.OperationId
+		return nil, status.Error(codes.Unavailable, "response lost")
+	}
+	deps.listProviders = func(context.Context) ([]*pb.Provider, error) {
+		return []*pb.Provider{{Alias: "bedrock", Type: "bedrock", Model: "test-model", IsDefault: true, OperationId: operationID}}, nil
+	}
+	model := newOnboarding(nil, theme.Dark(), deps)
+	model.providerIdx = onboardingProviderIndex(t, model, "bedrock")
+	model.selectedModel = "test-model"
+
+	model, cmd := model.startTest()
+	model, cmd = model.Update(runOnboardingCmd(t, cmd))
+	if cmd == nil {
+		t.Fatal("ambiguous add did not start reconciliation")
+	}
+	model, cmd = model.Update(runOnboardingCmd(t, cmd))
+	if model.savedProvider == nil || model.savedProvider.OperationId != operationID || cmd == nil {
+		t.Fatalf("reconciled add = provider:%v operation:%q cmd:%v", model.savedProvider, operationID, cmd)
+	}
+}
+
+func TestOnboardingAmbiguousAddRejectsPriorAliasOperation(t *testing.T) {
+	deps := testOnboardingDeps()
+	deps.addProvider = func(context.Context, *pb.AddProviderReq) (*pb.Provider, error) {
+		return nil, status.Error(codes.DeadlineExceeded, "response lost")
+	}
+	deps.listProviders = func(context.Context) ([]*pb.Provider, error) {
+		return []*pb.Provider{{Alias: "bedrock", Type: "bedrock", OperationId: "prior-operation"}}, nil
+	}
+	model := newOnboarding(nil, theme.Dark(), deps)
+	model.providerIdx = onboardingProviderIndex(t, model, "bedrock")
+	model.selectedModel = "test-model"
+
+	model, cmd := model.startTest()
+	model, cmd = model.Update(runOnboardingCmd(t, cmd))
+	model, cmd = model.Update(runOnboardingCmd(t, cmd))
+	if cmd != nil || model.savedProvider != nil || !strings.Contains(model.testError, "response lost") {
+		t.Fatalf("mismatched reconciliation = provider:%v error:%q cmd:%v", model.savedProvider, model.testError, cmd)
+	}
+}
+
+func TestOnboardingReconciliationFailurePausesRequestedQuit(t *testing.T) {
+	deps := testOnboardingDeps()
+	deps.addProvider = func(context.Context, *pb.AddProviderReq) (*pb.Provider, error) {
+		return nil, status.Error(codes.Unavailable, "response lost")
+	}
+	deps.listProviders = func(context.Context) ([]*pb.Provider, error) {
+		return nil, errors.New("daemon unavailable")
+	}
+	model := newOnboarding(nil, theme.Dark(), deps)
+	model.providerIdx = onboardingProviderIndex(t, model, "bedrock")
+	model.selectedModel = "test-model"
+	model, cmd := model.startTest()
+	if !model.RequestQuit() {
+		t.Fatal("quit did not wait for in-flight add")
+	}
+	model, cmd = model.Update(runOnboardingCmd(t, cmd))
+	model, cmd = model.Update(runOnboardingCmd(t, cmd))
+	if cmd != nil || model.quitAfterAdd || !strings.Contains(model.testError, "save result unknown") {
+		t.Fatalf("failed reconciliation = cmd:%v quit:%v error:%q", cmd, model.quitAfterAdd, model.testError)
+	}
+}
+
+func TestOnboardingQuitWaitsForInFlightAddResult(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	deps := testOnboardingDeps()
+	deps.addProvider = func(_ context.Context, req *pb.AddProviderReq) (*pb.Provider, error) {
+		close(started)
+		<-release
+		return &pb.Provider{Alias: req.Alias, Type: req.Type, OperationId: req.OperationId}, nil
+	}
+	model := newOnboarding(nil, theme.Dark(), deps)
+	model.providerIdx = onboardingProviderIndex(t, model, "bedrock")
+	model.selectedModel = "test-model"
+	model, cmd := model.startTest()
+	batch := cmd().(tea.BatchMsg)
+	result := make(chan tea.Msg, 1)
+	go func() { result <- batch[len(batch)-1]() }()
+	<-started
+	if !model.RequestQuit() {
+		t.Fatal("quit did not wait for in-flight add")
+	}
+	close(release)
+	model, cmd = model.Update(<-result)
+	msg, ok := runOnboardingCmd(t, cmd).(OnboardingQuitMsg)
+	if !ok || msg.Provider.GetOperationId() == "" {
+		t.Fatalf("quit message = %#v", msg)
+	}
+}
+
+func TestOnboardingAuthRejectsEmptySuccessResponses(t *testing.T) {
+	model := newOnboarding(nil, theme.Dark(), testOnboardingDeps())
+	model.providerIdx = onboardingProviderIndex(t, model, "openai_chatgpt")
+	model.step = stepBrowserAuth
+	model.authing = true
+
+	model, cmd := model.Update(browserAuthResultMsg{flowID: model.flowID})
+	if cmd != nil || model.authToken != "" || model.step != stepBrowserAuth || model.authError == "" {
+		t.Fatalf("empty auth result = step:%v token:%q error:%q cmd:%v", model.step, model.authToken, model.authError, cmd)
+	}
+
+	model.authing = true
+	model, cmd = model.Update(deviceCodeMsg{flowID: model.flowID})
+	if model.authing || model.step != stepBrowserAuth || model.authError == "" || cmd != nil {
+		t.Fatalf("nil device result = step:%v authing:%v error:%q cmd:%v", model.step, model.authing, model.authError, cmd)
+	}
+}
+
+func TestOnboardingRequiredBaseURLIsTrimmedBeforeDiscovery(t *testing.T) {
+	var discoveredBaseURL string
+	deps := testOnboardingDeps()
+	deps.listModels = func(_ context.Context, _, _, baseURL string, _ map[string]string) ([]providerauth.ModelInfo, error) {
+		discoveredBaseURL = baseURL
+		return []providerauth.ModelInfo{{ID: "test-model", Name: "Test model"}}, nil
+	}
+	model := newOnboarding(nil, theme.Dark(), deps)
+	model.providerIdx = onboardingProviderIndex(t, model, "custom")
+	model.step = stepEnterBaseURL
+	model.baseURLInput.SetValue("  https://models.example/v1  ")
+
+	model, cmd := model.updateEnterBaseURL(tea.KeyPressMsg{Code: tea.KeyEnter})
+	model, _ = model.Update(runOnboardingCmd(t, cmd))
+	if discoveredBaseURL != "https://models.example/v1" || model.baseURLInput.Value() != discoveredBaseURL {
+		t.Fatalf("normalized base URL = input:%q discovery:%q", model.baseURLInput.Value(), discoveredBaseURL)
+	}
+
+	model.step = stepEnterBaseURL
+	model.baseURLInput.SetValue("   ")
+	model, cmd = model.updateEnterBaseURL(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd != nil || model.step != stepEnterBaseURL {
+		t.Fatalf("blank required base URL advanced = step:%v cmd:%v", model.step, cmd)
+	}
+}
+
+func TestOnboardingSubmissionTrimsBaseURL(t *testing.T) {
+	var request *pb.AddProviderReq
+	deps := testOnboardingDeps()
+	deps.addProvider = func(_ context.Context, req *pb.AddProviderReq) (*pb.Provider, error) {
+		request = req
+		return &pb.Provider{Alias: req.Alias, Type: req.Type}, nil
+	}
+	model := newOnboarding(nil, theme.Dark(), deps)
+	model.providerIdx = onboardingProviderIndex(t, model, "custom")
+	model.selectedModel = "test-model"
+	model.baseURLInput.SetValue("  https://models.example/v1  ")
+
+	_, cmd := model.startTest()
+	_ = runOnboardingCmd(t, cmd)
+	if request == nil || request.BaseUrl != "https://models.example/v1" {
+		t.Fatalf("submitted base URL = %#v", request)
+	}
+}
+
 func TestOnboardingProviderTestHasDeadline(t *testing.T) {
 	deps := testOnboardingDeps()
 	deps.testProvider = func(ctx context.Context, _ string) (*pb.TestProviderResult, error) {
@@ -1040,6 +1200,7 @@ func TestOnboardingBackgroundProcessHelper(t *testing.T) {
 
 func testOnboardingDeps() onboardingDeps {
 	return onboardingDeps{
+		listProviders: func(context.Context) ([]*pb.Provider, error) { return nil, nil },
 		listModels: func(context.Context, string, string, string, map[string]string) ([]providerauth.ModelInfo, error) {
 			return []providerauth.ModelInfo{{ID: "test-model", Name: "Test model"}}, nil
 		},

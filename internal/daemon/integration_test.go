@@ -142,15 +142,16 @@ func TestIntegrationProviderCRUD(t *testing.T) {
 
 	// Add provider
 	p, err := client.AddProvider(ctx, &pb.AddProviderReq{
-		Alias:  "test-provider",
-		Type:   "anthropic",
-		ApiKey: "test-key",
+		Alias:       "test-provider",
+		Type:        "anthropic",
+		ApiKey:      "test-key",
+		OperationId: "provider-op-123",
 	})
 	if err != nil {
 		t.Fatalf("AddProvider: %v", err)
 	}
-	if p.Alias != "test-provider" {
-		t.Errorf("expected alias 'test-provider', got %s", p.Alias)
+	if p.Alias != "test-provider" || p.OperationId != "provider-op-123" {
+		t.Errorf("added provider = %+v", p)
 	}
 
 	// List providers
@@ -161,8 +162,8 @@ func TestIntegrationProviderCRUD(t *testing.T) {
 	if len(list.Providers) != 1 {
 		t.Errorf("expected 1 provider, got %d", len(list.Providers))
 	}
-	if list.Providers[0].Alias != "test-provider" {
-		t.Errorf("expected alias 'test-provider', got %s", list.Providers[0].Alias)
+	if list.Providers[0].Alias != "test-provider" || list.Providers[0].OperationId != "provider-op-123" {
+		t.Errorf("listed provider = %+v", list.Providers[0])
 	}
 
 	// Set as default
