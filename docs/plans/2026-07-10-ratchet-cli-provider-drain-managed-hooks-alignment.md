@@ -19,6 +19,13 @@
 | TUI supports categorized scrolling/filtering, stable framing, back navigation | Task 4, Task 5 | Covered |
 | ChatGPT, Copilot, Anthropic, CLI-native, Ollama, cloud, compatible paths | Task 3, Task 4 | Covered |
 | Provider secrets remain transient and use existing daemon secrets/Redactor | Task 2, Task 3, Task 4, Task 5 | Covered |
+| Dedicated durable save RPC rejects old daemons before mutation; legacy RPC delegates | Task 4, Task 5 | Covered |
+| Operation IDs are first-write-wins, alias-admitted, metadata-only, and queryable | Task 4, Task 5 | Covered |
+| Versioned secrets preserve active credentials across rollback and clean up asynchronously | Task 4, Task 5 | Covered |
+| Schema migration/restart recovery is fail-stop before RPC acceptance | Task 4, Task 5 | Covered |
+| OS daemon ownership lock precedes PID/socket/migration work on Unix and Windows | Task 4, Task 5 | Covered |
+| CLI/TUI save deadlines, signals, reconciliation, and unresolved-exit handling | Task 4, Task 5 | Covered |
+| Pinned new-to-old-write-to-new rollback proof verifies physical secret inventory | Task 5 | Covered |
 | CLI/TUI/daemon/provider real-boundary and PTY/ConPTY proof | Task 3, Task 4, Task 5 | Covered |
 | Background command uses `acp client` session identity and four daemon RPCs | Task 7, Task 8 | Covered |
 | Background start requires explicit unattended acknowledgement | Task 6, Task 7, Task 8 | Covered |
@@ -67,5 +74,7 @@
   background drains; PR 4 ships managed hooks.
 - Each PR is independently reviewable/releasable and serial dependencies are
   explicit.
+- Durable-save plan backports only refine Tasks 4-5 inside PR 2; task and PR
+  grouping remain unchanged and the manifest lock still verifies.
 
 **Drift Items:** None.
