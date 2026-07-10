@@ -73,6 +73,13 @@ The catalog covers every user-selectable runtime provider registered by
 such as `bedrock` and `anthropic_bedrock`, resolve to one canonical visible
 entry while remaining accepted on input.
 
+The current orchestrator registry keeps its factory map private, so a small
+upstream prerequisite adds a sorted, defensive-copy `ProviderTypes()` query to
+`workflow-plugin-agent/orchestrator.ProviderRegistry`. That package remains the
+runtime source of truth. Ratchet's catalog coverage test compares against the
+exported runtime set after excluding documented test-only types; it does not
+duplicate an expected provider list in a test.
+
 Provider-specific network calls and SDK behavior remain in
 `workflow-plugin-agent/provider`. Ratchet supplies settings and renders
 responses; it does not implement AWS, OpenAI, Anthropic, or model APIs.
@@ -109,9 +116,9 @@ Add a daemon-owned background drain manager and gRPC operations for start,
 stop, status, and list. The CLI surface is:
 
 ```text
-ratchet acp queue background start <queue> --agent <profile> --acknowledge-unattended
-ratchet acp queue background status [<queue>]
-ratchet acp queue background stop <queue>
+ratchet acp client background start <session-id> --agent <profile> --acknowledge-unattended
+ratchet acp client background status [<session-id>]
+ratchet acp client background stop <session-id>
 ```
 
 Start is rejected unless unattended execution is explicitly acknowledged.
@@ -119,16 +126,22 @@ Only built-in agents and trusted stored ACP launch profiles are eligible.
 Arbitrary persisted argv, shell commands, and untrusted custom profiles are not
 accepted.
 
-Each persisted policy contains the queue ID, profile name, launch fingerprint,
-enabled state, timestamps, and last terminal outcome. It contains no prompts,
-responses, environment values, or credentials. State is written atomically
-with owner-only permissions in the existing ratchet state tree.
+Each persisted policy contains the ACP client session ID, profile name,
+descriptor hash, acknowledgement timestamp and policy version, enabled state,
+timestamps, and last terminal outcome. It contains no prompts, responses,
+environment values, or credentials. State is written atomically with
+owner-only permissions in the existing ratchet state tree.
 
-At daemon startup, enabled entries resume only when the launch profile still
-exists, remains trusted, and matches the pinned fingerprint. Any mismatch moves
-the entry to `blocked` without launching an agent. A failed agent run moves the
-entry to `error` and stops automatic retries; an operator must explicitly start
-it again. This prevents cost-amplifying retry loops.
+At start and daemon restart, a stored profile is eligible only when `Trusted`
+is true, its stored trust hash equals its current `DescriptorHash()` (including
+command, args, environment-key names, and working directory), and that hash
+matches the policy's pinned hash. Built-ins pin the current `AgentSpec`
+fingerprint. Any mismatch moves the entry to `blocked` without launching an
+agent. The registry's general trusted-profile loader is hardened to apply the
+same hash-validity rule so background execution cannot become the only secure
+consumer. A failed agent run moves the entry to `error` and stops automatic
+retries; an operator must explicitly start it again. This prevents
+cost-amplifying retry loops.
 
 Stop first disables the persisted policy, then cancels the active drain through
 the existing cancellation path. Queue claim ownership, cancellation, and stale
@@ -138,6 +151,10 @@ duplicate queue semantics.
 The manager uses Go contexts and daemon lifecycle hooks on all platforms. It
 does not use `nohup`, shell detachment, cron, launchd, systemd, or Windows Task
 Scheduler.
+
+Service construction receives the manager as an owned dependency. Test and TUI
+smoke constructors inject a disabled/no-op manager so persisted host state can
+never start unattended work during tests.
 
 ### 3. Managed Hook Policy and Audit
 
@@ -152,6 +169,13 @@ Add an optional administrator-owned YAML document at the platform path:
 Tests inject a path directly. Environment variables do not override the
 production policy path because an unprivileged process environment is not an
 administrative trust boundary.
+
+The loader opens the final file without following symlinks, requires a regular
+file, and validates administrative ownership before parsing. Unix files must
+be owned by root and not group/other writable. Windows files must have a DACL
+that grants modification only to Administrators and SYSTEM. If the platform
+cannot establish that boundary, the present file is rejected rather than
+treated as managed policy.
 
 The policy mode is one of:
 
@@ -170,10 +194,14 @@ silently continue with unmanaged hooks after an administrator attempted to
 install policy.
 
 Hook execution appends owner-readable JSONL records containing timestamp,
-event, hook configuration hash, source kind, result class, and duration. The
-record excludes command text, environment, input payload, stdout, stderr, and
-error text. If future fields contain text, they must pass through the existing
-`secrets.Redactor`; no second redaction implementation is introduced.
+event, hook configuration hash, source kind, result class, and duration. A
+`started` record is durably appended before a managed hook launches; if that
+append fails, the hook does not run. A terminal record follows execution; its
+append failure is surfaced and marks hook auditing degraded until a later
+successful write. The record excludes command text, environment, input
+payload, stdout, stderr, and error text. If future fields contain text, they
+must pass through the existing `secrets.Redactor`; no second redaction
+implementation is introduced.
 
 `ratchet hooks list` exposes source and suppression status. `ratchet hooks
 policy` reports effective mode and policy source. `ratchet hooks audit` reads
@@ -210,14 +238,14 @@ flowchart LR
 - Provider setup keeps user-entered non-secret state when discovery fails and
   offers manual entry only when the catalog allows it.
 - Daemon background start validates acknowledgement, trust, fingerprint, and
-  queue/profile existence before persistence and launch.
+  session/profile existence before persistence and launch.
 - Background worker panics and terminal agent errors are contained, recorded as
   outcome classes, and do not trigger automatic retry.
 - Managed policy parse or validation errors identify the file and field without
   including hook commands or environment values.
-- Audit append failure is surfaced for managed hook execution; managed hooks do
-  not run unaudited. Unmanaged-hook audit behavior remains best effort unless a
-  managed policy requires auditing.
+- A managed hook does not launch unless its `started` audit record is durable.
+  Terminal append failure is surfaced as degraded audit state. Unmanaged-hook
+  audit behavior remains best effort unless a managed policy requires auditing.
 
 ## Security Review
 
@@ -250,30 +278,54 @@ Release artifacts remain the existing GoReleaser matrix, including Windows.
 
 | boundary | proof |
 |---|---|
+| Upstream registry to catalog | A real `workflow-plugin-agent` registry exposes sorted runtime types; ratchet's contract test excludes only documented test types and requires every remaining type to resolve through the catalog. |
 | Catalog to CLI | Contract tests enumerate every visible catalog entry through setup list/guide commands and accepted aliases. |
 | Catalog to TUI | State-machine tests traverse auth, settings, discovery, manual fallback, CLI-backed setup, and secret review suppression from catalog entries. |
 | TUI runtime | Fresh PTY smoke tests open provider/model setup, verify scrolling/filtering and readable framing, then exit from a fresh process. |
 | Daemon restart | Integration test persists an enabled policy, restarts the service, proves matching trusted profile resumes, then proves fingerprint drift blocks launch. |
 | Queue lifecycle | Existing claim/cancel/stale paths are exercised through the daemon manager with fake agents and deterministic contexts. |
-| Managed hooks | Loader/engine tests cover missing, malformed, additive, managed-only, plugin reload, immutable trust/disable, and audit failure behavior. |
+| Managed hooks | Loader/engine tests cover missing, malformed, insecure ownership/link, additive, managed-only, plugin reload, immutable trust/disable, pre-launch audit failure, and terminal audit failure behavior. |
 | Windows | `GOOS=windows` build, existing ConPTY smoke, and path/lifecycle unit tests run before merge; CI Windows jobs remain required. |
 | Release | Tag points to the merged commit; archives, checksums, Homebrew update path, and installed `ratchet --version` are verified. |
 
+## Integration Matrix
+
+| integration | status | proof or rationale |
+|---|---|---|
+| `workflow-plugin-agent/orchestrator.ProviderRegistry` types | runtime-integrated | Upstream API test plus ratchet catalog coverage test against a real registry instance. |
+| `workflow-plugin-agent/provider` model listing | runtime-integrated | CLI/TUI tests pass real settings into its lister boundary; credentialed live provider calls remain deferred CI. |
+| Existing daemon provider RPC and secrets provider/Redactor | runtime-integrated | Daemon integration test stores a provider through RPC and proves secret fields are absent from TUI review/output. |
+| Bubble Tea provider/model wizard | runtime-integrated | State tests plus real PTY navigation/render proof. |
+| Daemon gRPC/client background API | runtime-integrated | Started daemon, real client, fake ACP process, persisted restart and stop proof. |
+| ACP profile store and queue claim/cancel/recovery | runtime-integrated | Real stores and existing drain path; trust-hash drift has a negative launch proof. |
+| User/project/plugin/managed hook sources | runtime-integrated | Engine reload test merges all sources and executes only the effective set. |
+| OS managed-policy paths and ownership checks | runtime-integrated | Platform unit tests; Windows DACL and Unix ownership/link tests use platform-specific files. |
+| External managed policy service/SDK | deferred | No remote control plane is required for local administrator policy. |
+| Credentialed third-party provider discovery | deferred | Requires repository secrets and is not needed to prove catalog/wiring behavior. |
+| VS Code-style harness optimization loop | deferred | Next design cluster after this scope, based on current primary sources and code. |
+
+No plugin-contributed host UI is added. The TUI proof exercises ratchet's own
+wizard rather than a contribution metadata route.
+
 ## PR and Release Boundaries
 
-1. Provider catalog and unified CLI/TUI wizard.
-2. Daemon-supervised background ACP drains.
-3. Managed hook policy and audit.
+1. `workflow-plugin-agent`: exported provider-type introspection prerequisite.
+2. `ratchet-cli`: provider catalog and unified CLI/TUI wizard, including the
+   released plugin dependency bump.
+3. `ratchet-cli`: daemon-supervised background ACP drains.
+4. `ratchet-cli`: managed hook policy and audit.
 
 Each PR is independently tested, reviewed, merged, and released. Later PRs
 rebase onto the released predecessor. The prerequisite TUI smoke stabilization
-PR is not part of this three-PR scope.
+PR is not part of this four-PR scope. Public policy/parity docs transition
+background drain and managed hooks from deferred to supported only in the PR
+that supplies their runtime proof.
 
 ## Assumptions
 
 - `workflow-plugin-agent` remains the source of provider runtime and model
-  listing behavior; ratchet can validate its visible catalog against the
-  current registry surface.
+  listing behavior and can expose its registered type names without exposing
+  factories or mutation.
 - The daemon is the only ratchet process expected to supervise durable local
   jobs.
 - A trusted ACP profile name plus descriptor fingerprint is sufficient stable

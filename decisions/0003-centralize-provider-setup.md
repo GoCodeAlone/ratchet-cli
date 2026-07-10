@@ -18,6 +18,10 @@ CLI and TUI adapters render catalog entries and delegate model/auth behavior to
 existing provider packages. Test-only providers are excluded, accepted runtime
 aliases map to canonical visible entries, and contract tests enforce coverage.
 
+Add a read-only, sorted `ProviderTypes()` query to the upstream orchestrator
+registry. Ratchet tests its catalog against that runtime set instead of
+duplicating the expected set in another test fixture.
+
 The catalog contains setup metadata, not provider SDK implementations or
 credentials.
 
@@ -27,6 +31,8 @@ credentials.
 - Adding a provider requires one catalog entry plus strategy implementation
   only when existing strategies are insufficient.
 - Catalog validation becomes a CI boundary against plugin registry drift.
+- The change requires a small upstream plugin release before the ratchet
+  catalog PR.
 - The TUI needs a broader catalog-driven state machine rather than hardcoded
   provider branches.
 

@@ -16,10 +16,14 @@ Load optional administrator-owned policy from a fixed platform path, preserve
 managed provenance, and enforce additive or managed-only precedence after
 plugin hooks merge. A missing file means no policy; a malformed present file
 fails closed. Managed hooks cannot be changed by local trust/disable commands.
+Present policy must be a non-symlink regular file with root-only mutation on
+Unix or Administrators/SYSTEM-only mutation on Windows.
 
-Append owner-readable execution audit records containing hashes and outcome
-metadata only. Do not record command text, environment, payloads, output, or
-error text, and do not create another redaction implementation.
+Durably append a metadata-only `started` record before launching a managed
+hook, then append a terminal record. A failed start append blocks execution;
+terminal append failure is surfaced as degraded audit state. Do not record
+command text, environment, payloads, output, or error text, and do not create
+another redaction implementation.
 
 ## Consequences
 
