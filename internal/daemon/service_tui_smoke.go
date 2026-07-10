@@ -50,6 +50,11 @@ func newTUISmokeService(ctx context.Context, tempRoot string) (*Service, error) 
 		engine.Close()
 		return nil, fmt.Errorf("init smoke memory tables: %w", err)
 	}
+	providerOps := newProviderOperationManager(engine)
+	if err := providerOps.Start(ctx); err != nil {
+		engine.Close()
+		return nil, fmt.Errorf("start smoke provider operations: %w", err)
+	}
 	svc := &Service{
 		startedAt:        time.Now(),
 		engine:           engine,
@@ -67,6 +72,7 @@ func newTUISmokeService(ctx context.Context, tempRoot string) (*Service, error) 
 		trustMode:        "conservative",
 		trustDefaultMode: "conservative",
 		trustEngine:      policy.NewTrustEngine("conservative", nil, nil),
+		providerOps:      providerOps,
 	}
 	trustStore, err := policy.NewPermissionStore(engine.DB)
 	if err != nil {
@@ -99,6 +105,9 @@ func newTUISmokeServiceForTest(t interface {
 }
 
 func (s *Service) close() {
+	if s.providerOps != nil {
+		s.providerOps.Stop()
+	}
 	if s.engine != nil {
 		s.engine.Close()
 	}

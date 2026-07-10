@@ -505,6 +505,16 @@ Scope: no manifest change; Task 4 and PR 2 are unchanged.
 Evidence: removing the generated contract makes both named tests fail on the
 missing RPC/types; restoring it makes the focused command pass.
 
+### Backport 2026-07-10: Tagged TUI smoke lifecycle
+
+Cause: the tagged TUI smoke service constructed an engine without starting the
+durable provider-operation manager, so its legacy `AddProvider` fixture failed
+before the TUI launched. Change: start and stop the real operation manager with
+the smoke service. Scope: no manifest or PR change; this moves an existing Task
+5 service-lifecycle prerequisite forward so Task 4's locked TUI verification can
+run. Evidence: `TestTUIBinarySmokeSlashExit` fails with `FailedPrecondition`
+before the fix and passes after it.
+
 ### Backport 2026-07-10: Durable timestamp and harness invariants
 
 Cause: binding `time.Time` directly produced SQLite text that `unixepoch()`
