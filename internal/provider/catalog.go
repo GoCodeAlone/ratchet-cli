@@ -77,7 +77,10 @@ type SetupEntry struct {
 	BaseURLRequired    bool
 	Settings           []SettingField
 	AllowManualModel   bool
+	SetupAlias         string
 	SetupCommand       string
+	DefaultAlias       string
+	CLICommand         string
 	InstallHint        string
 	AuthHint           string
 	ModelBehavior      string
@@ -91,7 +94,7 @@ var setupCatalog = []SetupEntry{
 		Auth: AuthAnthropic, Setup: SetupInteractive, Model: ModelDynamic,
 		APIKeyEnv: "ANTHROPIC_API_KEY", CredentialLabel: "Anthropic API key", CredentialRequired: true, AllowManualModel: true,
 		SetupCommand: "ratchet provider add anthropic", InstallHint: "No separate CLI required.",
-		AuthHint:           "Use an Anthropic API key or the supported Anthropic browser flow.",
+		AuthHint:           "Use an Anthropic API key in the CLI; the TUI also offers the supported Anthropic browser flow.",
 		ModelBehavior:      "Lists Anthropic models when available; accepts a model ID manually.",
 		CredentialBoundary: "Stores the API credential through the daemon secrets provider.",
 	},
@@ -180,7 +183,7 @@ var setupCatalog = []SetupEntry{
 		Description: "ChatGPT subscription access using OpenAI device authorization.", Aliases: []string{"openai-chatgpt", "chatgpt"}, Category: CategorySubscription,
 		Auth: AuthOpenAIChatGPT, Setup: SetupInteractive, Model: ModelDynamic,
 		CredentialLabel: "OpenAI OAuth token bundle", CredentialRequired: true, AllowManualModel: true,
-		SetupCommand: "ratchet provider setup openai-chatgpt", InstallHint: "No separate CLI required.",
+		SetupAlias: "openai-chatgpt", SetupCommand: "ratchet provider setup openai-chatgpt", InstallHint: "No separate CLI required.",
 		AuthHint:           "Uses OpenAI device-code auth or a Codex auth import.",
 		ModelBehavior:      "Lists subscription models when available; accepts a model ID manually.",
 		CredentialBoundary: "Stores the OAuth token bundle through the daemon secrets provider; token values are never printed.",
@@ -192,7 +195,7 @@ var setupCatalog = []SetupEntry{
 		CredentialLabel: "GitHub Copilot token", CredentialRequired: true,
 		DefaultBaseURL: "https://api.githubcopilot.com", AllowManualModel: true,
 		SetupCommand: "ratchet provider add copilot", InstallHint: "GitHub CLI is optional for token discovery.",
-		AuthHint:           "Uses an existing GitHub token or GitHub device flow.",
+		AuthHint:           "Uses GitHub device authorization.",
 		ModelBehavior:      "Lists Copilot models when available; accepts a model ID manually.",
 		CredentialBoundary: "Stores the GitHub token through the daemon secrets provider.",
 	},
@@ -270,20 +273,23 @@ var setupCatalog = []SetupEntry{
 		ModelBehavior:      "Lists endpoint models when supported; accepts a model ID manually.",
 		CredentialBoundary: "Uses the local endpoint and stores no secret value.",
 	},
-	cliSetupEntry("claude_code", "Claude Code", "claude-code", "claude", "Claude Code owns credentials and model selection."),
-	cliSetupEntry("copilot_cli", "GitHub Copilot CLI", "copilot-cli", "copilot", "Copilot CLI owns credentials and model selection."),
-	cliSetupEntry("codex_cli", "Codex CLI", "codex-cli", "codex", "Codex CLI owns credentials and model selection."),
-	cliSetupEntry("gemini_cli", "Gemini CLI", "gemini-cli", "gemini", "Gemini CLI owns credentials and model selection."),
-	cliSetupEntry("cursor_cli", "Cursor CLI", "cursor-cli", "cursor-cli", "Cursor CLI owns credentials and model selection."),
+	cliSetupEntry("claude_code", "Claude Code", "claude-code", "claude", "claude", "Claude Code owns credentials and model selection."),
+	cliSetupEntry("copilot_cli", "GitHub Copilot CLI", "copilot-cli", "copilot", "copilot", "Copilot CLI owns credentials and model selection."),
+	cliSetupEntry("codex_cli", "Codex CLI", "codex-cli", "codex", "codex", "Codex CLI owns credentials and model selection."),
+	cliSetupEntry("gemini_cli", "Gemini CLI", "gemini-cli", "gemini", "gemini", "Gemini CLI owns credentials and model selection."),
+	cliSetupEntry("cursor_cli", "Cursor CLI", "cursor-cli", "agent", "cursor-cli", "Cursor CLI owns credentials and model selection."),
 }
 
-func cliSetupEntry(providerType, displayName, alias, command, boundary string) SetupEntry {
+func cliSetupEntry(providerType, displayName, setupAlias, defaultAlias, command, boundary string) SetupEntry {
 	return SetupEntry{
 		Type: providerType, DisplayName: displayName,
 		Description: fmt.Sprintf("Use %s as the provider runtime.", displayName),
-		Aliases:     []string{alias}, Category: CategoryCLI,
+		Aliases:     []string{setupAlias}, Category: CategoryCLI,
 		Auth: AuthCLINative, Setup: SetupCLINative, Model: ModelExternal,
-		SetupCommand:       fmt.Sprintf("ratchet provider setup %s", alias),
+		SetupAlias:         setupAlias,
+		SetupCommand:       fmt.Sprintf("ratchet provider setup %s", setupAlias),
+		DefaultAlias:       defaultAlias,
+		CLICommand:         command,
 		InstallHint:        fmt.Sprintf("Install %s and ensure `%s` is on PATH.", displayName, command),
 		AuthHint:           fmt.Sprintf("Run %s's native login flow.", displayName),
 		ModelBehavior:      fmt.Sprintf("Model selection remains owned by %s.", displayName),
@@ -348,6 +354,9 @@ func validateCatalog(entries []SetupEntry, runtimeTypes []string) error {
 		}
 		if entry.Model == ModelExternal && (entry.Setup != SetupCLINative || entry.Auth != AuthCLINative || entry.AllowManualModel) {
 			return fmt.Errorf("provider %q has inconsistent external CLI strategy", entry.Type)
+		}
+		if entry.Setup == SetupCLINative && (entry.SetupAlias == "" || entry.DefaultAlias == "" || entry.CLICommand == "") {
+			return fmt.Errorf("provider %q has incomplete external CLI metadata", entry.Type)
 		}
 		for _, alias := range entry.Aliases {
 			alias = strings.ToLower(strings.TrimSpace(alias))

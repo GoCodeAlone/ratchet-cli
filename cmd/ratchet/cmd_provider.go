@@ -16,6 +16,7 @@ import (
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 	providerauth "github.com/GoCodeAlone/ratchet-cli/internal/provider"
 	wfprovider "github.com/GoCodeAlone/workflow-plugin-agent/provider"
+	"github.com/GoCodeAlone/workflow/secrets"
 )
 
 type providerSetupGuide struct {
@@ -28,70 +29,25 @@ type providerSetupGuide struct {
 	CredentialBoundary string `json:"credential_boundary"`
 }
 
-var providerSetupGuides = []providerSetupGuide{
-	{
-		Alias:              "ollama",
-		ProviderType:       "ollama",
-		InstallHint:        "Install and start Ollama locally.",
-		AuthHint:           "No API key required.",
-		SetupCommand:       "ratchet provider setup ollama",
-		ModelBehavior:      "Lists local Ollama models when available; prompts for a model otherwise.",
-		CredentialBoundary: "Local Ollama endpoint only; no secret value is stored.",
-	},
-	{
-		Alias:              "openai-chatgpt",
-		ProviderType:       "openai_chatgpt",
-		InstallHint:        "No separate CLI required.",
-		AuthHint:           "Uses OpenAI device-code auth or a Codex auth import.",
-		SetupCommand:       "ratchet provider setup openai-chatgpt",
-		ModelBehavior:      "Defaults to the ChatGPT subscription coding model unless --model is provided.",
-		CredentialBoundary: "Stores the local OAuth token bundle through the daemon provider store; command output never prints token values.",
-	},
-	{
-		Alias:              "claude-code",
-		ProviderType:       "claude_code",
-		InstallHint:        "Install Claude Code and ensure `claude` is on PATH.",
-		AuthHint:           "Run Claude Code's native login flow.",
-		SetupCommand:       "ratchet provider setup claude-code",
-		ModelBehavior:      "Model selection remains owned by Claude Code.",
-		CredentialBoundary: "Ratchet stores command metadata only; Claude Code owns credentials.",
-	},
-	{
-		Alias:              "copilot-cli",
-		ProviderType:       "copilot_cli",
-		InstallHint:        "Install GitHub Copilot CLI and ensure `copilot` is on PATH.",
-		AuthHint:           "Run Copilot's native login flow.",
-		SetupCommand:       "ratchet provider setup copilot-cli",
-		ModelBehavior:      "Model selection remains owned by Copilot CLI.",
-		CredentialBoundary: "Ratchet stores command metadata only; Copilot owns credentials.",
-	},
-	{
-		Alias:              "codex-cli",
-		ProviderType:       "codex_cli",
-		InstallHint:        "Install Codex CLI and ensure `codex` is on PATH.",
-		AuthHint:           "Run Codex's native login flow.",
-		SetupCommand:       "ratchet provider setup codex-cli",
-		ModelBehavior:      "Model selection remains owned by Codex CLI.",
-		CredentialBoundary: "Ratchet stores command metadata only; Codex owns credentials.",
-	},
-	{
-		Alias:              "gemini-cli",
-		ProviderType:       "gemini_cli",
-		InstallHint:        "Install Gemini CLI and ensure `gemini` is on PATH.",
-		AuthHint:           "Run Gemini CLI's native login flow or configure Gemini-supported env.",
-		SetupCommand:       "ratchet provider setup gemini-cli",
-		ModelBehavior:      "Model selection remains owned by Gemini CLI.",
-		CredentialBoundary: "Ratchet stores command metadata only; Gemini CLI owns credentials.",
-	},
-	{
-		Alias:              "cursor-cli",
-		ProviderType:       "cursor_cli",
-		InstallHint:        "Install Cursor CLI and ensure `cursor-cli` is on PATH.",
-		AuthHint:           "Run Cursor's native login flow.",
-		SetupCommand:       "ratchet provider setup cursor-cli",
-		ModelBehavior:      "Model selection remains owned by Cursor CLI.",
-		CredentialBoundary: "Ratchet stores command metadata only; Cursor owns credentials.",
-	},
+func providerSetupGuideRows() []providerSetupGuide {
+	entries := providerauth.Catalog()
+	rows := make([]providerSetupGuide, 0, len(entries))
+	for _, entry := range entries {
+		rows = append(rows, providerSetupGuideFromEntry(entry))
+	}
+	return rows
+}
+
+func providerSetupGuideFromEntry(entry providerauth.SetupEntry) providerSetupGuide {
+	alias := entry.SetupAlias
+	if alias == "" {
+		alias = entry.Type
+	}
+	return providerSetupGuide{
+		Alias: alias, ProviderType: entry.Type, InstallHint: entry.InstallHint,
+		AuthHint: entry.AuthHint, SetupCommand: entry.SetupCommand,
+		ModelBehavior: entry.ModelBehavior, CredentialBoundary: entry.CredentialBoundary,
+	}
 }
 
 func handleProvider(args []string) {
@@ -106,7 +62,7 @@ func handleProvider(args []string) {
 		return
 	case "setup":
 		if len(args) < 2 {
-			fmt.Println("Usage: ratchet provider setup <list|guide|ollama|openai-chatgpt|claude-code|copilot-cli|codex-cli|gemini-cli|cursor-cli>")
+			fmt.Println("Usage: ratchet provider setup <list|guide|provider>")
 			return
 		}
 		switch args[1] {
@@ -120,24 +76,42 @@ func handleProvider(args []string) {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
 				os.Exit(1)
 			}
-		case "ollama":
-			handleOllamaSetup(args[2:])
-		case "openai-chatgpt":
-			handleOpenAIChatGPTSetup(args[2:])
-		case "claude-code":
-			handleCLIToolSetup("claude_code", "claude", "claude", args[2:])
-		case "copilot-cli":
-			handleCLIToolSetup("copilot_cli", "copilot", "copilot", args[2:])
-		case "codex-cli":
-			handleCLIToolSetup("codex_cli", "codex", "codex", args[2:])
-		case "gemini-cli":
-			handleCLIToolSetup("gemini_cli", "gemini", "gemini", args[2:])
-		case "cursor-cli":
-			handleCLIToolSetup("cursor_cli", "agent", "cursor-cli", args[2:])
 		default:
-			fmt.Printf("unknown provider to setup: %s\n", args[1])
+			entry, ok := providerauth.LookupSetup(args[1])
+			if !ok {
+				fmt.Printf("unknown provider to setup: %s\n", args[1])
+				return
+			}
+			switch {
+			case entry.Setup == providerauth.SetupOllama:
+				handleOllamaSetup(args[2:])
+			case entry.Auth == providerauth.AuthOpenAIChatGPT:
+				handleOpenAIChatGPTSetup(args[2:])
+			case entry.Setup == providerauth.SetupCLINative:
+				handleCLIToolSetup(entry.Type, entry.DefaultAlias, entry.CLICommand, args[2:])
+			default:
+				fmt.Printf("Use: %s\n", entry.SetupCommand)
+			}
 		}
 		return
+	}
+
+	var addEntry providerauth.SetupEntry
+	if args[0] == "add" {
+		requestedType := "anthropic"
+		if len(args) > 1 {
+			requestedType = args[1]
+		}
+		var ok bool
+		addEntry, ok = providerauth.LookupSetup(requestedType)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "error: unknown provider type %q\n", requestedType)
+			return
+		}
+		if requiresDedicatedProviderSetup(addEntry) {
+			fmt.Printf("Use: %s\n", addEntry.SetupCommand)
+			return
+		}
 	}
 
 	c, err := ensureProviderDaemon()
@@ -149,118 +123,36 @@ func handleProvider(args []string) {
 
 	switch args[0] {
 	case "add":
-		providerType := "anthropic"
-		if len(args) > 1 {
-			providerType = args[1]
-		}
-		alias := providerType
-		if len(args) > 2 {
+		entry := addEntry
+		alias := entry.Type
+		if len(args) > 2 && !strings.HasPrefix(args[2], "--") {
 			alias = args[2]
 		}
-		// Parse --model flag from remaining args.
 		model, modelSet := parseProviderModelFlag(args)
-		var apiKey, baseURL, settingsJSON string
-		var settings map[string]string
 		scanner := bufio.NewScanner(os.Stdin)
-		switch providerType {
-		case "ollama":
-			// No API key needed for Ollama
-			baseURL, err = providerauth.PromptBaseURL("http://localhost:11434")
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
-			}
-			// If no --model flag, try to list installed models and let user pick.
-			if model == "" {
-				ollamaClient := wfprovider.NewOllamaClient(baseURL)
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				models, listErr := ollamaClient.ListModels(ctx)
-				cancel()
-				if listErr == nil && len(models) > 0 {
-					fmt.Println("Available models:")
-					for i, m := range models {
-						fmt.Printf("  %d. %s\n", i+1, m.Name)
-					}
-					fmt.Print("Select [1]: ")
-					if scanner.Scan() {
-						choice := strings.TrimSpace(scanner.Text())
-						idx := 0
-						if choice != "" {
-							if _, scanErr := fmt.Sscanf(choice, "%d", &idx); scanErr == nil {
-								idx-- // 1-indexed
-							}
-						}
-						if idx >= 0 && idx < len(models) {
-							model = models[idx].ID
-						}
-					}
-					if model == "" {
-						model = models[0].ID
-					}
-				}
-			}
-		case "llama_cpp":
-			// No API key needed for llama.cpp
-			baseURL, err = providerauth.PromptBaseURL("http://localhost:8081/v1")
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
-			}
-		case "openai_chatgpt":
-			fmt.Println("Use: ratchet provider setup openai-chatgpt")
-			return
-		case "bedrock", "anthropic_bedrock":
-			apiKey, settings, err = promptBedrockProviderCredentials(scanner, os.Stdout, providerauth.PromptSecret)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
-			}
-		default:
-			if providerType == "custom" {
-				settings, err = promptCustomProviderCompatibility(scanner, os.Stdout)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "error: %v\n", err)
-					os.Exit(1)
-				}
-			}
-			apiKey, err = providerauth.PromptAPIKey(providerType)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
-			}
-			if providerPromptsBaseURL(providerType) {
-				baseURL, err = providerauth.PromptBaseURL("")
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "error: %v\n", err)
-					os.Exit(1)
-				}
-				if providerRequiresBaseURL(providerType) && strings.TrimSpace(baseURL) == "" {
-					fmt.Fprintf(os.Stderr, "error: %s requires a base URL\n", providerType)
-					os.Exit(1)
-				}
-			}
-		}
-		settingsJSON, err = providerSettingsJSON(settings)
+		input, err := collectProviderSetupInput(context.Background(), entry, model, modelSet, scanner, os.Stdout, providerSetupDeps{
+			promptSecret: providerauth.PromptSecret,
+			promptBaseURL: func(defaultURL string) (string, error) {
+				return promptProviderBaseURL(scanner, os.Stdout, defaultURL)
+			},
+			deviceFlow: providerauth.DeviceFlow,
+			listModels: wfprovider.ListModelsWithSettings,
+		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
-		if !modelSet && model == "" {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			selected, selectErr := promptProviderModelSelection(ctx, providerType, apiKey, baseURL, settings, scanner, os.Stdout, wfprovider.ListModelsWithSettings)
-			cancel()
-			if selectErr != nil {
-				fmt.Fprintf(os.Stderr, "model selection failed: %v\n", selectErr)
-				os.Exit(1)
-			}
-			model = selected
+		settingsJSON, err := providerSettingsJSON(input.Settings)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
 		}
 		p, err := c.AddProvider(context.Background(), &pb.AddProviderReq{
 			Alias:    alias,
-			Type:     providerType,
-			Model:    model,
-			ApiKey:   apiKey,
-			BaseUrl:  baseURL,
+			Type:     entry.Type,
+			Model:    input.Model,
+			ApiKey:   input.APIKey,
+			BaseUrl:  input.BaseURL,
 			Settings: settingsJSON,
 		})
 		if err != nil {
@@ -326,14 +218,19 @@ func handleProvider(args []string) {
 	}
 }
 
+func requiresDedicatedProviderSetup(entry providerauth.SetupEntry) bool {
+	return entry.Auth == providerauth.AuthOpenAIChatGPT || entry.Setup == providerauth.SetupCLINative
+}
+
 func printProviderSetupGuideList(args []string, w io.Writer) error {
+	guides := providerSetupGuideRows()
 	if hasJSONFlag(args) {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		return enc.Encode(providerSetupGuides)
+		return enc.Encode(guides)
 	}
 	fmt.Fprintf(w, "%-18s %-16s %s\n", "ALIAS", "TYPE", "SETUP")
-	for _, guide := range providerSetupGuides {
+	for _, guide := range guides {
 		fmt.Fprintf(w, "%-18s %-16s %s\n", guide.Alias, guide.ProviderType, guide.SetupCommand)
 	}
 	return nil
@@ -344,25 +241,23 @@ func printProviderSetupGuide(args []string, w io.Writer, errw io.Writer) error {
 		fmt.Fprintln(errw, "Usage: ratchet provider setup guide <provider> [--json]")
 		return nil
 	}
-	alias := args[0]
-	for _, guide := range providerSetupGuides {
-		if guide.Alias != alias {
-			continue
-		}
-		if hasJSONFlag(args[1:]) {
-			enc := json.NewEncoder(w)
-			enc.SetIndent("", "  ")
-			return enc.Encode(guide)
-		}
-		fmt.Fprintf(w, "%s (%s)\n", guide.Alias, guide.ProviderType)
-		fmt.Fprintf(w, "Install: %s\n", guide.InstallHint)
-		fmt.Fprintf(w, "Auth: %s\n", guide.AuthHint)
-		fmt.Fprintf(w, "Setup: %s\n", guide.SetupCommand)
-		fmt.Fprintf(w, "Model: %s\n", guide.ModelBehavior)
-		fmt.Fprintf(w, "Credentials: %s\n", guide.CredentialBoundary)
+	entry, ok := providerauth.LookupSetup(args[0])
+	if !ok {
+		fmt.Fprintf(errw, "unknown provider setup guide: %s\n", args[0])
 		return nil
 	}
-	fmt.Fprintf(errw, "unknown provider setup guide: %s\n", alias)
+	guide := providerSetupGuideFromEntry(entry)
+	if hasJSONFlag(args[1:]) {
+		enc := json.NewEncoder(w)
+		enc.SetIndent("", "  ")
+		return enc.Encode(guide)
+	}
+	fmt.Fprintf(w, "%s (%s)\n", guide.Alias, guide.ProviderType)
+	fmt.Fprintf(w, "Install: %s\n", guide.InstallHint)
+	fmt.Fprintf(w, "Auth: %s\n", guide.AuthHint)
+	fmt.Fprintf(w, "Setup: %s\n", guide.SetupCommand)
+	fmt.Fprintf(w, "Model: %s\n", guide.ModelBehavior)
+	fmt.Fprintf(w, "Credentials: %s\n", guide.CredentialBoundary)
 	return nil
 }
 
@@ -849,100 +744,183 @@ func promptModelSelection(models []wfprovider.ModelInfo, scanner *bufio.Scanner)
 	return models[0].ID
 }
 
-type providerModelLister func(context.Context, string, string, string, map[string]string) ([]wfprovider.ModelInfo, error)
-
-type providerSecretPrompter func(string) (string, error)
-
-func promptBedrockProviderCredentials(scanner *bufio.Scanner, out io.Writer, promptSecret providerSecretPrompter) (string, map[string]string, error) {
-	fmt.Fprint(out, "AWS access key ID: ")
-	if !scanner.Scan() {
-		if scanErr := scanner.Err(); scanErr != nil {
-			return "", nil, scanErr
-		}
-		return "", nil, io.EOF
-	}
-	accessKeyID := scanner.Text()
-
-	secretAccessKey, err := promptSecret("AWS secret access key")
-	if err != nil {
-		return "", nil, err
-	}
-	secretAccessKey = strings.TrimSpace(secretAccessKey)
-	if secretAccessKey == "" {
-		return "", nil, fmt.Errorf("AWS secret access key is required")
-	}
-
-	fmt.Fprint(out, "AWS region [us-east-1]: ")
-	if !scanner.Scan() {
-		if scanErr := scanner.Err(); scanErr != nil {
-			return "", nil, scanErr
-		}
-		return "", nil, io.EOF
-	}
-	region := scanner.Text()
-
-	settings, err := bedrockProviderSettings(accessKeyID, region)
-	if err != nil {
-		return "", nil, err
-	}
-	return secretAccessKey, settings, nil
+type providerSetupInput struct {
+	APIKey   string
+	BaseURL  string
+	Model    string
+	Settings map[string]string
 }
 
-func bedrockProviderSettings(accessKeyID, region string) (map[string]string, error) {
-	accessKeyID = strings.TrimSpace(accessKeyID)
-	region = strings.TrimSpace(region)
-	if accessKeyID == "" {
-		return nil, fmt.Errorf("AWS access key ID is required")
+type providerSetupDeps struct {
+	promptSecret  func(string) (string, error)
+	promptBaseURL func(string) (string, error)
+	deviceFlow    func(context.Context) (string, error)
+	listModels    providerModelLister
+}
+
+func collectProviderSetupInput(ctx context.Context, entry providerauth.SetupEntry, model string, modelSet bool, scanner *bufio.Scanner, out io.Writer, deps providerSetupDeps) (providerSetupInput, error) {
+	input := providerSetupInput{Model: strings.TrimSpace(model)}
+	var err error
+	switch entry.Auth {
+	case providerauth.AuthNone:
+	case providerauth.AuthAPIKey, providerauth.AuthAnthropic:
+		if deps.promptSecret == nil {
+			return providerSetupInput{}, fmt.Errorf("provider %s has no credential prompter", entry.Type)
+		}
+		input.APIKey, err = deps.promptSecret(entry.CredentialLabel)
+	case providerauth.AuthGitHubDevice:
+		if deps.deviceFlow == nil {
+			return providerSetupInput{}, fmt.Errorf("provider %s has no device flow", entry.Type)
+		}
+		input.APIKey, err = deps.deviceFlow(ctx)
+	case providerauth.AuthOpenAIChatGPT, providerauth.AuthCLINative:
+		return providerSetupInput{}, fmt.Errorf("provider %s requires dedicated setup: %s", entry.Type, entry.SetupCommand)
+	default:
+		return providerSetupInput{}, fmt.Errorf("provider %s has unsupported auth strategy %q", entry.Type, entry.Auth)
 	}
-	if region == "" {
-		region = "us-east-1"
+	if err != nil {
+		return providerSetupInput{}, err
 	}
-	settings := map[string]string{
-		"access_key_id": accessKeyID,
-		"region":        region,
+	input.APIKey = strings.TrimSpace(input.APIKey)
+	if entry.CredentialRequired && input.APIKey == "" {
+		return providerSetupInput{}, fmt.Errorf("%s is required", entry.CredentialLabel)
+	}
+
+	input.Settings, err = promptProviderSettings(scanner, out, entry.Settings)
+	if err != nil {
+		return providerSetupInput{}, err
+	}
+	if entry.PromptBaseURL {
+		if deps.promptBaseURL == nil {
+			return providerSetupInput{}, fmt.Errorf("provider %s has no base URL prompter", entry.Type)
+		}
+		input.BaseURL, err = deps.promptBaseURL(entry.DefaultBaseURL)
+		if err != nil {
+			return providerSetupInput{}, err
+		}
+		input.BaseURL = strings.TrimSpace(input.BaseURL)
+		if entry.BaseURLRequired && input.BaseURL == "" {
+			return providerSetupInput{}, fmt.Errorf("%s requires a base URL", entry.Type)
+		}
+	}
+
+	if modelSet || input.Model != "" || entry.Model == providerauth.ModelExternal {
+		return input, nil
+	}
+	switch entry.Model {
+	case providerauth.ModelManual:
+		input.Model, err = promptManualProviderModel(scanner, out)
+	case providerauth.ModelDynamic, providerauth.ModelOllama:
+		if deps.listModels == nil {
+			return providerSetupInput{}, fmt.Errorf("provider %s has no model lister", entry.Type)
+		}
+		listCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		defer cancel()
+		input.Model, err = promptProviderModelSelection(listCtx, entry.Type, input.APIKey, input.BaseURL, input.Settings, scanner, out, deps.listModels)
+	default:
+		err = fmt.Errorf("provider %s has unsupported model strategy %q", entry.Type, entry.Model)
+	}
+	if err != nil {
+		return providerSetupInput{}, err
+	}
+	return input, nil
+}
+
+func promptProviderSettings(scanner *bufio.Scanner, out io.Writer, fields []providerauth.SettingField) (map[string]string, error) {
+	settings := make(map[string]string, len(fields))
+	for _, field := range fields {
+		value, err := promptProviderSetting(scanner, out, field)
+		if err != nil {
+			return nil, err
+		}
+		if value != "" {
+			settings[field.Key] = value
+		}
 	}
 	return settings, nil
 }
 
-func providerPromptsBaseURL(providerType string) bool {
-	switch providerType {
-	case "custom", "openai", "openai_compatible", "anthropic_compatible":
-		return true
-	default:
-		return false
+func promptProviderBaseURL(scanner *bufio.Scanner, out io.Writer, defaultURL string) (string, error) {
+	if defaultURL != "" {
+		fmt.Fprintf(out, "Base URL [%s]: ", defaultURL)
+	} else {
+		fmt.Fprint(out, "Base URL: ")
 	}
-}
-
-func providerRequiresBaseURL(providerType string) bool {
-	switch providerType {
-	case "custom", "openai_compatible", "anthropic_compatible":
-		return true
-	default:
-		return false
-	}
-}
-
-func promptCustomProviderCompatibility(scanner *bufio.Scanner, out io.Writer) (map[string]string, error) {
-	fmt.Fprintln(out, "API compatibility:")
-	fmt.Fprintln(out, "  1. OpenAI-compatible /v1/chat/completions")
-	fmt.Fprintln(out, "  2. Anthropic-compatible /v1/messages")
-	fmt.Fprint(out, "Select [1]: ")
 	if !scanner.Scan() {
-		if scanErr := scanner.Err(); scanErr != nil {
-			return nil, scanErr
+		if err := scanner.Err(); err != nil {
+			return "", err
 		}
-		return map[string]string{"api_compat": "openai"}, nil
+		return "", io.EOF
 	}
-	choice := strings.TrimSpace(scanner.Text())
-	switch strings.ToLower(choice) {
-	case "", "1", "openai", "openai_compatible":
-		return map[string]string{"api_compat": "openai"}, nil
-	case "2", "anthropic", "anthropic_compatible":
-		return map[string]string{"api_compat": "anthropic"}, nil
-	default:
-		return nil, fmt.Errorf("invalid API compatibility selection %q", choice)
+	baseURL := strings.TrimSpace(scanner.Text())
+	if baseURL == "" {
+		baseURL = defaultURL
 	}
+	return baseURL, nil
 }
+
+func promptProviderSetting(scanner *bufio.Scanner, out io.Writer, field providerauth.SettingField) (string, error) {
+	if len(field.Choices) > 0 {
+		fmt.Fprintf(out, "%s:\n", field.Label)
+		for i, choice := range field.Choices {
+			fmt.Fprintf(out, "  %d. %s\n", i+1, choice)
+		}
+		fmt.Fprintf(out, "Select [%s]: ", field.Default)
+	} else if field.Default != "" {
+		fmt.Fprintf(out, "%s [%s]: ", field.Label, field.Default)
+	} else {
+		fmt.Fprintf(out, "%s: ", field.Label)
+	}
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return "", err
+		}
+		return "", io.EOF
+	}
+	value := strings.TrimSpace(scanner.Text())
+	if value == "" {
+		value = field.Default
+	}
+	if len(field.Choices) > 0 && value != "" {
+		var index int
+		if _, err := fmt.Sscanf(value, "%d", &index); err == nil && index >= 1 && index <= len(field.Choices) {
+			value = field.Choices[index-1]
+		} else {
+			matched := false
+			for _, choice := range field.Choices {
+				if strings.EqualFold(value, choice) {
+					value = choice
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return "", fmt.Errorf("invalid %s selection %q", field.Label, value)
+			}
+		}
+	}
+	if field.Required && value == "" {
+		return "", fmt.Errorf("%s is required", field.Label)
+	}
+	return value, nil
+}
+
+func promptManualProviderModel(scanner *bufio.Scanner, out io.Writer) (string, error) {
+	fmt.Fprint(out, "Model ID: ")
+	if !scanner.Scan() {
+		if err := scanner.Err(); err != nil {
+			return "", err
+		}
+		return "", io.EOF
+	}
+	model := strings.TrimSpace(scanner.Text())
+	if model == "" {
+		return "", fmt.Errorf("model ID is required")
+	}
+	return model, nil
+}
+
+type providerModelLister func(context.Context, string, string, string, map[string]string) ([]wfprovider.ModelInfo, error)
 
 func providerSettingsJSON(settings map[string]string) (string, error) {
 	if len(settings) == 0 {
@@ -971,7 +949,9 @@ func promptProviderModelSelection(ctx context.Context, providerType, apiKey, bas
 	models, err := list(ctx, providerType, apiKey, baseURL, settings)
 	if err != nil || len(models) == 0 {
 		if err != nil {
-			fmt.Fprintf(out, "could not list models for %s: %v\n", providerType, err)
+			redactor := secrets.NewRedactor()
+			redactor.AddValue("provider credential", apiKey)
+			fmt.Fprintf(out, "could not list models for %s: %s\n", providerType, redactor.Redact(err.Error()))
 		} else {
 			fmt.Fprintf(out, "could not list models for %s: no models returned\n", providerType)
 		}

@@ -9,10 +9,12 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
+	providerauth "github.com/GoCodeAlone/ratchet-cli/internal/provider"
 	wfprovider "github.com/GoCodeAlone/workflow-plugin-agent/provider"
 )
 
@@ -35,11 +37,16 @@ func TestProviderSetupListJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &rows); err != nil {
 		t.Fatalf("unmarshal setup list: %v\n%s", err, out)
 	}
-	if len(rows) < 7 {
-		t.Fatalf("guide count = %d, want at least 7", len(rows))
+	if len(rows) != len(providerauth.Catalog()) {
+		t.Fatalf("guide count = %d, want %d", len(rows), len(providerauth.Catalog()))
 	}
 	if rows[0].Alias == "" || rows[0].SetupCommand == "" || rows[0].CredentialBoundary == "" {
 		t.Fatalf("first guide missing fields: %+v", rows[0])
+	}
+	for _, entry := range providerauth.Catalog() {
+		if !slices.ContainsFunc(rows, func(row providerSetupGuide) bool { return row.ProviderType == entry.Type }) {
+			t.Errorf("setup list missing catalog provider %q", entry.Type)
+		}
 	}
 }
 
@@ -79,6 +86,62 @@ func TestProviderSetupGuideUnknownAlias(t *testing.T) {
 	})
 	if !strings.Contains(out, "unknown provider setup guide") {
 		t.Fatalf("stderr = %q", out)
+	}
+}
+
+func TestProviderSetupGuideResolvesRuntimeAliasToCanonicalEntry(t *testing.T) {
+	var out strings.Builder
+	if err := printProviderSetupGuide([]string{"anthropic_bedrock", "--json"}, &out, io.Discard); err != nil {
+		t.Fatalf("printProviderSetupGuide: %v", err)
+	}
+	var guide providerSetupGuide
+	if err := json.Unmarshal([]byte(out.String()), &guide); err != nil {
+		t.Fatalf("unmarshal guide: %v", err)
+	}
+	if guide.Alias != "bedrock" || guide.ProviderType != "bedrock" {
+		t.Fatalf("guide = %+v", guide)
+	}
+}
+
+func TestProviderSetupGuideResolvesEveryCatalogName(t *testing.T) {
+	for _, entry := range providerauth.Catalog() {
+		names := append([]string{entry.Type}, entry.Aliases...)
+		for _, name := range names {
+			t.Run(name, func(t *testing.T) {
+				var out strings.Builder
+				if err := printProviderSetupGuide([]string{name, "--json"}, &out, io.Discard); err != nil {
+					t.Fatalf("printProviderSetupGuide: %v", err)
+				}
+				var guide providerSetupGuide
+				if err := json.Unmarshal([]byte(out.String()), &guide); err != nil {
+					t.Fatalf("unmarshal guide: %v", err)
+				}
+				if guide.ProviderType != entry.Type {
+					t.Fatalf("guide.ProviderType = %q, want %q", guide.ProviderType, entry.Type)
+				}
+			})
+		}
+	}
+}
+
+func TestProviderDedicatedSetupDispatchComesFromCatalog(t *testing.T) {
+	for _, providerType := range []string{"openai_chatgpt", "claude_code", "copilot_cli", "codex_cli", "gemini_cli", "cursor_cli"} {
+		entry, ok := providerauth.LookupSetup(providerType)
+		if !ok {
+			t.Fatalf("LookupSetup(%q) not found", providerType)
+		}
+		if !requiresDedicatedProviderSetup(entry) {
+			t.Errorf("requiresDedicatedProviderSetup(%q) = false", providerType)
+		}
+		if entry.SetupCommand == "" {
+			t.Errorf("provider %q has no setup command", providerType)
+		}
+	}
+	for _, providerType := range []string{"anthropic", "copilot", "bedrock", "ollama", "custom"} {
+		entry, _ := providerauth.LookupSetup(providerType)
+		if requiresDedicatedProviderSetup(entry) {
+			t.Errorf("requiresDedicatedProviderSetup(%q) = true", providerType)
+		}
 	}
 }
 
@@ -270,92 +333,152 @@ func TestProviderSettingsJSON(t *testing.T) {
 	}
 }
 
-func TestBedrockProviderSettingsDefaultsRegion(t *testing.T) {
-	settings, err := bedrockProviderSettings(" AKIAEXAMPLE ", "")
-	if err != nil {
-		t.Fatalf("bedrockProviderSettings: %v", err)
+func TestCollectProviderSetupInputUsesBedrockSettingsForDiscovery(t *testing.T) {
+	entry, ok := providerauth.LookupSetup("anthropic_bedrock")
+	if !ok {
+		t.Fatal("bedrock setup entry not found")
 	}
-	if settings["access_key_id"] != "AKIAEXAMPLE" {
-		t.Fatalf("access_key_id = %q", settings["access_key_id"])
-	}
-	if settings["region"] != "us-east-1" {
-		t.Fatalf("region = %q", settings["region"])
-	}
-	if _, ok := settings["session_token"]; ok {
-		t.Fatalf("session_token should not be stored in settings: %#v", settings)
-	}
-}
-
-func TestPromptBedrockProviderCredentials(t *testing.T) {
-	scanner := bufio.NewScanner(strings.NewReader("AKIAEXAMPLE\nus-west-2\n"))
-	apiKey, settings, err := promptBedrockProviderCredentials(scanner, &strings.Builder{}, func(label string) (string, error) {
-		if label != "AWS secret access key" {
-			t.Fatalf("label = %q", label)
-		}
-		return " secret ", nil
+	scanner := bufio.NewScanner(strings.NewReader("AKIAEXAMPLE\nus-west-2\n\n"))
+	var out strings.Builder
+	input, err := collectProviderSetupInput(t.Context(), entry, "", false, scanner, &out, providerSetupDeps{
+		promptSecret: func(label string) (string, error) {
+			if label != "AWS secret access key" {
+				t.Fatalf("secret label = %q", label)
+			}
+			return "SECRET-SENTINEL", nil
+		},
+		listModels: func(_ context.Context, providerType, apiKey, baseURL string, settings map[string]string) ([]wfprovider.ModelInfo, error) {
+			if providerType != "bedrock" || apiKey != "SECRET-SENTINEL" || baseURL != "" {
+				t.Fatalf("discovery args = %q %q %q", providerType, apiKey, baseURL)
+			}
+			if settings["access_key_id"] != "AKIAEXAMPLE" || settings["region"] != "us-west-2" {
+				t.Fatalf("settings = %#v", settings)
+			}
+			return []wfprovider.ModelInfo{{ID: "anthropic.claude-test", Name: "Claude Test"}}, nil
+		},
 	})
 	if err != nil {
-		t.Fatalf("promptBedrockProviderCredentials: %v", err)
+		t.Fatalf("collectProviderSetupInput: %v", err)
 	}
-	if apiKey != "secret" {
-		t.Fatalf("apiKey = %q", apiKey)
+	if input.APIKey != "SECRET-SENTINEL" || input.Model != "anthropic.claude-test" {
+		t.Fatalf("input = %+v", input)
 	}
-	if settings["access_key_id"] != "AKIAEXAMPLE" || settings["region"] != "us-west-2" {
-		t.Fatalf("settings = %#v", settings)
+	if strings.Contains(out.String(), "SECRET-SENTINEL") {
+		t.Fatalf("output leaked credential: %q", out.String())
 	}
-	if _, ok := settings["session_token"]; ok {
-		t.Fatalf("session_token should not be stored in settings: %#v", settings)
+	settingsJSON, err := providerSettingsJSON(input.Settings)
+	if err != nil {
+		t.Fatalf("providerSettingsJSON: %v", err)
+	}
+	if strings.Contains(settingsJSON, "SECRET-SENTINEL") {
+		t.Fatalf("settings leaked credential: %s", settingsJSON)
 	}
 }
 
-func TestPromptBedrockProviderCredentialsRequiresSecret(t *testing.T) {
-	scanner := bufio.NewScanner(strings.NewReader("AKIAEXAMPLE\nus-west-2\n"))
-	_, _, err := promptBedrockProviderCredentials(scanner, &strings.Builder{}, func(string) (string, error) {
-		return " ", nil
+func TestCollectProviderSetupInputCustomPassesCompatibilityAndFallsBackToManualModel(t *testing.T) {
+	entry, ok := providerauth.LookupSetup("custom-endpoint")
+	if !ok {
+		t.Fatal("custom setup entry not found")
+	}
+	scanner := bufio.NewScanner(strings.NewReader("2\nhttps://models.example/v1\nmanual-model\n"))
+	input, err := collectProviderSetupInput(t.Context(), entry, "", false, scanner, io.Discard, providerSetupDeps{
+		promptSecret: func(string) (string, error) { return "", nil },
+		promptBaseURL: func(defaultURL string) (string, error) {
+			return promptProviderBaseURL(scanner, io.Discard, defaultURL)
+		},
+		listModels: func(_ context.Context, providerType, apiKey, baseURL string, settings map[string]string) ([]wfprovider.ModelInfo, error) {
+			if providerType != "custom" || apiKey != "" || baseURL != "https://models.example/v1" {
+				t.Fatalf("discovery args = %q %q %q", providerType, apiKey, baseURL)
+			}
+			if settings["api_compat"] != "anthropic" {
+				t.Fatalf("settings = %#v", settings)
+			}
+			return nil, errors.New("listing unsupported")
+		},
 	})
-	if err == nil {
-		t.Fatal("expected missing secret error")
+	if err != nil {
+		t.Fatalf("collectProviderSetupInput: %v", err)
+	}
+	if input.Model != "manual-model" || input.Settings["api_compat"] != "anthropic" {
+		t.Fatalf("input = %+v", input)
 	}
 }
 
-func TestProviderBaseURLPromptPolicy(t *testing.T) {
-	for _, providerType := range []string{"custom", "openai", "openai_compatible", "anthropic_compatible"} {
-		if !providerPromptsBaseURL(providerType) {
-			t.Fatalf("%s should prompt for base URL", providerType)
-		}
+func TestCollectProviderSetupInputManualCloudModel(t *testing.T) {
+	entry, ok := providerauth.LookupSetup("azure-openai")
+	if !ok {
+		t.Fatal("Azure OpenAI setup entry not found")
 	}
-	for _, providerType := range []string{"custom", "openai_compatible", "anthropic_compatible"} {
-		if !providerRequiresBaseURL(providerType) {
-			t.Fatalf("%s should require base URL", providerType)
-		}
+	scanner := bufio.NewScanner(strings.NewReader("resource-a\ndeployment-a\n\nmodel-a\n"))
+	input, err := collectProviderSetupInput(t.Context(), entry, "", false, scanner, io.Discard, providerSetupDeps{
+		promptSecret: func(string) (string, error) { return "secret", nil },
+		listModels: func(context.Context, string, string, string, map[string]string) ([]wfprovider.ModelInfo, error) {
+			t.Fatal("manual provider must not list models")
+			return nil, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("collectProviderSetupInput: %v", err)
 	}
-	if providerRequiresBaseURL("openai") {
-		t.Fatal("openai should allow the default upstream URL")
-	}
-	if providerPromptsBaseURL("bedrock") {
-		t.Fatal("bedrock should use AWS region/settings rather than base URL by default")
+	if input.Model != "model-a" || input.Settings["resource"] != "resource-a" ||
+		input.Settings["deployment_name"] != "deployment-a" || input.Settings["api_version"] != "2024-10-21" {
+		t.Fatalf("input = %+v", input)
 	}
 }
 
-func TestPromptCustomProviderCompatibilityDefaultsOpenAI(t *testing.T) {
+func TestCollectProviderSetupInputOtherManualCloudSettings(t *testing.T) {
+	tests := []struct {
+		provider string
+		input    string
+		want     map[string]string
+	}{
+		{provider: "anthropic_foundry", input: "foundry-resource\nfoundry-model\n", want: map[string]string{"resource": "foundry-resource"}},
+		{provider: "anthropic_vertex", input: "gcp-project\n\nvertex-model\n", want: map[string]string{"project_id": "gcp-project", "region": "us-east5"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.provider, func(t *testing.T) {
+			entry, ok := providerauth.LookupSetup(tt.provider)
+			if !ok {
+				t.Fatalf("LookupSetup(%q) not found", tt.provider)
+			}
+			result, err := collectProviderSetupInput(t.Context(), entry, "", false, bufio.NewScanner(strings.NewReader(tt.input)), io.Discard, providerSetupDeps{
+				promptSecret: func(string) (string, error) { return "secret", nil },
+			})
+			if err != nil {
+				t.Fatalf("collectProviderSetupInput: %v", err)
+			}
+			for key, want := range tt.want {
+				if got := result.Settings[key]; got != want {
+					t.Errorf("settings[%q] = %q, want %q", key, got, want)
+				}
+			}
+			if result.Model == "" {
+				t.Error("manual model is empty")
+			}
+		})
+	}
+}
+
+func TestCollectProviderSetupInputUsesGitHubDeviceFlow(t *testing.T) {
+	entry, ok := providerauth.LookupSetup("copilot")
+	if !ok {
+		t.Fatal("Copilot setup entry not found")
+	}
 	scanner := bufio.NewScanner(strings.NewReader("\n"))
-	settings, err := promptCustomProviderCompatibility(scanner, &strings.Builder{})
+	input, err := collectProviderSetupInput(t.Context(), entry, "", false, scanner, io.Discard, providerSetupDeps{
+		deviceFlow: func(context.Context) (string, error) { return "copilot-token", nil },
+		listModels: func(_ context.Context, providerType, apiKey, _ string, _ map[string]string) ([]wfprovider.ModelInfo, error) {
+			if providerType != "copilot" || apiKey != "copilot-token" {
+				t.Fatalf("discovery args = %q %q", providerType, apiKey)
+			}
+			return []wfprovider.ModelInfo{{ID: "gpt-copilot"}}, nil
+		},
+	})
 	if err != nil {
-		t.Fatalf("promptCustomProviderCompatibility: %v", err)
+		t.Fatalf("collectProviderSetupInput: %v", err)
 	}
-	if settings["api_compat"] != "openai" {
-		t.Fatalf("settings = %#v", settings)
-	}
-}
-
-func TestPromptCustomProviderCompatibilitySupportsAnthropic(t *testing.T) {
-	scanner := bufio.NewScanner(strings.NewReader("2\n"))
-	settings, err := promptCustomProviderCompatibility(scanner, &strings.Builder{})
-	if err != nil {
-		t.Fatalf("promptCustomProviderCompatibility: %v", err)
-	}
-	if settings["api_compat"] != "anthropic" {
-		t.Fatalf("settings = %#v", settings)
+	if input.APIKey != "copilot-token" || input.Model != "gpt-copilot" {
+		t.Fatalf("input = %+v", input)
 	}
 }
 
@@ -438,6 +561,28 @@ func TestPromptProviderModelSelectionPromptsManualWhenEnumerationFails(t *testin
 	}
 	if !strings.Contains(out.String(), "could not list models") {
 		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestPromptProviderModelSelectionRedactsCredentialFromEnumerationError(t *testing.T) {
+	const credential = "SECRET-PROVIDER-CREDENTIAL"
+	scanner := bufio.NewScanner(strings.NewReader("manual-after-error\n"))
+	var out strings.Builder
+	model, err := promptProviderModelSelection(
+		t.Context(), "custom", credential, "https://models.example/v1", nil,
+		scanner, &out,
+		func(context.Context, string, string, string, map[string]string) ([]wfprovider.ModelInfo, error) {
+			return nil, errors.New("request rejected for " + credential)
+		},
+	)
+	if err != nil {
+		t.Fatalf("promptProviderModelSelection: %v", err)
+	}
+	if model != "manual-after-error" {
+		t.Fatalf("model = %q", model)
+	}
+	if strings.Contains(out.String(), credential) {
+		t.Fatalf("output leaked credential: %q", out.String())
 	}
 }
 
