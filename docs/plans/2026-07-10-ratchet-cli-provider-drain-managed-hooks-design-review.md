@@ -101,3 +101,55 @@ design/ADRs before planning. The revised artifact now names its upstream
 contract, established command/state identifiers, trust validity, secure policy
 file boundary, audit ordering, daemon injection pattern, integration matrix,
 and four-PR release shape. No Critical or unresolved Important finding remains.
+
+## Cycle 2: Durable Provider Saves
+
+**Status:** FAIL
+
+**Findings (Critical):** none.
+
+**Findings (Important):**
+
+- `D7` [Security] Caller operation IDs lack canonical UUID validation and must
+  never directly form file-provider paths.
+- `D8` [Idempotency] Duplicate/concurrent operation IDs need first-write-wins
+  replay and deterministic conflict rejection.
+- `D9` [Intent] Every current CLI/TUI `AddProvider` caller needs operation IDs;
+  older clients need explicit compatibility behavior.
+- `D10` [Cleanup] Secret cleanup needs reserved namespace, startup ordering,
+  SQL reference marking, idempotent deletion, and durable retries.
+- `D11` [Durability] `secrets.Provider.Set` does not promise crash durability;
+  ratchet must not claim more than the provider contract supplies.
+- `D12` [State model] Operation rows need pending/committed/failed states,
+  restart transitions, bounded polling, and retention greater than polling.
+- `D13` [Runtime boundary] Commit ordering must include cache invalidation,
+  redactor registration, old-secret retirement, and real registry resolution.
+- `D14` [Plan wiring] Tasks 4-5 omit proto, daemon, schema, cleanup, restart, and
+  mixed-platform proof despite the unchanged manifest.
+- `D15` [Migration/rollback] Required migration, mixed-version writes, retained
+  rows, orphan cleanup, and downgrade behavior are absent.
+- `D16` [Privacy] Operation schema/RPC must forbid credentials, requests,
+  sensitive settings, and raw errors.
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Project guidance | Finding | Windows, existing secret providers, and release-safe execution need explicit proof. |
+| Assumptions | Finding | Secret durability, idempotency, and authoritative polling were underspecified. |
+| Repo/artifact precedent | Finding | Provider cache/redactor order and RPC/migration task shape were omitted. |
+| YAGNI | Clean | Historical operation identity is required; alias state alone is insufficient. |
+| Failure/security/infra | Finding | Crash cleanup, identifier safety, retention, and migration need concrete contracts. |
+| Multi-component/integration | Finding | SQL, secrets, registry, redactor, RPC, CLI, and TUI require one real boundary proof. |
+| Contributed UI | Clean | Native wizard only; existing viewport proof applies. |
+| Rollback | Finding | Mixed-version and versioned-secret downgrade behavior missing. |
+| Simpler alternative | Finding | Serialized startup mark-and-sweep is simpler than heuristic runtime cleanup. |
+| User intent | Finding | CLI save paths were outside the first durability correction. |
+| Runtime validity | Finding | Real `FileProvider` does not guarantee durable atomic writes. |
+
+**Alternatives:** two-phase operation journal; startup-only namespace sweep;
+separate client operation and server secret-version IDs; upstream atomic file
+writes.
+
+**Verdict reasoning:** FAIL; ten Important architecture gaps require revision
+before implementation.
