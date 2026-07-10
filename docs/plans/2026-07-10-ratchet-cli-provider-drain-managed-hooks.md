@@ -338,6 +338,8 @@ strategy and focused tests that:
 - dynamic discovery receives settings; empty/error results show manual entry;
 - ChatGPT device auth and CLI-native providers reach review without API-key
   prompts;
+- every visible catalog entry can be selected and reaches its declared first
+  setup step, and a source guard rejects a second TUI-owned provider table;
 - review omits secret values and masks credential presence;
 - submit sends alias/type/model/base URL/settings once;
 - views at 80x24 and 120x40 contain no overflow and always show actionable
@@ -422,6 +424,7 @@ managed hooks deferred until their PRs merge.
 ```bash
 go test ./internal/provider ./cmd/ratchet ./internal/tui/pages -count=1
 go test ./internal/tui -run 'ProviderSetup|TUIBinarySmoke' -count=1 -timeout=12m
+go test ./cmd/ratchet -run HarnessEmulationDocs -count=1
 go test ./...
 go vet ./...
 golangci-lint run --new-from-rev=origin/master
@@ -456,6 +459,8 @@ prior CLI/TUI starts. Stored provider rows remain schema-compatible.
 - Modify: `internal/acpclient/spec_test.go`
 - Create: `internal/acpclient/background.go`
 - Create: `internal/acpclient/background_test.go`
+- Create: `internal/acpclient/background_audit.go`
+- Create: `internal/acpclient/background_audit_test.go`
 
 **Step 1: Add failing trust and persistence tests**
 
@@ -471,6 +476,9 @@ Add tests proving:
 - profile drift blocks start/resume; worker error moves to `error` without
   retry; stop persists disabled before cancellation;
 - state files are atomic and owner-only.
+- start, resume, block, error, and stop append owner-only JSONL records with
+  session/profile/hash/outcome metadata and no prompt, response, argv,
+  environment value, or credential.
 
 Inject clock, watcher, profile resolver, and persistence path.
 
@@ -490,12 +498,12 @@ load.
 
 **Step 4: Implement the manager**
 
-Create `BackgroundPolicy`, `BackgroundStatus`, `BackgroundStore`, and
-`BackgroundManager`. The manager owns one context/cancel pair per ACP client
-session ID and delegates work to `WatchQueue`. Persist before launch and before
-stop cancellation. Resume only enabled, acknowledged, trust-valid entries with
-matching pinned hash. Built-ins pin `AgentSpec.Fingerprint`; stored profiles
-pin `Profile.DescriptorHash`.
+Create `BackgroundPolicy`, `BackgroundStatus`, `BackgroundStore`,
+`BackgroundAudit`, and `BackgroundManager`. The manager owns one context/cancel
+pair per ACP client session ID and delegates work to `WatchQueue`. Persist and
+append classified audit before launch and before stop cancellation. Resume only
+enabled, acknowledged, trust-valid entries with matching pinned hash. Built-ins
+pin `AgentSpec.Fingerprint`; stored profiles pin `Profile.DescriptorHash`.
 
 On terminal worker error, persist `error` and return; never hot-loop. Redacted
 audit/status carries outcome class only.
@@ -503,7 +511,7 @@ audit/status carries outcome class only.
 **Step 5: Verify and commit**
 
 ```bash
-gofmt -w internal/acpclient/profiles.go internal/acpclient/profiles_test.go internal/acpclient/spec.go internal/acpclient/spec_test.go internal/acpclient/background.go internal/acpclient/background_test.go
+gofmt -w internal/acpclient/profiles.go internal/acpclient/profiles_test.go internal/acpclient/spec.go internal/acpclient/spec_test.go internal/acpclient/background.go internal/acpclient/background_test.go internal/acpclient/background_audit.go internal/acpclient/background_audit_test.go
 go test ./internal/acpclient -run 'Profile.*Trust|Background|WatchQueue|DrainQueue' -count=1
 git add internal/acpclient
 git commit -m "feat(acp): manage trusted background drains"
@@ -651,6 +659,7 @@ go test ./internal/acpclient ./internal/daemon ./internal/client ./cmd/ratchet -
 go test ./...
 go vet ./...
 golangci-lint run --new-from-rev=origin/master
+go test ./cmd/ratchet -run HarnessEmulationDocs -count=1
 GOOS=windows GOARCH=amd64 go test -c ./internal/acpclient -o dist/acpclient.test.exe
 GOOS=windows GOARCH=amd64 go test -c ./internal/client -o dist/client.test.exe
 GOOS=windows GOARCH=amd64 go test -c ./cmd/ratchet -o dist/ratchet.test.exe
@@ -685,6 +694,7 @@ publish the next patch. Persisted metadata contains no content and may remain.
 - Create: `internal/hooks/managed_path_unix_test.go`
 - Create: `internal/hooks/managed_path_windows.go`
 - Create: `internal/hooks/managed_path_windows_test.go`
+- Modify: `.github/workflows/ci.yml`
 - Modify: `go.mod`
 - Modify: `go.sum`
 
@@ -728,10 +738,11 @@ to managed hooks.
 Default paths follow the design. Tests may inject `LoadOptions.ManagedPath` and
 a secure-reader seam; production has no environment override.
 
-Unix uses `x/sys/unix` `O_NOFOLLOW` plus `Fstat` before reading. Windows opens
-the file without following reparse points, inspects owner/DACL with
-`x/sys/windows`, and rejects non-admin modification rights. Promote `x/sys` to
-a direct dependency; do not add an ACL library.
+Unix uses `x/sys/unix` `O_NOFOLLOW` plus `Fstat` before reading. Windows obtains
+ProgramData through `windows.KnownFolderPath(windows.FOLDERID_ProgramData, ...)`
+rather than `%ProgramData%`, opens the file without following reparse points,
+inspects owner/DACL with `x/sys/windows`, and rejects non-admin modification
+rights. Promote `x/sys` to a direct dependency; do not add an ACL library.
 
 Missing file returns no policy. Any present unreadable/insecure/malformed file
 returns a typed `ErrManagedPolicy`.
@@ -748,10 +759,14 @@ GOOS=linux GOARCH=amd64 go test -c ./internal/hooks -o dist/hooks-linux.test
 Expected: current-platform tests PASS and both test binaries compile. Windows
 CI later executes native DACL tests.
 
+Add `go test ./internal/hooks -run 'Managed|SecurePolicy' -count=1` to the
+existing `windows-2025` CI job. Expected on the PR: a named native Windows
+managed-policy check passes, rather than relying only on cross-compilation.
+
 **Step 6: Commit**
 
 ```bash
-git add internal/hooks go.mod go.sum
+git add internal/hooks go.mod go.sum .github/workflows/ci.yml
 git commit -m "feat(hooks): load secure managed policy"
 ```
 
@@ -793,6 +808,9 @@ compatibility wrapper. Before a managed hook process starts, append and sync a
 `started` record. Append terminal success/failure after execution. Store only
 the classified result (`success`, `command_failed`, `audit_degraded`) and
 elapsed milliseconds. No command/output/data fields exist in the record schema.
+Managed command failures return only event/hash/result classification to the
+engine, so existing daemon error logging cannot emit raw managed-hook output.
+Unmanaged compatibility errors continue through the existing redactor boundary.
 
 If any future text is unavoidable, require the existing `secrets.Redactor`
 adapter; do not implement replacement redaction.
@@ -885,6 +903,7 @@ go test ./internal/hooks ./internal/daemon ./cmd/ratchet -run 'Hook|Managed|Audi
 go test ./...
 go vet ./...
 golangci-lint run --new-from-rev=origin/master
+go test ./cmd/ratchet -run HarnessEmulationDocs -count=1
 GOOS=windows GOARCH=amd64 go build ./cmd/ratchet
 GOOS=windows GOARCH=amd64 go test -c ./internal/hooks -o dist/hooks.test.exe
 GOOS=windows GOARCH=amd64 go test -c ./internal/daemon -o dist/daemon.test.exe
