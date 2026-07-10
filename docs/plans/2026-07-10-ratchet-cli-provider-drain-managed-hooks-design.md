@@ -247,10 +247,10 @@ flowchart LR
   with bounded backoff. Pending, applied, not-found, and temporary RPC failure
   remain unresolved until the deadline; committed returns the stored provider;
   failed returns a classified outcome. Unresolved exit requests stay in the UI.
-- Every current CLI writer uses a signal-aware 30-second save context and a
-  separate 10-second reconciliation context. TUI/CLI mutations first require
-  the daemon's `provider_save_operations` version capability; unsupported old
-  daemons fail the mutation after reload rather than silently degrading.
+- Every current CLI writer uses a signal-aware 30-second `CommitProviderSave`
+  call and a separate 10-second reconciliation context. Old daemons return
+  `Unimplemented` before mutation. First interrupt shows reconciliation status;
+  second interrupt exits with the operation ID for explicit status lookup.
 - Applied-operation finalization uses daemon-owned timeouts and is retried by
   operation queries and startup, independent of the canceled caller context.
 - Nil provider/list/test/auth success responses and whitespace-only required
@@ -274,6 +274,9 @@ flowchart LR
   Server keys contain only a reserved prefix, server timestamp, and UUID. Existing
   `secrets.Redactor` protects runtime errors and may safely over-redact retired
   values until restart.
+- **Mutation serialization:** one daemon-wide mutex covers provider save,
+  remove, finalization, and cleanup. Pending rows reserve secret keys before
+  `Set`; cleanup excludes provider references and pending/applied reservations.
 - **Unattended execution:** opt-in is explicit and profile identity is pinned.
   Profile trust/fingerprint drift blocks resume. Persisted arbitrary commands
   are prohibited.
@@ -313,7 +316,7 @@ Release artifacts remain the existing GoReleaser matrix, including Windows.
 | Daemon restart | Integration test persists an enabled policy, restarts the service, proves matching trusted profile resumes, then proves fingerprint drift blocks launch. |
 | Queue lifecycle | Existing claim/cancel/stale paths are exercised through the daemon manager with fake agents and deterministic contexts. |
 | Managed hooks | Loader/engine tests cover missing, malformed, insecure ownership/link, additive, managed-only, plugin reload, immutable trust/disable, pre-launch audit failure, and terminal audit failure behavior. |
-| Windows | `GOOS=windows` build, existing ConPTY smoke, and path/lifecycle unit tests run before merge; CI Windows jobs remain required. |
+| Windows | `GOOS=windows` build plus native `windows-2025` lock contention/release and ConPTY tests run before merge; CI Windows jobs remain required. |
 | Release | Tag points to the merged commit; archives, checksums, Homebrew update path, and installed `ratchet --version` are verified. |
 
 ## Integration Matrix
@@ -322,7 +325,7 @@ Release artifacts remain the existing GoReleaser matrix, including Windows.
 |---|---|---|
 | `workflow-plugin-agent/orchestrator.ProviderRegistry` types | runtime-integrated | Upstream API test plus ratchet catalog coverage test against a real registry instance. |
 | `workflow-plugin-agent/provider` model listing | runtime-integrated | CLI/TUI tests pass real settings into its lister boundary; credentialed live provider calls remain deferred CI. |
-| Existing daemon provider RPC, registry, and secrets provider/Redactor | runtime-integrated | Real daemon tests exercise capability negotiation, versioned secret pointer commit/rollback, operation query/replay/finalization, registry resolution, redactor ordering, age-gated cleanup, and secret-free TUI/output. |
+| Existing daemon provider RPC, registry, and secrets provider/Redactor | runtime-integrated | A dedicated durable-save RPC makes old daemons fail pre-mutation; real daemon tests exercise legacy delegation, versioned secret pointer commit/rollback, operation query/replay/finalization, registry resolution, redactor ordering, serialized cleanup, and secret-free TUI/output. |
 | Bubble Tea provider/model wizard | runtime-integrated | State tests plus real PTY navigation/render proof. |
 | Daemon gRPC/client background API | runtime-integrated | Started daemon, real client, fake ACP process, persisted restart and stop proof. |
 | ACP profile store and queue claim/cancel/recovery | runtime-integrated | Real stores and existing drain path; trust-hash drift has a negative launch proof. |
@@ -425,7 +428,8 @@ Each PR can be reverted independently. PR 2's additive operation/cleanup tables
 are ignored by older binaries; provider rows keep exact versioned secret names,
 which existing registries resolve. The additive daemon lock file is ignored by
 older binaries. Legacy clients without operation IDs remain
-accepted; new writers refuse an old daemon without the capability. Before
+accepted; new writers call a dedicated RPC that old daemons reject before
+mutation. Before
 downgrade, process pending cleanup where possible; old writers
 may leave inactive `provider-v2-` versions, which a later upgraded startup
 sweeps without touching referenced or legacy-prefix secrets. Background
@@ -461,9 +465,11 @@ Cause: round-five review proved alias-stable secret mutation and one-shot list
 reconciliation cannot make an upsert atomic or authoritative. Change: use
 two-phase pending/applied/terminal operations, server-derived versioned keys,
 idempotent replay, durable old-secret cleanup, and a metadata-only operation RPC.
-All current CLI/TUI writers require a version capability, use canonical UUIDs,
-bounded signal-aware saves, and detached reconciliation; legacy empty IDs remain
-compatible. The lifetime lock excludes concurrent startup; startup resolves
+All current CLI/TUI writers use a dedicated durable RPC, canonical UUIDs,
+bounded signal-aware saves, and detached reconciliation; legacy `AddProvider`
+delegates durably on new daemons. A provider-mutation mutex and pending secret
+reservations exclude runtime cleanup/save races. The lifetime lock excludes
+concurrent startup; startup resolves
 pending/applied rows and orphans before RPC acceptance; migration failure is
 fatal. SQL records `applied`; a
 daemon-context/query-assisted finalizer performs cache/redactor work before

@@ -325,6 +325,7 @@ git commit -m "refactor(provider): drive CLI from catalog"
 - Modify: `internal/proto/ratchet.proto`
 - Modify generated: `internal/proto/ratchet.pb.go`
 - Modify generated: `internal/proto/ratchet_grpc.pb.go`
+- Modify: `.github/workflows/ci.yml`
 - Modify: `internal/daemon/engine.go`
 - Modify: `internal/daemon/daemon.go`
 - Create: `internal/daemon/lock_unix.go`
@@ -358,12 +359,14 @@ strategy and focused tests that:
   setup step, and a source guard rejects a second TUI-owned provider table;
 - review omits secret values and masks credential presence;
 - submit sends alias/type/model/base URL/settings once;
-- every CLI/TUI save requires the daemon capability, sends a canonical UUID,
+- every CLI/TUI save calls the dedicated durable RPC with a canonical UUID,
   uses a signal-aware 30-second call, and reconciles separately for 10 seconds;
 - operation replay is unconditional first-write-wins for the same alias, another
   alias conflicts, and operation RPCs omit credentials/settings/base URLs/errors;
 - SQL rollback preserves the active secret; commit updates registry/redactor
   before success; old-secret cleanup is durable and retryable;
+- pending rows reserve secret keys; one provider-mutation mutex serializes save,
+  remove, applied finalization, and cleanup through terminal state;
 - an OS-level lock is acquired before PID/socket cleanup, migration, or secret
   reconciliation and retained for daemon lifetime on Unix and Windows;
 - startup finalizes applied operations, fails inherited pending, sweeps only
@@ -372,6 +375,8 @@ strategy and focused tests that:
 - ambiguous save responses poll pending/not-found operation state with bounded
   backoff; commit resolves, failed reports a class, and unresolved pauses exit;
 - nil daemon responses and whitespace credentials/base URLs fail safely;
+- native Windows CI executes lock contention, graceful release, and process-exit
+  release tests; cross-build remains additional evidence;
 - views at 80x24 and 120x40 contain no overflow and always show actionable
   navigation/help text.
 
@@ -408,21 +413,25 @@ field; setting values are non-secret by catalog validation.
 Add a two-phase provider-save journal per ADR 0006. Required table migrations
 fail startup. New clients send canonical UUIDs; the daemon generates a separate
 UUID for `provider-v2-` secret keys and accepts empty IDs only for legacy
-compatibility. Mutation first checks the daemon's advertised capability.
-Pending creation is unconditional first-write-wins for the same alias; another
+compatibility. New clients call `CommitProviderSave`; old daemons return
+`Unimplemented` without mutation. Pending creation reserves the server secret
+key and is unconditional first-write-wins for the same alias; another
 alias conflicts. SQL atomically switches the provider pointer, stores an
 `applied` result without base URL, and queues the old secret.
 Rollback deletes only the inactive new version and durably queues failed
-cleanup. A daemon-owned bounded finalizer and operation-query retry perform
-redactor registration/cache invalidation before `committed`. Daemon startup
+cleanup. One daemon-wide provider-mutation mutex serializes save, remove,
+finalization, and cleanup. A daemon-owned bounded finalizer and operation-query
+retry perform redactor registration/cache invalidation before `committed`. Daemon startup
 first acquires a lifetime OS lock, then finalizes applied rows, fails inherited
 pending rows, sweeps unreferenced reserved orphans, retries cleanup, and accepts
 RPCs.
 
 Expose a metadata-only operation query and use it for bounded CLI/TUI
 reconciliation. All CLI writers use signal-aware save contexts plus detached
-reconciliation so interruption preserves the UUID. Advertise the capability in
-version checks and refuse provider mutations against unsupported old daemons.
+reconciliation so interruption preserves the UUID. First interrupt displays
+reconciliation; second exits nonzero with the ID, and
+`provider operation <id>` exposes status. First-write replay lasts 24 hours;
+expired/unresolved retries use a new UUID.
 Do not persist credentials, base URLs, raw requests/settings/errors, or a
 credential hash. Keep retired values in the existing additive Redactor until
 restart; do not introduce a second redaction or secret abstraction.
@@ -432,7 +441,7 @@ restart; do not introduce a second redaction or secret abstraction.
 ```bash
 make proto
 gofmt -w internal/daemon/engine.go internal/daemon/daemon.go internal/daemon/lock_unix.go internal/daemon/lock_windows.go internal/daemon/lock_unix_test.go internal/daemon/lock_windows_test.go internal/daemon/service.go internal/daemon/integration_test.go internal/client/client.go cmd/ratchet/cmd_provider.go cmd/ratchet/cmd_provider_test.go internal/tui/app.go internal/tui/app_session_tree_test.go internal/tui/pages/onboarding.go internal/tui/pages/onboarding_test.go
-go test ./internal/daemon -run 'ProviderOperation|ProviderSecret|ProviderCRUD' -count=1
+go test ./internal/daemon -run 'ProviderOperation|ProviderSecret|ProviderCRUD|DaemonLock' -count=1
 go test ./cmd/ratchet -run 'Provider.*Operation|Provider.*Catalog|ProviderSetupGuide|ProviderModelSelection' -count=1
 go test ./internal/tui/pages -run 'Onboarding|ProviderCatalog' -count=1
 go test ./internal/tui -run 'Provider|Onboarding|SlashExit' -count=1 -timeout=10m
@@ -445,7 +454,7 @@ within configured widths and secret sentinels absent.
 **Step 5: Commit**
 
 ```bash
-git add internal/proto internal/daemon/engine.go internal/daemon/daemon.go internal/daemon/lock_unix.go internal/daemon/lock_windows.go internal/daemon/lock_unix_test.go internal/daemon/lock_windows_test.go internal/daemon/service.go internal/daemon/integration_test.go internal/client/client.go cmd/ratchet/cmd_provider.go cmd/ratchet/cmd_provider_test.go internal/tui/app.go internal/tui/app_session_tree_test.go internal/tui/pages/onboarding.go internal/tui/pages/onboarding_test.go
+git add .github/workflows/ci.yml internal/proto internal/daemon/engine.go internal/daemon/daemon.go internal/daemon/lock_unix.go internal/daemon/lock_windows.go internal/daemon/lock_unix_test.go internal/daemon/lock_windows_test.go internal/daemon/service.go internal/daemon/integration_test.go internal/client/client.go cmd/ratchet/cmd_provider.go cmd/ratchet/cmd_provider_test.go internal/tui/app.go internal/tui/app_session_tree_test.go internal/tui/pages/onboarding.go internal/tui/pages/onboarding_test.go
 git commit -m "feat(tui): unify provider setup wizard"
 ```
 

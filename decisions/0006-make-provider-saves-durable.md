@@ -14,10 +14,10 @@ prove which request committed.
 
 ## Decision
 
-All current CLI/TUI callers require the daemon's `provider_save_operations`
-capability and send a canonical UUID operation ID; unsupported daemons fail the
-mutation instead of silently falling back. The daemon validates IDs and
-generates one only for legacy clients. A metadata-only `provider_operations`
+All current CLI/TUI callers use a new `CommitProviderSave` RPC and send a
+canonical UUID operation ID; old daemons return `Unimplemented` before mutation.
+Legacy `AddProvider` remains and delegates to the same durable implementation
+with a server-generated ID. A metadata-only `provider_operations`
 journal uses pending/applied/committed/failed states and unconditional
 first-write-wins replay. Same-alias reuse returns the first result regardless of
 later payload; another alias conflicts. UUID randomness, not persisted request
@@ -25,7 +25,7 @@ fingerprints, prevents accidental reuse.
 
 The daemon independently generates a secret version as
 `provider-v2-<unix-seconds>-<uuid>` using server time and UUID only. It journals
-pending, writes through the existing
+pending with that secret reservation, writes through the existing
 `secrets.Provider`, then atomically commits the provider pointer, cleanup entry,
 non-secret result, and `applied` state. Rollback deletes only the inactive new
 version. Post-commit code registers redaction, invalidates the provider cache,
@@ -35,6 +35,11 @@ marks `committed`, then retires queued old secrets. Operation queries expose
 Post-commit finalization uses a daemon-owned bounded context. Operation queries
 also finalize `applied` rows before returning, so RPC cancellation does not
 strand them until restart.
+
+A daemon-wide provider-mutation mutex serializes save, remove, finalization, and
+cleanup; configuration writes are rare. Before a later alias mutation, any
+applied row for that alias must finalize or the mutation fails. Cleanup excludes
+every provider pointer and pending/applied secret reservation.
 
 `provider_secret_cleanup` stores only server secret name, attempt count,
 classified outcome, and timestamps. Startup runs before RPCs: secret `List`
@@ -56,8 +61,12 @@ existing Workflow providers.
 - Active credentials remain unchanged when SQL commit fails.
 - Ambiguous responses reconcile across restart and later alias writes; terminal
   rows live 24 hours, while client reconciliation is bounded to 10 seconds.
+- First-write-wins idempotency lasts for that 24-hour retention window. Expired
+  or unresolved work must use a new UUID.
 - CLI saves use signal-aware 30-second calls and a separate 10-second
-  reconciliation context, preserving operation identity after interruption.
+  reconciliation context. First interrupt prints reconciliation status; a
+  second exits nonzero with the operation ID, queryable through
+  `ratchet provider operation <id>`.
 - The daemon acquires and retains an OS-level exclusive data-directory lock
   before PID/socket cleanup, migration, or reconciliation. Unix `flock` and
   Windows `LockFileEx` prevent concurrent owners; crash closes release the lock.
