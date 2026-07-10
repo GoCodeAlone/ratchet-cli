@@ -5,14 +5,59 @@ import (
 	"io"
 	"net"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 )
+
+func TestProviderOperationRPCContract(t *testing.T) {
+	service := pb.File_internal_proto_ratchet_proto.Services().ByName("RatchetDaemon")
+	if service == nil {
+		t.Fatal("RatchetDaemon service descriptor not found")
+	}
+
+	for _, name := range []protoreflect.Name{"CommitProviderSave", "GetProviderOperation"} {
+		method := service.Methods().ByName(name)
+		if method == nil {
+			t.Fatalf("RatchetDaemon.%s descriptor not found", name)
+		}
+		if method.Output().FullName() != "ratchet.ProviderOperation" {
+			t.Fatalf("RatchetDaemon.%s output = %s, want ratchet.ProviderOperation", name, method.Output().FullName())
+		}
+	}
+
+	if pb.ProviderOperationState_PROVIDER_OPERATION_STATE_PENDING == pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED {
+		t.Fatal("provider operation states must be distinct")
+	}
+	if pb.ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_ALIAS_BUSY == pb.ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_OPERATION_CONFLICT {
+		t.Fatal("provider operation failure classes must be distinct")
+	}
+
+	assertMessageFields(t, (&pb.ProviderSaveResult{}).ProtoReflect().Descriptor(),
+		[]string{"alias", "is_default", "model", "type"})
+	assertMessageFields(t, (&pb.ProviderOperation{}).ProtoReflect().Descriptor(),
+		[]string{"alias", "created_at", "expires_at", "failure", "operation_id", "result", "state", "updated_at"})
+}
+
+func assertMessageFields(t *testing.T, message protoreflect.MessageDescriptor, want []string) {
+	t.Helper()
+	got := make([]string, 0, message.Fields().Len())
+	for i := range message.Fields().Len() {
+		field := message.Fields().Get(i)
+		got = append(got, string(field.Name()))
+	}
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("%s fields = %v, want %v", message.FullName(), got, want)
+	}
+}
 
 // startTestServer starts an in-process daemon gRPC server on a temp Unix socket.
 // Returns the client connection. Caller must close conn and stop server.

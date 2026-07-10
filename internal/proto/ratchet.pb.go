@@ -22,6 +22,128 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type ProviderOperationState int32
+
+const (
+	ProviderOperationState_PROVIDER_OPERATION_STATE_UNSPECIFIED ProviderOperationState = 0
+	ProviderOperationState_PROVIDER_OPERATION_STATE_PENDING     ProviderOperationState = 1
+	ProviderOperationState_PROVIDER_OPERATION_STATE_APPLIED     ProviderOperationState = 2
+	ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED   ProviderOperationState = 3
+	ProviderOperationState_PROVIDER_OPERATION_STATE_FAILED      ProviderOperationState = 4
+)
+
+// Enum value maps for ProviderOperationState.
+var (
+	ProviderOperationState_name = map[int32]string{
+		0: "PROVIDER_OPERATION_STATE_UNSPECIFIED",
+		1: "PROVIDER_OPERATION_STATE_PENDING",
+		2: "PROVIDER_OPERATION_STATE_APPLIED",
+		3: "PROVIDER_OPERATION_STATE_COMMITTED",
+		4: "PROVIDER_OPERATION_STATE_FAILED",
+	}
+	ProviderOperationState_value = map[string]int32{
+		"PROVIDER_OPERATION_STATE_UNSPECIFIED": 0,
+		"PROVIDER_OPERATION_STATE_PENDING":     1,
+		"PROVIDER_OPERATION_STATE_APPLIED":     2,
+		"PROVIDER_OPERATION_STATE_COMMITTED":   3,
+		"PROVIDER_OPERATION_STATE_FAILED":      4,
+	}
+)
+
+func (x ProviderOperationState) Enum() *ProviderOperationState {
+	p := new(ProviderOperationState)
+	*p = x
+	return p
+}
+
+func (x ProviderOperationState) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ProviderOperationState) Descriptor() protoreflect.EnumDescriptor {
+	return file_internal_proto_ratchet_proto_enumTypes[0].Descriptor()
+}
+
+func (ProviderOperationState) Type() protoreflect.EnumType {
+	return &file_internal_proto_ratchet_proto_enumTypes[0]
+}
+
+func (x ProviderOperationState) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ProviderOperationState.Descriptor instead.
+func (ProviderOperationState) EnumDescriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{0}
+}
+
+type ProviderOperationFailure int32
+
+const (
+	ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_UNSPECIFIED        ProviderOperationFailure = 0
+	ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_INVALID_REQUEST    ProviderOperationFailure = 1
+	ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_OPERATION_CONFLICT ProviderOperationFailure = 2
+	ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_ALIAS_BUSY         ProviderOperationFailure = 3
+	ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_SECRET_STORE       ProviderOperationFailure = 4
+	ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_DATABASE           ProviderOperationFailure = 5
+	ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_FINALIZATION       ProviderOperationFailure = 6
+	ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_RESTART_RECOVERY   ProviderOperationFailure = 7
+	ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_INTERNAL           ProviderOperationFailure = 8
+)
+
+// Enum value maps for ProviderOperationFailure.
+var (
+	ProviderOperationFailure_name = map[int32]string{
+		0: "PROVIDER_OPERATION_FAILURE_UNSPECIFIED",
+		1: "PROVIDER_OPERATION_FAILURE_INVALID_REQUEST",
+		2: "PROVIDER_OPERATION_FAILURE_OPERATION_CONFLICT",
+		3: "PROVIDER_OPERATION_FAILURE_ALIAS_BUSY",
+		4: "PROVIDER_OPERATION_FAILURE_SECRET_STORE",
+		5: "PROVIDER_OPERATION_FAILURE_DATABASE",
+		6: "PROVIDER_OPERATION_FAILURE_FINALIZATION",
+		7: "PROVIDER_OPERATION_FAILURE_RESTART_RECOVERY",
+		8: "PROVIDER_OPERATION_FAILURE_INTERNAL",
+	}
+	ProviderOperationFailure_value = map[string]int32{
+		"PROVIDER_OPERATION_FAILURE_UNSPECIFIED":        0,
+		"PROVIDER_OPERATION_FAILURE_INVALID_REQUEST":    1,
+		"PROVIDER_OPERATION_FAILURE_OPERATION_CONFLICT": 2,
+		"PROVIDER_OPERATION_FAILURE_ALIAS_BUSY":         3,
+		"PROVIDER_OPERATION_FAILURE_SECRET_STORE":       4,
+		"PROVIDER_OPERATION_FAILURE_DATABASE":           5,
+		"PROVIDER_OPERATION_FAILURE_FINALIZATION":       6,
+		"PROVIDER_OPERATION_FAILURE_RESTART_RECOVERY":   7,
+		"PROVIDER_OPERATION_FAILURE_INTERNAL":           8,
+	}
+)
+
+func (x ProviderOperationFailure) Enum() *ProviderOperationFailure {
+	p := new(ProviderOperationFailure)
+	*p = x
+	return p
+}
+
+func (x ProviderOperationFailure) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ProviderOperationFailure) Descriptor() protoreflect.EnumDescriptor {
+	return file_internal_proto_ratchet_proto_enumTypes[1].Descriptor()
+}
+
+func (ProviderOperationFailure) Type() protoreflect.EnumType {
+	return &file_internal_proto_ratchet_proto_enumTypes[1]
+}
+
+func (x ProviderOperationFailure) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ProviderOperationFailure.Descriptor instead.
+func (ProviderOperationFailure) EnumDescriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{1}
+}
+
 type Empty struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -6944,6 +7066,270 @@ func (x *TaskReq) GetTaskId() string {
 	return ""
 }
 
+type CommitProviderSaveReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	OperationId   string                 `protobuf:"bytes,1,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
+	Provider      *AddProviderReq        `protobuf:"bytes,2,opt,name=provider,proto3" json:"provider,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CommitProviderSaveReq) Reset() {
+	*x = CommitProviderSaveReq{}
+	mi := &file_internal_proto_ratchet_proto_msgTypes[108]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CommitProviderSaveReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CommitProviderSaveReq) ProtoMessage() {}
+
+func (x *CommitProviderSaveReq) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_ratchet_proto_msgTypes[108]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CommitProviderSaveReq.ProtoReflect.Descriptor instead.
+func (*CommitProviderSaveReq) Descriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{108}
+}
+
+func (x *CommitProviderSaveReq) GetOperationId() string {
+	if x != nil {
+		return x.OperationId
+	}
+	return ""
+}
+
+func (x *CommitProviderSaveReq) GetProvider() *AddProviderReq {
+	if x != nil {
+		return x.Provider
+	}
+	return nil
+}
+
+type GetProviderOperationReq struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	OperationId   string                 `protobuf:"bytes,1,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetProviderOperationReq) Reset() {
+	*x = GetProviderOperationReq{}
+	mi := &file_internal_proto_ratchet_proto_msgTypes[109]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetProviderOperationReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetProviderOperationReq) ProtoMessage() {}
+
+func (x *GetProviderOperationReq) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_ratchet_proto_msgTypes[109]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetProviderOperationReq.ProtoReflect.Descriptor instead.
+func (*GetProviderOperationReq) Descriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{109}
+}
+
+func (x *GetProviderOperationReq) GetOperationId() string {
+	if x != nil {
+		return x.OperationId
+	}
+	return ""
+}
+
+type ProviderSaveResult struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Alias         string                 `protobuf:"bytes,1,opt,name=alias,proto3" json:"alias,omitempty"`
+	Type          string                 `protobuf:"bytes,2,opt,name=type,proto3" json:"type,omitempty"`
+	Model         string                 `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`
+	IsDefault     bool                   `protobuf:"varint,4,opt,name=is_default,json=isDefault,proto3" json:"is_default,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProviderSaveResult) Reset() {
+	*x = ProviderSaveResult{}
+	mi := &file_internal_proto_ratchet_proto_msgTypes[110]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProviderSaveResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProviderSaveResult) ProtoMessage() {}
+
+func (x *ProviderSaveResult) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_ratchet_proto_msgTypes[110]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProviderSaveResult.ProtoReflect.Descriptor instead.
+func (*ProviderSaveResult) Descriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{110}
+}
+
+func (x *ProviderSaveResult) GetAlias() string {
+	if x != nil {
+		return x.Alias
+	}
+	return ""
+}
+
+func (x *ProviderSaveResult) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *ProviderSaveResult) GetModel() string {
+	if x != nil {
+		return x.Model
+	}
+	return ""
+}
+
+func (x *ProviderSaveResult) GetIsDefault() bool {
+	if x != nil {
+		return x.IsDefault
+	}
+	return false
+}
+
+type ProviderOperation struct {
+	state         protoimpl.MessageState   `protogen:"open.v1"`
+	OperationId   string                   `protobuf:"bytes,1,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
+	Alias         string                   `protobuf:"bytes,2,opt,name=alias,proto3" json:"alias,omitempty"`
+	State         ProviderOperationState   `protobuf:"varint,3,opt,name=state,proto3,enum=ratchet.ProviderOperationState" json:"state,omitempty"`
+	Failure       ProviderOperationFailure `protobuf:"varint,4,opt,name=failure,proto3,enum=ratchet.ProviderOperationFailure" json:"failure,omitempty"`
+	CreatedAt     *timestamppb.Timestamp   `protobuf:"bytes,5,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	UpdatedAt     *timestamppb.Timestamp   `protobuf:"bytes,6,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	ExpiresAt     *timestamppb.Timestamp   `protobuf:"bytes,7,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	Result        *ProviderSaveResult      `protobuf:"bytes,8,opt,name=result,proto3" json:"result,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProviderOperation) Reset() {
+	*x = ProviderOperation{}
+	mi := &file_internal_proto_ratchet_proto_msgTypes[111]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProviderOperation) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProviderOperation) ProtoMessage() {}
+
+func (x *ProviderOperation) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_proto_ratchet_proto_msgTypes[111]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProviderOperation.ProtoReflect.Descriptor instead.
+func (*ProviderOperation) Descriptor() ([]byte, []int) {
+	return file_internal_proto_ratchet_proto_rawDescGZIP(), []int{111}
+}
+
+func (x *ProviderOperation) GetOperationId() string {
+	if x != nil {
+		return x.OperationId
+	}
+	return ""
+}
+
+func (x *ProviderOperation) GetAlias() string {
+	if x != nil {
+		return x.Alias
+	}
+	return ""
+}
+
+func (x *ProviderOperation) GetState() ProviderOperationState {
+	if x != nil {
+		return x.State
+	}
+	return ProviderOperationState_PROVIDER_OPERATION_STATE_UNSPECIFIED
+}
+
+func (x *ProviderOperation) GetFailure() ProviderOperationFailure {
+	if x != nil {
+		return x.Failure
+	}
+	return ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_UNSPECIFIED
+}
+
+func (x *ProviderOperation) GetCreatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return nil
+}
+
+func (x *ProviderOperation) GetUpdatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.UpdatedAt
+	}
+	return nil
+}
+
+func (x *ProviderOperation) GetExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return nil
+}
+
+func (x *ProviderOperation) GetResult() *ProviderSaveResult {
+	if x != nil {
+		return x.Result
+	}
+	return nil
+}
+
 var File_internal_proto_ratchet_proto protoreflect.FileDescriptor
 
 const file_internal_proto_ratchet_proto_rawDesc = "" +
@@ -7486,7 +7872,46 @@ const file_internal_proto_ratchet_proto_rawDesc = "" +
 	"\bTaskList\x12'\n" +
 	"\x05tasks\x18\x01 \x03(\v2\x11.ratchet.TaskInfoR\x05tasks\"\"\n" +
 	"\aTaskReq\x12\x17\n" +
-	"\atask_id\x18\x01 \x01(\tR\x06taskId2\x8c\"\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\"o\n" +
+	"\x15CommitProviderSaveReq\x12!\n" +
+	"\foperation_id\x18\x01 \x01(\tR\voperationId\x123\n" +
+	"\bprovider\x18\x02 \x01(\v2\x17.ratchet.AddProviderReqR\bprovider\"<\n" +
+	"\x17GetProviderOperationReq\x12!\n" +
+	"\foperation_id\x18\x01 \x01(\tR\voperationId\"s\n" +
+	"\x12ProviderSaveResult\x12\x14\n" +
+	"\x05alias\x18\x01 \x01(\tR\x05alias\x12\x12\n" +
+	"\x04type\x18\x02 \x01(\tR\x04type\x12\x14\n" +
+	"\x05model\x18\x03 \x01(\tR\x05model\x12\x1d\n" +
+	"\n" +
+	"is_default\x18\x04 \x01(\bR\tisDefault\"\xa6\x03\n" +
+	"\x11ProviderOperation\x12!\n" +
+	"\foperation_id\x18\x01 \x01(\tR\voperationId\x12\x14\n" +
+	"\x05alias\x18\x02 \x01(\tR\x05alias\x125\n" +
+	"\x05state\x18\x03 \x01(\x0e2\x1f.ratchet.ProviderOperationStateR\x05state\x12;\n" +
+	"\afailure\x18\x04 \x01(\x0e2!.ratchet.ProviderOperationFailureR\afailure\x129\n" +
+	"\n" +
+	"created_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
+	"\n" +
+	"updated_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x129\n" +
+	"\n" +
+	"expires_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x123\n" +
+	"\x06result\x18\b \x01(\v2\x1b.ratchet.ProviderSaveResultR\x06result*\xdb\x01\n" +
+	"\x16ProviderOperationState\x12(\n" +
+	"$PROVIDER_OPERATION_STATE_UNSPECIFIED\x10\x00\x12$\n" +
+	" PROVIDER_OPERATION_STATE_PENDING\x10\x01\x12$\n" +
+	" PROVIDER_OPERATION_STATE_APPLIED\x10\x02\x12&\n" +
+	"\"PROVIDER_OPERATION_STATE_COMMITTED\x10\x03\x12#\n" +
+	"\x1fPROVIDER_OPERATION_STATE_FAILED\x10\x04*\xb1\x03\n" +
+	"\x18ProviderOperationFailure\x12*\n" +
+	"&PROVIDER_OPERATION_FAILURE_UNSPECIFIED\x10\x00\x12.\n" +
+	"*PROVIDER_OPERATION_FAILURE_INVALID_REQUEST\x10\x01\x121\n" +
+	"-PROVIDER_OPERATION_FAILURE_OPERATION_CONFLICT\x10\x02\x12)\n" +
+	"%PROVIDER_OPERATION_FAILURE_ALIAS_BUSY\x10\x03\x12+\n" +
+	"'PROVIDER_OPERATION_FAILURE_SECRET_STORE\x10\x04\x12'\n" +
+	"#PROVIDER_OPERATION_FAILURE_DATABASE\x10\x05\x12+\n" +
+	"'PROVIDER_OPERATION_FAILURE_FINALIZATION\x10\x06\x12/\n" +
+	"+PROVIDER_OPERATION_FAILURE_RESTART_RECOVERY\x10\a\x12'\n" +
+	"#PROVIDER_OPERATION_FAILURE_INTERNAL\x10\b2\xb4#\n" +
 	"\rRatchetDaemon\x12<\n" +
 	"\rCreateSession\x12\x19.ratchet.CreateSessionReq\x1a\x10.ratchet.Session\x124\n" +
 	"\fListSessions\x12\x0e.ratchet.Empty\x1a\x14.ratchet.SessionList\x12K\n" +
@@ -7508,7 +7933,9 @@ const file_internal_proto_ratchet_proto_rawDesc = "" +
 	"ResetTrust\x12\x0e.ratchet.Empty\x1a\x13.ratchet.TrustState\x12>\n" +
 	"\rAddTrustGrant\x12\x18.ratchet.AddTrustRuleReq\x1a\x13.ratchet.TrustState\x12E\n" +
 	"\x10RevokeTrustGrant\x12\x1c.ratchet.RevokeTrustGrantReq\x1a\x13.ratchet.TrustState\x129\n" +
-	"\vAddProvider\x12\x17.ratchet.AddProviderReq\x1a\x11.ratchet.Provider\x126\n" +
+	"\vAddProvider\x12\x17.ratchet.AddProviderReq\x1a\x11.ratchet.Provider\x12P\n" +
+	"\x12CommitProviderSave\x12\x1e.ratchet.CommitProviderSaveReq\x1a\x1a.ratchet.ProviderOperation\x12T\n" +
+	"\x14GetProviderOperation\x12 .ratchet.GetProviderOperationReq\x1a\x1a.ratchet.ProviderOperation\x126\n" +
 	"\rListProviders\x12\x0e.ratchet.Empty\x1a\x15.ratchet.ProviderList\x12E\n" +
 	"\fTestProvider\x12\x18.ratchet.TestProviderReq\x1a\x1b.ratchet.TestProviderResult\x12<\n" +
 	"\x0eRemoveProvider\x12\x1a.ratchet.RemoveProviderReq\x1a\x0e.ratchet.Empty\x12D\n" +
@@ -7585,325 +8012,343 @@ func file_internal_proto_ratchet_proto_rawDescGZIP() []byte {
 	return file_internal_proto_ratchet_proto_rawDescData
 }
 
-var file_internal_proto_ratchet_proto_msgTypes = make([]protoimpl.MessageInfo, 109)
+var file_internal_proto_ratchet_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_internal_proto_ratchet_proto_msgTypes = make([]protoimpl.MessageInfo, 113)
 var file_internal_proto_ratchet_proto_goTypes = []any{
-	(*Empty)(nil),                   // 0: ratchet.Empty
-	(*Session)(nil),                 // 1: ratchet.Session
-	(*CreateSessionReq)(nil),        // 2: ratchet.CreateSessionReq
-	(*SessionList)(nil),             // 3: ratchet.SessionList
-	(*AttachReq)(nil),               // 4: ratchet.AttachReq
-	(*DetachReq)(nil),               // 5: ratchet.DetachReq
-	(*KillReq)(nil),                 // 6: ratchet.KillReq
-	(*SessionMessagesReq)(nil),      // 7: ratchet.SessionMessagesReq
-	(*CloneSessionReq)(nil),         // 8: ratchet.CloneSessionReq
-	(*ForkSessionReq)(nil),          // 9: ratchet.ForkSessionReq
-	(*SessionTreeReq)(nil),          // 10: ratchet.SessionTreeReq
-	(*SessionCompactionsReq)(nil),   // 11: ratchet.SessionCompactionsReq
-	(*UpdateSessionSummaryReq)(nil), // 12: ratchet.UpdateSessionSummaryReq
-	(*CompactionRecord)(nil),        // 13: ratchet.CompactionRecord
-	(*SessionCompactionList)(nil),   // 14: ratchet.SessionCompactionList
-	(*SendMessageReq)(nil),          // 15: ratchet.SendMessageReq
-	(*ChatEvent)(nil),               // 16: ratchet.ChatEvent
-	(*ThinkingBlock)(nil),           // 17: ratchet.ThinkingBlock
-	(*AuthError)(nil),               // 18: ratchet.AuthError
-	(*ContextCompressedEvent)(nil),  // 19: ratchet.ContextCompressedEvent
-	(*TokenDelta)(nil),              // 20: ratchet.TokenDelta
-	(*ToolCallStart)(nil),           // 21: ratchet.ToolCallStart
-	(*ToolCallResult)(nil),          // 22: ratchet.ToolCallResult
-	(*PermissionRequest)(nil),       // 23: ratchet.PermissionRequest
-	(*PermissionResponse)(nil),      // 24: ratchet.PermissionResponse
-	(*TrustRule)(nil),               // 25: ratchet.TrustRule
-	(*TrustState)(nil),              // 26: ratchet.TrustState
-	(*TrustGrant)(nil),              // 27: ratchet.TrustGrant
-	(*SetTrustModeReq)(nil),         // 28: ratchet.SetTrustModeReq
-	(*AddTrustRuleReq)(nil),         // 29: ratchet.AddTrustRuleReq
-	(*RevokeTrustGrantReq)(nil),     // 30: ratchet.RevokeTrustGrantReq
-	(*AgentSpawned)(nil),            // 31: ratchet.AgentSpawned
-	(*AgentMessage)(nil),            // 32: ratchet.AgentMessage
-	(*SessionComplete)(nil),         // 33: ratchet.SessionComplete
-	(*ErrorEvent)(nil),              // 34: ratchet.ErrorEvent
-	(*SessionHistory)(nil),          // 35: ratchet.SessionHistory
-	(*HistoryMessage)(nil),          // 36: ratchet.HistoryMessage
-	(*AddProviderReq)(nil),          // 37: ratchet.AddProviderReq
-	(*Provider)(nil),                // 38: ratchet.Provider
-	(*ProviderList)(nil),            // 39: ratchet.ProviderList
-	(*TestProviderReq)(nil),         // 40: ratchet.TestProviderReq
-	(*TestProviderResult)(nil),      // 41: ratchet.TestProviderResult
-	(*RemoveProviderReq)(nil),       // 42: ratchet.RemoveProviderReq
-	(*SetDefaultProviderReq)(nil),   // 43: ratchet.SetDefaultProviderReq
-	(*UpdateProviderModelReq)(nil),  // 44: ratchet.UpdateProviderModelReq
-	(*Agent)(nil),                   // 45: ratchet.Agent
-	(*AgentList)(nil),               // 46: ratchet.AgentList
-	(*AgentStatusReq)(nil),          // 47: ratchet.AgentStatusReq
-	(*StartTeamReq)(nil),            // 48: ratchet.StartTeamReq
-	(*TeamEvent)(nil),               // 49: ratchet.TeamEvent
-	(*TeamStatusReq)(nil),           // 50: ratchet.TeamStatusReq
-	(*TeamStatus)(nil),              // 51: ratchet.TeamStatus
-	(*PlanStep)(nil),                // 52: ratchet.PlanStep
-	(*Plan)(nil),                    // 53: ratchet.Plan
-	(*ApprovePlanReq)(nil),          // 54: ratchet.ApprovePlanReq
-	(*RejectPlanReq)(nil),           // 55: ratchet.RejectPlanReq
-	(*CronJob)(nil),                 // 56: ratchet.CronJob
-	(*CreateCronReq)(nil),           // 57: ratchet.CreateCronReq
-	(*CronJobList)(nil),             // 58: ratchet.CronJobList
-	(*CronJobReq)(nil),              // 59: ratchet.CronJobReq
-	(*StartFleetReq)(nil),           // 60: ratchet.StartFleetReq
-	(*FleetWorker)(nil),             // 61: ratchet.FleetWorker
-	(*FleetStatus)(nil),             // 62: ratchet.FleetStatus
-	(*FleetStatusReq)(nil),          // 63: ratchet.FleetStatusReq
-	(*KillFleetWorkerReq)(nil),      // 64: ratchet.KillFleetWorkerReq
-	(*Job)(nil),                     // 65: ratchet.Job
-	(*JobList)(nil),                 // 66: ratchet.JobList
-	(*JobReq)(nil),                  // 67: ratchet.JobReq
-	(*HealthResponse)(nil),          // 68: ratchet.HealthResponse
-	(*VersionCheckReq)(nil),         // 69: ratchet.VersionCheckReq
-	(*VersionCheckResp)(nil),        // 70: ratchet.VersionCheckResp
-	(*ReloadReq)(nil),               // 71: ratchet.ReloadReq
-	(*ReloadStatus)(nil),            // 72: ratchet.ReloadStatus
-	(*RegisterNodeReq)(nil),         // 73: ratchet.RegisterNodeReq
-	(*RegisterNodeResp)(nil),        // 74: ratchet.RegisterNodeResp
-	(*BlackboardSync)(nil),          // 75: ratchet.BlackboardSync
-	(*MeshEvent)(nil),               // 76: ratchet.MeshEvent
-	(*BlackboardEntry)(nil),         // 77: ratchet.BlackboardEntry
-	(*BlackboardReadReq)(nil),       // 78: ratchet.BlackboardReadReq
-	(*BlackboardReadResp)(nil),      // 79: ratchet.BlackboardReadResp
-	(*BlackboardWriteReq)(nil),      // 80: ratchet.BlackboardWriteReq
-	(*BlackboardListReq)(nil),       // 81: ratchet.BlackboardListReq
-	(*BlackboardListResp)(nil),      // 82: ratchet.BlackboardListResp
-	(*ListTeamsReq)(nil),            // 83: ratchet.ListTeamsReq
-	(*TeamList)(nil),                // 84: ratchet.TeamList
-	(*TeamAddAgentReq)(nil),         // 85: ratchet.TeamAddAgentReq
-	(*TeamRemoveAgentReq)(nil),      // 86: ratchet.TeamRemoveAgentReq
-	(*TeamRenameReq)(nil),           // 87: ratchet.TeamRenameReq
-	(*KillTeamReq)(nil),             // 88: ratchet.KillTeamReq
-	(*AttachTeamReq)(nil),           // 89: ratchet.AttachTeamReq
-	(*TeamActivityEvent)(nil),       // 90: ratchet.TeamActivityEvent
-	(*HumanRequest)(nil),            // 91: ratchet.HumanRequest
-	(*HumanResponse)(nil),           // 92: ratchet.HumanResponse
-	(*PendingHumanReq)(nil),         // 93: ratchet.PendingHumanReq
-	(*PendingHumanList)(nil),        // 94: ratchet.PendingHumanList
-	(*SteerTeamReq)(nil),            // 95: ratchet.SteerTeamReq
-	(*DirectMessageReq)(nil),        // 96: ratchet.DirectMessageReq
-	(*StartProjectReq)(nil),         // 97: ratchet.StartProjectReq
-	(*ProjectStatus)(nil),           // 98: ratchet.ProjectStatus
-	(*ProjectList)(nil),             // 99: ratchet.ProjectList
-	(*ProjectReq)(nil),              // 100: ratchet.ProjectReq
-	(*TaskCreateReq)(nil),           // 101: ratchet.TaskCreateReq
-	(*TaskUpdateReq)(nil),           // 102: ratchet.TaskUpdateReq
-	(*TaskClaimReq)(nil),            // 103: ratchet.TaskClaimReq
-	(*TaskListReq)(nil),             // 104: ratchet.TaskListReq
-	(*TaskInfo)(nil),                // 105: ratchet.TaskInfo
-	(*TaskList)(nil),                // 106: ratchet.TaskList
-	(*TaskReq)(nil),                 // 107: ratchet.TaskReq
-	nil,                             // 108: ratchet.Job.MetadataEntry
-	(*timestamppb.Timestamp)(nil),   // 109: google.protobuf.Timestamp
+	(ProviderOperationState)(0),     // 0: ratchet.ProviderOperationState
+	(ProviderOperationFailure)(0),   // 1: ratchet.ProviderOperationFailure
+	(*Empty)(nil),                   // 2: ratchet.Empty
+	(*Session)(nil),                 // 3: ratchet.Session
+	(*CreateSessionReq)(nil),        // 4: ratchet.CreateSessionReq
+	(*SessionList)(nil),             // 5: ratchet.SessionList
+	(*AttachReq)(nil),               // 6: ratchet.AttachReq
+	(*DetachReq)(nil),               // 7: ratchet.DetachReq
+	(*KillReq)(nil),                 // 8: ratchet.KillReq
+	(*SessionMessagesReq)(nil),      // 9: ratchet.SessionMessagesReq
+	(*CloneSessionReq)(nil),         // 10: ratchet.CloneSessionReq
+	(*ForkSessionReq)(nil),          // 11: ratchet.ForkSessionReq
+	(*SessionTreeReq)(nil),          // 12: ratchet.SessionTreeReq
+	(*SessionCompactionsReq)(nil),   // 13: ratchet.SessionCompactionsReq
+	(*UpdateSessionSummaryReq)(nil), // 14: ratchet.UpdateSessionSummaryReq
+	(*CompactionRecord)(nil),        // 15: ratchet.CompactionRecord
+	(*SessionCompactionList)(nil),   // 16: ratchet.SessionCompactionList
+	(*SendMessageReq)(nil),          // 17: ratchet.SendMessageReq
+	(*ChatEvent)(nil),               // 18: ratchet.ChatEvent
+	(*ThinkingBlock)(nil),           // 19: ratchet.ThinkingBlock
+	(*AuthError)(nil),               // 20: ratchet.AuthError
+	(*ContextCompressedEvent)(nil),  // 21: ratchet.ContextCompressedEvent
+	(*TokenDelta)(nil),              // 22: ratchet.TokenDelta
+	(*ToolCallStart)(nil),           // 23: ratchet.ToolCallStart
+	(*ToolCallResult)(nil),          // 24: ratchet.ToolCallResult
+	(*PermissionRequest)(nil),       // 25: ratchet.PermissionRequest
+	(*PermissionResponse)(nil),      // 26: ratchet.PermissionResponse
+	(*TrustRule)(nil),               // 27: ratchet.TrustRule
+	(*TrustState)(nil),              // 28: ratchet.TrustState
+	(*TrustGrant)(nil),              // 29: ratchet.TrustGrant
+	(*SetTrustModeReq)(nil),         // 30: ratchet.SetTrustModeReq
+	(*AddTrustRuleReq)(nil),         // 31: ratchet.AddTrustRuleReq
+	(*RevokeTrustGrantReq)(nil),     // 32: ratchet.RevokeTrustGrantReq
+	(*AgentSpawned)(nil),            // 33: ratchet.AgentSpawned
+	(*AgentMessage)(nil),            // 34: ratchet.AgentMessage
+	(*SessionComplete)(nil),         // 35: ratchet.SessionComplete
+	(*ErrorEvent)(nil),              // 36: ratchet.ErrorEvent
+	(*SessionHistory)(nil),          // 37: ratchet.SessionHistory
+	(*HistoryMessage)(nil),          // 38: ratchet.HistoryMessage
+	(*AddProviderReq)(nil),          // 39: ratchet.AddProviderReq
+	(*Provider)(nil),                // 40: ratchet.Provider
+	(*ProviderList)(nil),            // 41: ratchet.ProviderList
+	(*TestProviderReq)(nil),         // 42: ratchet.TestProviderReq
+	(*TestProviderResult)(nil),      // 43: ratchet.TestProviderResult
+	(*RemoveProviderReq)(nil),       // 44: ratchet.RemoveProviderReq
+	(*SetDefaultProviderReq)(nil),   // 45: ratchet.SetDefaultProviderReq
+	(*UpdateProviderModelReq)(nil),  // 46: ratchet.UpdateProviderModelReq
+	(*Agent)(nil),                   // 47: ratchet.Agent
+	(*AgentList)(nil),               // 48: ratchet.AgentList
+	(*AgentStatusReq)(nil),          // 49: ratchet.AgentStatusReq
+	(*StartTeamReq)(nil),            // 50: ratchet.StartTeamReq
+	(*TeamEvent)(nil),               // 51: ratchet.TeamEvent
+	(*TeamStatusReq)(nil),           // 52: ratchet.TeamStatusReq
+	(*TeamStatus)(nil),              // 53: ratchet.TeamStatus
+	(*PlanStep)(nil),                // 54: ratchet.PlanStep
+	(*Plan)(nil),                    // 55: ratchet.Plan
+	(*ApprovePlanReq)(nil),          // 56: ratchet.ApprovePlanReq
+	(*RejectPlanReq)(nil),           // 57: ratchet.RejectPlanReq
+	(*CronJob)(nil),                 // 58: ratchet.CronJob
+	(*CreateCronReq)(nil),           // 59: ratchet.CreateCronReq
+	(*CronJobList)(nil),             // 60: ratchet.CronJobList
+	(*CronJobReq)(nil),              // 61: ratchet.CronJobReq
+	(*StartFleetReq)(nil),           // 62: ratchet.StartFleetReq
+	(*FleetWorker)(nil),             // 63: ratchet.FleetWorker
+	(*FleetStatus)(nil),             // 64: ratchet.FleetStatus
+	(*FleetStatusReq)(nil),          // 65: ratchet.FleetStatusReq
+	(*KillFleetWorkerReq)(nil),      // 66: ratchet.KillFleetWorkerReq
+	(*Job)(nil),                     // 67: ratchet.Job
+	(*JobList)(nil),                 // 68: ratchet.JobList
+	(*JobReq)(nil),                  // 69: ratchet.JobReq
+	(*HealthResponse)(nil),          // 70: ratchet.HealthResponse
+	(*VersionCheckReq)(nil),         // 71: ratchet.VersionCheckReq
+	(*VersionCheckResp)(nil),        // 72: ratchet.VersionCheckResp
+	(*ReloadReq)(nil),               // 73: ratchet.ReloadReq
+	(*ReloadStatus)(nil),            // 74: ratchet.ReloadStatus
+	(*RegisterNodeReq)(nil),         // 75: ratchet.RegisterNodeReq
+	(*RegisterNodeResp)(nil),        // 76: ratchet.RegisterNodeResp
+	(*BlackboardSync)(nil),          // 77: ratchet.BlackboardSync
+	(*MeshEvent)(nil),               // 78: ratchet.MeshEvent
+	(*BlackboardEntry)(nil),         // 79: ratchet.BlackboardEntry
+	(*BlackboardReadReq)(nil),       // 80: ratchet.BlackboardReadReq
+	(*BlackboardReadResp)(nil),      // 81: ratchet.BlackboardReadResp
+	(*BlackboardWriteReq)(nil),      // 82: ratchet.BlackboardWriteReq
+	(*BlackboardListReq)(nil),       // 83: ratchet.BlackboardListReq
+	(*BlackboardListResp)(nil),      // 84: ratchet.BlackboardListResp
+	(*ListTeamsReq)(nil),            // 85: ratchet.ListTeamsReq
+	(*TeamList)(nil),                // 86: ratchet.TeamList
+	(*TeamAddAgentReq)(nil),         // 87: ratchet.TeamAddAgentReq
+	(*TeamRemoveAgentReq)(nil),      // 88: ratchet.TeamRemoveAgentReq
+	(*TeamRenameReq)(nil),           // 89: ratchet.TeamRenameReq
+	(*KillTeamReq)(nil),             // 90: ratchet.KillTeamReq
+	(*AttachTeamReq)(nil),           // 91: ratchet.AttachTeamReq
+	(*TeamActivityEvent)(nil),       // 92: ratchet.TeamActivityEvent
+	(*HumanRequest)(nil),            // 93: ratchet.HumanRequest
+	(*HumanResponse)(nil),           // 94: ratchet.HumanResponse
+	(*PendingHumanReq)(nil),         // 95: ratchet.PendingHumanReq
+	(*PendingHumanList)(nil),        // 96: ratchet.PendingHumanList
+	(*SteerTeamReq)(nil),            // 97: ratchet.SteerTeamReq
+	(*DirectMessageReq)(nil),        // 98: ratchet.DirectMessageReq
+	(*StartProjectReq)(nil),         // 99: ratchet.StartProjectReq
+	(*ProjectStatus)(nil),           // 100: ratchet.ProjectStatus
+	(*ProjectList)(nil),             // 101: ratchet.ProjectList
+	(*ProjectReq)(nil),              // 102: ratchet.ProjectReq
+	(*TaskCreateReq)(nil),           // 103: ratchet.TaskCreateReq
+	(*TaskUpdateReq)(nil),           // 104: ratchet.TaskUpdateReq
+	(*TaskClaimReq)(nil),            // 105: ratchet.TaskClaimReq
+	(*TaskListReq)(nil),             // 106: ratchet.TaskListReq
+	(*TaskInfo)(nil),                // 107: ratchet.TaskInfo
+	(*TaskList)(nil),                // 108: ratchet.TaskList
+	(*TaskReq)(nil),                 // 109: ratchet.TaskReq
+	(*CommitProviderSaveReq)(nil),   // 110: ratchet.CommitProviderSaveReq
+	(*GetProviderOperationReq)(nil), // 111: ratchet.GetProviderOperationReq
+	(*ProviderSaveResult)(nil),      // 112: ratchet.ProviderSaveResult
+	(*ProviderOperation)(nil),       // 113: ratchet.ProviderOperation
+	nil,                             // 114: ratchet.Job.MetadataEntry
+	(*timestamppb.Timestamp)(nil),   // 115: google.protobuf.Timestamp
 }
 var file_internal_proto_ratchet_proto_depIdxs = []int32{
-	109, // 0: ratchet.Session.created_at:type_name -> google.protobuf.Timestamp
-	1,   // 1: ratchet.SessionList.sessions:type_name -> ratchet.Session
-	109, // 2: ratchet.CompactionRecord.created_at:type_name -> google.protobuf.Timestamp
-	13,  // 3: ratchet.SessionCompactionList.records:type_name -> ratchet.CompactionRecord
-	20,  // 4: ratchet.ChatEvent.token:type_name -> ratchet.TokenDelta
-	21,  // 5: ratchet.ChatEvent.tool_start:type_name -> ratchet.ToolCallStart
-	22,  // 6: ratchet.ChatEvent.tool_result:type_name -> ratchet.ToolCallResult
-	23,  // 7: ratchet.ChatEvent.permission:type_name -> ratchet.PermissionRequest
-	31,  // 8: ratchet.ChatEvent.agent_spawned:type_name -> ratchet.AgentSpawned
-	32,  // 9: ratchet.ChatEvent.agent_message:type_name -> ratchet.AgentMessage
-	33,  // 10: ratchet.ChatEvent.complete:type_name -> ratchet.SessionComplete
-	34,  // 11: ratchet.ChatEvent.error:type_name -> ratchet.ErrorEvent
-	35,  // 12: ratchet.ChatEvent.history:type_name -> ratchet.SessionHistory
-	53,  // 13: ratchet.ChatEvent.plan_proposed:type_name -> ratchet.Plan
-	52,  // 14: ratchet.ChatEvent.plan_step_update:type_name -> ratchet.PlanStep
-	62,  // 15: ratchet.ChatEvent.fleet_status:type_name -> ratchet.FleetStatus
-	19,  // 16: ratchet.ChatEvent.context_compressed:type_name -> ratchet.ContextCompressedEvent
-	18,  // 17: ratchet.ChatEvent.auth_error:type_name -> ratchet.AuthError
-	17,  // 18: ratchet.ChatEvent.thinking:type_name -> ratchet.ThinkingBlock
-	25,  // 19: ratchet.TrustState.rules:type_name -> ratchet.TrustRule
-	27,  // 20: ratchet.TrustState.grants:type_name -> ratchet.TrustGrant
-	109, // 21: ratchet.TrustGrant.created_at:type_name -> google.protobuf.Timestamp
-	36,  // 22: ratchet.SessionHistory.messages:type_name -> ratchet.HistoryMessage
-	109, // 23: ratchet.HistoryMessage.timestamp:type_name -> google.protobuf.Timestamp
-	38,  // 24: ratchet.ProviderList.providers:type_name -> ratchet.Provider
-	45,  // 25: ratchet.AgentList.agents:type_name -> ratchet.Agent
-	31,  // 26: ratchet.TeamEvent.agent_spawned:type_name -> ratchet.AgentSpawned
-	32,  // 27: ratchet.TeamEvent.agent_message:type_name -> ratchet.AgentMessage
-	20,  // 28: ratchet.TeamEvent.token:type_name -> ratchet.TokenDelta
-	21,  // 29: ratchet.TeamEvent.tool_start:type_name -> ratchet.ToolCallStart
-	22,  // 30: ratchet.TeamEvent.tool_result:type_name -> ratchet.ToolCallResult
-	23,  // 31: ratchet.TeamEvent.permission:type_name -> ratchet.PermissionRequest
-	33,  // 32: ratchet.TeamEvent.complete:type_name -> ratchet.SessionComplete
-	34,  // 33: ratchet.TeamEvent.error:type_name -> ratchet.ErrorEvent
-	45,  // 34: ratchet.TeamStatus.agents:type_name -> ratchet.Agent
-	52,  // 35: ratchet.Plan.steps:type_name -> ratchet.PlanStep
-	56,  // 36: ratchet.CronJobList.jobs:type_name -> ratchet.CronJob
-	61,  // 37: ratchet.FleetStatus.workers:type_name -> ratchet.FleetWorker
-	108, // 38: ratchet.Job.metadata:type_name -> ratchet.Job.MetadataEntry
-	65,  // 39: ratchet.JobList.jobs:type_name -> ratchet.Job
-	75,  // 40: ratchet.MeshEvent.blackboard_sync:type_name -> ratchet.BlackboardSync
-	32,  // 41: ratchet.MeshEvent.agent_message:type_name -> ratchet.AgentMessage
-	74,  // 42: ratchet.MeshEvent.node_registered:type_name -> ratchet.RegisterNodeResp
-	77,  // 43: ratchet.BlackboardReadResp.entry:type_name -> ratchet.BlackboardEntry
-	77,  // 44: ratchet.BlackboardListResp.entries:type_name -> ratchet.BlackboardEntry
-	51,  // 45: ratchet.TeamList.teams:type_name -> ratchet.TeamStatus
-	32,  // 46: ratchet.TeamActivityEvent.agent_message:type_name -> ratchet.AgentMessage
-	20,  // 47: ratchet.TeamActivityEvent.token:type_name -> ratchet.TokenDelta
-	34,  // 48: ratchet.TeamActivityEvent.error:type_name -> ratchet.ErrorEvent
-	33,  // 49: ratchet.TeamActivityEvent.complete:type_name -> ratchet.SessionComplete
-	91,  // 50: ratchet.TeamActivityEvent.human_request:type_name -> ratchet.HumanRequest
-	91,  // 51: ratchet.PendingHumanList.requests:type_name -> ratchet.HumanRequest
-	98,  // 52: ratchet.ProjectList.projects:type_name -> ratchet.ProjectStatus
-	105, // 53: ratchet.TaskList.tasks:type_name -> ratchet.TaskInfo
-	2,   // 54: ratchet.RatchetDaemon.CreateSession:input_type -> ratchet.CreateSessionReq
-	0,   // 55: ratchet.RatchetDaemon.ListSessions:input_type -> ratchet.Empty
-	7,   // 56: ratchet.RatchetDaemon.ListSessionMessages:input_type -> ratchet.SessionMessagesReq
-	8,   // 57: ratchet.RatchetDaemon.CloneSession:input_type -> ratchet.CloneSessionReq
-	9,   // 58: ratchet.RatchetDaemon.ForkSession:input_type -> ratchet.ForkSessionReq
-	10,  // 59: ratchet.RatchetDaemon.GetSessionTree:input_type -> ratchet.SessionTreeReq
-	11,  // 60: ratchet.RatchetDaemon.ListSessionCompactions:input_type -> ratchet.SessionCompactionsReq
-	12,  // 61: ratchet.RatchetDaemon.UpdateSessionSummary:input_type -> ratchet.UpdateSessionSummaryReq
-	4,   // 62: ratchet.RatchetDaemon.AttachSession:input_type -> ratchet.AttachReq
-	5,   // 63: ratchet.RatchetDaemon.DetachSession:input_type -> ratchet.DetachReq
-	6,   // 64: ratchet.RatchetDaemon.KillSession:input_type -> ratchet.KillReq
-	15,  // 65: ratchet.RatchetDaemon.SendMessage:input_type -> ratchet.SendMessageReq
-	24,  // 66: ratchet.RatchetDaemon.RespondToPermission:input_type -> ratchet.PermissionResponse
-	0,   // 67: ratchet.RatchetDaemon.GetTrustState:input_type -> ratchet.Empty
-	28,  // 68: ratchet.RatchetDaemon.SetTrustMode:input_type -> ratchet.SetTrustModeReq
-	29,  // 69: ratchet.RatchetDaemon.AddTrustRule:input_type -> ratchet.AddTrustRuleReq
-	0,   // 70: ratchet.RatchetDaemon.ResetTrust:input_type -> ratchet.Empty
-	29,  // 71: ratchet.RatchetDaemon.AddTrustGrant:input_type -> ratchet.AddTrustRuleReq
-	30,  // 72: ratchet.RatchetDaemon.RevokeTrustGrant:input_type -> ratchet.RevokeTrustGrantReq
-	37,  // 73: ratchet.RatchetDaemon.AddProvider:input_type -> ratchet.AddProviderReq
-	0,   // 74: ratchet.RatchetDaemon.ListProviders:input_type -> ratchet.Empty
-	40,  // 75: ratchet.RatchetDaemon.TestProvider:input_type -> ratchet.TestProviderReq
-	42,  // 76: ratchet.RatchetDaemon.RemoveProvider:input_type -> ratchet.RemoveProviderReq
-	43,  // 77: ratchet.RatchetDaemon.SetDefaultProvider:input_type -> ratchet.SetDefaultProviderReq
-	44,  // 78: ratchet.RatchetDaemon.UpdateProviderModel:input_type -> ratchet.UpdateProviderModelReq
-	0,   // 79: ratchet.RatchetDaemon.ListAgents:input_type -> ratchet.Empty
-	47,  // 80: ratchet.RatchetDaemon.GetAgentStatus:input_type -> ratchet.AgentStatusReq
-	48,  // 81: ratchet.RatchetDaemon.StartTeam:input_type -> ratchet.StartTeamReq
-	50,  // 82: ratchet.RatchetDaemon.GetTeamStatus:input_type -> ratchet.TeamStatusReq
-	54,  // 83: ratchet.RatchetDaemon.ApprovePlan:input_type -> ratchet.ApprovePlanReq
-	55,  // 84: ratchet.RatchetDaemon.RejectPlan:input_type -> ratchet.RejectPlanReq
-	60,  // 85: ratchet.RatchetDaemon.StartFleet:input_type -> ratchet.StartFleetReq
-	63,  // 86: ratchet.RatchetDaemon.GetFleetStatus:input_type -> ratchet.FleetStatusReq
-	64,  // 87: ratchet.RatchetDaemon.KillFleetWorker:input_type -> ratchet.KillFleetWorkerReq
-	57,  // 88: ratchet.RatchetDaemon.CreateCron:input_type -> ratchet.CreateCronReq
-	0,   // 89: ratchet.RatchetDaemon.ListCrons:input_type -> ratchet.Empty
-	59,  // 90: ratchet.RatchetDaemon.PauseCron:input_type -> ratchet.CronJobReq
-	59,  // 91: ratchet.RatchetDaemon.ResumeCron:input_type -> ratchet.CronJobReq
-	59,  // 92: ratchet.RatchetDaemon.StopCron:input_type -> ratchet.CronJobReq
-	0,   // 93: ratchet.RatchetDaemon.ListJobs:input_type -> ratchet.Empty
-	67,  // 94: ratchet.RatchetDaemon.PauseJob:input_type -> ratchet.JobReq
-	67,  // 95: ratchet.RatchetDaemon.ResumeJob:input_type -> ratchet.JobReq
-	67,  // 96: ratchet.RatchetDaemon.KillJob:input_type -> ratchet.JobReq
-	0,   // 97: ratchet.RatchetDaemon.Health:input_type -> ratchet.Empty
-	0,   // 98: ratchet.RatchetDaemon.Shutdown:input_type -> ratchet.Empty
-	69,  // 99: ratchet.RatchetDaemon.CheckVersion:input_type -> ratchet.VersionCheckReq
-	71,  // 100: ratchet.RatchetDaemon.RequestReload:input_type -> ratchet.ReloadReq
-	73,  // 101: ratchet.RatchetDaemon.RegisterMeshNode:input_type -> ratchet.RegisterNodeReq
-	76,  // 102: ratchet.RatchetDaemon.MeshStream:input_type -> ratchet.MeshEvent
-	78,  // 103: ratchet.RatchetDaemon.BlackboardRead:input_type -> ratchet.BlackboardReadReq
-	80,  // 104: ratchet.RatchetDaemon.BlackboardWrite:input_type -> ratchet.BlackboardWriteReq
-	81,  // 105: ratchet.RatchetDaemon.BlackboardList:input_type -> ratchet.BlackboardListReq
-	83,  // 106: ratchet.RatchetDaemon.ListTeams:input_type -> ratchet.ListTeamsReq
-	88,  // 107: ratchet.RatchetDaemon.KillTeam:input_type -> ratchet.KillTeamReq
-	87,  // 108: ratchet.RatchetDaemon.RenameTeam:input_type -> ratchet.TeamRenameReq
-	85,  // 109: ratchet.RatchetDaemon.TeamAddAgent:input_type -> ratchet.TeamAddAgentReq
-	86,  // 110: ratchet.RatchetDaemon.TeamRemoveAgent:input_type -> ratchet.TeamRemoveAgentReq
-	89,  // 111: ratchet.RatchetDaemon.AttachTeam:input_type -> ratchet.AttachTeamReq
-	95,  // 112: ratchet.RatchetDaemon.SteerTeam:input_type -> ratchet.SteerTeamReq
-	96,  // 113: ratchet.RatchetDaemon.DirectMessage:input_type -> ratchet.DirectMessageReq
-	92,  // 114: ratchet.RatchetDaemon.RespondToHuman:input_type -> ratchet.HumanResponse
-	93,  // 115: ratchet.RatchetDaemon.ListPendingHuman:input_type -> ratchet.PendingHumanReq
-	97,  // 116: ratchet.RatchetDaemon.StartProject:input_type -> ratchet.StartProjectReq
-	0,   // 117: ratchet.RatchetDaemon.ListProjects:input_type -> ratchet.Empty
-	100, // 118: ratchet.RatchetDaemon.PauseProject:input_type -> ratchet.ProjectReq
-	100, // 119: ratchet.RatchetDaemon.ResumeProject:input_type -> ratchet.ProjectReq
-	100, // 120: ratchet.RatchetDaemon.KillProject:input_type -> ratchet.ProjectReq
-	100, // 121: ratchet.RatchetDaemon.GetProjectStatus:input_type -> ratchet.ProjectReq
-	101, // 122: ratchet.RatchetDaemon.CreateTask:input_type -> ratchet.TaskCreateReq
-	103, // 123: ratchet.RatchetDaemon.ClaimTask:input_type -> ratchet.TaskClaimReq
-	102, // 124: ratchet.RatchetDaemon.UpdateTask:input_type -> ratchet.TaskUpdateReq
-	104, // 125: ratchet.RatchetDaemon.ListTasks:input_type -> ratchet.TaskListReq
-	107, // 126: ratchet.RatchetDaemon.GetTask:input_type -> ratchet.TaskReq
-	1,   // 127: ratchet.RatchetDaemon.CreateSession:output_type -> ratchet.Session
-	3,   // 128: ratchet.RatchetDaemon.ListSessions:output_type -> ratchet.SessionList
-	35,  // 129: ratchet.RatchetDaemon.ListSessionMessages:output_type -> ratchet.SessionHistory
-	1,   // 130: ratchet.RatchetDaemon.CloneSession:output_type -> ratchet.Session
-	1,   // 131: ratchet.RatchetDaemon.ForkSession:output_type -> ratchet.Session
-	3,   // 132: ratchet.RatchetDaemon.GetSessionTree:output_type -> ratchet.SessionList
-	14,  // 133: ratchet.RatchetDaemon.ListSessionCompactions:output_type -> ratchet.SessionCompactionList
-	1,   // 134: ratchet.RatchetDaemon.UpdateSessionSummary:output_type -> ratchet.Session
-	16,  // 135: ratchet.RatchetDaemon.AttachSession:output_type -> ratchet.ChatEvent
-	0,   // 136: ratchet.RatchetDaemon.DetachSession:output_type -> ratchet.Empty
-	0,   // 137: ratchet.RatchetDaemon.KillSession:output_type -> ratchet.Empty
-	16,  // 138: ratchet.RatchetDaemon.SendMessage:output_type -> ratchet.ChatEvent
-	0,   // 139: ratchet.RatchetDaemon.RespondToPermission:output_type -> ratchet.Empty
-	26,  // 140: ratchet.RatchetDaemon.GetTrustState:output_type -> ratchet.TrustState
-	26,  // 141: ratchet.RatchetDaemon.SetTrustMode:output_type -> ratchet.TrustState
-	26,  // 142: ratchet.RatchetDaemon.AddTrustRule:output_type -> ratchet.TrustState
-	26,  // 143: ratchet.RatchetDaemon.ResetTrust:output_type -> ratchet.TrustState
-	26,  // 144: ratchet.RatchetDaemon.AddTrustGrant:output_type -> ratchet.TrustState
-	26,  // 145: ratchet.RatchetDaemon.RevokeTrustGrant:output_type -> ratchet.TrustState
-	38,  // 146: ratchet.RatchetDaemon.AddProvider:output_type -> ratchet.Provider
-	39,  // 147: ratchet.RatchetDaemon.ListProviders:output_type -> ratchet.ProviderList
-	41,  // 148: ratchet.RatchetDaemon.TestProvider:output_type -> ratchet.TestProviderResult
-	0,   // 149: ratchet.RatchetDaemon.RemoveProvider:output_type -> ratchet.Empty
-	0,   // 150: ratchet.RatchetDaemon.SetDefaultProvider:output_type -> ratchet.Empty
-	0,   // 151: ratchet.RatchetDaemon.UpdateProviderModel:output_type -> ratchet.Empty
-	46,  // 152: ratchet.RatchetDaemon.ListAgents:output_type -> ratchet.AgentList
-	45,  // 153: ratchet.RatchetDaemon.GetAgentStatus:output_type -> ratchet.Agent
-	49,  // 154: ratchet.RatchetDaemon.StartTeam:output_type -> ratchet.TeamEvent
-	51,  // 155: ratchet.RatchetDaemon.GetTeamStatus:output_type -> ratchet.TeamStatus
-	16,  // 156: ratchet.RatchetDaemon.ApprovePlan:output_type -> ratchet.ChatEvent
-	0,   // 157: ratchet.RatchetDaemon.RejectPlan:output_type -> ratchet.Empty
-	16,  // 158: ratchet.RatchetDaemon.StartFleet:output_type -> ratchet.ChatEvent
-	62,  // 159: ratchet.RatchetDaemon.GetFleetStatus:output_type -> ratchet.FleetStatus
-	0,   // 160: ratchet.RatchetDaemon.KillFleetWorker:output_type -> ratchet.Empty
-	56,  // 161: ratchet.RatchetDaemon.CreateCron:output_type -> ratchet.CronJob
-	58,  // 162: ratchet.RatchetDaemon.ListCrons:output_type -> ratchet.CronJobList
-	0,   // 163: ratchet.RatchetDaemon.PauseCron:output_type -> ratchet.Empty
-	0,   // 164: ratchet.RatchetDaemon.ResumeCron:output_type -> ratchet.Empty
-	0,   // 165: ratchet.RatchetDaemon.StopCron:output_type -> ratchet.Empty
-	66,  // 166: ratchet.RatchetDaemon.ListJobs:output_type -> ratchet.JobList
-	0,   // 167: ratchet.RatchetDaemon.PauseJob:output_type -> ratchet.Empty
-	0,   // 168: ratchet.RatchetDaemon.ResumeJob:output_type -> ratchet.Empty
-	0,   // 169: ratchet.RatchetDaemon.KillJob:output_type -> ratchet.Empty
-	68,  // 170: ratchet.RatchetDaemon.Health:output_type -> ratchet.HealthResponse
-	0,   // 171: ratchet.RatchetDaemon.Shutdown:output_type -> ratchet.Empty
-	70,  // 172: ratchet.RatchetDaemon.CheckVersion:output_type -> ratchet.VersionCheckResp
-	72,  // 173: ratchet.RatchetDaemon.RequestReload:output_type -> ratchet.ReloadStatus
-	74,  // 174: ratchet.RatchetDaemon.RegisterMeshNode:output_type -> ratchet.RegisterNodeResp
-	76,  // 175: ratchet.RatchetDaemon.MeshStream:output_type -> ratchet.MeshEvent
-	79,  // 176: ratchet.RatchetDaemon.BlackboardRead:output_type -> ratchet.BlackboardReadResp
-	77,  // 177: ratchet.RatchetDaemon.BlackboardWrite:output_type -> ratchet.BlackboardEntry
-	82,  // 178: ratchet.RatchetDaemon.BlackboardList:output_type -> ratchet.BlackboardListResp
-	84,  // 179: ratchet.RatchetDaemon.ListTeams:output_type -> ratchet.TeamList
-	0,   // 180: ratchet.RatchetDaemon.KillTeam:output_type -> ratchet.Empty
-	0,   // 181: ratchet.RatchetDaemon.RenameTeam:output_type -> ratchet.Empty
-	0,   // 182: ratchet.RatchetDaemon.TeamAddAgent:output_type -> ratchet.Empty
-	0,   // 183: ratchet.RatchetDaemon.TeamRemoveAgent:output_type -> ratchet.Empty
-	90,  // 184: ratchet.RatchetDaemon.AttachTeam:output_type -> ratchet.TeamActivityEvent
-	0,   // 185: ratchet.RatchetDaemon.SteerTeam:output_type -> ratchet.Empty
-	0,   // 186: ratchet.RatchetDaemon.DirectMessage:output_type -> ratchet.Empty
-	0,   // 187: ratchet.RatchetDaemon.RespondToHuman:output_type -> ratchet.Empty
-	94,  // 188: ratchet.RatchetDaemon.ListPendingHuman:output_type -> ratchet.PendingHumanList
-	98,  // 189: ratchet.RatchetDaemon.StartProject:output_type -> ratchet.ProjectStatus
-	99,  // 190: ratchet.RatchetDaemon.ListProjects:output_type -> ratchet.ProjectList
-	0,   // 191: ratchet.RatchetDaemon.PauseProject:output_type -> ratchet.Empty
-	0,   // 192: ratchet.RatchetDaemon.ResumeProject:output_type -> ratchet.Empty
-	0,   // 193: ratchet.RatchetDaemon.KillProject:output_type -> ratchet.Empty
-	98,  // 194: ratchet.RatchetDaemon.GetProjectStatus:output_type -> ratchet.ProjectStatus
-	105, // 195: ratchet.RatchetDaemon.CreateTask:output_type -> ratchet.TaskInfo
-	105, // 196: ratchet.RatchetDaemon.ClaimTask:output_type -> ratchet.TaskInfo
-	105, // 197: ratchet.RatchetDaemon.UpdateTask:output_type -> ratchet.TaskInfo
-	106, // 198: ratchet.RatchetDaemon.ListTasks:output_type -> ratchet.TaskList
-	105, // 199: ratchet.RatchetDaemon.GetTask:output_type -> ratchet.TaskInfo
-	127, // [127:200] is the sub-list for method output_type
-	54,  // [54:127] is the sub-list for method input_type
-	54,  // [54:54] is the sub-list for extension type_name
-	54,  // [54:54] is the sub-list for extension extendee
-	0,   // [0:54] is the sub-list for field type_name
+	115, // 0: ratchet.Session.created_at:type_name -> google.protobuf.Timestamp
+	3,   // 1: ratchet.SessionList.sessions:type_name -> ratchet.Session
+	115, // 2: ratchet.CompactionRecord.created_at:type_name -> google.protobuf.Timestamp
+	15,  // 3: ratchet.SessionCompactionList.records:type_name -> ratchet.CompactionRecord
+	22,  // 4: ratchet.ChatEvent.token:type_name -> ratchet.TokenDelta
+	23,  // 5: ratchet.ChatEvent.tool_start:type_name -> ratchet.ToolCallStart
+	24,  // 6: ratchet.ChatEvent.tool_result:type_name -> ratchet.ToolCallResult
+	25,  // 7: ratchet.ChatEvent.permission:type_name -> ratchet.PermissionRequest
+	33,  // 8: ratchet.ChatEvent.agent_spawned:type_name -> ratchet.AgentSpawned
+	34,  // 9: ratchet.ChatEvent.agent_message:type_name -> ratchet.AgentMessage
+	35,  // 10: ratchet.ChatEvent.complete:type_name -> ratchet.SessionComplete
+	36,  // 11: ratchet.ChatEvent.error:type_name -> ratchet.ErrorEvent
+	37,  // 12: ratchet.ChatEvent.history:type_name -> ratchet.SessionHistory
+	55,  // 13: ratchet.ChatEvent.plan_proposed:type_name -> ratchet.Plan
+	54,  // 14: ratchet.ChatEvent.plan_step_update:type_name -> ratchet.PlanStep
+	64,  // 15: ratchet.ChatEvent.fleet_status:type_name -> ratchet.FleetStatus
+	21,  // 16: ratchet.ChatEvent.context_compressed:type_name -> ratchet.ContextCompressedEvent
+	20,  // 17: ratchet.ChatEvent.auth_error:type_name -> ratchet.AuthError
+	19,  // 18: ratchet.ChatEvent.thinking:type_name -> ratchet.ThinkingBlock
+	27,  // 19: ratchet.TrustState.rules:type_name -> ratchet.TrustRule
+	29,  // 20: ratchet.TrustState.grants:type_name -> ratchet.TrustGrant
+	115, // 21: ratchet.TrustGrant.created_at:type_name -> google.protobuf.Timestamp
+	38,  // 22: ratchet.SessionHistory.messages:type_name -> ratchet.HistoryMessage
+	115, // 23: ratchet.HistoryMessage.timestamp:type_name -> google.protobuf.Timestamp
+	40,  // 24: ratchet.ProviderList.providers:type_name -> ratchet.Provider
+	47,  // 25: ratchet.AgentList.agents:type_name -> ratchet.Agent
+	33,  // 26: ratchet.TeamEvent.agent_spawned:type_name -> ratchet.AgentSpawned
+	34,  // 27: ratchet.TeamEvent.agent_message:type_name -> ratchet.AgentMessage
+	22,  // 28: ratchet.TeamEvent.token:type_name -> ratchet.TokenDelta
+	23,  // 29: ratchet.TeamEvent.tool_start:type_name -> ratchet.ToolCallStart
+	24,  // 30: ratchet.TeamEvent.tool_result:type_name -> ratchet.ToolCallResult
+	25,  // 31: ratchet.TeamEvent.permission:type_name -> ratchet.PermissionRequest
+	35,  // 32: ratchet.TeamEvent.complete:type_name -> ratchet.SessionComplete
+	36,  // 33: ratchet.TeamEvent.error:type_name -> ratchet.ErrorEvent
+	47,  // 34: ratchet.TeamStatus.agents:type_name -> ratchet.Agent
+	54,  // 35: ratchet.Plan.steps:type_name -> ratchet.PlanStep
+	58,  // 36: ratchet.CronJobList.jobs:type_name -> ratchet.CronJob
+	63,  // 37: ratchet.FleetStatus.workers:type_name -> ratchet.FleetWorker
+	114, // 38: ratchet.Job.metadata:type_name -> ratchet.Job.MetadataEntry
+	67,  // 39: ratchet.JobList.jobs:type_name -> ratchet.Job
+	77,  // 40: ratchet.MeshEvent.blackboard_sync:type_name -> ratchet.BlackboardSync
+	34,  // 41: ratchet.MeshEvent.agent_message:type_name -> ratchet.AgentMessage
+	76,  // 42: ratchet.MeshEvent.node_registered:type_name -> ratchet.RegisterNodeResp
+	79,  // 43: ratchet.BlackboardReadResp.entry:type_name -> ratchet.BlackboardEntry
+	79,  // 44: ratchet.BlackboardListResp.entries:type_name -> ratchet.BlackboardEntry
+	53,  // 45: ratchet.TeamList.teams:type_name -> ratchet.TeamStatus
+	34,  // 46: ratchet.TeamActivityEvent.agent_message:type_name -> ratchet.AgentMessage
+	22,  // 47: ratchet.TeamActivityEvent.token:type_name -> ratchet.TokenDelta
+	36,  // 48: ratchet.TeamActivityEvent.error:type_name -> ratchet.ErrorEvent
+	35,  // 49: ratchet.TeamActivityEvent.complete:type_name -> ratchet.SessionComplete
+	93,  // 50: ratchet.TeamActivityEvent.human_request:type_name -> ratchet.HumanRequest
+	93,  // 51: ratchet.PendingHumanList.requests:type_name -> ratchet.HumanRequest
+	100, // 52: ratchet.ProjectList.projects:type_name -> ratchet.ProjectStatus
+	107, // 53: ratchet.TaskList.tasks:type_name -> ratchet.TaskInfo
+	39,  // 54: ratchet.CommitProviderSaveReq.provider:type_name -> ratchet.AddProviderReq
+	0,   // 55: ratchet.ProviderOperation.state:type_name -> ratchet.ProviderOperationState
+	1,   // 56: ratchet.ProviderOperation.failure:type_name -> ratchet.ProviderOperationFailure
+	115, // 57: ratchet.ProviderOperation.created_at:type_name -> google.protobuf.Timestamp
+	115, // 58: ratchet.ProviderOperation.updated_at:type_name -> google.protobuf.Timestamp
+	115, // 59: ratchet.ProviderOperation.expires_at:type_name -> google.protobuf.Timestamp
+	112, // 60: ratchet.ProviderOperation.result:type_name -> ratchet.ProviderSaveResult
+	4,   // 61: ratchet.RatchetDaemon.CreateSession:input_type -> ratchet.CreateSessionReq
+	2,   // 62: ratchet.RatchetDaemon.ListSessions:input_type -> ratchet.Empty
+	9,   // 63: ratchet.RatchetDaemon.ListSessionMessages:input_type -> ratchet.SessionMessagesReq
+	10,  // 64: ratchet.RatchetDaemon.CloneSession:input_type -> ratchet.CloneSessionReq
+	11,  // 65: ratchet.RatchetDaemon.ForkSession:input_type -> ratchet.ForkSessionReq
+	12,  // 66: ratchet.RatchetDaemon.GetSessionTree:input_type -> ratchet.SessionTreeReq
+	13,  // 67: ratchet.RatchetDaemon.ListSessionCompactions:input_type -> ratchet.SessionCompactionsReq
+	14,  // 68: ratchet.RatchetDaemon.UpdateSessionSummary:input_type -> ratchet.UpdateSessionSummaryReq
+	6,   // 69: ratchet.RatchetDaemon.AttachSession:input_type -> ratchet.AttachReq
+	7,   // 70: ratchet.RatchetDaemon.DetachSession:input_type -> ratchet.DetachReq
+	8,   // 71: ratchet.RatchetDaemon.KillSession:input_type -> ratchet.KillReq
+	17,  // 72: ratchet.RatchetDaemon.SendMessage:input_type -> ratchet.SendMessageReq
+	26,  // 73: ratchet.RatchetDaemon.RespondToPermission:input_type -> ratchet.PermissionResponse
+	2,   // 74: ratchet.RatchetDaemon.GetTrustState:input_type -> ratchet.Empty
+	30,  // 75: ratchet.RatchetDaemon.SetTrustMode:input_type -> ratchet.SetTrustModeReq
+	31,  // 76: ratchet.RatchetDaemon.AddTrustRule:input_type -> ratchet.AddTrustRuleReq
+	2,   // 77: ratchet.RatchetDaemon.ResetTrust:input_type -> ratchet.Empty
+	31,  // 78: ratchet.RatchetDaemon.AddTrustGrant:input_type -> ratchet.AddTrustRuleReq
+	32,  // 79: ratchet.RatchetDaemon.RevokeTrustGrant:input_type -> ratchet.RevokeTrustGrantReq
+	39,  // 80: ratchet.RatchetDaemon.AddProvider:input_type -> ratchet.AddProviderReq
+	110, // 81: ratchet.RatchetDaemon.CommitProviderSave:input_type -> ratchet.CommitProviderSaveReq
+	111, // 82: ratchet.RatchetDaemon.GetProviderOperation:input_type -> ratchet.GetProviderOperationReq
+	2,   // 83: ratchet.RatchetDaemon.ListProviders:input_type -> ratchet.Empty
+	42,  // 84: ratchet.RatchetDaemon.TestProvider:input_type -> ratchet.TestProviderReq
+	44,  // 85: ratchet.RatchetDaemon.RemoveProvider:input_type -> ratchet.RemoveProviderReq
+	45,  // 86: ratchet.RatchetDaemon.SetDefaultProvider:input_type -> ratchet.SetDefaultProviderReq
+	46,  // 87: ratchet.RatchetDaemon.UpdateProviderModel:input_type -> ratchet.UpdateProviderModelReq
+	2,   // 88: ratchet.RatchetDaemon.ListAgents:input_type -> ratchet.Empty
+	49,  // 89: ratchet.RatchetDaemon.GetAgentStatus:input_type -> ratchet.AgentStatusReq
+	50,  // 90: ratchet.RatchetDaemon.StartTeam:input_type -> ratchet.StartTeamReq
+	52,  // 91: ratchet.RatchetDaemon.GetTeamStatus:input_type -> ratchet.TeamStatusReq
+	56,  // 92: ratchet.RatchetDaemon.ApprovePlan:input_type -> ratchet.ApprovePlanReq
+	57,  // 93: ratchet.RatchetDaemon.RejectPlan:input_type -> ratchet.RejectPlanReq
+	62,  // 94: ratchet.RatchetDaemon.StartFleet:input_type -> ratchet.StartFleetReq
+	65,  // 95: ratchet.RatchetDaemon.GetFleetStatus:input_type -> ratchet.FleetStatusReq
+	66,  // 96: ratchet.RatchetDaemon.KillFleetWorker:input_type -> ratchet.KillFleetWorkerReq
+	59,  // 97: ratchet.RatchetDaemon.CreateCron:input_type -> ratchet.CreateCronReq
+	2,   // 98: ratchet.RatchetDaemon.ListCrons:input_type -> ratchet.Empty
+	61,  // 99: ratchet.RatchetDaemon.PauseCron:input_type -> ratchet.CronJobReq
+	61,  // 100: ratchet.RatchetDaemon.ResumeCron:input_type -> ratchet.CronJobReq
+	61,  // 101: ratchet.RatchetDaemon.StopCron:input_type -> ratchet.CronJobReq
+	2,   // 102: ratchet.RatchetDaemon.ListJobs:input_type -> ratchet.Empty
+	69,  // 103: ratchet.RatchetDaemon.PauseJob:input_type -> ratchet.JobReq
+	69,  // 104: ratchet.RatchetDaemon.ResumeJob:input_type -> ratchet.JobReq
+	69,  // 105: ratchet.RatchetDaemon.KillJob:input_type -> ratchet.JobReq
+	2,   // 106: ratchet.RatchetDaemon.Health:input_type -> ratchet.Empty
+	2,   // 107: ratchet.RatchetDaemon.Shutdown:input_type -> ratchet.Empty
+	71,  // 108: ratchet.RatchetDaemon.CheckVersion:input_type -> ratchet.VersionCheckReq
+	73,  // 109: ratchet.RatchetDaemon.RequestReload:input_type -> ratchet.ReloadReq
+	75,  // 110: ratchet.RatchetDaemon.RegisterMeshNode:input_type -> ratchet.RegisterNodeReq
+	78,  // 111: ratchet.RatchetDaemon.MeshStream:input_type -> ratchet.MeshEvent
+	80,  // 112: ratchet.RatchetDaemon.BlackboardRead:input_type -> ratchet.BlackboardReadReq
+	82,  // 113: ratchet.RatchetDaemon.BlackboardWrite:input_type -> ratchet.BlackboardWriteReq
+	83,  // 114: ratchet.RatchetDaemon.BlackboardList:input_type -> ratchet.BlackboardListReq
+	85,  // 115: ratchet.RatchetDaemon.ListTeams:input_type -> ratchet.ListTeamsReq
+	90,  // 116: ratchet.RatchetDaemon.KillTeam:input_type -> ratchet.KillTeamReq
+	89,  // 117: ratchet.RatchetDaemon.RenameTeam:input_type -> ratchet.TeamRenameReq
+	87,  // 118: ratchet.RatchetDaemon.TeamAddAgent:input_type -> ratchet.TeamAddAgentReq
+	88,  // 119: ratchet.RatchetDaemon.TeamRemoveAgent:input_type -> ratchet.TeamRemoveAgentReq
+	91,  // 120: ratchet.RatchetDaemon.AttachTeam:input_type -> ratchet.AttachTeamReq
+	97,  // 121: ratchet.RatchetDaemon.SteerTeam:input_type -> ratchet.SteerTeamReq
+	98,  // 122: ratchet.RatchetDaemon.DirectMessage:input_type -> ratchet.DirectMessageReq
+	94,  // 123: ratchet.RatchetDaemon.RespondToHuman:input_type -> ratchet.HumanResponse
+	95,  // 124: ratchet.RatchetDaemon.ListPendingHuman:input_type -> ratchet.PendingHumanReq
+	99,  // 125: ratchet.RatchetDaemon.StartProject:input_type -> ratchet.StartProjectReq
+	2,   // 126: ratchet.RatchetDaemon.ListProjects:input_type -> ratchet.Empty
+	102, // 127: ratchet.RatchetDaemon.PauseProject:input_type -> ratchet.ProjectReq
+	102, // 128: ratchet.RatchetDaemon.ResumeProject:input_type -> ratchet.ProjectReq
+	102, // 129: ratchet.RatchetDaemon.KillProject:input_type -> ratchet.ProjectReq
+	102, // 130: ratchet.RatchetDaemon.GetProjectStatus:input_type -> ratchet.ProjectReq
+	103, // 131: ratchet.RatchetDaemon.CreateTask:input_type -> ratchet.TaskCreateReq
+	105, // 132: ratchet.RatchetDaemon.ClaimTask:input_type -> ratchet.TaskClaimReq
+	104, // 133: ratchet.RatchetDaemon.UpdateTask:input_type -> ratchet.TaskUpdateReq
+	106, // 134: ratchet.RatchetDaemon.ListTasks:input_type -> ratchet.TaskListReq
+	109, // 135: ratchet.RatchetDaemon.GetTask:input_type -> ratchet.TaskReq
+	3,   // 136: ratchet.RatchetDaemon.CreateSession:output_type -> ratchet.Session
+	5,   // 137: ratchet.RatchetDaemon.ListSessions:output_type -> ratchet.SessionList
+	37,  // 138: ratchet.RatchetDaemon.ListSessionMessages:output_type -> ratchet.SessionHistory
+	3,   // 139: ratchet.RatchetDaemon.CloneSession:output_type -> ratchet.Session
+	3,   // 140: ratchet.RatchetDaemon.ForkSession:output_type -> ratchet.Session
+	5,   // 141: ratchet.RatchetDaemon.GetSessionTree:output_type -> ratchet.SessionList
+	16,  // 142: ratchet.RatchetDaemon.ListSessionCompactions:output_type -> ratchet.SessionCompactionList
+	3,   // 143: ratchet.RatchetDaemon.UpdateSessionSummary:output_type -> ratchet.Session
+	18,  // 144: ratchet.RatchetDaemon.AttachSession:output_type -> ratchet.ChatEvent
+	2,   // 145: ratchet.RatchetDaemon.DetachSession:output_type -> ratchet.Empty
+	2,   // 146: ratchet.RatchetDaemon.KillSession:output_type -> ratchet.Empty
+	18,  // 147: ratchet.RatchetDaemon.SendMessage:output_type -> ratchet.ChatEvent
+	2,   // 148: ratchet.RatchetDaemon.RespondToPermission:output_type -> ratchet.Empty
+	28,  // 149: ratchet.RatchetDaemon.GetTrustState:output_type -> ratchet.TrustState
+	28,  // 150: ratchet.RatchetDaemon.SetTrustMode:output_type -> ratchet.TrustState
+	28,  // 151: ratchet.RatchetDaemon.AddTrustRule:output_type -> ratchet.TrustState
+	28,  // 152: ratchet.RatchetDaemon.ResetTrust:output_type -> ratchet.TrustState
+	28,  // 153: ratchet.RatchetDaemon.AddTrustGrant:output_type -> ratchet.TrustState
+	28,  // 154: ratchet.RatchetDaemon.RevokeTrustGrant:output_type -> ratchet.TrustState
+	40,  // 155: ratchet.RatchetDaemon.AddProvider:output_type -> ratchet.Provider
+	113, // 156: ratchet.RatchetDaemon.CommitProviderSave:output_type -> ratchet.ProviderOperation
+	113, // 157: ratchet.RatchetDaemon.GetProviderOperation:output_type -> ratchet.ProviderOperation
+	41,  // 158: ratchet.RatchetDaemon.ListProviders:output_type -> ratchet.ProviderList
+	43,  // 159: ratchet.RatchetDaemon.TestProvider:output_type -> ratchet.TestProviderResult
+	2,   // 160: ratchet.RatchetDaemon.RemoveProvider:output_type -> ratchet.Empty
+	2,   // 161: ratchet.RatchetDaemon.SetDefaultProvider:output_type -> ratchet.Empty
+	2,   // 162: ratchet.RatchetDaemon.UpdateProviderModel:output_type -> ratchet.Empty
+	48,  // 163: ratchet.RatchetDaemon.ListAgents:output_type -> ratchet.AgentList
+	47,  // 164: ratchet.RatchetDaemon.GetAgentStatus:output_type -> ratchet.Agent
+	51,  // 165: ratchet.RatchetDaemon.StartTeam:output_type -> ratchet.TeamEvent
+	53,  // 166: ratchet.RatchetDaemon.GetTeamStatus:output_type -> ratchet.TeamStatus
+	18,  // 167: ratchet.RatchetDaemon.ApprovePlan:output_type -> ratchet.ChatEvent
+	2,   // 168: ratchet.RatchetDaemon.RejectPlan:output_type -> ratchet.Empty
+	18,  // 169: ratchet.RatchetDaemon.StartFleet:output_type -> ratchet.ChatEvent
+	64,  // 170: ratchet.RatchetDaemon.GetFleetStatus:output_type -> ratchet.FleetStatus
+	2,   // 171: ratchet.RatchetDaemon.KillFleetWorker:output_type -> ratchet.Empty
+	58,  // 172: ratchet.RatchetDaemon.CreateCron:output_type -> ratchet.CronJob
+	60,  // 173: ratchet.RatchetDaemon.ListCrons:output_type -> ratchet.CronJobList
+	2,   // 174: ratchet.RatchetDaemon.PauseCron:output_type -> ratchet.Empty
+	2,   // 175: ratchet.RatchetDaemon.ResumeCron:output_type -> ratchet.Empty
+	2,   // 176: ratchet.RatchetDaemon.StopCron:output_type -> ratchet.Empty
+	68,  // 177: ratchet.RatchetDaemon.ListJobs:output_type -> ratchet.JobList
+	2,   // 178: ratchet.RatchetDaemon.PauseJob:output_type -> ratchet.Empty
+	2,   // 179: ratchet.RatchetDaemon.ResumeJob:output_type -> ratchet.Empty
+	2,   // 180: ratchet.RatchetDaemon.KillJob:output_type -> ratchet.Empty
+	70,  // 181: ratchet.RatchetDaemon.Health:output_type -> ratchet.HealthResponse
+	2,   // 182: ratchet.RatchetDaemon.Shutdown:output_type -> ratchet.Empty
+	72,  // 183: ratchet.RatchetDaemon.CheckVersion:output_type -> ratchet.VersionCheckResp
+	74,  // 184: ratchet.RatchetDaemon.RequestReload:output_type -> ratchet.ReloadStatus
+	76,  // 185: ratchet.RatchetDaemon.RegisterMeshNode:output_type -> ratchet.RegisterNodeResp
+	78,  // 186: ratchet.RatchetDaemon.MeshStream:output_type -> ratchet.MeshEvent
+	81,  // 187: ratchet.RatchetDaemon.BlackboardRead:output_type -> ratchet.BlackboardReadResp
+	79,  // 188: ratchet.RatchetDaemon.BlackboardWrite:output_type -> ratchet.BlackboardEntry
+	84,  // 189: ratchet.RatchetDaemon.BlackboardList:output_type -> ratchet.BlackboardListResp
+	86,  // 190: ratchet.RatchetDaemon.ListTeams:output_type -> ratchet.TeamList
+	2,   // 191: ratchet.RatchetDaemon.KillTeam:output_type -> ratchet.Empty
+	2,   // 192: ratchet.RatchetDaemon.RenameTeam:output_type -> ratchet.Empty
+	2,   // 193: ratchet.RatchetDaemon.TeamAddAgent:output_type -> ratchet.Empty
+	2,   // 194: ratchet.RatchetDaemon.TeamRemoveAgent:output_type -> ratchet.Empty
+	92,  // 195: ratchet.RatchetDaemon.AttachTeam:output_type -> ratchet.TeamActivityEvent
+	2,   // 196: ratchet.RatchetDaemon.SteerTeam:output_type -> ratchet.Empty
+	2,   // 197: ratchet.RatchetDaemon.DirectMessage:output_type -> ratchet.Empty
+	2,   // 198: ratchet.RatchetDaemon.RespondToHuman:output_type -> ratchet.Empty
+	96,  // 199: ratchet.RatchetDaemon.ListPendingHuman:output_type -> ratchet.PendingHumanList
+	100, // 200: ratchet.RatchetDaemon.StartProject:output_type -> ratchet.ProjectStatus
+	101, // 201: ratchet.RatchetDaemon.ListProjects:output_type -> ratchet.ProjectList
+	2,   // 202: ratchet.RatchetDaemon.PauseProject:output_type -> ratchet.Empty
+	2,   // 203: ratchet.RatchetDaemon.ResumeProject:output_type -> ratchet.Empty
+	2,   // 204: ratchet.RatchetDaemon.KillProject:output_type -> ratchet.Empty
+	100, // 205: ratchet.RatchetDaemon.GetProjectStatus:output_type -> ratchet.ProjectStatus
+	107, // 206: ratchet.RatchetDaemon.CreateTask:output_type -> ratchet.TaskInfo
+	107, // 207: ratchet.RatchetDaemon.ClaimTask:output_type -> ratchet.TaskInfo
+	107, // 208: ratchet.RatchetDaemon.UpdateTask:output_type -> ratchet.TaskInfo
+	108, // 209: ratchet.RatchetDaemon.ListTasks:output_type -> ratchet.TaskList
+	107, // 210: ratchet.RatchetDaemon.GetTask:output_type -> ratchet.TaskInfo
+	136, // [136:211] is the sub-list for method output_type
+	61,  // [61:136] is the sub-list for method input_type
+	61,  // [61:61] is the sub-list for extension type_name
+	61,  // [61:61] is the sub-list for extension extendee
+	0,   // [0:61] is the sub-list for field type_name
 }
 
 func init() { file_internal_proto_ratchet_proto_init() }
@@ -7955,13 +8400,14 @@ func file_internal_proto_ratchet_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_internal_proto_ratchet_proto_rawDesc), len(file_internal_proto_ratchet_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   109,
+			NumEnums:      2,
+			NumMessages:   113,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_internal_proto_ratchet_proto_goTypes,
 		DependencyIndexes: file_internal_proto_ratchet_proto_depIdxs,
+		EnumInfos:         file_internal_proto_ratchet_proto_enumTypes,
 		MessageInfos:      file_internal_proto_ratchet_proto_msgTypes,
 	}.Build()
 	File_internal_proto_ratchet_proto = out.File
