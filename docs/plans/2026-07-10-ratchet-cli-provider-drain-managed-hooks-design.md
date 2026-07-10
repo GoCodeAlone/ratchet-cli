@@ -510,9 +510,10 @@ missing RPC/types; restoring it makes the focused command pass.
 Cause: binding `time.Time` directly produced SQLite text that `unixepoch()`
 read as `NULL`; the existing E2E harness and redactor test also assumed legacy
 alias-stable secret labels.
-Change: persist operation/retry deadlines as RFC3339, assert non-null operation
-timestamps through the RPC, initialize the real operation manager in the shared
-harness, and derive redactor labels from the committed provider pointer.
+Change: persist operation/retry deadlines as RFC3339, compare them through
+SQLite `unixepoch()` rather than mixed-format text ordering, assert non-null
+operation timestamps through the RPC, initialize the real operation manager in
+the shared harness, and derive redactor labels from the committed provider pointer.
 Scope: no manifest change; Task 4B files/staging now name both shared tests.
 Evidence: the focused 4B suite and `go test ./internal/daemon -count=1` pass;
 removing the durable manager makes the named tests fail at compile time.
