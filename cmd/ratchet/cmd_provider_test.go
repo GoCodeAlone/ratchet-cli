@@ -6,17 +6,593 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"os"
+	"os/exec"
 	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 	providerauth "github.com/GoCodeAlone/ratchet-cli/internal/provider"
 	wfprovider "github.com/GoCodeAlone/workflow-plugin-agent/provider"
+	"github.com/google/uuid"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
 )
+
+func TestProviderDurableSaveDeadlineAndReconciliation(t *testing.T) {
+	client := &providerSaveTestClient{}
+	callDeadline := make(chan time.Time, 1)
+	client.commit = func(ctx context.Context, _ *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			return nil, errors.New("provider save has no deadline")
+		}
+		callDeadline <- deadline
+		<-ctx.Done()
+		return nil, status.FromContextError(ctx.Err()).Err()
+	}
+	client.get = func(_ context.Context, operationID string) (*pb.ProviderOperation, error) {
+		client.queried = append(client.queried, operationID)
+		if len(client.queried) == 1 {
+			return &pb.ProviderOperation{OperationId: operationID, State: pb.ProviderOperationState_PROVIDER_OPERATION_STATE_PENDING}, nil
+		}
+		return committedProviderOperation(operationID), nil
+	}
+
+	started := time.Now()
+	op, err := commitProviderSave(t.Context(), client, &pb.AddProviderReq{Alias: "work", Type: "openai"}, providerSaveOptions{
+		CallTimeout:      25 * time.Millisecond,
+		ReconcileTimeout: time.Second,
+		PollInterval:     time.Millisecond,
+		Status:           io.Discard,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op.GetState() != pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED {
+		t.Fatalf("operation state = %s, want committed", op.GetState())
+	}
+	if got := (<-callDeadline).Sub(started); got < 20*time.Millisecond || got > 100*time.Millisecond {
+		t.Fatalf("provider save call deadline offset = %s, want approximately 25ms", got)
+	}
+	if _, err := uuid.Parse(op.GetOperationId()); err != nil {
+		t.Fatalf("operation ID = %q: %v", op.GetOperationId(), err)
+	}
+	if len(client.queried) != 2 || client.queried[0] != op.GetOperationId() || client.queried[1] != op.GetOperationId() {
+		t.Fatalf("queried IDs = %v, want stable operation ID", client.queried)
+	}
+	if got := nextProviderPollInterval(100 * time.Millisecond); got != 200*time.Millisecond {
+		t.Fatalf("next poll interval = %s, want 200ms", got)
+	}
+	if got := nextProviderPollInterval(750 * time.Millisecond); got != time.Second {
+		t.Fatalf("capped poll interval = %s, want 1s", got)
+	}
+}
+
+func TestProviderDurableSaveInterruptAndForceExit(t *testing.T) {
+	interrupts := make(chan os.Signal, 2)
+	commitStarted := make(chan struct{})
+	queryStarted := make(chan struct{})
+	client := &providerSaveTestClient{}
+	client.commit = func(ctx context.Context, _ *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+		close(commitStarted)
+		<-ctx.Done()
+		return nil, status.FromContextError(ctx.Err()).Err()
+	}
+	client.get = func(ctx context.Context, _ string) (*pb.ProviderOperation, error) {
+		close(queryStarted)
+		<-ctx.Done()
+		return nil, status.FromContextError(ctx.Err()).Err()
+	}
+	var statusOutput strings.Builder
+	done := make(chan error, 1)
+	go func() {
+		_, err := commitProviderSave(context.Background(), client, &pb.AddProviderReq{Alias: "work", Type: "openai"}, providerSaveOptions{
+			CallTimeout:      time.Second,
+			ReconcileTimeout: 5 * time.Second,
+			PollInterval:     time.Millisecond,
+			Interrupts:       interrupts,
+			Status:           &statusOutput,
+		})
+		done <- err
+	}()
+	<-commitStarted
+	interrupts <- os.Interrupt
+	<-queryStarted
+	interrupts <- os.Interrupt
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("second interrupt did not stop a blocked operation query")
+	}
+	if err == nil || !strings.Contains(err.Error(), "operation") {
+		t.Fatalf("forced-exit error = %v, want operation ID", err)
+	}
+	if !strings.Contains(statusOutput.String(), "reconciling provider operation") {
+		t.Fatalf("status output = %q", statusOutput.String())
+	}
+}
+
+func TestProviderDurableSaveFirstPollingInterruptDefersExit(t *testing.T) {
+	interrupts := make(chan os.Signal, 2)
+	queryStarted := make(chan struct{}, 2)
+	client := &providerSaveTestClient{
+		commit: func(context.Context, *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+			return nil, status.Error(codes.DeadlineExceeded, "ambiguous")
+		},
+		get: func(ctx context.Context, _ string) (*pb.ProviderOperation, error) {
+			queryStarted <- struct{}{}
+			<-ctx.Done()
+			return nil, status.FromContextError(ctx.Err()).Err()
+		},
+	}
+	var statusOutput strings.Builder
+	done := make(chan error, 1)
+	go func() {
+		_, err := commitProviderSave(context.Background(), client, &pb.AddProviderReq{Alias: "work", Type: "openai"}, providerSaveOptions{
+			CallTimeout:      time.Second,
+			ReconcileTimeout: 5 * time.Second,
+			PollInterval:     time.Millisecond,
+			Interrupts:       interrupts,
+			Status:           &statusOutput,
+		})
+		done <- err
+	}()
+
+	<-queryStarted
+	interrupts <- os.Interrupt
+	select {
+	case err := <-done:
+		t.Fatalf("first polling interrupt exited reconciliation: %v", err)
+	case <-queryStarted:
+	}
+	interrupts <- os.Interrupt
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "operation") {
+			t.Fatalf("second polling interrupt error = %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("second polling interrupt did not exit reconciliation")
+	}
+	if got := statusOutput.String(); !strings.Contains(got, "interrupt again to exit") {
+		t.Fatalf("status output = %q", got)
+	}
+}
+
+func TestProviderOperationStatusCommand(t *testing.T) {
+	operationID := "f1f183c5-b277-4c27-bc3d-50cdd20f7ed1"
+	client := &providerSaveTestClient{get: func(_ context.Context, got string) (*pb.ProviderOperation, error) {
+		if got != operationID {
+			t.Fatalf("operation ID = %q, want %q", got, operationID)
+		}
+		return committedProviderOperation(got), nil
+	}}
+	var out strings.Builder
+	if err := printProviderOperationStatus(t.Context(), client, []string{operationID, "--json"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	var operation pb.ProviderOperation
+	if err := protojson.Unmarshal([]byte(out.String()), &operation); err != nil {
+		t.Fatalf("decode status: %v\n%s", err, out.String())
+	}
+	if operation.GetOperationId() != operationID || operation.GetState() != pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED {
+		t.Fatalf("operation = %+v", &operation)
+	}
+	if err := printProviderOperationStatus(t.Context(), client, []string{operationID}, errWriter{}); err == nil || !strings.Contains(err.Error(), "write failed") {
+		t.Fatalf("human operation status output error = %v", err)
+	}
+}
+
+func TestProviderDurableSaveRejectsMismatchedOperationIdentity(t *testing.T) {
+	t.Run("initial response", func(t *testing.T) {
+		client := &providerSaveTestClient{commit: func(_ context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+			return committedProviderOperation(uuid.NewString()), nil
+		}}
+		_, err := commitProviderSave(t.Context(), client, &pb.AddProviderReq{Alias: "work", Type: "openai"}, providerSaveOptions{
+			CallTimeout:      time.Second,
+			ReconcileTimeout: time.Second,
+			PollInterval:     time.Millisecond,
+			Status:           io.Discard,
+		})
+		if err == nil || !strings.Contains(err.Error(), "operation ID") {
+			t.Fatalf("mismatched initial response error = %v", err)
+		}
+	})
+
+	t.Run("polled response", func(t *testing.T) {
+		client := &providerSaveTestClient{}
+		client.commit = func(_ context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+			return &pb.ProviderOperation{
+				OperationId: req.GetOperationId(),
+				State:       pb.ProviderOperationState_PROVIDER_OPERATION_STATE_PENDING,
+			}, nil
+		}
+		client.get = func(context.Context, string) (*pb.ProviderOperation, error) {
+			return committedProviderOperation(uuid.NewString()), nil
+		}
+		_, err := commitProviderSave(t.Context(), client, &pb.AddProviderReq{Alias: "work", Type: "openai"}, providerSaveOptions{
+			CallTimeout:      time.Second,
+			ReconcileTimeout: time.Second,
+			PollInterval:     time.Millisecond,
+			Status:           io.Discard,
+		})
+		if err == nil || !strings.Contains(err.Error(), "operation ID") {
+			t.Fatalf("mismatched polled response error = %v", err)
+		}
+	})
+}
+
+func TestProviderReconciliationErrorIncludesRecoveryID(t *testing.T) {
+	operationID := make(chan string, 1)
+	client := &providerSaveTestClient{}
+	client.commit = func(_ context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+		operationID <- req.GetOperationId()
+		return &pb.ProviderOperation{
+			OperationId: req.GetOperationId(),
+			State:       pb.ProviderOperationState_PROVIDER_OPERATION_STATE_PENDING,
+		}, nil
+	}
+	client.get = func(context.Context, string) (*pb.ProviderOperation, error) {
+		return nil, status.Error(codes.PermissionDenied, "denied")
+	}
+	_, err := commitProviderSave(t.Context(), client, &pb.AddProviderReq{Alias: "work", Type: "openai"}, providerSaveOptions{
+		CallTimeout:      time.Second,
+		ReconcileTimeout: time.Second,
+		PollInterval:     time.Millisecond,
+		Status:           io.Discard,
+	})
+	wantID := <-operationID
+	if err == nil || !strings.Contains(err.Error(), wantID) || !strings.Contains(err.Error(), "provider operation "+wantID) {
+		t.Fatalf("reconciliation error = %v, want recovery command for %s", err, wantID)
+	}
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("reconciliation status code = %s, want permission denied", status.Code(err))
+	}
+}
+
+func TestProviderAddJSONIncludesStableOperationID(t *testing.T) {
+	client := &providerSaveTestClient{}
+	client.commit = func(_ context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+		return committedProviderOperation(req.GetOperationId()), nil
+	}
+	client.get = func(_ context.Context, operationID string) (*pb.ProviderOperation, error) {
+		client.queried = append(client.queried, operationID)
+		return committedProviderOperation(operationID), nil
+	}
+	op, err := commitProviderSave(t.Context(), client, &pb.AddProviderReq{Alias: "work", Type: "openai"}, providerSaveOptions{
+		CallTimeout:      time.Second,
+		ReconcileTimeout: time.Second,
+		PollInterval:     time.Millisecond,
+		Status:           io.Discard,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var addOut strings.Builder
+	if err := writeProviderSaveResult(&addOut, op, true); err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		OperationID string `json:"operation_id"`
+		Alias       string `json:"alias"`
+		Type        string `json:"type"`
+		Model       string `json:"model"`
+		IsDefault   bool   `json:"is_default"`
+	}
+	if err := json.Unmarshal([]byte(addOut.String()), &payload); err != nil {
+		t.Fatalf("decode add output: %v\n%s", err, addOut.String())
+	}
+	if payload.OperationID != op.GetOperationId() || payload.Alias != "work" || payload.Type != "openai" || payload.Model != "test-model" || payload.IsDefault {
+		t.Fatalf("add payload = %+v, operation = %+v", payload, op)
+	}
+	var statusOut strings.Builder
+	if err := printProviderOperationStatus(t.Context(), client, []string{payload.OperationID, "--json"}, &statusOut); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.queried) != 1 || client.queried[0] != payload.OperationID {
+		t.Fatalf("status queried IDs = %v", client.queried)
+	}
+}
+
+func TestProviderHumanSaveOutputPropagatesWriteFailure(t *testing.T) {
+	err := writeProviderSaveResult(errWriter{}, committedProviderOperation(uuid.NewString()), false)
+	if err == nil || !strings.Contains(err.Error(), "write failed") {
+		t.Fatalf("human output error = %v", err)
+	}
+}
+
+func TestProviderJSONInteractiveOutputUsesStatusWriter(t *testing.T) {
+	var statusOutput strings.Builder
+	stdout := captureStdout(t, func() {
+		secret, err := promptProviderSecretTo(&statusOutput, "API key", func(int) ([]byte, error) {
+			return []byte(" secret "), nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if secret != "secret" {
+			t.Fatalf("secret = %q", secret)
+		}
+
+		results := make(chan providerauth.OAuthResult, 1)
+		results <- providerauth.OAuthResult{Token: "device-token"}
+		close(results)
+		token, err := runProviderDeviceFlow(t.Context(), &statusOutput,
+			func(context.Context, string) (*providerauth.DeviceCodeResult, error) {
+				return &providerauth.DeviceCodeResult{
+					DeviceCode:      "device-code",
+					UserCode:        "ABCD-EFGH",
+					VerificationURI: "https://example.test/device",
+					Interval:        1,
+				}, nil
+			},
+			func(context.Context, string, string, int) <-chan providerauth.OAuthResult {
+				return results
+			},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if token != "device-token" {
+			t.Fatalf("device token = %q", token)
+		}
+	})
+	if stdout != "" {
+		t.Fatalf("interactive JSON setup wrote to stdout: %q", stdout)
+	}
+	if got := statusOutput.String(); !strings.Contains(got, "API key: ") || !strings.Contains(got, "ABCD-EFGH") {
+		t.Fatalf("status output = %q", got)
+	}
+
+	source, err := os.ReadFile("cmd_provider.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, direct := range []string{"promptSecret: providerauth.PromptSecret", "deviceFlow: providerauth.DeviceFlow"} {
+		if strings.Contains(string(source), direct) {
+			t.Fatalf("generic JSON setup retains stdout-bound helper %q", direct)
+		}
+	}
+}
+
+func TestProviderDeviceFlowRejectsNilStartResponse(t *testing.T) {
+	_, err := runProviderDeviceFlow(
+		t.Context(),
+		io.Discard,
+		func(context.Context, string) (*providerauth.DeviceCodeResult, error) { return nil, nil },
+		func(context.Context, string, string, int) <-chan providerauth.OAuthResult {
+			t.Fatal("polled after nil device-flow response")
+			return nil
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "empty") {
+		t.Fatalf("nil device-flow response error = %v", err)
+	}
+}
+
+func TestGenericProviderAddJSONBoundary(t *testing.T) {
+	entry, ok := providerauth.LookupSetup("anthropic")
+	if !ok {
+		t.Fatal("anthropic provider setup is missing")
+	}
+	client := &providerSaveTestClient{commit: func(_ context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+		provider := req.GetProvider()
+		if provider.GetAlias() != "work" || provider.GetApiKey() != "secret" || provider.GetModel() != "test-model" {
+			t.Fatalf("provider request = %+v", provider)
+		}
+		return &pb.ProviderOperation{
+			OperationId: req.GetOperationId(),
+			State:       pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED,
+			Result: &pb.ProviderSaveResult{
+				Alias:     provider.GetAlias(),
+				Type:      provider.GetType(),
+				Model:     provider.GetModel(),
+				IsDefault: provider.GetIsDefault(),
+			},
+		}, nil
+	}}
+	var stdout strings.Builder
+	var stderr strings.Builder
+	err := runGenericProviderAdd(
+		t.Context(),
+		client,
+		entry,
+		[]string{"add", "anthropic", "work", "--model", "test-model", "--json"},
+		bufio.NewScanner(strings.NewReader("")),
+		&stdout,
+		&stderr,
+		func(_ *bufio.Scanner, out io.Writer) providerSetupDeps {
+			return providerSetupDeps{promptSecret: func(string) (string, error) {
+				fmt.Fprint(out, "credential prompt")
+				return "secret", nil
+			}}
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoder := json.NewDecoder(strings.NewReader(stdout.String()))
+	var payload struct {
+		OperationID string `json:"operation_id"`
+		Alias       string `json:"alias"`
+		Type        string `json:"type"`
+		Model       string `json:"model"`
+	}
+	if err := decoder.Decode(&payload); err != nil {
+		t.Fatalf("decode provider add JSON: %v\n%s", err, stdout.String())
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		t.Fatalf("provider add stdout contains more than one JSON value: %v\n%s", err, stdout.String())
+	}
+	if payload.OperationID == "" || payload.Alias != "work" || payload.Type != "anthropic" || payload.Model != "test-model" {
+		t.Fatalf("provider add payload = %+v", payload)
+	}
+	if got := stderr.String(); got != "credential prompt" {
+		t.Fatalf("provider add stderr = %q", got)
+	}
+}
+
+func TestProviderDurableSaveRejectsNilSuccessAndDirectWriters(t *testing.T) {
+	client := &providerSaveTestClient{commit: func(context.Context, *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+		return nil, nil
+	}}
+	if _, err := commitProviderSave(t.Context(), client, &pb.AddProviderReq{Alias: "work", Type: "openai"}, providerSaveOptions{
+		CallTimeout:      time.Second,
+		ReconcileTimeout: time.Second,
+		PollInterval:     time.Millisecond,
+		Status:           io.Discard,
+	}); err == nil {
+		t.Fatal("nil provider operation succeeded")
+	}
+	source, err := os.ReadFile("cmd_provider.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(source), ".AddProvider(") {
+		t.Fatal("cmd_provider.go contains a direct AddProvider writer")
+	}
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "cmd_provider.go", source, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wiring := map[string]string{
+		"handleProvider":           "runGenericProviderAdd",
+		"runGenericProviderAdd":    "saveProviderFromCLI",
+		"handleOpenAIChatGPTSetup": "saveProviderFromCLI",
+		"handleOllamaSetup":        "saveProviderFromCLI",
+		"handleCLIToolSetup":       "saveProviderFromCLI",
+	}
+	for function, helper := range wiring {
+		if !functionCallsIdentifier(file, function, helper) {
+			t.Errorf("%s does not call %s", function, helper)
+		}
+	}
+}
+
+func functionCallsIdentifier(file *ast.File, function, identifier string) bool {
+	for _, declaration := range file.Decls {
+		decl, ok := declaration.(*ast.FuncDecl)
+		if !ok || decl.Name.Name != function {
+			continue
+		}
+		found := false
+		ast.Inspect(decl.Body, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			callee, ok := call.Fun.(*ast.Ident)
+			if ok && callee.Name == identifier {
+				found = true
+				return false
+			}
+			return true
+		})
+		return found
+	}
+	return false
+}
+
+func TestWaitForProviderBackgroundProcess(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "-test.run=^TestProviderBackgroundProcessHelper$")
+	cmd.Env = append(os.Environ(), "RATCHET_PROVIDER_PROCESS_HELPER=1")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-waitForProviderBackgroundProcess(cmd):
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatal("background process was not reaped")
+	}
+
+	source, err := os.ReadFile("cmd_provider.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := parser.ParseFile(token.NewFileSet(), "cmd_provider.go", source, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, helper := range []string{"waitForProviderBackgroundProcess", "stopProviderBackgroundProcess"} {
+		if !functionCallsIdentifier(file, "startOllamaServer", helper) {
+			t.Errorf("startOllamaServer does not call %s", helper)
+		}
+	}
+}
+
+func TestStopProviderBackgroundProcessIsBounded(t *testing.T) {
+	t.Run("kill failure", func(t *testing.T) {
+		want := errors.New("kill denied")
+		err := stopProviderBackgroundProcess(providerProcessKillerFunc(func() error { return want }), make(chan error), time.Second)
+		if !errors.Is(err, want) {
+			t.Fatalf("stop error = %v, want %v", err, want)
+		}
+	})
+
+	t.Run("wait timeout", func(t *testing.T) {
+		started := time.Now()
+		err := stopProviderBackgroundProcess(providerProcessKillerFunc(func() error { return nil }), make(chan error), 20*time.Millisecond)
+		if err == nil || !strings.Contains(err.Error(), "exit") {
+			t.Fatalf("stop error = %v, want bounded exit timeout", err)
+		}
+		if elapsed := time.Since(started); elapsed > time.Second {
+			t.Fatalf("bounded stop took %s", elapsed)
+		}
+	})
+}
+
+type providerProcessKillerFunc func() error
+
+func (f providerProcessKillerFunc) Kill() error { return f() }
+
+func TestProviderBackgroundProcessHelper(t *testing.T) {
+	if os.Getenv("RATCHET_PROVIDER_PROCESS_HELPER") != "1" {
+		return
+	}
+}
+
+type providerSaveTestClient struct {
+	commit  func(context.Context, *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error)
+	get     func(context.Context, string) (*pb.ProviderOperation, error)
+	queried []string
+}
+
+func (c *providerSaveTestClient) CommitProviderSave(ctx context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+	return c.commit(ctx, req)
+}
+
+func (c *providerSaveTestClient) GetProviderOperation(ctx context.Context, operationID string) (*pb.ProviderOperation, error) {
+	return c.get(ctx, operationID)
+}
+
+func committedProviderOperation(operationID string) *pb.ProviderOperation {
+	return &pb.ProviderOperation{
+		OperationId: operationID,
+		Alias:       "work",
+		State:       pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED,
+		Result: &pb.ProviderSaveResult{
+			Alias: "work",
+			Type:  "openai",
+			Model: "test-model",
+		},
+	}
+}
 
 func TestProviderSetupListOutputsKnownGuides(t *testing.T) {
 	out := captureStdout(t, func() {
