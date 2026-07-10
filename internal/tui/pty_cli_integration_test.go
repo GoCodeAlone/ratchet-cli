@@ -16,6 +16,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	providerauth "github.com/GoCodeAlone/ratchet-cli/internal/provider"
 )
 
 // cliTool describes a PTY-backed CLI provider for integration testing.
@@ -96,7 +98,7 @@ func TestPTYCLI_HealthCheck(t *testing.T) {
 				t.Skipf("%s not installed, skipping", tool.binary)
 			}
 
-			healthArgs := cliHealthCheckArgsForType(tool.providerType)
+			healthArgs := providerauth.CLIHealthCheckArgs(tool.providerType)
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
@@ -157,12 +159,4 @@ func TestPTYCLI_PTYChat(t *testing.T) {
 			t.Logf("PTY chat output:\n%s", out)
 		})
 	}
-}
-
-// cliHealthCheckArgsForType mirrors the adapter's HealthCheckArgs() for each provider type.
-func cliHealthCheckArgsForType(providerType string) []string {
-	if providerType == "codex_cli" {
-		return []string{"exec", "say ok"}
-	}
-	return []string{"-p", "say ok"}
 }

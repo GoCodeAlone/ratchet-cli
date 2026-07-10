@@ -88,7 +88,7 @@ func handleProvider(args []string) {
 			case entry.Auth == providerauth.AuthOpenAIChatGPT:
 				handleOpenAIChatGPTSetup(args[2:])
 			case entry.Setup == providerauth.SetupCLINative:
-				handleCLIToolSetup(entry.Type, entry.DefaultAlias, entry.CLICommand, args[2:])
+				handleCLIToolSetup(entry, args[2:])
 			default:
 				fmt.Printf("Use: %s\n", entry.SetupCommand)
 			}
@@ -644,10 +644,10 @@ var cliInstallInstructions = map[string]string{
 }
 
 // handleCLIToolSetup is the generic setup flow for PTY-backed CLI providers.
-// providerType is the ratchet type (e.g. "claude_code"), binary is the executable
-// name (e.g. "claude"), and alias is the human-facing setup name (e.g. "claude-code").
-func handleCLIToolSetup(providerType, binary, alias string, _ []string) {
-	fmt.Printf("=== %s Setup ===\n", alias)
+func handleCLIToolSetup(entry providerauth.SetupEntry, _ []string) {
+	providerType, binary := entry.Type, entry.CLICommand
+	setupAlias, providerAlias := entry.SetupAlias, entry.DefaultAlias
+	fmt.Printf("=== %s Setup ===\n", setupAlias)
 
 	scanner := bufio.NewScanner(os.Stdin)
 
@@ -655,23 +655,23 @@ func handleCLIToolSetup(providerType, binary, alias string, _ []string) {
 	binPath, err := exec.LookPath(binary)
 	if err != nil {
 		fmt.Printf("✗ %s not found in PATH\n", binary)
-		if inst, ok := cliInstallInstructions[alias]; ok {
+		if inst, ok := cliInstallInstructions[setupAlias]; ok {
 			fmt.Println(inst)
 		}
-		fmt.Printf("After installing, re-run: ratchet provider setup %s\n", alias)
+		fmt.Printf("After installing, re-run: ratchet provider setup %s\n", setupAlias)
 		return
 	}
 	fmt.Printf("✓ %s found: %s\n", binary, binPath)
 
 	// 2. Health check: run <binary> -p "say ok" with 30s timeout.
 	fmt.Print("Running health check... ")
-	healthArgs := cliHealthCheckArgs(providerType)
+	healthArgs := providerauth.CLIHealthCheckArgs(providerType)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	out, err := exec.CommandContext(ctx, binary, healthArgs...).Output()
 	cancel()
 	if err != nil {
 		fmt.Printf("FAIL\n  %v\n", err)
-		fmt.Printf("Ensure %s is authenticated and working, then re-run: ratchet provider setup %s\n", binary, alias)
+		fmt.Printf("Ensure %s is authenticated and working, then re-run: ratchet provider setup %s\n", binary, setupAlias)
 		return
 	}
 	response := strings.TrimSpace(string(out))
@@ -689,9 +689,13 @@ func handleCLIToolSetup(providerType, binary, alias string, _ []string) {
 	}
 	defer func() { _ = c.Close() }()
 
-	workDir, _ := os.Getwd()
+	workDir, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "resolve working directory: %v\n", err)
+		return
+	}
 	p, err := c.AddProvider(context.Background(), &pb.AddProviderReq{
-		Alias:   alias,
+		Alias:   providerAlias,
 		Type:    providerType,
 		BaseUrl: workDir,
 	})
@@ -703,24 +707,14 @@ func handleCLIToolSetup(providerType, binary, alias string, _ []string) {
 
 	// 4. Optionally set as default.
 	if promptYesNo("Set as default provider?", scanner) {
-		if err := c.SetDefaultProvider(context.Background(), alias); err != nil {
+		if err := c.SetDefaultProvider(context.Background(), providerAlias); err != nil {
 			fmt.Fprintf(os.Stderr, "set default failed: %v\n", err)
 		} else {
-			fmt.Printf("✓ Default provider set to: %s\n", alias)
+			fmt.Printf("✓ Default provider set to: %s\n", providerAlias)
 		}
 	}
 
-	fmt.Printf("\n=== Setup complete ===\nRun 'ratchet' to start chatting via %s.\n", alias)
-}
-
-// cliHealthCheckArgs returns the health-check args for a given PTY provider type.
-func cliHealthCheckArgs(providerType string) []string {
-	switch providerType {
-	case "codex_cli":
-		return []string{"exec", "say ok"}
-	default:
-		return []string{"-p", "say ok"}
-	}
+	fmt.Printf("\n=== Setup complete ===\nRun 'ratchet' to start chatting via %s.\n", providerAlias)
 }
 
 // promptModelSelection prints a numbered list of models and returns the selected model ID.
