@@ -104,3 +104,40 @@ commands, proves native Windows security, prevents both audit and ordinary-log
 secret leakage, enumerates every TUI provider entry, and keeps the four PRs
 serial, independently releasable, and rollback-capable. No Critical or
 unresolved Important finding remains.
+
+## Cycle 2: Durable Provider Saves
+
+**Status:** FAIL
+
+**Findings (Critical):** none.
+
+**Findings (Important):**
+
+- `P7` Task 4 is under-decomposed; proto, migration/engine, lock, CLI, TUI, and
+  CI require sequential checkpoints while retaining one task/PR.
+- `P8` Red commands omit daemon lock/CRUD/workers/app tests; Task 5 has no red
+  persistent-smoke command.
+- `P9` Native Windows CI commands/test names are unspecified and current regexes
+  would skip lock/provider-save tests.
+- `P10` Legacy-schema upgrade, migration failure, and stop/lock-release/current-
+  to-parent downgrade are unproved.
+- `P11` Test-only smoke does not prove production daemon startup, durable save,
+  operation lookup, restart, and shutdown wiring.
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Guidance/security/YAGNI | Clean | Existing boundaries and minimum primitives remain sound. |
+| Assumptions/precedent | Finding | CI regex, migration compatibility, and smoke/production equivalence failed. |
+| Decomposition/TDD | Finding | Serial generated/schema/runtime slices need focused red-green checkpoints. |
+| Windows/infra | Finding | Native test selection and migration failure proof missing. |
+| Integration/UI | Finding | UI save is real, but production daemon lifecycle is not. |
+| Rollback | Finding | Downgrade quiescence/version-pair proof absent. |
+| Naming/compile/config | Clean | Planned identifiers and embedded code are valid. |
+
+**Alternatives:** internal Task 4 checkpoints; one production lifecycle harness;
+dedicated Windows native step; current/parent version-pair rollback fixture.
+
+**Verdict reasoning:** FAIL; Tasks 4-5 are behaviorally complete but not yet an
+executable TDD/runtime/rollback plan.
