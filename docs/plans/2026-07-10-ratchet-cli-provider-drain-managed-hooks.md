@@ -348,11 +348,11 @@ git commit -m "refactor(provider): drive CLI from catalog"
 - Modify: `internal/tui/pages/onboarding.go`
 - Create: `internal/tui/pages/onboarding_test.go`
 
-**Step 1: Add failing state-machine and rendering tests**
+**Step 1: Task 4 acceptance checklist**
 
-Use an injected dependency struct for model listing, auth start, CLI health
-checks, and provider submission. Add table-driven tests for every catalog
-strategy and focused tests that:
+Use this list as completion criteria, not an instruction to create every test
+up front. Each checkpoint below adds only its own tests so Go package-wide test
+compilation is valid. The completed checkpoints must prove:
 
 - provider selection is catalog-derived, category-labeled, scrollable, and
   filterable without changing the frame width;
@@ -412,6 +412,12 @@ Expected red: compile failure with undefined operation messages/RPCs. Add the
 protobuf messages and RPCs, run `make proto`, implement client adapters, rerun
 the command to PASS, then commit `feat(provider): add durable save contract`.
 
+```bash
+gofmt -w internal/client/client.go internal/client/provider_save_test.go
+git add internal/proto/ratchet.proto internal/proto/ratchet.pb.go internal/proto/ratchet_grpc.pb.go internal/client/client.go internal/client/provider_save_test.go
+git commit -m "feat(provider): add durable save contract"
+```
+
 **Checkpoint 4B: Implement schema, operation execution, and cleanup**
 
 Write these tests before implementation:
@@ -464,6 +470,12 @@ short cleanup workers. Cleanup rows key by secret name, persist
 holding a worker slot. Terminal operations retain 24 hours. Rerun the red
 command to PASS and commit `feat(provider): make saves durable`.
 
+```bash
+gofmt -w internal/daemon/engine.go internal/daemon/service.go internal/daemon/integration_test.go internal/daemon/provider_operations.go internal/daemon/provider_operations_test.go internal/daemon/provider_cleanup.go internal/daemon/provider_cleanup_test.go
+git add internal/daemon/engine.go internal/daemon/service.go internal/daemon/integration_test.go internal/daemon/provider_operations.go internal/daemon/provider_operations_test.go internal/daemon/provider_cleanup.go internal/daemon/provider_cleanup_test.go
+git commit -m "feat(provider): make saves durable"
+```
+
 **Checkpoint 4C: Enforce single-daemon ownership on Unix and Windows**
 
 Add `TestDaemonLockExcludesSecondOwner`,
@@ -498,6 +510,12 @@ the YAML edit, the releaseguard test must PASS.
 Local Unix tests must PASS; Windows tests are compile-checked locally and must
 run natively in PR CI. Commit `fix(daemon): enforce exclusive ownership`.
 
+```bash
+gofmt -w internal/daemon/daemon.go internal/daemon/lock_unix.go internal/daemon/lock_windows.go internal/daemon/lock_unix_test.go internal/daemon/lock_windows_test.go internal/releaseguard/workflow_test.go
+git add internal/daemon/daemon.go internal/daemon/lock_unix.go internal/daemon/lock_windows.go internal/daemon/lock_unix_test.go internal/daemon/lock_windows_test.go internal/releaseguard/workflow_test.go .github/workflows/ci.yml
+git commit -m "fix(daemon): enforce exclusive ownership"
+```
+
 **Checkpoint 4D: Route every CLI save through durable operations**
 
 Add failing `TestProviderDurableSaveDeadlineAndReconciliation`,
@@ -515,6 +533,12 @@ separate 10-second operation poll. First interrupt prints reconciliation status;
 second exits nonzero and prints the ID. Add
 `provider operation <id> [--json]`. Nil success responses fail cleanly. Rerun to
 PASS and commit `refactor(provider): use durable saves`.
+
+```bash
+gofmt -w cmd/ratchet/cmd_provider.go cmd/ratchet/cmd_provider_test.go
+git add cmd/ratchet/cmd_provider.go cmd/ratchet/cmd_provider_test.go
+git commit -m "refactor(provider): use durable saves"
+```
 
 **Checkpoint 4E: Finish the catalog-driven TUI state machine**
 
@@ -534,6 +558,12 @@ navigation never deletes an upsert. Reconciliation handles pending/applied/
 committed/failed/unresolved and preserves committed provider state in the app.
 Rerun both commands to PASS and commit
 `feat(tui): unify provider setup wizard`.
+
+```bash
+gofmt -w internal/tui/app.go internal/tui/app_session_tree_test.go internal/tui/pages/onboarding.go internal/tui/pages/onboarding_test.go
+git add internal/tui/app.go internal/tui/app_session_tree_test.go internal/tui/pages/onboarding.go internal/tui/pages/onboarding_test.go
+git commit -m "feat(tui): unify provider setup wizard"
+```
 
 **Step 4: Verify state and render behavior**
 
@@ -631,14 +661,19 @@ its current version, and the real registry resolves the new credential after an
 upsert. Verify operation rows/RPC/status/log snapshots contain no sentinel.
 
 Extend the production-binary harness with a local OpenAI-compatible fixture.
-Launch built `dist/ratchet` under isolated HOME/state, save through the CLI,
+Build the current production command into `t.TempDir()` with the existing
+`buildRatchetSmokeBinary` helper; never read/write a shared `dist` artifact from
+the test. Launch that binary under isolated HOME/state, save through the CLI,
 parse its operation ID, invoke `provider operation <id> --json`, restart the
 production daemon, list/test the provider, and shut down through RPC. The
-downgrade harness uses `git worktree add --detach ... origin/master` (CI checkout
-must use `fetch-depth: 0`), builds the parent binary, stops the current daemon,
-observes socket/PID removal and lock release, then starts the parent and proves
-it resolves the versioned secret against the same local fixture. Cleanup always
-removes the temporary worktree.
+downgrade harness resolves `RATCHET_DOWNGRADE_BASE_SHA` or `origin/master` (CI
+checkout must use `fetch-depth: 0`), logs base/current SHAs, requires they differ,
+and requires `git show <base>:internal/proto/ratchet.proto` not to contain
+`CommitProviderSave`; otherwise it fails as vacuous. It adds a detached worktree,
+builds both binaries into `t.TempDir()`, stops the current daemon, observes
+socket/PID removal and lock release, then starts the parent and proves it resolves
+the versioned secret against the same local fixture. Cleanup always removes the
+temporary worktree. Post-merge reruns must set an explicitly older base SHA.
 
 Update `tui-smoke` checkout to `fetch-depth: 0` and add this Linux step:
 
@@ -672,6 +707,7 @@ go vet ./...
 golangci-lint run --new-from-rev=origin/master
 GOOS=windows GOARCH=amd64 go build ./cmd/ratchet
 go build -o ./dist/ratchet ./cmd/ratchet
+./dist/ratchet --version
 go test ./cmd/ratchet -run HarnessSmokeVersionHelpAndDaemonStatus -count=1
 ```
 
