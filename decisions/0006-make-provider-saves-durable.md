@@ -37,19 +37,21 @@ also finalize `applied` rows before returning, so RPC cancellation does not
 strand them until restart.
 
 A daemon-owned executor serializes each alias from pending reservation through
-terminal state while unrelated aliases proceed. RPC handlers wait only until
-their context ends; a non-cancellable secret `Set` continues in the worker with
-the reservation live. Before a later alias mutation, any applied row must
-finalize or the mutation fails. Cleanup excludes every provider pointer and
-pending/applied reservation and runs in separate per-secret workers.
+terminal state while unrelated aliases proceed. Exactly one operation is
+admitted per alias: same-ID calls attach to its result; another ID receives
+classified `AliasBusy` immediately and its credential is not retained or
+journaled. RPC handlers wait only until their context ends; a non-cancellable
+secret `Set` continues with its reservation live. Replacement UUIDs are accepted
+only after terminal state or startup recovery. Ownership entries then retire.
 
 `provider_secret_cleanup` stores only server secret name, attempt count,
 classified outcome, and timestamps. Startup runs before RPCs: secret `List`
 failure is fatal; applied rows are finalized; inherited pending rows become
 failed; unreferenced reserved-prefix keys are queued. Startup discovery and
-journaling complete before RPC acceptance; queued `Delete` runs asynchronously,
-not-found succeeds, and other failures remain queued. Runtime cleanup rechecks
-references before delete.
+journaling complete before RPC acceptance; cleanup rows are unique by secret
+name and feed a two-worker pool with bounded exponential retry. Not-found
+succeeds, other failures remain queued, and workers retire when idle. Runtime
+cleanup rechecks references before delete.
 Provider update/removal queues the prior key in its SQL transaction.
 Legacy-prefix keys are touched only when a row explicitly retires them.
 
@@ -78,9 +80,9 @@ existing Workflow providers.
 - The daemon acquires and retains an OS-level exclusive data-directory lock
   before PID/socket cleanup, migration, or reconciliation. Unix `flock` and
   Windows `LockFileEx` prevent concurrent owners; crash closes release the lock.
-- Startup, before RPC acceptance, finalizes `applied` rows whose provider points
-  at their secret version, fails inherited `pending`, then serially sweeps
-  unreferenced reserved-prefix secrets and cleanup entries.
+- Startup, before RPC acceptance, finalizes `applied` rows, fails inherited
+  `pending`, and journals unreferenced reserved-prefix secrets. Physical deletion
+  is asynchronous through the bounded cleanup pool.
 - Guarantees are logical/process-crash atomicity within the existing provider
   contract; storage power-loss durability is not newly claimed.
 - Old redaction values may remain over-redacted until restart; secret values are

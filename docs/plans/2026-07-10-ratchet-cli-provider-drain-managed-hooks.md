@@ -367,13 +367,18 @@ strategy and focused tests that:
   before success; old-secret cleanup is durable and retryable;
 - pending rows reserve secret keys; daemon-owned per-alias workers serialize
   save/remove through terminal state while cleanup workers recheck references;
+- one ID is admitted per alias; same-ID calls attach, another receives
+  `AliasBusy` without credential retention, and ownership retires at terminal;
 - a blocking fake secret provider proves client timeout leaves a live pending
-  worker/reservation, other aliases proceed, and restart recovery is deterministic;
+  worker/reservation, same-ID attachment, other-ID busy rejection, unrelated
+  aliases proceeding, and deterministic restart recovery;
+- cleanup rows deduplicate by secret name and a two-worker pool proves bounded
+  concurrency/backoff and idle retirement;
 - an OS-level lock is acquired before PID/socket cleanup, migration, or secret
   reconciliation and retained for daemon lifetime on Unix and Windows;
-- startup finalizes applied operations, fails inherited pending, sweeps only
-  unreferenced reserved-prefix secrets before RPC acceptance, and prunes
-  terminal operations after 24 hours;
+- startup finalizes applied operations, fails inherited pending, journals only
+  unreferenced reserved-prefix secrets before RPC acceptance, then asynchronously
+  deletes through the bounded pool; terminal operations prune after 24 hours;
 - ambiguous save responses poll pending/not-found operation state with bounded
   backoff; commit resolves, failed reports a class, and unresolved pauses exit;
 - nil daemon responses and whitespace credentials/base URLs fail safely;
@@ -422,13 +427,14 @@ alias conflicts. SQL atomically switches the provider pointer, stores an
 `applied` result without base URL, and queues the old secret.
 Rollback deletes only the inactive new version and durably queues failed
 cleanup. Daemon-owned per-alias workers serialize save/remove through terminal
-state while unrelated aliases proceed; separate cleanup workers recheck provider
-and pending/applied references. RPC deadlines bound waiting, not non-cancellable
+state while unrelated aliases proceed. Same-ID callers attach; other IDs fail
+busy without journaling/retaining credentials. A two-worker deduplicated cleanup
+pool rechecks provider and pending/applied references. RPC deadlines bound waiting, not non-cancellable
 secret calls. A daemon-owned bounded finalizer and operation-query retry perform
 redactor registration/cache invalidation before `committed`. Daemon startup
 first acquires a lifetime OS lock, then finalizes applied rows, fails inherited
-pending rows, sweeps unreferenced reserved orphans, retries cleanup, and accepts
-RPCs.
+pending rows, journals unreferenced reserved orphans/cleanup, accepts RPCs, and
+processes physical deletion asynchronously.
 
 Expose a metadata-only operation query and use it for bounded CLI/TUI
 reconciliation. All CLI writers use signal-aware save contexts plus detached

@@ -276,9 +276,10 @@ flowchart LR
   `secrets.Redactor` protects runtime errors and may safely over-redact retired
   values until restart.
 - **Mutation serialization:** daemon-owned per-alias workers cover provider
-  save/remove through terminal state while unrelated aliases proceed. Pending
-  rows reserve secret keys before `Set`; separate cleanup workers exclude
-  provider references and pending/applied reservations.
+  save/remove through terminal state while unrelated aliases proceed. One ID is
+  admitted: same-ID calls attach; another gets `AliasBusy` without retention.
+  Pending rows reserve keys before `Set`; a two-worker deduplicated cleanup pool
+  excludes provider references and pending/applied reservations.
 - **Unattended execution:** opt-in is explicit and profile identity is pinned.
   Profile trust/fingerprint drift blocks resume. Persisted arbitrary commands
   are prohibited.
@@ -305,7 +306,8 @@ reconciliation (`flock` on Unix; `LockFileEx` on Windows). Startup then finalize
 applied rows after registry/redactor refresh, fails inherited pending rows, and
 queues only unreferenced `provider-v2-` secrets plus durable cleanup. Secret
 `List` is fail-stop before RPC acceptance because the provider may ignore
-context; `Delete` runs asynchronously after references are journaled.
+context; deduplicated `Delete` runs asynchronously through a two-worker pool
+with bounded backoff after references are journaled.
 Release artifacts remain the existing GoReleaser matrix, including Windows.
 
 ## Multi-Component Validation
@@ -473,8 +475,9 @@ All current CLI/TUI writers use a dedicated durable RPC, canonical UUIDs,
 bounded signal-aware saves, and detached reconciliation; legacy `AddProvider`
 delegates durably on new daemons. Pending secret reservations exclude runtime
 cleanup/save races. Daemon-owned per-alias workers
-let non-cancellable secret calls continue without blocking unrelated aliases;
-separate cleanup workers recheck references. The lifetime lock excludes
+admit one ID, attach replay, reject other IDs as busy, and let non-cancellable
+secret calls continue without blocking unrelated aliases. A deduplicated
+two-worker cleanup pool rechecks references. The lifetime lock excludes
 concurrent startup; startup resolves pending/applied rows and orphans before RPC
 acceptance; migration failure is fatal. SQL records `applied`; a
 daemon-context/query-assisted finalizer performs cache/redactor work before
