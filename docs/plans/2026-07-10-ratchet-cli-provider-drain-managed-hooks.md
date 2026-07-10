@@ -531,8 +531,10 @@ Expected red: missing helper/status command and direct `AddProvider` writers.
 Implement one helper using a canonical UUID, signal-aware 30-second RPC, and a
 separate 10-second operation poll. First interrupt prints reconciliation status;
 second exits nonzero and prints the ID. Add
-`provider operation <id> [--json]`. Nil success responses fail cleanly. Rerun to
-PASS and commit `refactor(provider): use durable saves`.
+`provider operation <id> [--json]`. Successful generic
+`provider add ... --json` emits an object containing stable `operation_id` and
+provider fields; human output also prints the ID. Nil success responses fail
+cleanly. Rerun to PASS and commit `refactor(provider): use durable saves`.
 
 ```bash
 gofmt -w cmd/ratchet/cmd_provider.go cmd/ratchet/cmd_provider_test.go
@@ -542,16 +544,19 @@ git commit -m "refactor(provider): use durable saves"
 
 **Checkpoint 4E: Finish the catalog-driven TUI state machine**
 
-Run the existing/new state tests first:
+Add `TestOnboardingDurableSubmission`,
+`TestOnboardingPendingReconciliation`,
+`TestOnboardingUnresolvedExitDeferral`, and
+`TestAppOnboardingCommittedProviderRouting`, then run the state tests:
 
 ```bash
 go test ./internal/tui/pages -run 'Onboarding|ProviderCatalog' -count=1
 go test ./internal/tui -run 'Provider|Onboarding|SlashExit' -count=1 -timeout=10m
 ```
 
-Expected red: hardcoded provider state plus missing durable-save routing,
-reconciliation, Ctrl+C wait, nil auth/list guards, and normalized credential/
-endpoint handling. Implement catalog filter/viewport/settings/manual model,
+Expected red: missing `CommitProviderSave` routing, operation-state
+reconciliation, Ctrl+C wait, and committed app-state propagation. Implement
+catalog filter/viewport/settings/manual model,
 specialized auth/CLI/Ollama strategies, bounded render/help, and one
 `CommitProviderSave` submission. Review confirmation is the commit boundary;
 navigation never deletes an upsert. Reconciliation handles pending/applied/
@@ -666,8 +671,10 @@ Build the current production command into `t.TempDir()` with the existing
 the test. Launch that binary under isolated HOME/state, save through the CLI,
 parse its operation ID, invoke `provider operation <id> --json`, restart the
 production daemon, list/test the provider, and shut down through RPC. The
-downgrade harness resolves `RATCHET_DOWNGRADE_BASE_SHA` or `origin/master` (CI
-checkout must use `fetch-depth: 0`), logs base/current SHAs, requires they differ,
+downgrade harness requires `RATCHET_DOWNGRADE_BASE_SHA` (CI checkout must use
+`fetch-depth: 0`). Without the environment variable, ordinary
+and post-merge suites call `t.Skip` with an explicit opt-in message. When set,
+the test logs base/current SHAs, requires they differ,
 and requires `git show <base>:internal/proto/ratchet.proto` not to contain
 `CommitProviderSave`; otherwise it fails as vacuous. It adds a detached worktree,
 builds both binaries into `t.TempDir()`, stops the current daemon, observes
@@ -679,13 +686,16 @@ Update `tui-smoke` checkout to `fetch-depth: 0` and add this Linux step:
 
 ```yaml
 - name: Run production provider durability smoke
+  env:
+    RATCHET_DOWNGRADE_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
   run: go test ./cmd/ratchet -run 'HarnessSmokeDurableProvider' -count=1 -timeout=12m
 ```
 
 The `windows-conpty-smoke` job must retain the Task 4 exact `DaemonLock` and
 `WindowsConPTYProviderSave` commands. Extend
 `TestCIRequiresWindowsProviderDurability` to assert the Linux checkout depth and
-production command as well as both Windows commands.
+production command plus event-derived `RATCHET_DOWNGRADE_BASE_SHA`, as well as
+both Windows commands.
 
 **Step 3: Update human documentation and guards**
 
