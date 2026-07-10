@@ -35,7 +35,7 @@
 | 3 | `feat(acp): supervise background queue drains` (`ratchet-cli`) | Task 6, Task 7, Task 8 | `feat/daemon-acp-background-drain` |
 | 4 | `feat(hooks): enforce managed policy` (`ratchet-cli`) | Task 9, Task 10, Task 11 | `feat/managed-hook-policy` |
 
-**Status:** Draft
+**Status:** Locked 2026-07-10T11:14:35Z
 
 ## Global Execution Rules
 
