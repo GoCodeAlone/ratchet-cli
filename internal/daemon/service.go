@@ -570,8 +570,8 @@ func (s *Service) AddProvider(ctx context.Context, req *pb.AddProviderReq) (*pb.
 
 	// Upsert: insert or update if alias already exists.
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO llm_providers (id, alias, type, model, secret_name, base_url, max_tokens, settings, is_default, last_operation_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO llm_providers (id, alias, type, model, secret_name, base_url, max_tokens, settings, is_default)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(alias) DO UPDATE SET
 		   type = excluded.type,
 		   model = excluded.model,
@@ -579,9 +579,8 @@ func (s *Service) AddProvider(ctx context.Context, req *pb.AddProviderReq) (*pb.
 		   base_url = CASE WHEN excluded.base_url = '' THEN base_url ELSE excluded.base_url END,
 		   settings = CASE WHEN excluded.settings = '{}' THEN settings ELSE excluded.settings END,
 		   max_tokens = excluded.max_tokens,
-		   is_default = excluded.is_default,
-		   last_operation_id = excluded.last_operation_id`,
-		id, req.Alias, req.Type, req.Model, secretName, req.BaseUrl, maxTokens, settings, isDefault, req.OperationId,
+		   is_default = excluded.is_default`,
+		id, req.Alias, req.Type, req.Model, secretName, req.BaseUrl, maxTokens, settings, isDefault,
 	); err != nil {
 		return nil, status.Errorf(codes.Internal, "insert provider: %v", err)
 	}
@@ -603,12 +602,11 @@ func (s *Service) AddProvider(ctx context.Context, req *pb.AddProviderReq) (*pb.
 	s.engine.ProviderRegistry.InvalidateCacheAlias(req.Alias)
 
 	return &pb.Provider{
-		Alias:       req.Alias,
-		Type:        req.Type,
-		Model:       req.Model,
-		BaseUrl:     req.BaseUrl,
-		IsDefault:   req.IsDefault,
-		OperationId: req.OperationId,
+		Alias:     req.Alias,
+		Type:      req.Type,
+		Model:     req.Model,
+		BaseUrl:   req.BaseUrl,
+		IsDefault: req.IsDefault,
 	}, nil
 }
 
@@ -650,7 +648,7 @@ func validProviderAliasForSecret(alias string) bool {
 
 func (s *Service) ListProviders(ctx context.Context, _ *pb.Empty) (*pb.ProviderList, error) {
 	rows, err := s.engine.DB.QueryContext(ctx,
-		`SELECT alias, type, model, base_url, is_default, last_operation_id FROM llm_providers ORDER BY alias`,
+		`SELECT alias, type, model, base_url, is_default FROM llm_providers ORDER BY alias`,
 	)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list providers: %v", err)
@@ -661,7 +659,7 @@ func (s *Service) ListProviders(ctx context.Context, _ *pb.Empty) (*pb.ProviderL
 	for rows.Next() {
 		var p pb.Provider
 		var isDefault int
-		if err := rows.Scan(&p.Alias, &p.Type, &p.Model, &p.BaseUrl, &isDefault, &p.OperationId); err != nil {
+		if err := rows.Scan(&p.Alias, &p.Type, &p.Model, &p.BaseUrl, &isDefault); err != nil {
 			return nil, status.Errorf(codes.Internal, "scan provider: %v", err)
 		}
 		p.IsDefault = isDefault == 1

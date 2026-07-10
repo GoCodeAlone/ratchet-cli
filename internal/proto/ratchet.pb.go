@@ -2420,7 +2420,6 @@ type AddProviderReq struct {
 	MaxTokens     int32                  `protobuf:"varint,6,opt,name=max_tokens,json=maxTokens,proto3" json:"max_tokens,omitempty"`
 	IsDefault     bool                   `protobuf:"varint,7,opt,name=is_default,json=isDefault,proto3" json:"is_default,omitempty"`
 	Settings      string                 `protobuf:"bytes,8,opt,name=settings,proto3" json:"settings,omitempty"`
-	OperationId   string                 `protobuf:"bytes,9,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2511,13 +2510,6 @@ func (x *AddProviderReq) GetSettings() string {
 	return ""
 }
 
-func (x *AddProviderReq) GetOperationId() string {
-	if x != nil {
-		return x.OperationId
-	}
-	return ""
-}
-
 type Provider struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Alias         string                 `protobuf:"bytes,1,opt,name=alias,proto3" json:"alias,omitempty"`
@@ -2525,7 +2517,6 @@ type Provider struct {
 	Model         string                 `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`
 	BaseUrl       string                 `protobuf:"bytes,4,opt,name=base_url,json=baseUrl,proto3" json:"base_url,omitempty"`
 	IsDefault     bool                   `protobuf:"varint,5,opt,name=is_default,json=isDefault,proto3" json:"is_default,omitempty"`
-	OperationId   string                 `protobuf:"bytes,6,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2593,13 +2584,6 @@ func (x *Provider) GetIsDefault() bool {
 		return x.IsDefault
 	}
 	return false
-}
-
-func (x *Provider) GetOperationId() string {
-	if x != nil {
-		return x.OperationId
-	}
-	return ""
 }
 
 type ProviderList struct {
@@ -7154,7 +7138,7 @@ const file_internal_proto_ratchet_proto_rawDesc = "" +
 	"\ftool_call_id\x18\x04 \x01(\tR\n" +
 	"toolCallId\x128\n" +
 	"\ttimestamp\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\x12\x0e\n" +
-	"\x02id\x18\x06 \x01(\tR\x02id\"\x81\x02\n" +
+	"\x02id\x18\x06 \x01(\tR\x02id\"\xde\x01\n" +
 	"\x0eAddProviderReq\x12\x14\n" +
 	"\x05alias\x18\x01 \x01(\tR\x05alias\x12\x12\n" +
 	"\x04type\x18\x02 \x01(\tR\x04type\x12\x14\n" +
@@ -7165,16 +7149,14 @@ const file_internal_proto_ratchet_proto_rawDesc = "" +
 	"max_tokens\x18\x06 \x01(\x05R\tmaxTokens\x12\x1d\n" +
 	"\n" +
 	"is_default\x18\a \x01(\bR\tisDefault\x12\x1a\n" +
-	"\bsettings\x18\b \x01(\tR\bsettings\x12!\n" +
-	"\foperation_id\x18\t \x01(\tR\voperationId\"\xa7\x01\n" +
+	"\bsettings\x18\b \x01(\tR\bsettings\"\x84\x01\n" +
 	"\bProvider\x12\x14\n" +
 	"\x05alias\x18\x01 \x01(\tR\x05alias\x12\x12\n" +
 	"\x04type\x18\x02 \x01(\tR\x04type\x12\x14\n" +
 	"\x05model\x18\x03 \x01(\tR\x05model\x12\x19\n" +
 	"\bbase_url\x18\x04 \x01(\tR\abaseUrl\x12\x1d\n" +
 	"\n" +
-	"is_default\x18\x05 \x01(\bR\tisDefault\x12!\n" +
-	"\foperation_id\x18\x06 \x01(\tR\voperationId\"?\n" +
+	"is_default\x18\x05 \x01(\bR\tisDefault\"?\n" +
 	"\fProviderList\x12/\n" +
 	"\tproviders\x18\x01 \x03(\v2\x11.ratchet.ProviderR\tproviders\"'\n" +
 	"\x0fTestProviderReq\x12\x14\n" +

@@ -259,8 +259,7 @@ func initDB(db *sql.DB) error {
 			base_url TEXT,
 			max_tokens INTEGER DEFAULT 4096,
 			settings TEXT NOT NULL DEFAULT '{}',
-			is_default INTEGER DEFAULT 0,
-			last_operation_id TEXT NOT NULL DEFAULT ''
+			is_default INTEGER DEFAULT 0
 		)`,
 		`CREATE TABLE IF NOT EXISTS permissions (
 			tool_name TEXT NOT NULL,
@@ -287,9 +286,6 @@ func initDB(db *sql.DB) error {
 	}
 
 	if err := ensureColumn(db, "llm_providers", "settings", "TEXT NOT NULL DEFAULT '{}'"); err != nil {
-		log.Printf("warning: migration failed: %v", err)
-	}
-	if err := ensureColumn(db, "llm_providers", "last_operation_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		log.Printf("warning: migration failed: %v", err)
 	}
 	for _, col := range []string{"parent_id", "root_id", "forked_from_message_id", "fork_reason", "branch_summary"} {

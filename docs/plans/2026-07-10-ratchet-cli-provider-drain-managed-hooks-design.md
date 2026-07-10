@@ -422,12 +422,8 @@ must pass before PR 2.
 Cause: daemon `AddProvider` is an alias-keyed upsert, so wizard compensation by
 alias could delete a pre-existing provider and could not restore its prior
 secret. Change: Review confirmation is the commit boundary; navigation never
-deletes a saved provider, save/test RPCs are bounded, and each upsert persists a
-non-secret operation ID so an ambiguous response can be reconciled exactly.
-Ctrl+C waits for direct or reconciled save resolution; a failed reconciliation
-pauses exit instead of guessing. Cancellation reports any committed provider to
-the app, and explicit provider removal remains a separate user command. Scope:
-no manifest change; this corrects Task 4 lifecycle semantics. Evidence: focused
-lifecycle tests cover save/cancel races, operation-ID round trips, ambiguous
-responses, failed test navigation, nil RPC results, process reaping, and app
-cache reconciliation.
+deletes a saved provider, save/test RPCs are bounded, cancellation reports any
+committed provider to the app, and explicit provider removal remains a separate
+user command. Scope: no manifest change; this corrects Task 4 lifecycle
+semantics. Evidence: focused lifecycle tests cover save/cancel races, failed
+test navigation, nil RPC results, process reaping, and app cache reconciliation.

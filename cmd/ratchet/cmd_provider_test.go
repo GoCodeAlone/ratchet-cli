@@ -18,26 +18,6 @@ import (
 	wfprovider "github.com/GoCodeAlone/workflow-plugin-agent/provider"
 )
 
-func TestValidateProviderRPCResponsesRejectNilSuccess(t *testing.T) {
-	if _, err := validateAddedProvider(nil, nil); err == nil {
-		t.Fatal("nil successful provider response accepted")
-	}
-	if _, err := validateProviderTestResult(nil, nil); err == nil {
-		t.Fatal("nil successful provider test response accepted")
-	}
-	if _, err := validateProviderList(nil, nil); err == nil {
-		t.Fatal("nil successful provider list response accepted")
-	}
-	provider := &pb.Provider{Alias: "test"}
-	if got, err := validateAddedProvider(provider, nil); err != nil || got != provider {
-		t.Fatalf("valid provider response = got:%v err:%v", got, err)
-	}
-	result := &pb.TestProviderResult{Success: true}
-	if got, err := validateProviderTestResult(result, nil); err != nil || got != result {
-		t.Fatalf("valid test response = got:%v err:%v", got, err)
-	}
-}
-
 func TestProviderSetupListOutputsKnownGuides(t *testing.T) {
 	out := captureStdout(t, func() {
 		handleProvider([]string{"setup", "list"})

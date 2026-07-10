@@ -3,7 +3,6 @@ package pages
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,9 +15,6 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/google/uuid"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/client"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
@@ -38,12 +34,6 @@ type OnboardingCancelledMsg struct {
 	Provider *pb.Provider
 }
 
-// OnboardingQuitMsg signals that pending setup work reached an authoritative
-// result and the app can exit without losing a committed provider.
-type OnboardingQuitMsg struct {
-	Provider *pb.Provider
-}
-
 // NavigateToOnboardingMsg signals the app to switch to the onboarding page.
 type NavigateToOnboardingMsg struct{}
 
@@ -57,13 +47,6 @@ type providerTestedMsg struct {
 	result *pb.TestProviderResult
 	err    error
 	flowID uint64
-}
-
-type providerReconciledMsg struct {
-	provider *pb.Provider
-	addErr   error
-	err      error
-	flowID   uint64
 }
 
 // browserAuthResultMsg carries the result of a browser-based auth flow.
@@ -145,7 +128,6 @@ const (
 
 type onboardingDeps struct {
 	listModels        func(context.Context, string, string, string, map[string]string) ([]providerauth.ModelInfo, error)
-	listProviders     func(context.Context) ([]*pb.Provider, error)
 	addProvider       func(context.Context, *pb.AddProviderReq) (*pb.Provider, error)
 	testProvider      func(context.Context, string) (*pb.TestProviderResult, error)
 	startGitHubDevice func(context.Context) (*providerauth.DeviceCodeResult, error)
@@ -237,19 +219,16 @@ type OnboardingModel struct {
 	cliCheckCancel context.CancelFunc
 
 	// Connection test
-	spinner            spinner.Model
-	testing            bool
-	adding             bool
-	reconcilingAdd     bool
-	cancelAfterAdd     bool
-	quitAfterAdd       bool
-	pendingOperationID string
-	providerOpContext  context.Context
-	providerOpCancel   context.CancelFunc
-	testResult         *pb.TestProviderResult
-	testError          string
-	added              bool // provider has been added to daemon
-	savedProvider      *pb.Provider
+	spinner           spinner.Model
+	testing           bool
+	adding            bool
+	cancelAfterAdd    bool
+	providerOpContext context.Context
+	providerOpCancel  context.CancelFunc
+	testResult        *pb.TestProviderResult
+	testError         string
+	added             bool // provider has been added to daemon
+	savedProvider     *pb.Provider
 
 	width  int
 	height int
@@ -262,13 +241,6 @@ func NewOnboarding(c *client.Client, t theme.Theme) OnboardingModel {
 func defaultOnboardingDeps(c *client.Client) onboardingDeps {
 	return onboardingDeps{
 		listModels: providerauth.ListModelsWithSettings,
-		listProviders: func(ctx context.Context) ([]*pb.Provider, error) {
-			providers, err := c.ListProviders(ctx)
-			if err != nil {
-				return nil, err
-			}
-			return providers.GetProviders(), nil
-		},
 		addProvider: func(ctx context.Context, req *pb.AddProviderReq) (*pb.Provider, error) {
 			return c.AddProvider(ctx, req)
 		},
@@ -382,9 +354,6 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 			m.authCancel()
 			m.authCancel = nil
 		}
-		if msg.err == nil && (msg.result == nil || strings.TrimSpace(msg.result.DeviceCode) == "" || strings.TrimSpace(msg.result.UserCode) == "" || strings.TrimSpace(msg.result.VerificationURI) == "") {
-			msg.err = errors.New("authentication returned an incomplete device code")
-		}
 		if msg.err != nil {
 			m.authing = false
 			m.authError = msg.err.Error()
@@ -413,9 +382,6 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 			m.authCancel()
 			m.authCancel = nil
 		}
-		if msg.err == nil && m.selectedProvider().CredentialRequired && strings.TrimSpace(msg.token) == "" {
-			msg.err = errors.New("authentication returned an empty credential")
-		}
 		if msg.err != nil {
 			m.authError = msg.err.Error()
 			p := m.selectedProvider()
@@ -431,7 +397,7 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 			}
 			return m, m.apiKeyInput.Focus()
 		}
-		m.authToken = strings.TrimSpace(msg.token)
+		m.authToken = msg.token
 		return m.advanceAfterCredential()
 
 	case modelsListMsg:
@@ -526,33 +492,31 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		if msg.flowID != m.flowID {
 			return m, nil
 		}
+		m.adding = false
 		if msg.err != nil {
-			if providerAddNeedsReconciliation(msg.err) && m.pendingOperationID != "" {
-				m.finishProviderOperation()
-				ctx := m.beginProviderOperation()
-				m.reconcilingAdd = true
-				return m, tea.Batch(m.spinner.Tick, m.reconcileProvider(ctx, msg.err))
-			}
-			return m.finishProviderAddFailure(msg.err)
-		}
-		if msg.provider == nil {
-			return m.finishProviderAddFailure(errors.New("add provider returned no provider"))
-		}
-		return m.finishProviderAddSuccess(msg.provider)
-
-	case providerReconciledMsg:
-		if msg.flowID != m.flowID {
+			m.finishProviderOperation()
+			m.testing = false
+			m.testError = redactProviderError(msg.err, m.authToken)
 			return m, nil
 		}
-		m.reconcilingAdd = false
-		if msg.err != nil {
-			m.quitAfterAdd = false
-			return m.finishProviderAddFailure(fmt.Errorf("save result unknown after %v: reconcile provider: %w", msg.addErr, msg.err))
-		}
 		if msg.provider == nil {
-			return m.finishProviderAddFailure(msg.addErr)
+			m.finishProviderOperation()
+			m.testing = false
+			m.testError = "add provider returned no provider"
+			return m, nil
 		}
-		return m.finishProviderAddSuccess(msg.provider)
+		m.added = true
+		m.savedProvider = msg.provider
+		if m.cancelAfterAdd {
+			m.cancelAfterAdd = false
+			m.finishProviderOperation()
+			m.testing = false
+			provider := msg.provider
+			return m, func() tea.Msg { return OnboardingDoneMsg{Provider: provider} }
+		}
+		m.finishProviderOperation()
+		ctx := m.beginProviderOperation()
+		return m, m.testProvider(ctx, msg.provider.Alias)
 
 	case providerTestedMsg:
 		if msg.flowID != m.flowID {
@@ -1348,9 +1312,7 @@ func (m OnboardingModel) updateEnterBaseURL(msg tea.Msg) (OnboardingModel, tea.C
 			m.cursor = m.providerIdx
 			return m, nil
 		case "enter":
-			baseURL := strings.TrimSpace(m.baseURLInput.Value())
-			m.baseURLInput.SetValue(baseURL)
-			if m.selectedProvider().BaseURLRequired && baseURL == "" {
+			if m.selectedProvider().BaseURLRequired && m.baseURLInput.Value() == "" {
 				return m, nil
 			}
 			return m.transitionToModelStrategy()
@@ -1608,9 +1570,6 @@ func (m OnboardingModel) startTest() (OnboardingModel, tea.Cmd) {
 	m.testing = true
 	m.adding = true
 	m.cancelAfterAdd = false
-	m.quitAfterAdd = false
-	m.reconcilingAdd = false
-	m.pendingOperationID = uuid.NewString()
 	m.testResult = nil
 	m.testError = ""
 	m.added = false
@@ -1634,85 +1593,22 @@ func (m OnboardingModel) addProvider(ctx context.Context, p providerauth.SetupEn
 			}
 			settingsJSON = string(data)
 		}
-		baseURL := strings.TrimSpace(m.baseURLInput.Value())
+		baseURL := m.baseURLInput.Value()
 		if p.Model == providerauth.ModelExternal {
 			baseURL = m.cliWorkingDir
 		}
 		req := &pb.AddProviderReq{
-			Alias:       providerAlias(p),
-			Type:        p.Type,
-			Model:       model,
-			ApiKey:      m.authToken,
-			BaseUrl:     baseURL,
-			Settings:    settingsJSON,
-			IsDefault:   true,
-			OperationId: m.pendingOperationID,
+			Alias:     providerAlias(p),
+			Type:      p.Type,
+			Model:     model,
+			ApiKey:    m.authToken,
+			BaseUrl:   baseURL,
+			Settings:  settingsJSON,
+			IsDefault: true,
 		}
 		provider, err := m.deps.addProvider(ctx, req)
 		return providerAddedMsg{provider: provider, err: err, flowID: m.flowID}
 	}
-}
-
-func (m OnboardingModel) reconcileProvider(ctx context.Context, addErr error) tea.Cmd {
-	return func() tea.Msg {
-		providers, err := m.deps.listProviders(ctx)
-		if err != nil {
-			return providerReconciledMsg{addErr: addErr, err: err, flowID: m.flowID}
-		}
-		for _, provider := range providers {
-			if provider.GetOperationId() == m.pendingOperationID {
-				return providerReconciledMsg{provider: provider, addErr: addErr, flowID: m.flowID}
-			}
-		}
-		return providerReconciledMsg{addErr: addErr, flowID: m.flowID}
-	}
-}
-
-func providerAddNeedsReconciliation(err error) bool {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return true
-	}
-	st, ok := status.FromError(err)
-	if !ok {
-		return false
-	}
-	switch st.Code() {
-	case codes.Canceled, codes.DeadlineExceeded, codes.Unavailable, codes.Unknown:
-		return true
-	default:
-		return false
-	}
-}
-
-func (m OnboardingModel) finishProviderAddSuccess(provider *pb.Provider) (OnboardingModel, tea.Cmd) {
-	m.finishProviderOperation()
-	m.adding = false
-	m.reconcilingAdd = false
-	m.added = true
-	m.savedProvider = provider
-	if m.quitAfterAdd {
-		m.testing = false
-		return m, func() tea.Msg { return OnboardingQuitMsg{Provider: provider} }
-	}
-	if m.cancelAfterAdd {
-		m.cancelAfterAdd = false
-		m.testing = false
-		return m, func() tea.Msg { return OnboardingDoneMsg{Provider: provider} }
-	}
-	ctx := m.beginProviderOperation()
-	return m, m.testProvider(ctx, provider.GetAlias())
-}
-
-func (m OnboardingModel) finishProviderAddFailure(err error) (OnboardingModel, tea.Cmd) {
-	m.finishProviderOperation()
-	m.adding = false
-	m.reconcilingAdd = false
-	m.testing = false
-	m.testError = redactProviderError(err, m.authToken)
-	if m.quitAfterAdd {
-		return m, func() tea.Msg { return OnboardingQuitMsg{} }
-	}
-	return m, nil
 }
 
 func (m OnboardingModel) testProvider(ctx context.Context, alias string) tea.Cmd {
@@ -1765,16 +1661,6 @@ func (m *OnboardingModel) Cancel() {
 	m.cliCheckCancel = nil
 	m.providerOpCancel = nil
 	m.providerOpContext = nil
-}
-
-// RequestQuit defers exit while a provider upsert is unresolved.
-func (m *OnboardingModel) RequestQuit() bool {
-	if m.adding || m.reconcilingAdd {
-		m.quitAfterAdd = true
-		return true
-	}
-	m.Cancel()
-	return false
 }
 
 func providerAlias(entry providerauth.SetupEntry) string {
@@ -2133,14 +2019,8 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 	case stepTestConnection:
 		p := m.selectedProvider()
 		if m.adding {
-			if m.reconcilingAdd {
-				sb.WriteString(m.spinner.View() + " Confirming whether " + p.DisplayName + " was saved...\n\n")
-			} else {
-				sb.WriteString(m.spinner.View() + " Saving " + p.DisplayName + " configuration...\n\n")
-			}
-			if m.quitAfterAdd {
-				sb.WriteString(mutedStyle.Render("Exit requested; waiting for the save result"))
-			} else if m.cancelAfterAdd {
+			sb.WriteString(m.spinner.View() + " Saving " + p.DisplayName + " configuration...\n\n")
+			if m.cancelAfterAdd {
 				sb.WriteString(mutedStyle.Render("Cancel requested; setup will finish after save"))
 			} else {
 				sb.WriteString(mutedStyle.Render("Esc: cancel after save"))
