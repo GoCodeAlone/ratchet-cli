@@ -141,3 +141,40 @@ dedicated Windows native step; current/parent version-pair rollback fixture.
 
 **Verdict reasoning:** FAIL; Tasks 4-5 are behaviorally complete but not yet an
 executable TDD/runtime/rollback plan.
+
+## Cycle 3: Durable Provider Saves
+
+**Status:** FAIL
+
+**Findings (Critical):** none.
+
+**Findings (Important):**
+
+- `P12` Adding all Task 4 tests before Checkpoint 4A breaks package compilation
+  on undefined later symbols; each checkpoint must add only its own tests.
+- `P13` Production tests run before `dist/ratchet` exists; harnesses must build
+  current/parent binaries into test-owned temporary paths.
+- `P14` `origin/master` may equal HEAD/current code; downgrade proof must pin,
+  log, and validate a distinct SHA whose proto lacks `CommitProviderSave`.
+
+**Findings (Minor):**
+
+- `P15` Each checkpoint needs local `gofmt`, focused proof, exact staging, and
+  commit order so final formatting cannot dirty a supposedly clean branch.
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Guidance/security/infra/UI | Clean | Existing boundaries and named proofs remain sound. |
+| Assumptions/runtime | Finding | Shared dist artifact and older-ref identity were assumed. |
+| TDD/compile/dependencies | Finding | Go compiles all package tests regardless of `-run`. |
+| Integration | Finding | Production harness must construct the binary it launches. |
+| Rollback | Finding | Same-SHA parent makes downgrade proof vacuous. |
+| Decomposition | Clean | Internal checkpoints preserve locked tasks/PRs. |
+
+**Alternatives:** checkpoint-owned tests; temporary production binaries; pinned
+and validated base SHA; checkpoint-local closeout.
+
+**Verdict reasoning:** FAIL; checkpoint compilation, hermetic runtime build, and
+non-vacuous downgrade identity require correction.
