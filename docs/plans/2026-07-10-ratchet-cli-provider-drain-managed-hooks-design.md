@@ -517,3 +517,12 @@ the shared harness, and derive redactor labels from the committed provider point
 Scope: no manifest change; Task 4B files/staging now name both shared tests.
 Evidence: the focused 4B suite and `go test ./internal/daemon -count=1` pass;
 removing the durable manager makes the named tests fail at compile time.
+
+### Backport 2026-07-10: Native daemon lock dependency
+
+Cause: Windows `LockFileEx` requires `golang.org/x/sys/windows`; the module was
+already pinned transitively but 4C's staging list did not name `go.mod`.
+Change: promote the existing `x/sys` version to a direct dependency and use its
+platform-native `windows.Overlapped` type; Unix uses the sibling `unix.Flock`.
+Scope: no manifest change; Task 4 and PR 2 are unchanged.
+Evidence: Unix lock tests pass and the Windows daemon test binary cross-compiles.

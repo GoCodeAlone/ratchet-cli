@@ -326,6 +326,7 @@ git commit -m "refactor(provider): drive CLI from catalog"
 - Modify generated: `internal/proto/ratchet.pb.go`
 - Modify generated: `internal/proto/ratchet_grpc.pb.go`
 - Modify: `.github/workflows/ci.yml`
+- Modify: `go.mod`
 - Modify: `internal/releaseguard/workflow_test.go`
 - Modify: `internal/daemon/engine.go`
 - Modify: `internal/daemon/daemon.go`
@@ -514,7 +515,7 @@ run natively in PR CI. Commit `fix(daemon): enforce exclusive ownership`.
 
 ```bash
 gofmt -w internal/daemon/daemon.go internal/daemon/lock_unix.go internal/daemon/lock_windows.go internal/daemon/lock_unix_test.go internal/daemon/lock_windows_test.go internal/releaseguard/workflow_test.go
-git add internal/daemon/daemon.go internal/daemon/lock_unix.go internal/daemon/lock_windows.go internal/daemon/lock_unix_test.go internal/daemon/lock_windows_test.go internal/releaseguard/workflow_test.go .github/workflows/ci.yml
+git add internal/daemon/daemon.go internal/daemon/lock_unix.go internal/daemon/lock_windows.go internal/daemon/lock_unix_test.go internal/daemon/lock_windows_test.go internal/releaseguard/workflow_test.go .github/workflows/ci.yml go.mod
 git commit -m "fix(daemon): enforce exclusive ownership"
 ```
 
