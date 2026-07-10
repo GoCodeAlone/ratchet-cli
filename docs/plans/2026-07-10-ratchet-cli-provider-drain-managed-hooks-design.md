@@ -188,6 +188,12 @@ administrator-owned file boundary. Local trust and disable commands reject
 attempts to alter them. Plugin hooks are filtered only after plugin merge so
 managed-only cannot be bypassed by reload order.
 
+Project hooks are loaded lazily from a session working directory at event time.
+The engine therefore applies effective managed policy at the final
+`EngineContext.RunHooks` composition point, after daemon user/plugin hooks and
+the event's project hooks have merged. Reload-time annotation alone is not an
+enforcement boundary.
+
 A missing managed file means no managed policy. An existing malformed file is
 a fail-closed error during daemon startup and hook reload. The runtime must not
 silently continue with unmanaged hooks after an administrator attempted to
@@ -298,7 +304,7 @@ Release artifacts remain the existing GoReleaser matrix, including Windows.
 | Bubble Tea provider/model wizard | runtime-integrated | State tests plus real PTY navigation/render proof. |
 | Daemon gRPC/client background API | runtime-integrated | Started daemon, real client, fake ACP process, persisted restart and stop proof. |
 | ACP profile store and queue claim/cancel/recovery | runtime-integrated | Real stores and existing drain path; trust-hash drift has a negative launch proof. |
-| User/project/plugin/managed hook sources | runtime-integrated | Engine reload test merges all sources and executes only the effective set. |
+| User/project/plugin/managed hook sources | runtime-integrated | Engine reload plus event-time project load test merges all sources and executes only the final effective set. |
 | OS managed-policy paths and ownership checks | runtime-integrated | Platform unit tests; Windows DACL and Unix ownership/link tests use platform-specific files. |
 | External managed policy service/SDK | deferred | No remote control plane is required for local administrator policy. |
 | Credentialed third-party provider discovery | deferred | Requires repository secrets and is not needed to prove catalog/wiring behavior. |

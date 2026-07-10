@@ -19,6 +19,9 @@ fails closed. Managed hooks cannot be changed by local trust/disable commands.
 Present policy must be a non-symlink regular file with root-only mutation on
 Unix or Administrators/SYSTEM-only mutation on Windows.
 
+Because project hooks load per event, the engine reapplies policy at the final
+`RunHooks` composition point after user, plugin, and project sources merge.
+
 Durably append a metadata-only `started` record before launching a managed
 hook, then append a terminal record. A failed start append blocks execution;
 terminal append failure is surfaced as degraded audit state. Do not record

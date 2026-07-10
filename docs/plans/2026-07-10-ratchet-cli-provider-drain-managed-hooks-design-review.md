@@ -50,6 +50,13 @@ Windows, secret, plugin, release, and autonomous-delivery constraints.
   state in tests. Recommendation: constructor-inject daemon ownership and use a
   disabled manager in test/smoke constructors. _Resolution: design and ADR 0004
   corrected._
+- `D6` [Repo precedent / security] [Managed Hook Policy and Audit]: Project
+  hooks are loaded lazily inside `EngineContext.RunHooks`, after the plugin
+  reload path where the initial design placed final filtering. Managed-only
+  enforcement at reload could therefore be bypassed by a project hook.
+  Recommendation: apply effective policy after the per-event user/plugin/project
+  composition. _Resolution: design and ADR 0005 corrected with a combined
+  source execution test._
 
 **Findings (Minor):**
 
@@ -61,10 +68,10 @@ Windows, secret, plugin, release, and autonomous-delivery constraints.
 |---|---|---|
 | Project-guidance conflicts | Clean | Revised design reuses plugin SDKs, existing secrets/Redactor, Go, JSONL audit, Windows builds, and per-PR release gates from workspace guidance. |
 | Assumptions under attack | Finding | Profile trust validity and implicit test-manager disablement were load-bearing; D3/D5 resolved them. |
-| Repo-precedent conflicts | Finding | Existing command hierarchy is `acp client` and queue state is session-owned; D2 corrected both. |
+| Repo-precedent conflicts | Finding | Existing command/session hierarchy and late project-hook loading conflicted with the first shape; D2/D6 corrected both. |
 | Artifact-class precedent | Finding | Daemon smoke constructors explicitly omit background schedulers; D5 requires the same injection pattern. |
 | YAGNI violations | Clean | No remote policy service, TypeScript SDK, arbitrary scheduler, provider SDK, or self-mutation loop is included. |
-| Missing failure modes | Finding | Insecure managed files, pre-launch audit failure, profile drift, test state leakage, and retry amplification are now specified. |
+| Missing failure modes | Finding | Insecure managed files, late project bypass, pre-launch audit failure, profile drift, test state leakage, and retry amplification are now specified. |
 | Security / privacy at architecture level | Finding | D3/D4 closed unattended trust and administrator-boundary gaps; secrets/content remain excluded from policy and audit. |
 | Infrastructure impact | Clean | Local files and daemon workers only; no production resources, IAM, migrations, or deployment approval required. |
 | Multi-component validation | Clean | Revised matrix requires real catalog/registry, TUI/daemon, daemon/ACP process, and hook loader/plugin/runner proofs. |
@@ -89,7 +96,7 @@ Windows, secret, plugin, release, and autonomous-delivery constraints.
    enforce managed-only after plugin reload or protect policy from local
    disable state, so it does not meet administrator-policy intent.
 
-**Verdict reasoning:** Five Important issues were found and resolved in the
+**Verdict reasoning:** Six Important issues were found and resolved in the
 design/ADRs before planning. The revised artifact now names its upstream
 contract, established command/state identifiers, trust validity, secure policy
 file boundary, audit ordering, daemon injection pattern, integration matrix,
