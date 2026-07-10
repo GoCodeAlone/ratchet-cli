@@ -432,6 +432,32 @@ func TestOnboardingCLINativeProviderUsesResolvedCommand(t *testing.T) {
 	}
 }
 
+func TestOnboardingCLICheckEscCancelsProcess(t *testing.T) {
+	started := make(chan struct{})
+	cancelled := make(chan struct{})
+	deps := testOnboardingDeps()
+	deps.checkCLI = func(ctx context.Context, _, _ string) error {
+		close(started)
+		<-ctx.Done()
+		close(cancelled)
+		return ctx.Err()
+	}
+	model := newOnboarding(nil, theme.Dark(), deps)
+	model.cursor = onboardingProviderIndex(t, model, "codex_cli")
+	model, cmd := model.advanceFromProvider()
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok || len(batch) < 2 {
+		t.Fatalf("CLI check command = %T", cmd())
+	}
+	go batch[len(batch)-1]() //nolint:errcheck
+	<-started
+	model, _ = model.updateCLISetup(tea.KeyPressMsg{Code: tea.KeyEsc})
+	<-cancelled
+	if model.step != stepSelectProvider || model.cliCheckCancel != nil {
+		t.Fatalf("cancelled CLI check = step:%v cancel:%v", model.step, model.cliCheckCancel)
+	}
+}
+
 func TestOnboardingCLINativeSubmitUsesCatalogAliasCommandAndWorkingDirectory(t *testing.T) {
 	var request *pb.AddProviderReq
 	deps := testOnboardingDeps()
@@ -544,6 +570,19 @@ func TestOnboardingFilteredProviderListFitsShortTerminal(t *testing.T) {
 	}
 }
 
+func TestOnboardingProviderHelpMatchesFilterState(t *testing.T) {
+	model := newOnboarding(nil, theme.Dark(), testOnboardingDeps())
+	view := model.View(theme.Dark(), 80, 24)
+	if !strings.Contains(view, "Esc: cancel") || strings.Contains(view, "Esc: clear filter") {
+		t.Fatalf("root provider help is inaccurate:\n%s", view)
+	}
+	model.filterInput.SetValue("bedrock")
+	view = model.View(theme.Dark(), 80, 24)
+	if !strings.Contains(view, "Esc: clear") || !strings.Contains(view, "filter") {
+		t.Fatalf("filtered provider help is inaccurate:\n%s", view)
+	}
+}
+
 func TestOnboardingReviewWrapsLongValuesWithinTerminalWidth(t *testing.T) {
 	model := newOnboarding(nil, theme.Dark(), testOnboardingDeps())
 	model.providerIdx = onboardingProviderIndex(t, model, "custom")
@@ -621,6 +660,19 @@ func TestOnboardingPullAndCLICheckViewsBoundStatusAndShowRecovery(t *testing.T) 
 	if !strings.Contains(view, "Esc: cancel") {
 		t.Fatalf("CLI check view missing recovery:\n%s", view)
 	}
+
+	model.step = stepTestConnection
+	model.testing = true
+	view = model.View(theme.Dark(), 80, 24)
+	if !strings.Contains(view, "Esc: cancel") {
+		t.Fatalf("provider test view missing recovery:\n%s", view)
+	}
+	model.testing = false
+	model.removing = true
+	view = model.View(theme.Dark(), 80, 24)
+	if !strings.Contains(view, "Esc: cancel") {
+		t.Fatalf("provider removal view missing recovery:\n%s", view)
+	}
 }
 
 func TestOnboardingReviewEscReturnsToModelSelection(t *testing.T) {
@@ -669,6 +721,33 @@ func TestOnboardingTestFailureWaitsForProviderRemovalBeforeReview(t *testing.T) 
 	model, _ = model.Update(runOnboardingCmd(t, cmd))
 	if removedAlias != "bedrock" || model.step != stepReview || model.removing || model.added {
 		t.Fatalf("removal result = alias:%q step:%v removing:%v added:%v", removedAlias, model.step, model.removing, model.added)
+	}
+}
+
+func TestOnboardingProviderTestEscCancelsOperation(t *testing.T) {
+	started := make(chan struct{})
+	cancelled := make(chan struct{})
+	deps := testOnboardingDeps()
+	deps.testProvider = func(ctx context.Context, _ string) (*pb.TestProviderResult, error) {
+		close(started)
+		<-ctx.Done()
+		close(cancelled)
+		return nil, ctx.Err()
+	}
+	model := newOnboarding(nil, theme.Dark(), deps)
+	model.providerIdx = onboardingProviderIndex(t, model, "bedrock")
+	model.selectedModel = "test-model"
+	model, cmd := model.startTest()
+	batch := cmd().(tea.BatchMsg)
+	model, cmd = model.Update(batch[len(batch)-1]())
+	result := make(chan tea.Msg, 1)
+	go func() { result <- cmd() }()
+	<-started
+	model, _ = model.updateTestConnection(tea.KeyPressMsg{Code: tea.KeyEsc})
+	<-cancelled
+	model, _ = model.Update(<-result)
+	if model.testing || model.providerOpCancel != nil || !strings.Contains(model.testError, "canceled") {
+		t.Fatalf("cancelled test = testing:%v cancel:%v error:%q", model.testing, model.providerOpCancel, model.testError)
 	}
 }
 

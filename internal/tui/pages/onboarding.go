@@ -217,14 +217,17 @@ type OnboardingModel struct {
 	cliCommandPath string
 	cliWorkingDir  string
 	cliError       string
+	cliCheckCancel context.CancelFunc
 
 	// Connection test
-	spinner    spinner.Model
-	testing    bool
-	removing   bool
-	testResult *pb.TestProviderResult
-	testError  string
-	added      bool // provider has been added to daemon
+	spinner           spinner.Model
+	testing           bool
+	removing          bool
+	providerOpContext context.Context
+	providerOpCancel  context.CancelFunc
+	testResult        *pb.TestProviderResult
+	testError         string
+	added             bool // provider has been added to daemon
 
 	width  int
 	height int
@@ -428,6 +431,10 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		if msg.flowID != m.flowID {
 			return m, nil
 		}
+		if m.cliCheckCancel != nil {
+			m.cliCheckCancel()
+			m.cliCheckCancel = nil
+		}
 		if msg.err != nil {
 			m.cliError = msg.err.Error()
 			return m, nil
@@ -477,17 +484,19 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 			return m, nil
 		}
 		if msg.err != nil {
+			m.cancelProviderOperation()
 			m.testing = false
 			m.testError = msg.err.Error()
 			return m, nil
 		}
 		m.added = true
-		return m, m.testProvider(msg.provider.Alias)
+		return m, m.testProvider(m.providerOpContext, msg.provider.Alias)
 
 	case providerTestedMsg:
 		if msg.flowID != m.flowID {
 			return m, nil
 		}
+		m.cancelProviderOperation()
 		m.testing = false
 		if msg.err != nil {
 			m.testError = msg.err.Error()
@@ -503,6 +512,7 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		if msg.flowID != m.flowID {
 			return m, nil
 		}
+		m.cancelProviderOperation()
 		m.removing = false
 		if msg.err != nil {
 			m.testError = "remove failed: " + msg.err.Error()
@@ -660,8 +670,7 @@ func (m OnboardingModel) advanceFromProvider() (OnboardingModel, tea.Cmd) {
 	m.baseURLInput.SetValue("")
 
 	if p.Setup == providerauth.SetupCLINative {
-		m.step = stepCLISetup
-		return m, tea.Batch(m.spinner.Tick, m.checkCLIProvider())
+		return m.beginCLISetup()
 	}
 
 	switch p.Auth {
@@ -846,14 +855,21 @@ func (m OnboardingModel) transitionToModelStrategy() (OnboardingModel, tea.Cmd) 
 	}
 }
 
-func (m OnboardingModel) checkCLIProvider() tea.Cmd {
+func (m OnboardingModel) beginCLISetup() (OnboardingModel, tea.Cmd) {
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cliCheckCancel = cancel
+	m.step = stepCLISetup
+	return m, tea.Batch(m.spinner.Tick, m.checkCLIProvider(ctx))
+}
+
+func (m OnboardingModel) checkCLIProvider(ctx context.Context) tea.Cmd {
 	return func() tea.Msg {
 		entry := m.selectedProvider()
 		path, err := m.deps.lookPath(entry.CLICommand)
 		if err != nil {
 			return cliCheckMsg{err: err, flowID: m.flowID}
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		if err := m.deps.checkCLI(ctx, entry.Type, path); err != nil {
 			return cliCheckMsg{err: fmt.Errorf("health check %s: %w", entry.DisplayName, err), flowID: m.flowID}
@@ -865,6 +881,10 @@ func (m OnboardingModel) checkCLIProvider() tea.Cmd {
 
 func (m OnboardingModel) updateCLISetup(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok && keyMsg.String() == "esc" {
+		if m.cliCheckCancel != nil {
+			m.cliCheckCancel()
+			m.cliCheckCancel = nil
+		}
 		m.flowID++
 		m.step = stepSelectProvider
 		m.cursor = 0
@@ -1493,6 +1513,12 @@ func (m OnboardingModel) updateSelectModel(msg tea.Msg) (OnboardingModel, tea.Cm
 }
 
 func (m OnboardingModel) startTest() (OnboardingModel, tea.Cmd) {
+	if m.providerOpCancel != nil {
+		m.providerOpCancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	m.providerOpContext = ctx
+	m.providerOpCancel = cancel
 	m.step = stepTestConnection
 	m.testing = true
 	m.testResult = nil
@@ -1504,11 +1530,11 @@ func (m OnboardingModel) startTest() (OnboardingModel, tea.Cmd) {
 
 	return m, tea.Batch(
 		m.spinner.Tick,
-		m.addProvider(p, model),
+		m.addProvider(ctx, p, model),
 	)
 }
 
-func (m OnboardingModel) addProvider(p providerauth.SetupEntry, model string) tea.Cmd {
+func (m OnboardingModel) addProvider(ctx context.Context, p providerauth.SetupEntry, model string) tea.Cmd {
 	return func() tea.Msg {
 		settingsJSON := ""
 		if len(m.settings) > 0 {
@@ -1531,22 +1557,40 @@ func (m OnboardingModel) addProvider(p providerauth.SetupEntry, model string) te
 			Settings:  settingsJSON,
 			IsDefault: true,
 		}
-		provider, err := m.deps.addProvider(context.Background(), req)
+		provider, err := m.deps.addProvider(ctx, req)
 		return providerAddedMsg{provider: provider, err: err, flowID: m.flowID}
 	}
 }
 
-func (m OnboardingModel) testProvider(alias string) tea.Cmd {
+func (m OnboardingModel) testProvider(ctx context.Context, alias string) tea.Cmd {
 	return func() tea.Msg {
-		result, err := m.deps.testProvider(context.Background(), alias)
+		result, err := m.deps.testProvider(ctx, alias)
 		return providerTestedMsg{result: result, err: err, flowID: m.flowID}
 	}
 }
 
-func (m OnboardingModel) removeProvider(alias string) tea.Cmd {
+func (m OnboardingModel) removeProvider(ctx context.Context, alias string) tea.Cmd {
 	return func() tea.Msg {
-		return providerRemovedMsg{err: m.deps.removeProvider(context.Background(), alias), flowID: m.flowID}
+		return providerRemovedMsg{err: m.deps.removeProvider(ctx, alias), flowID: m.flowID}
 	}
+}
+
+func (m *OnboardingModel) beginProviderOperation() context.Context {
+	if m.providerOpCancel != nil {
+		m.providerOpCancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	m.providerOpContext = ctx
+	m.providerOpCancel = cancel
+	return ctx
+}
+
+func (m *OnboardingModel) cancelProviderOperation() {
+	if m.providerOpCancel != nil {
+		m.providerOpCancel()
+	}
+	m.providerOpContext = nil
+	m.providerOpCancel = nil
 }
 
 func providerAlias(entry providerauth.SetupEntry) string {
@@ -1559,6 +1603,9 @@ func providerAlias(entry providerauth.SetupEntry) string {
 func (m OnboardingModel) updateTestConnection(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 		if m.testing || m.removing {
+			if keyMsg.String() == "esc" {
+				m.cancelProviderOperation()
+			}
 			return m, nil
 		}
 
@@ -1584,17 +1631,19 @@ func (m OnboardingModel) updateTestConnection(msg tea.Msg) (OnboardingModel, tea
 		switch keyMsg.String() {
 		case "r":
 			if m.added {
+				ctx := m.beginProviderOperation()
 				m.testing = true
 				m.testError = ""
 				p := m.selectedProvider()
-				return m, tea.Batch(m.spinner.Tick, m.testProvider(providerAlias(p)))
+				return m, tea.Batch(m.spinner.Tick, m.testProvider(ctx, providerAlias(p)))
 			}
 			return m.startTest()
 		case "b", "esc":
 			if m.added {
+				ctx := m.beginProviderOperation()
 				p := m.selectedProvider()
 				m.removing = true
-				return m, tea.Batch(m.spinner.Tick, m.removeProvider(providerAlias(p)))
+				return m, tea.Batch(m.spinner.Tick, m.removeProvider(ctx, providerAlias(p)))
 			}
 			m.step = stepReview
 			m.testResult = nil
@@ -1694,7 +1743,11 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 			selected := m.providers[indices[cursor]]
 			sb.WriteString("\n" + wrapMuted.Render(selected.Description) + "\n")
 		}
-		sb.WriteString("\n" + mutedStyle.Render("↑/↓: select  /: filter  Enter: confirm  Esc: clear filter"))
+		help := "↑/↓: select  /: filter  Enter: confirm  Esc: cancel"
+		if m.filtering || m.filterInput.Value() != "" {
+			help = "↑/↓: select  /: filter  Enter: confirm  Esc: clear filter"
+		}
+		sb.WriteString("\n" + mutedStyle.Render(help))
 
 	case stepAnthropicAuthChoice:
 		sb.WriteString("Sign in with Anthropic\n\n")
@@ -1884,9 +1937,11 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 	case stepTestConnection:
 		p := m.selectedProvider()
 		if m.removing {
-			sb.WriteString(m.spinner.View() + " Removing the failed provider configuration...\n")
+			sb.WriteString(m.spinner.View() + " Removing the failed provider configuration...\n\n")
+			sb.WriteString(mutedStyle.Render("Esc: cancel"))
 		} else if m.testing {
-			sb.WriteString(m.spinner.View() + " Testing connection to " + p.DisplayName + "...\n")
+			sb.WriteString(m.spinner.View() + " Testing connection to " + p.DisplayName + "...\n\n")
+			sb.WriteString(mutedStyle.Render("Esc: cancel"))
 		} else if m.testResult != nil && m.testResult.Success {
 			sb.WriteString(successStyle.Render("Connection successful") + "\n\n")
 			sb.WriteString("Provider: " + p.Type + "\n")
