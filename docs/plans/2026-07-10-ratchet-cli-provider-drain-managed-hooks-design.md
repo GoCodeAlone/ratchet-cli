@@ -427,3 +427,16 @@ committed provider to the app, and explicit provider removal remains a separate
 user command. Scope: no manifest change; this corrects Task 4 lifecycle
 semantics. Evidence: focused lifecycle tests cover save/cancel races, failed
 test navigation, nil RPC results, process reaping, and app cache reconciliation.
+
+### Backport 2026-07-10: Durable provider-save operations
+
+Cause: round-five review proved alias-stable secret mutation and one-shot list
+reconciliation cannot make an upsert atomic or authoritative. Change: use
+operation-versioned secret names; commit the provider pointer and durable
+`provider_operations` result in one SQL transaction; query/poll that operation
+after ambiguous responses; fail startup on required schema migration failure.
+Old-secret retirement occurs only after commit; rollback deletes only the new
+inactive secret. See `decisions/0006-make-provider-saves-durable.md`. Scope: no
+manifest change; this replaces Task 4's rejected reconciliation implementation.
+Evidence required: secret rollback, operation restart/query, delayed commit,
+nil list, Ctrl+C wait, and Windows build tests.
