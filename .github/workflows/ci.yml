@@ -126,6 +126,10 @@ jobs:
           cache: true
       - name: Configure Git for private modules
         run: git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
+      - name: Run Windows daemon lock tests
+        run: go test ./internal/daemon -run 'DaemonLock' -count=1
+      - name: Run Windows ConPTY provider save
+        run: go test -tags tui_smoke ./internal/tui -run 'WindowsConPTYProviderSave' -count=1 -timeout=10m
       - name: Run Windows ConPTY smoke tests
         run: go test -tags tui_smoke ./internal/client ./internal/daemon ./internal/tui -run 'ConnectSmokeLoopback|SmokeServiceLoopback|WindowsConPTY' -count=1 -timeout=10m
 

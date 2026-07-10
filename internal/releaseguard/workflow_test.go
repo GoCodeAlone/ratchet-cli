@@ -94,6 +94,15 @@ func TestCITUISmokeAndTapPreflightJobs(t *testing.T) {
 	requireRun(t, tap, "Run tap preflight", "go test -count=1 ./internal/releaseguard -run TestTapPreflight")
 }
 
+func TestCIRequiresWindowsProviderDurability(t *testing.T) {
+	workflow := loadWorkflow(t, ".github/workflows/ci.yml")
+	windowsSmoke := requireJob(t, workflow, "windows-conpty-smoke")
+	requireRun(t, windowsSmoke, "Run Windows daemon lock tests",
+		"go test ./internal/daemon -run 'DaemonLock' -count=1")
+	requireRun(t, windowsSmoke, "Run Windows ConPTY provider save",
+		"go test -tags tui_smoke ./internal/tui -run 'WindowsConPTYProviderSave' -count=1 -timeout=10m")
+}
+
 func TestReleaseWorkflowPrePublishGuards(t *testing.T) {
 	workflow := loadWorkflow(t, ".github/workflows/release.yml")
 	job := requireJob(t, workflow, "release")
