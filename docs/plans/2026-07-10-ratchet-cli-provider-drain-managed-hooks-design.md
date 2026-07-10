@@ -494,3 +494,13 @@ Task 5 gains restart/cleanup/runtime proof. Evidence required: hostile IDs,
 duplicate/replay conflict, secret rollback, registry resolution, restart states,
 cleanup retry/sweep, delayed operation polling, nil list, Ctrl+C wait, CLI/TUI
 coverage, and Windows build tests.
+
+### Backport 2026-07-10: Contract test staging
+
+Cause: Checkpoint 4A names `TestProviderOperationRPCContract` in the daemon
+package but its staging command omitted the modified daemon test file.
+Change: stage `internal/daemon/integration_test.go` with the generated contract
+and client compile-contract test.
+Scope: no manifest change; Task 4 and PR 2 are unchanged.
+Evidence: removing the generated contract makes both named tests fail on the
+missing RPC/types; restoring it makes the focused command pass.

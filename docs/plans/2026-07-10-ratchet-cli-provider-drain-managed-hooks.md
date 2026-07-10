@@ -414,7 +414,7 @@ the command to PASS, then commit `feat(provider): add durable save contract`.
 
 ```bash
 gofmt -w internal/client/client.go internal/client/provider_save_test.go
-git add internal/proto/ratchet.proto internal/proto/ratchet.pb.go internal/proto/ratchet_grpc.pb.go internal/client/client.go internal/client/provider_save_test.go
+git add internal/proto/ratchet.proto internal/proto/ratchet.pb.go internal/proto/ratchet_grpc.pb.go internal/client/client.go internal/client/provider_save_test.go internal/daemon/integration_test.go
 git commit -m "feat(provider): add durable save contract"
 ```
 
