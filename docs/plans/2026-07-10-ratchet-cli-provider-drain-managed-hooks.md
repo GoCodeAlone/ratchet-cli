@@ -520,8 +520,9 @@ git commit -m "fix(daemon): enforce exclusive ownership"
 
 Add failing `TestProviderDurableSaveDeadlineAndReconciliation`,
 `TestProviderDurableSaveInterruptAndForceExit`,
-`TestProviderOperationStatusCommand`, and a source guard enumerating generic,
-ChatGPT, Ollama, and CLI-native writers. Run:
+`TestProviderOperationStatusCommand`,
+`TestProviderAddJSONIncludesStableOperationID`, and a source guard enumerating
+generic, ChatGPT, Ollama, and CLI-native writers. Run:
 
 ```bash
 go test ./cmd/ratchet -run 'Provider.*Operation|ProviderDurableSave' -count=1
@@ -629,6 +630,8 @@ First add failing tests named `TestTUIBinarySmokeProviderSave`,
 go test -tags tui_smoke ./internal/daemon -run 'TUISmokeProviderSave' -count=1
 go test -tags tui_smoke ./internal/tui -run 'TUIBinary.*ProviderSave' -count=1 -timeout=12m
 go test ./cmd/ratchet -run 'HarnessSmokeDurableProvider' -count=1 -timeout=12m
+RATCHET_DOWNGRADE_BASE_SHA=8cb5602166ffe529a0f05101dff583bad0919415 \
+  go test ./cmd/ratchet -run 'HarnessSmokeDurableProviderDowngrade' -count=1 -timeout=12m
 ```
 
 Expected: FAIL because smoke state is in-memory/discarded, the binaries do not
@@ -682,20 +685,27 @@ socket/PID removal and lock release, then starts the parent and proves it resolv
 the versioned secret against the same local fixture. Cleanup always removes the
 temporary worktree. Post-merge reruns must set an explicitly older base SHA.
 
-Update `tui-smoke` checkout to `fetch-depth: 0` and add this Linux step:
+Update `tui-smoke` checkout to `fetch-depth: 0`. Keep the restart proof
+evergreen on every event and run the old-protocol downgrade proof only on pull
+requests, whose base revision is the compatibility boundary under review:
 
 ```yaml
 - name: Run production provider durability smoke
+  run: go test ./cmd/ratchet -run 'HarnessSmokeDurableProviderSaveRestart' -count=1 -timeout=12m
+- name: Run production provider downgrade smoke
+  if: github.event_name == 'pull_request'
   env:
-    RATCHET_DOWNGRADE_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-  run: go test ./cmd/ratchet -run 'HarnessSmokeDurableProvider' -count=1 -timeout=12m
+    RATCHET_DOWNGRADE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+  run: go test ./cmd/ratchet -run 'HarnessSmokeDurableProviderDowngrade' -count=1 -timeout=12m
 ```
 
 The `windows-conpty-smoke` job must retain the Task 4 exact `DaemonLock` and
 `WindowsConPTYProviderSave` commands. Extend
 `TestCIRequiresWindowsProviderDurability` to assert the Linux checkout depth and
-production command plus event-derived `RATCHET_DOWNGRADE_BASE_SHA`, as well as
-both Windows commands.
+both production commands, the downgrade step's PR-only condition and PR-base
+`RATCHET_DOWNGRADE_BASE_SHA`, and both Windows commands. It must reject
+`github.event.before` so ordinary pushes cannot become coupled to a predecessor
+that already contains `CommitProviderSave`.
 
 **Step 3: Update human documentation and guards**
 

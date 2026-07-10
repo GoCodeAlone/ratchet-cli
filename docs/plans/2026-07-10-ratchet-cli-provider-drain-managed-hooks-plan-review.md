@@ -212,3 +212,68 @@ JSON; named TUI delta tests.
 
 **Verdict reasoning:** FAIL; CI must supply a distinct older SHA only to the
 merge-gating downgrade step.
+
+## Cycle 5: Durable Provider Saves
+
+**Status:** FAIL
+
+**Findings (Critical):** none.
+
+**Findings (Important):**
+
+- `P19` The push downgrade proof is not evergreen: after the feature merge,
+  `github.event.before` can already contain `CommitProviderSave`, blocking
+  unrelated pushes. Recommendation: keep restart coverage on every event and
+  run old-protocol downgrade coverage only against a pull request base known to
+  predate the RPC. _Resolution: Task 5 corrected to a PR-only downgrade step;
+  releaseguard rejects `github.event.before`._
+
+**Findings (Minor):**
+
+- `P20` Stable successful `provider add --json` output lacked a named contract
+  test. _Resolution: Task 4D adds
+  `TestProviderAddJSONIncludesStableOperationID`._
+- `P21` The focused downgrade red command omitted the opt-in SHA and therefore
+  skipped its central test. _Resolution: Task 5's red command pins the known
+  pre-RPC revision `8cb5602166ffe529a0f05101dff583bad0919415`._
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Clean | Worktree isolation, focused tests, Go formatting, Windows support, and exact staging remain represented. |
+| Assumptions under attack | Finding | P19 rejects the assumption that every push predecessor predates the new RPC. |
+| Repo-precedent conflicts | Finding | P19 would make default-branch CI permanently brittle after merge. |
+| Artifact-class precedent | Clean | Red/green checkpoints, exact files, commands, and commits remain explicit. |
+| YAGNI violations | Clean | Durable saves and compatibility proof remain within the accepted design. |
+| Missing failure modes | Finding | P19/P21 cover future push predecessors and skipped downgrade execution. |
+| Security / privacy at architecture level | Clean | Metadata-only operations and sentinel secret proofs remain intact. |
+| Infrastructure impact | Finding | P19 could block unrelated future default-branch pushes. |
+| Multi-component validation | Clean | Proto, daemon, CLI, TUI, secrets, redactor, lifecycle, and CI remain joined. |
+| Declared integration proof | Clean | Persistent-root PTY/ConPTY tests use the real RPC and secret provider. |
+| Contributed UI rendering proof | Clean | TUI routing, bounded rendering, and durable states remain covered. |
+| Rollback story | Finding | P19 made the automatic revision choice unsustainable; PR-base selection corrects it. |
+| Simpler alternative not considered | Finding | A PR-only pre-RPC revision is simpler and evergreen. |
+| User-intent drift | Clean | CLI/TUI unification, Windows support, and release validation remain in scope. |
+| Existence / runtime-validity | Finding | P19 fails once a push predecessor contains the RPC. |
+| Over/under-decomposition | Clean | Internal checkpoints preserve the locked 11-task/4-PR manifest. |
+| Verification-class mismatch | Finding | P20/P21 require direct JSON and opt-in downgrade proofs. |
+| Auth/authz chain composition | Clean | Empty/nil auth boundaries and specialized auth paths remain covered. |
+| Hidden serial dependencies | Clean | Proto, schema, engine, locking, CLI, TUI, and runtime checkpoints stay ordered. |
+| Missing rollback wiring | Finding | The wiring existed, but P19 made routine post-merge execution invalid. |
+| Missing integration proof | Clean | Full production and terminal saves inspect operation, provider, secret, redactor, and output state. |
+| Missing declared integration matrix | Clean | Unix, Windows, CLI, TUI, legacy/new RPC, restart, and downgrade paths remain named. |
+| Missing contributed UI route proof | Clean | App routing and durable onboarding tests remain named in Task 4E. |
+| Infrastructure verification mismatch | Finding | Releaseguard must reject push-predecessor downgrade wiring. |
+| Plugin-loader runtime layout | Clean | No plugin-layout change is introduced. |
+| Config-validation schema rules | Clean | Additive migrations and legacy-schema failures remain covered. |
+| Identifier / naming-convention match | Finding | P20 adds a named test for the public `operation_id` field. |
+| Planned-code compile-validity | Clean | Checkpoint ordering and generated-proto work remain compile-valid. |
+
+**Alternatives:** PR-only base compatibility; pinned pre-RPC compatibility
+revision; workflow-dispatch compatibility input; explicit red/green base SHA.
+
+**Verdict reasoning:** FAIL; P16-P18 were resolved, but P19 exposed a new
+evergreen-CI defect. Task 5 now limits downgrade proof to the PR compatibility
+boundary while preserving restart coverage on every event; P20-P21 are also
+resolved for the next cycle.
