@@ -405,3 +405,14 @@ stops workers before removing RPC/state handling; persisted metadata can remain
 ignored and contains no content. Managed-hook rollback must be coordinated with
 administrators because removing enforcement weakens policy; revert only after
 removing or migrating the managed file and preserving audit records.
+
+### Backport 2026-07-10: CLI setup semantics and failed-test cleanup
+
+Cause: Catalog consumers treated setup alias, provider alias, executable, and
+working directory as interchangeable; failed provider cleanup was fire-and-forget.
+Change: Name all four CLI values in the catalog contract, share health-check
+arguments, execute TUI health checks, persist the working directory, and await
+provider removal before review/re-add.
+Scope: no manifest change; corrections satisfy Tasks 2-4.
+Evidence: `go test ./internal/provider ./cmd/ratchet ./internal/tui/pages -count=1`
+must pass before PR 2.
