@@ -690,11 +690,14 @@ one more durable save that retires the legacy key without exposing any sentinel.
 Assert provider pointers, operation states, active credentials, and cleanup rows
 after each transition. Use a named bounded convergence helper, not sleeps, to
 poll terminal cleanup rows and `secrets.Provider.List`; on timeout print only
-row/classification and key-name diagnostics. After re-upgrade, require the
-original v2 key absent and the active legacy key to be the only provider key.
-After the final durable save, require the legacy key absent and the final active
-v2 key to be the only provider key. Cleanup always removes the temporary
-worktree.
+row state, failure class, key category, and counts, never raw names or values.
+Seed and snapshot an unrelated secret before the lifecycle. Compare sorted sets
+because `List` order is unspecified: classify only the test's exact legacy key
+plus reserved `provider-v2-` keys, require unrelated keys unchanged, and reject
+unexpected provider keys. After re-upgrade, require the original v2 key absent
+and the active legacy key to be the only provider key. After the final durable
+save, require the legacy key absent and the final active v2 key to be the only
+provider key. Cleanup always removes the temporary worktree.
 
 Update `tui-smoke` checkout to `fetch-depth: 0`. Keep the restart proof
 evergreen on every event and use the verified pre-RPC compatibility revision for
@@ -705,13 +708,17 @@ or PR base: stacked and future PR bases can already contain the RPC.
 - name: Run production provider durability smoke
   run: go test ./cmd/ratchet -run 'HarnessSmokeDurableProviderSaveRestart' -count=1 -timeout=12m
 - name: Run production provider downgrade smoke
+  shell: bash
   env:
     RATCHET_DOWNGRADE_BASE_SHA: 8cb5602166ffe529a0f05101dff583bad0919415
   run: |
-    go test -v ./cmd/ratchet -run '^TestHarnessSmokeDurableProviderDowngrade$' -count=1 -timeout=12m \
-      | tee /tmp/ratchet-provider-downgrade.log
-    grep -F -- '--- PASS: TestHarnessSmokeDurableProviderDowngrade' \
-      /tmp/ratchet-provider-downgrade.log
+    log=$(mktemp)
+    trap 'rm -f "$log"' EXIT
+    if ! go test -json ./cmd/ratchet -run '^TestHarnessSmokeDurableProviderDowngrade$' -count=1 -timeout=12m >"$log"; then
+      cat "$log"
+      exit 1
+    fi
+    jq -e 'select(.Action == "pass" and .Test == "TestHarnessSmokeDurableProviderDowngrade")' "$log" >/dev/null
 ```
 
 The `windows-conpty-smoke` job must retain the Task 4 exact `DaemonLock` and
@@ -721,8 +728,10 @@ both production commands, the exact pinned `RATCHET_DOWNGRADE_BASE_SHA`, and bot
 Windows commands. It must reject `github.event.before` and
 `github.event.pull_request.base.sha` so later events cannot silently move the
 compatibility boundary to a revision that already contains `CommitProviderSave`.
-It must also require the anchored verbose test selector, transcript capture, and
-exact PASS-line assertion so a renamed or deleted test cannot satisfy CI.
+It must also require `shell: bash`, an owned `mktemp` transcript with cleanup,
+the anchored JSON test selector whose exit is checked before parsing, and an
+exact `jq` pass-event assertion so a failed, renamed, or deleted test cannot
+satisfy CI.
 
 **Step 3: Update human documentation and guards**
 
@@ -739,11 +748,16 @@ go test ./internal/daemon -run 'ProviderOperation|ProviderSecret|TUISmoke' -coun
 go test ./internal/tui -run 'ProviderSetup|TUIBinarySmoke' -count=1 -timeout=12m
 go test ./cmd/ratchet -run HarnessEmulationDocs -count=1
 go test ./cmd/ratchet -run 'HarnessSmokeDurableProvider' -count=1 -timeout=12m
-RATCHET_DOWNGRADE_BASE_SHA=8cb5602166ffe529a0f05101dff583bad0919415 \
-  go test -v ./cmd/ratchet -run '^TestHarnessSmokeDurableProviderDowngrade$' -count=1 -timeout=12m \
-    | tee /tmp/ratchet-provider-downgrade.log
-grep -F -- '--- PASS: TestHarnessSmokeDurableProviderDowngrade' \
-  /tmp/ratchet-provider-downgrade.log
+(
+  log=$(mktemp)
+  trap 'rm -f "$log"' EXIT
+  export RATCHET_DOWNGRADE_BASE_SHA=8cb5602166ffe529a0f05101dff583bad0919415
+  if ! go test -json ./cmd/ratchet -run '^TestHarnessSmokeDurableProviderDowngrade$' -count=1 -timeout=12m >"$log"; then
+    cat "$log"
+    exit 1
+  fi
+  jq -e 'select(.Action == "pass" and .Test == "TestHarnessSmokeDurableProviderDowngrade")' "$log" >/dev/null
+)
 go test ./...
 go vet ./...
 golangci-lint run --new-from-rev=origin/master
@@ -768,8 +782,8 @@ Follow Global Execution Rules 4-5 and verify the released Homebrew binary opens
 `provider setup list --json` with the full catalog.
 
 Rollback: before reverting the commit that owns the compatibility harness, run
-the exact pinned Step 4 downgrade command with `-v` and require the output line
-`--- PASS: TestHarnessSmokeDurableProviderDowngrade`. Then run
+the exact pinned Step 4 downgrade command and require its exact JSON pass event.
+Then run
 `ratchet daemon stop`, wait for socket/PID removal and lock release,
 inspect/allow pending cleanup to settle when available, revert PR 2 and the
 plugin pin, and rebuild the parent binary. Additive operation/cleanup tables

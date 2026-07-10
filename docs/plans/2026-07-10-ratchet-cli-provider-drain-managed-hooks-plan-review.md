@@ -404,3 +404,66 @@ deadline-bounded cleanup convergence helper.
 **Verdict reasoning:** FAIL; P22-P25 are resolved, but P26 still allowed a
 vacuous CI success and P27 left physical secret retirement unproved. Task 5 now
 addresses P26-P28 for Cycle 8.
+
+## Cycle 8: Durable Provider Saves
+
+**Status:** FAIL
+
+**Findings (Critical):** none.
+
+**Findings (Important):**
+
+- `P29` Piping `go test` through `tee` could mask a later package failure when
+  `pipefail` was not guaranteed. _Resolution: CI/local proof now writes
+  `go test -json` directly to an owned temporary file, checks producer exit,
+  then requires the exact named pass event with `jq`._
+
+**Findings (Minor):**
+
+- `P30` Fixed `/tmp` transcript could collide or follow a symlink. _Resolution:
+  use `mktemp` plus an EXIT cleanup trap._
+- `P31` Whole-namespace `List` has unspecified order and may contain unrelated
+  secrets. _Resolution: seed/snapshot unrelated state, sort sets, classify the
+  test's exact legacy/reserved keys, reject unexpected provider keys, and prove
+  unrelated state unchanged._
+- `P32` Timeout diagnostics could expose secret key metadata. _Resolution: log
+  only row state, failure class, key category, and counts._
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | P32 closes internal custody-reference leakage. |
+| Assumptions under attack | Finding | P29 attacks pipeline status; P31 attacks namespace/order assumptions. |
+| Repo-precedent conflicts | Finding | P29 removes reliance on implicit shell pipeline semantics. |
+| Artifact-class precedent | Finding | P30 replaces a shared transcript with test-owned temporary storage. |
+| YAGNI violations | Clean | Named execution and inventory proof address demonstrated vacuity/orphan risks. |
+| Missing failure modes | Finding | P29-P31 cover post-test failure, concurrent transcript use, and unrelated keys. |
+| Security / privacy at architecture level | Finding | P32 makes diagnostics metadata-only. |
+| Infrastructure impact | Finding | P29 prevents a false-green compatibility gate. |
+| Multi-component validation | Finding | P31 defines the physical inventory boundary precisely. |
+| Declared integration proof | Finding | File-provider `List` now uses explicit filtering and set comparison. |
+| Contributed UI rendering proof | Clean | Real catalog navigation/rendering/submission remain covered. |
+| Rollback story | Finding | Producer exit and exact event now make rollback proof reliable. |
+| Simpler alternative not considered | Finding | JSON events avoid transcript scraping and pipeline ambiguity. |
+| User-intent drift | Finding | P29 previously weakened autonomous merge confidence. |
+| Existence / runtime-validity | Finding | The pinned SHA is valid; shell status propagation was not. |
+| Over/under-decomposition | Clean | Manifest remains 11 tasks and 4 PRs. |
+| Verification-class mismatch | Finding | P29/P31 correct runtime and inventory verification. |
+| Auth/authz chain composition | Clean | No new network authz chain is introduced. |
+| Hidden serial dependencies | Finding | P30 removes shared transcript ownership. |
+| Missing rollback wiring | Finding | Rollback now checks producer status before revert. |
+| Missing integration proof | Finding | P31 preserves unrelated state and proves exact provider inventory. |
+| Missing declared integration matrix | Finding | File-provider cleanup semantics are now explicit. |
+| Missing contributed UI route proof | Clean | The actual shell/provider content remain exercised. |
+| Infrastructure verification mismatch | Finding | Releaseguard now requires owned JSON proof and exact event parsing. |
+| Plugin-loader runtime layout | Clean | No external plugin process is added. |
+| Config-validation schema rules | Clean | Schema and mixed-version startup coverage remain complete. |
+| Identifier / naming-convention match | Finding | Legacy/reserved provider namespaces are now explicit. |
+| Planned-code compile-validity | Clean | Commands and Go checkpoint order remain valid. |
+
+**Alternatives:** JSON event verification; explicit Bash/pipefail; sorted
+inventory helper with category/count-only diagnostics.
+
+**Verdict reasoning:** FAIL; P26-P28 are addressed, but P29 leaves the gate
+capable of false success. Task 5 now addresses P29-P32 for Cycle 9.
