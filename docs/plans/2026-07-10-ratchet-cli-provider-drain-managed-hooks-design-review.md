@@ -197,3 +197,44 @@ unconditional first-write replay; cross-platform ownership lock.
 
 **Verdict reasoning:** FAIL; capability negotiation, conservative cleanup,
 runtime applied finalization, and bounded CLI saves require revision.
+
+## Cycle 4: Durable Provider Saves
+
+**Status:** FAIL
+
+**Findings (Critical):** none.
+
+**Findings (Important):**
+
+- `D24` [Protocol] Capability preflight races daemon replacement; use a new RPC
+  that an old daemon rejects before mutation.
+- `D25` [Concurrency] Runtime cleanup can delete a Set-but-not-committed secret;
+  pending rows must reserve keys or mutation/cleanup must serialize.
+- `D26` [State] A later same-alias save can displace an applied operation before
+  finalization; serialize through terminal state or define supersession.
+- `D27` [Windows proof] New `LockFileEx` tests are absent from native Windows CI.
+
+**Findings (Minor):**
+
+- `D28` State that UUID idempotency lasts for the 24-hour retention window.
+- `D29` Interrupted CLI reconciliation needs status text and second-signal UX.
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Guidance/intent | Finding | Windows proof and atomic old-daemon refusal missing. |
+| Assumptions/failures | Finding | Internal cleanup and alias overwrite races remain. |
+| Repo/artifact precedent | Finding | Reconnecting client and Windows CI job require direct wiring. |
+| YAGNI | Clean | Each durability primitive addresses a demonstrated failure. |
+| Security | Clean | Identifier/path/privacy boundaries are resolved. |
+| Infra/integration/runtime | Finding | Dedicated RPC, serialization, and native Windows proof needed. |
+| UI | Clean | Native wizard proofs remain specified. |
+| Rollback | Finding | Preflight cannot prevent downgraded-daemon mutation. |
+| Simpler alternative | Finding | Pending secret reservation is deterministic. |
+
+**Alternatives:** dedicated durable-save RPC; pending reservation; per-alias
+finalization lock; native Windows lock gate.
+
+**Verdict reasoning:** FAIL; four Important protocol/concurrency/platform gaps
+remain.
