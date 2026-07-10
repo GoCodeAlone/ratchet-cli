@@ -212,6 +212,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case pages.OnboardingDoneMsg:
 		if msg.Provider != nil {
+			if msg.Provider.GetIsDefault() {
+				for _, provider := range a.providers {
+					provider.IsDefault = false
+				}
+			}
 			replaced := false
 			for i, provider := range a.providers {
 				if provider.GetAlias() == msg.Provider.GetAlias() {

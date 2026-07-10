@@ -167,12 +167,12 @@ func TestAppOnboardingCancelWithoutProviderQuits(t *testing.T) {
 func TestAppOnboardingDoneUpdatesProviderStateForLaterCancellation(t *testing.T) {
 	app := readyChatApp(t, "root-session-12345678")
 	app.page = pageOnboarding
-	app.providers = nil
+	app.providers = []*pb.Provider{{Alias: "old", Type: "openai", IsDefault: true}}
 	provider := &pb.Provider{Alias: "configured", Type: "anthropic", IsDefault: true}
 
 	model, _ := app.Update(pages.OnboardingDoneMsg{Provider: provider})
 	app = model.(App)
-	if app.page != pageChat || len(app.providers) != 1 || app.providers[0].GetAlias() != "configured" {
+	if app.page != pageChat || len(app.providers) != 2 || app.providers[0].GetIsDefault() || app.providers[1].GetAlias() != "configured" {
 		t.Fatalf("onboarding success state = page:%v providers:%v", app.page, app.providers)
 	}
 

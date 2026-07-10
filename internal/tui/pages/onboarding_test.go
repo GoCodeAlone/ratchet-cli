@@ -276,6 +276,29 @@ func TestOnboardingEmptyModelDiscoveryOffersManualEntry(t *testing.T) {
 	}
 }
 
+func TestOnboardingModelDiscoveryEscCancelsRequest(t *testing.T) {
+	started := make(chan struct{})
+	cancelled := make(chan struct{})
+	deps := testOnboardingDeps()
+	deps.listModels = func(ctx context.Context, _, _, _ string, _ map[string]string) ([]providerauth.ModelInfo, error) {
+		close(started)
+		<-ctx.Done()
+		close(cancelled)
+		return nil, ctx.Err()
+	}
+	model := newOnboarding(nil, theme.Dark(), deps)
+	model.providerIdx = onboardingProviderIndex(t, model, "openai")
+	model, cmd := model.transitionToModelStrategy()
+	batch := cmd().(tea.BatchMsg)
+	go batch[len(batch)-1]() //nolint:errcheck
+	<-started
+	model, _ = model.updateFetchModels(tea.KeyPressMsg{Code: tea.KeyEsc})
+	<-cancelled
+	if model.step != stepSelectProvider || model.modelFetchCancel != nil {
+		t.Fatalf("cancelled model fetch = step:%v cancel:%v", model.step, model.modelFetchCancel)
+	}
+}
+
 func TestOnboardingChatGPTDeviceFlowTransitionsToModelDiscovery(t *testing.T) {
 	deps := testOnboardingDeps()
 	deps.startOpenAIDevice = func(context.Context) (*providerauth.DeviceCodeResult, error) {
@@ -352,6 +375,25 @@ func TestOnboardingDeviceStartEscCancelsRequest(t *testing.T) {
 	<-cancelled
 	if model.step != stepSelectProvider || model.authCancel != nil {
 		t.Fatalf("cancelled device start = step:%v cancel:%v", model.step, model.authCancel)
+	}
+}
+
+func TestOnboardingDeviceRetryClearsExpiredCode(t *testing.T) {
+	deps := testOnboardingDeps()
+	deps.pollOpenAIDevice = func(context.Context, string, string, int) (string, error) {
+		return "", errors.New("authorization expired")
+	}
+	model := newOnboarding(nil, theme.Dark(), deps)
+	model.cursor = onboardingProviderIndex(t, model, "openai_chatgpt")
+	model, cmd := model.advanceFromProvider()
+	model, cmd = model.Update(runOnboardingCmd(t, cmd))
+	if model.deviceUserCode == "" {
+		t.Fatal("device flow did not expose initial code")
+	}
+	model, _ = model.Update(runOnboardingCmd(t, cmd))
+	model, cmd = model.updateBrowserAuth(tea.KeyPressMsg{Code: 'r', Text: "r"})
+	if cmd == nil || model.deviceUserCode != "" || model.deviceVerificationURI != "" {
+		t.Fatalf("retry state = code:%q URI:%q cmd:%v", model.deviceUserCode, model.deviceVerificationURI, cmd)
 	}
 }
 
@@ -846,20 +888,19 @@ func TestOnboardingProviderTestEscCancelsOperation(t *testing.T) {
 	}
 }
 
-func TestOnboardingAddSuccessRacingCancelKeepsCancelledContext(t *testing.T) {
+func TestOnboardingAddSuccessRacingCancelRemovesCommittedProvider(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
+	var removedAlias string
 	deps := testOnboardingDeps()
 	deps.addProvider = func(_ context.Context, req *pb.AddProviderReq) (*pb.Provider, error) {
 		close(started)
 		<-release
 		return &pb.Provider{Alias: req.Alias, Type: req.Type}, nil
 	}
-	deps.testProvider = func(ctx context.Context, _ string) (*pb.TestProviderResult, error) {
-		if ctx == nil {
-			t.Fatal("test provider received nil context")
-		}
-		return nil, ctx.Err()
+	deps.removeProvider = func(_ context.Context, alias string) error {
+		removedAlias = alias
+		return nil
 	}
 	model := newOnboarding(nil, theme.Dark(), deps)
 	model.providerIdx = onboardingProviderIndex(t, model, "bedrock")
@@ -872,12 +913,12 @@ func TestOnboardingAddSuccessRacingCancelKeepsCancelledContext(t *testing.T) {
 	model, _ = model.updateTestConnection(tea.KeyPressMsg{Code: tea.KeyEsc})
 	close(release)
 	model, cmd = model.Update(<-result)
-	if cmd == nil || !model.added || model.providerOpContext == nil {
-		t.Fatalf("raced add state = cmd:%v added:%v context:%v", cmd, model.added, model.providerOpContext)
+	if cmd == nil || !model.added || !model.removing {
+		t.Fatalf("raced add state = cmd:%v added:%v removing:%v", cmd, model.added, model.removing)
 	}
-	model, _ = model.Update(cmd())
-	if model.providerOpContext != nil || model.providerOpCancel != nil || !strings.Contains(model.testError, "canceled") {
-		t.Fatalf("raced cancellation result = context:%v cancel:%v error:%q", model.providerOpContext, model.providerOpCancel, model.testError)
+	model, _ = model.Update(runOnboardingCmd(t, cmd))
+	if removedAlias != "bedrock" || model.added || model.removing || model.step != stepReview {
+		t.Fatalf("compensated cancellation = alias:%q added:%v removing:%v step:%v", removedAlias, model.added, model.removing, model.step)
 	}
 }
 

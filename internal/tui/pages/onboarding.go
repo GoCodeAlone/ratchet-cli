@@ -184,9 +184,10 @@ type OnboardingModel struct {
 	anthropicChoice       anthropicAuthChoice // which Anthropic auth option was selected
 
 	// Model listing
-	fetchingModels bool
-	fetchedModels  []providerauth.ModelInfo
-	modelsError    string
+	modelFetchCancel context.CancelFunc
+	fetchingModels   bool
+	fetchedModels    []providerauth.ModelInfo
+	modelsError      string
 
 	// Ollama choice and setup (stepOllamaChoice, stepOllamaSetup)
 	ollamaChoiceCursor int    // 0 = "I have a server", 1 = "Set up Ollama"
@@ -222,7 +223,9 @@ type OnboardingModel struct {
 	// Connection test
 	spinner           spinner.Model
 	testing           bool
+	adding            bool
 	removing          bool
+	cancelAfterAdd    bool
 	providerOpContext context.Context
 	providerOpCancel  context.CancelFunc
 	testResult        *pb.TestProviderResult
@@ -406,6 +409,10 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		if msg.flowID != m.flowID {
 			return m, nil
 		}
+		if m.modelFetchCancel != nil {
+			m.modelFetchCancel()
+			m.modelFetchCancel = nil
+		}
 		m.fetchingModels = false
 		if msg.err != nil {
 			m.modelsError = redactProviderError(msg.err, m.authToken)
@@ -490,6 +497,7 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		if msg.flowID != m.flowID {
 			return m, nil
 		}
+		m.adding = false
 		if msg.err != nil {
 			m.finishProviderOperation()
 			m.testing = false
@@ -497,6 +505,14 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 			return m, nil
 		}
 		m.added = true
+		if m.cancelAfterAdd {
+			m.cancelAfterAdd = false
+			m.finishProviderOperation()
+			ctx := m.beginProviderOperation()
+			m.testing = false
+			m.removing = true
+			return m, tea.Batch(m.spinner.Tick, m.removeProvider(ctx, msg.provider.Alias))
+		}
 		return m, m.testProvider(m.providerOpContext, msg.provider.Alias)
 
 	case providerTestedMsg:
@@ -919,17 +935,22 @@ func (m OnboardingModel) updateReview(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 
 // transitionToFetchModels starts the async model listing step.
 func (m OnboardingModel) transitionToFetchModels() (OnboardingModel, tea.Cmd) {
+	if m.modelFetchCancel != nil {
+		m.modelFetchCancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	m.modelFetchCancel = cancel
 	m.step = stepFetchModels
 	m.fetchingModels = true
 	m.fetchedModels = nil
 	m.modelsError = ""
-	return m, tea.Batch(m.spinner.Tick, m.fetchModels())
+	return m, tea.Batch(m.spinner.Tick, m.fetchModels(ctx))
 }
 
-func (m OnboardingModel) fetchModels() tea.Cmd {
+func (m OnboardingModel) fetchModels(ctx context.Context) tea.Cmd {
 	return func() tea.Msg {
 		p := m.selectedProvider()
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
 		models, err := m.deps.listModels(ctx, p.Type, m.authToken, m.baseURLInput.Value(), m.settings)
 		return modelsListMsg{models: models, err: err, flowID: m.flowID}
@@ -942,6 +963,8 @@ func (m OnboardingModel) beginDeviceFlow() (OnboardingModel, tea.Cmd) {
 	m.step = stepBrowserAuth
 	m.authing = true
 	m.authError = ""
+	m.deviceUserCode = ""
+	m.deviceVerificationURI = ""
 	return m, tea.Batch(m.spinner.Tick, m.startDeviceFlow(ctx))
 }
 
@@ -1189,6 +1212,11 @@ func setupOllama(ctx context.Context, baseURL string) (string, error) {
 			pollErr := c.Health(pollCtx)
 			pollCancel()
 			if pollErr == nil {
+				if err := cmd.Process.Release(); err != nil {
+					_ = cmd.Process.Kill()
+					_ = cmd.Wait()
+					return "failed", fmt.Errorf("release ollama server process: %w", err)
+				}
 				return "ready", nil
 			}
 		}
@@ -1303,6 +1331,10 @@ func (m OnboardingModel) updateFetchModels(msg tea.Msg) (OnboardingModel, tea.Cm
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 		if keyMsg.String() == "esc" {
 			m.fetchingModels = false
+			if m.modelFetchCancel != nil {
+				m.modelFetchCancel()
+				m.modelFetchCancel = nil
+			}
 			m.flowID++
 			m.step = stepSelectProvider
 			m.cursor = m.providerIdx
@@ -1539,6 +1571,8 @@ func (m OnboardingModel) startTest() (OnboardingModel, tea.Cmd) {
 	m.providerOpCancel = cancel
 	m.step = stepTestConnection
 	m.testing = true
+	m.adding = true
+	m.cancelAfterAdd = false
 	m.testResult = nil
 	m.testError = ""
 	m.added = false
@@ -1626,7 +1660,11 @@ func (m OnboardingModel) updateTestConnection(msg tea.Msg) (OnboardingModel, tea
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 		if m.testing || m.removing {
 			if keyMsg.String() == "esc" {
-				m.requestProviderOperationCancel()
+				if m.adding {
+					m.cancelAfterAdd = true
+				} else {
+					m.requestProviderOperationCancel()
+				}
 			}
 			return m, nil
 		}
@@ -1965,6 +2003,13 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 		if m.removing {
 			sb.WriteString(m.spinner.View() + " Removing the failed provider configuration...\n\n")
 			sb.WriteString(mutedStyle.Render("Esc: cancel"))
+		} else if m.adding {
+			sb.WriteString(m.spinner.View() + " Saving " + p.DisplayName + " configuration...\n\n")
+			if m.cancelAfterAdd {
+				sb.WriteString(mutedStyle.Render("Cancel requested; waiting to remove the saved provider"))
+			} else {
+				sb.WriteString(mutedStyle.Render("Esc: cancel after save"))
+			}
 		} else if m.testing {
 			sb.WriteString(m.spinner.View() + " Testing connection to " + p.DisplayName + "...\n\n")
 			sb.WriteString(mutedStyle.Render("Esc: cancel"))
