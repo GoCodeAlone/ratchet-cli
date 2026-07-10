@@ -238,3 +238,43 @@ finalization lock; native Windows lock gate.
 
 **Verdict reasoning:** FAIL; four Important protocol/concurrency/platform gaps
 remain.
+
+## Cycle 5: Durable Provider Saves
+
+**Status:** FAIL
+
+**Findings (Critical):** none.
+
+**Findings (Important):**
+
+- `D30` [Integration] Separate PTY navigation and direct-client secret tests do
+  not prove the real wizard uses the durable RPC; require one full PTY save and
+  inspect operation/provider/secret/redactor/output state.
+- `D31` [Failure mode] Existing file-secret calls ignore context; holding the
+  global mutex across `Set`/`List`/`Delete` can block startup or all mutations.
+  Define daemon-owned workers, pending reservations, bounded client waiting, and
+  honest fail-stop behavior for non-cancellable provider calls.
+
+**Findings (Minor):**
+
+- `D32` Replace stale design text naming `AddProvider` as the current TUI RPC.
+- `D33` Downgrade requires stopping the new daemon and observing lock release.
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Guidance/intent | Clean | Go, existing secret provider/Redactor, Windows preserved. |
+| Assumptions/failures | Finding | Secret provider context cancellation is not guaranteed. |
+| Repo/artifact precedent | Finding | FileProvider ignores context; one stale RPC name remains. |
+| YAGNI/security | Clean | Journals and metadata minimization are justified. |
+| Infra/runtime | Finding | Blocking secret calls need explicit ownership/fail-stop behavior. |
+| Integration | Finding | Real PTY submission boundary is unproved. |
+| UI | Clean | Native UI render proofs remain. |
+| Rollback | Finding | Downgrade quiescence precondition missing. |
+
+**Alternatives:** per-alias operation workers; one executable full-save smoke;
+explicit fail-stop secret-provider contract.
+
+**Verdict reasoning:** FAIL; real TUI submission and non-cancellable secret-call
+semantics remain Important.
