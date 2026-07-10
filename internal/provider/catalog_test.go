@@ -114,6 +114,43 @@ func TestCatalogDeclaresNonSecretSettingsAndModelFallbacks(t *testing.T) {
 	}
 }
 
+func TestCatalogCLINativeSetupFieldsMatchRuntimeCommands(t *testing.T) {
+	tests := []struct {
+		providerType string
+		setupAlias   string
+		defaultAlias string
+		command      string
+	}{
+		{"claude_code", "claude-code", "claude-code", "claude"},
+		{"copilot_cli", "copilot-cli", "copilot-cli", "copilot"},
+		{"codex_cli", "codex-cli", "codex-cli", "codex"},
+		{"gemini_cli", "gemini-cli", "gemini-cli", "gemini"},
+		{"cursor_cli", "cursor-cli", "cursor-cli", "agent"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.providerType, func(t *testing.T) {
+			entry, ok := LookupSetup(tt.providerType)
+			if !ok {
+				t.Fatalf("LookupSetup(%q) not found", tt.providerType)
+			}
+			if entry.SetupAlias != tt.setupAlias || entry.DefaultAlias != tt.defaultAlias || entry.CLICommand != tt.command {
+				t.Fatalf("CLI setup fields = alias:%q default:%q command:%q", entry.SetupAlias, entry.DefaultAlias, entry.CLICommand)
+			}
+		})
+	}
+}
+
+func TestCLIHealthCheckArgsMatchProviderAdapters(t *testing.T) {
+	for _, providerType := range []string{"claude_code", "copilot_cli", "gemini_cli", "cursor_cli"} {
+		if got := CLIHealthCheckArgs(providerType); !slices.Equal(got, []string{"-p", "say ok"}) {
+			t.Errorf("CLIHealthCheckArgs(%q) = %v", providerType, got)
+		}
+	}
+	if got := CLIHealthCheckArgs("codex_cli"); !slices.Equal(got, []string{"exec", "say ok"}) {
+		t.Errorf("CLIHealthCheckArgs(codex_cli) = %v", got)
+	}
+}
+
 func TestValidateCatalogRejectsInvalidEntriesAndRuntimeGaps(t *testing.T) {
 	base := Catalog()
 	tests := []struct {
@@ -159,6 +196,15 @@ func TestValidateCatalogRejectsInvalidEntriesAndRuntimeGaps(t *testing.T) {
 				return entries
 			},
 			wantErr: "setup guide metadata",
+		},
+		{
+			name: "CLI default alias collision",
+			mutate: func(entries []SetupEntry) []SetupEntry {
+				index := slices.IndexFunc(entries, func(entry SetupEntry) bool { return entry.Type == "copilot_cli" })
+				entries[index].DefaultAlias = "copilot"
+				return entries
+			},
+			wantErr: "default alias",
 		},
 	}
 

@@ -49,6 +49,15 @@ const (
 	ModelExternal ModelStrategy = "external"
 )
 
+// CLIHealthCheckArgs returns the non-interactive health-check arguments for a
+// CLI-backed provider.
+func CLIHealthCheckArgs(providerType string) []string {
+	if providerType == "codex_cli" {
+		return []string{"exec", "say ok"}
+	}
+	return []string{"-p", "say ok"}
+}
+
 // SettingField describes a non-secret provider setting.
 type SettingField struct {
 	Key         string
@@ -273,11 +282,11 @@ var setupCatalog = []SetupEntry{
 		ModelBehavior:      "Lists endpoint models when supported; accepts a model ID manually.",
 		CredentialBoundary: "Uses the local endpoint and stores no secret value.",
 	},
-	cliSetupEntry("claude_code", "Claude Code", "claude-code", "claude", "claude", "Claude Code owns credentials and model selection."),
-	cliSetupEntry("copilot_cli", "GitHub Copilot CLI", "copilot-cli", "copilot", "copilot", "Copilot CLI owns credentials and model selection."),
-	cliSetupEntry("codex_cli", "Codex CLI", "codex-cli", "codex", "codex", "Codex CLI owns credentials and model selection."),
-	cliSetupEntry("gemini_cli", "Gemini CLI", "gemini-cli", "gemini", "gemini", "Gemini CLI owns credentials and model selection."),
-	cliSetupEntry("cursor_cli", "Cursor CLI", "cursor-cli", "agent", "cursor-cli", "Cursor CLI owns credentials and model selection."),
+	cliSetupEntry("claude_code", "Claude Code", "claude-code", "claude-code", "claude", "Claude Code owns credentials and model selection."),
+	cliSetupEntry("copilot_cli", "GitHub Copilot CLI", "copilot-cli", "copilot-cli", "copilot", "Copilot CLI owns credentials and model selection."),
+	cliSetupEntry("codex_cli", "Codex CLI", "codex-cli", "codex-cli", "codex", "Codex CLI owns credentials and model selection."),
+	cliSetupEntry("gemini_cli", "Gemini CLI", "gemini-cli", "gemini-cli", "gemini", "Gemini CLI owns credentials and model selection."),
+	cliSetupEntry("cursor_cli", "Cursor CLI", "cursor-cli", "cursor-cli", "agent", "Cursor CLI owns credentials and model selection."),
 }
 
 func cliSetupEntry(providerType, displayName, setupAlias, defaultAlias, command, boundary string) SetupEntry {
@@ -367,6 +376,13 @@ func validateCatalog(entries []SetupEntry, runtimeTypes []string) error {
 				return fmt.Errorf("duplicate provider name %q (owned by %q and %q)", alias, prior, entry.Type)
 			}
 			seenNames[alias] = entry.Type
+		}
+		if entry.Setup == SetupCLINative {
+			defaultAlias := strings.ToLower(strings.TrimSpace(entry.DefaultAlias))
+			if prior, exists := seenNames[defaultAlias]; exists && prior != entry.Type {
+				return fmt.Errorf("provider %q default alias %q collides with %q", entry.Type, defaultAlias, prior)
+			}
+			seenNames[defaultAlias] = entry.Type
 		}
 		seenSettings := make(map[string]struct{}, len(entry.Settings))
 		for _, field := range entry.Settings {
