@@ -365,8 +365,10 @@ strategy and focused tests that:
   alias conflicts, and operation RPCs omit credentials/settings/base URLs/errors;
 - SQL rollback preserves the active secret; commit updates registry/redactor
   before success; old-secret cleanup is durable and retryable;
-- pending rows reserve secret keys; one provider-mutation mutex serializes save,
-  remove, applied finalization, and cleanup through terminal state;
+- pending rows reserve secret keys; daemon-owned per-alias workers serialize
+  save/remove through terminal state while cleanup workers recheck references;
+- a blocking fake secret provider proves client timeout leaves a live pending
+  worker/reservation, other aliases proceed, and restart recovery is deterministic;
 - an OS-level lock is acquired before PID/socket cleanup, migration, or secret
   reconciliation and retained for daemon lifetime on Unix and Windows;
 - startup finalizes applied operations, fails inherited pending, sweeps only
@@ -419,9 +421,11 @@ key and is unconditional first-write-wins for the same alias; another
 alias conflicts. SQL atomically switches the provider pointer, stores an
 `applied` result without base URL, and queues the old secret.
 Rollback deletes only the inactive new version and durably queues failed
-cleanup. One daemon-wide provider-mutation mutex serializes save, remove,
-finalization, and cleanup. A daemon-owned bounded finalizer and operation-query
-retry perform redactor registration/cache invalidation before `committed`. Daemon startup
+cleanup. Daemon-owned per-alias workers serialize save/remove through terminal
+state while unrelated aliases proceed; separate cleanup workers recheck provider
+and pending/applied references. RPC deadlines bound waiting, not non-cancellable
+secret calls. A daemon-owned bounded finalizer and operation-query retry perform
+redactor registration/cache invalidation before `committed`. Daemon startup
 first acquires a lifetime OS lock, then finalizes applied rows, fails inherited
 pending rows, sweeps unreferenced reserved orphans, retries cleanup, and accepts
 RPCs.
@@ -435,6 +439,9 @@ expired/unresolved retries use a new UUID.
 Do not persist credentials, base URLs, raw requests/settings/errors, or a
 credential hash. Keep retired values in the existing additive Redactor until
 restart; do not introduce a second redaction or secret abstraction.
+Treat startup secret `List` as fail-stop before RPC acceptance. Journal cleanup
+before starting asynchronous `Delete`; shutdown stops accepting work but does
+not wait forever for a provider method that ignores context.
 
 **Step 4: Verify state and render behavior**
 
@@ -461,6 +468,8 @@ git commit -m "feat(tui): unify provider setup wizard"
 ### Task 5: Prove, Document, Merge, and Release Unified Provider Setup
 
 **Files:**
+- Modify: `cmd/ratchet-tui-smoke/main.go`
+- Modify: `cmd/ratchet-tui-smoke/main_windows.go`
 - Modify: `internal/daemon/service_tui_smoke.go`
 - Modify: `internal/daemon/service_tui_smoke_test.go`
 - Modify: `internal/tui/tui_binary_smoke_unix_test.go`
@@ -476,8 +485,13 @@ git commit -m "feat(tui): unify provider setup wizard"
 Add a dedicated PTY/ConPTY scenario that launches the smoke binary, submits
 `/provider add`, observes catalog entries beyond the former five (at least
 `Amazon Bedrock` and `Custom endpoint`), filters to Bedrock, enters non-secret
-settings, backs out, and exits in the existing fresh shutdown test. Do not add
-shutdown responsibility to the long all-surfaces test.
+settings, and backs out. Then configure Custom endpoint against a local
+OpenAI-compatible HTTP fixture, enter a sentinel credential, discover/select a
+model, and complete a successful save/test through `CommitProviderSave`.
+Run the smoke daemon on a caller-supplied temporary root with persistent SQLite
+and the existing file secret provider so the test can inspect the real state.
+Exit in the existing fresh shutdown test; do not add shutdown responsibility to
+the long all-surfaces test.
 
 **Step 2: Add daemon secret-boundary proof**
 
@@ -485,6 +499,11 @@ Through the smoke daemon/client boundary, submit a provider with a sentinel
 credential and settings. Assert the provider row/settings and rendered review
 contain no sentinel while the existing secrets provider resolves it and the
 existing redactor redacts it.
+
+For the executable TUI save, assert the operation row is committed, provider row
+references a `provider-v2-` key, the existing file provider resolves the
+sentinel, the redactor suppresses it in a daemon assertion, and no PTY/ConPTY,
+operation, provider, database-status, or rendered-review output contains it.
 
 Restart a real test daemon around persisted SQLite/secret state. Prove committed
 operation query/replay survives, inherited pending becomes classified failed,
@@ -522,7 +541,7 @@ starting the daemon.
 **Step 5: Commit and complete PR 2**
 
 ```bash
-git add internal/daemon/service_tui_smoke.go internal/daemon/service_tui_smoke_test.go internal/tui/tui_binary_smoke_unix_test.go internal/tui/tui_binary_smoke_windows_test.go README.md docs/harness-emulation.md docs/competitor-parity.md docs/policy-matrix.md cmd/ratchet/harness_docs_test.go
+git add cmd/ratchet-tui-smoke/main.go cmd/ratchet-tui-smoke/main_windows.go internal/daemon/service_tui_smoke.go internal/daemon/service_tui_smoke_test.go internal/tui/tui_binary_smoke_unix_test.go internal/tui/tui_binary_smoke_windows_test.go README.md docs/harness-emulation.md docs/competitor-parity.md docs/policy-matrix.md cmd/ratchet/harness_docs_test.go
 git commit -m "docs: explain unified provider setup"
 ```
 

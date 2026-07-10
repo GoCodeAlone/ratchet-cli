@@ -36,16 +36,20 @@ Post-commit finalization uses a daemon-owned bounded context. Operation queries
 also finalize `applied` rows before returning, so RPC cancellation does not
 strand them until restart.
 
-A daemon-wide provider-mutation mutex serializes save, remove, finalization, and
-cleanup; configuration writes are rare. Before a later alias mutation, any
-applied row for that alias must finalize or the mutation fails. Cleanup excludes
-every provider pointer and pending/applied secret reservation.
+A daemon-owned executor serializes each alias from pending reservation through
+terminal state while unrelated aliases proceed. RPC handlers wait only until
+their context ends; a non-cancellable secret `Set` continues in the worker with
+the reservation live. Before a later alias mutation, any applied row must
+finalize or the mutation fails. Cleanup excludes every provider pointer and
+pending/applied reservation and runs in separate per-secret workers.
 
 `provider_secret_cleanup` stores only server secret name, attempt count,
 classified outcome, and timestamps. Startup runs before RPCs: secret `List`
 failure is fatal; applied rows are finalized; inherited pending rows become
-failed; unreferenced reserved-prefix keys are queued. Not-found deletion succeeds;
-other failures remain queued. Runtime cleanup rechecks references before delete.
+failed; unreferenced reserved-prefix keys are queued. Startup discovery and
+journaling complete before RPC acceptance; queued `Delete` runs asynchronously,
+not-found succeeds, and other failures remain queued. Runtime cleanup rechecks
+references before delete.
 Provider update/removal queues the prior key in its SQL transaction.
 Legacy-prefix keys are touched only when a row explicitly retires them.
 
@@ -67,6 +71,10 @@ existing Workflow providers.
   reconciliation context. First interrupt prints reconciliation status; a
   second exits nonzero with the operation ID, queryable through
   `ratchet provider operation <id>`.
+- Secret-provider contexts are advisory. Startup `List` is explicitly fail-stop:
+  no RPCs are accepted until it returns, and operators may terminate a stalled
+  process. Shutdown stops accepting work and leaves non-cancellable workers as
+  pending for restart recovery instead of waiting without bound.
 - The daemon acquires and retains an OS-level exclusive data-directory lock
   before PID/socket cleanup, migration, or reconciliation. Unix `flock` and
   Windows `LockFileEx` prevent concurrent owners; crash closes release the lock.
@@ -80,3 +88,5 @@ existing Workflow providers.
 - Reverting code is schema-compatible: old binaries ignore operation rows and
   resolve exact versioned names. Legacy empty-ID writes remain accepted; an old
   writer may leave a v2 orphan that a later upgraded startup safely sweeps.
+- Downgrade requires stopping the new daemon and observing lock release before
+  launching an older binary that does not participate in the OS lock.

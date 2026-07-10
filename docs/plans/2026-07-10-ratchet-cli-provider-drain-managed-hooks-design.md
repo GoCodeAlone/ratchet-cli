@@ -99,8 +99,9 @@ The TUI wizard becomes a catalog-driven state machine:
 5. Choose a discovered model or enter one manually when allowed.
 6. Review non-secret values and submit once to the daemon.
 
-Secrets remain transient in the TUI model and are sent only to the existing
-daemon `AddProvider` RPC. The daemon stores them through its existing secrets
+Secrets remain transient in the TUI model and are sent only to the dedicated
+daemon `CommitProviderSave` RPC. Legacy `AddProvider` delegates to the same
+durable server path. The daemon stores credentials through its existing secrets
 provider and adds them to its existing redactor. Secret settings are not
 included in review text, errors, or snapshots.
 
@@ -274,9 +275,10 @@ flowchart LR
   Server keys contain only a reserved prefix, server timestamp, and UUID. Existing
   `secrets.Redactor` protects runtime errors and may safely over-redact retired
   values until restart.
-- **Mutation serialization:** one daemon-wide mutex covers provider save,
-  remove, finalization, and cleanup. Pending rows reserve secret keys before
-  `Set`; cleanup excludes provider references and pending/applied reservations.
+- **Mutation serialization:** daemon-owned per-alias workers cover provider
+  save/remove through terminal state while unrelated aliases proceed. Pending
+  rows reserve secret keys before `Set`; separate cleanup workers exclude
+  provider references and pending/applied reservations.
 - **Unattended execution:** opt-in is explicit and profile identity is pinned.
   Profile trust/fingerprint drift blocks resume. Persisted arbitrary commands
   are prohibited.
@@ -301,7 +303,9 @@ acceptance. Terminal operations retain 24 hours. An OS-level exclusive lock is
 held for daemon lifetime and acquired before PID/socket cleanup, migration, or
 reconciliation (`flock` on Unix; `LockFileEx` on Windows). Startup then finalizes
 applied rows after registry/redactor refresh, fails inherited pending rows, and
-serially sweeps only unreferenced `provider-v2-` secrets plus durable cleanup.
+queues only unreferenced `provider-v2-` secrets plus durable cleanup. Secret
+`List` is fail-stop before RPC acceptance because the provider may ignore
+context; `Delete` runs asynchronously after references are journaled.
 Release artifacts remain the existing GoReleaser matrix, including Windows.
 
 ## Multi-Component Validation
@@ -312,7 +316,7 @@ Release artifacts remain the existing GoReleaser matrix, including Windows.
 | Catalog to CLI | Contract tests enumerate every visible catalog entry through setup list/guide commands and accepted aliases. |
 | Catalog to TUI | State-machine tests traverse auth, settings, discovery, manual fallback, CLI-backed setup, and secret review suppression from catalog entries. |
 | Provider save transaction | Real daemon + SQLite + stateful secret provider prove pending journal, idempotent replay/conflict, commit result, rollback preserving the active credential, cache invalidation, redactor registration, restart transition, cleanup retry, and exact operation polling. |
-| TUI runtime | Fresh PTY smoke tests open provider/model setup, verify scrolling/filtering and readable framing, then exit from a fresh process. |
+| TUI runtime | A persistent smoke daemon plus local OpenAI-compatible HTTP fixture drives real PTY/ConPTY catalog navigation and one complete save through `CommitProviderSave`; tests inspect operation/provider/secret state, redaction, and sentinel-free output. |
 | Daemon restart | Integration test persists an enabled policy, restarts the service, proves matching trusted profile resumes, then proves fingerprint drift blocks launch. |
 | Queue lifecycle | Existing claim/cancel/stale paths are exercised through the daemon manager with fake agents and deterministic contexts. |
 | Managed hooks | Loader/engine tests cover missing, malformed, insecure ownership/link, additive, managed-only, plugin reload, immutable trust/disable, pre-launch audit failure, and terminal audit failure behavior. |
@@ -429,8 +433,8 @@ are ignored by older binaries; provider rows keep exact versioned secret names,
 which existing registries resolve. The additive daemon lock file is ignored by
 older binaries. Legacy clients without operation IDs remain
 accepted; new writers call a dedicated RPC that old daemons reject before
-mutation. Before
-downgrade, process pending cleanup where possible; old writers
+mutation. Downgrade requires stopping the new daemon and observing lock release;
+then process pending cleanup where possible. Old writers
 may leave inactive `provider-v2-` versions, which a later upgraded startup
 sweeps without touching referenced or legacy-prefix secrets. Background
 rollback stops workers before removing RPC/state handling. Managed-hook rollback
@@ -467,11 +471,12 @@ two-phase pending/applied/terminal operations, server-derived versioned keys,
 idempotent replay, durable old-secret cleanup, and a metadata-only operation RPC.
 All current CLI/TUI writers use a dedicated durable RPC, canonical UUIDs,
 bounded signal-aware saves, and detached reconciliation; legacy `AddProvider`
-delegates durably on new daemons. A provider-mutation mutex and pending secret
-reservations exclude runtime cleanup/save races. The lifetime lock excludes
-concurrent startup; startup resolves
-pending/applied rows and orphans before RPC acceptance; migration failure is
-fatal. SQL records `applied`; a
+delegates durably on new daemons. Pending secret reservations exclude runtime
+cleanup/save races. Daemon-owned per-alias workers
+let non-cancellable secret calls continue without blocking unrelated aliases;
+separate cleanup workers recheck references. The lifetime lock excludes
+concurrent startup; startup resolves pending/applied rows and orphans before RPC
+acceptance; migration failure is fatal. SQL records `applied`; a
 daemon-context/query-assisted finalizer performs cache/redactor work before
 externally visible `committed`. See
 `decisions/0006-make-provider-saves-durable.md`.
