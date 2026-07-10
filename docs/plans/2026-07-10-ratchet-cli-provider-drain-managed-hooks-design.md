@@ -1,0 +1,349 @@
+# Ratchet CLI Provider, Drain, and Managed Hook Design
+
+## Goal
+
+Deliver the next three ratchet-cli improvements as separate, releasable changes:
+
+1. Make provider and model setup one domain shared by the CLI and TUI so new
+   providers, auth methods, settings, and model discovery cannot drift.
+2. Let the daemon supervise explicitly enabled background ACP queue drains for
+   trusted agent launch profiles.
+3. Add OS-managed hook policy with immutable precedence, managed-only mode, and
+   metadata-only execution auditing.
+
+The design preserves ratchet's local-first architecture. It does not add a
+remote control plane, another provider SDK, another secret store, or detached
+shell scheduling.
+
+## Current State
+
+The CLI provider path supports AWS Bedrock settings, compatible/custom
+endpoints, settings-aware model discovery, manual model fallback, ChatGPT
+device auth, and CLI-backed providers. The TUI onboarding wizard has a separate
+five-provider table, drops provider-specific settings, and uses a different
+model discovery call. Users therefore see different capabilities depending on
+which entry point they choose.
+
+ACP queue draining already has ownership, cancellation, and stale-recovery
+semantics, but it only runs while a foreground command is attached. The daemon
+already owns durable lifecycle work and is the correct supervisor for optional
+unattended drains.
+
+Hooks can come from user, project, and plugin sources. Trust is local and
+project-oriented; there is no administrator-enforced policy, managed-only
+mode, or durable execution audit.
+
+The intermittent long-sequence TUI smoke-test shutdown assertion discovered
+during baseline verification is handled by a prerequisite PR. Fresh-process
+exit tests own shutdown behavior; the long all-surfaces test owns navigation
+and rendering coverage.
+
+## Global Design Guidance
+
+Sources: repository README and `docs/policy-matrix.md`, plus
+`GoCodeAlone/workspace` `docs/design-guidance.md`.
+
+| guidance | design response |
+|---|---|
+| Keep Go as the primary implementation language. | All catalog, daemon, policy, CLI, and TUI work remains Go-native. |
+| Reuse provider/plugin SDKs and existing secret infrastructure. | Model listing continues through `workflow-plugin-agent/provider`; provider credentials remain in the daemon's existing secrets provider and existing `secrets.Redactor`. |
+| Never log secrets or sensitive prompt content. | Background state stores queue/profile metadata only; hook audit stores hashes and outcomes only. |
+| Audit privileged or unattended behavior. | Background policy changes and managed hook execution produce redacted, local JSONL metadata records. |
+| Prefer daemon-owned lifecycle and explicit policy. | The daemon owns workers; CLI commands only mutate/query policy through RPC. |
+| Support Windows as a release target. | No Unix process groups, shell detachment, cron, or POSIX-only managed paths are assumed. Windows tests and release smoke remain required. |
+| Merge only after local verification and green PR checks. | Each implementation PR has focused tests, full repository tests, runtime proof, CI monitoring, merge, and a release tag. |
+
+## Architecture
+
+### 1. Shared Provider Setup Catalog
+
+Add a UI-agnostic catalog under `internal/provider`. A catalog entry owns:
+
+- canonical provider type and accepted aliases;
+- display name, category, and description;
+- auth strategy and setup strategy;
+- API-key environment name, when applicable;
+- base-URL policy and default URL;
+- typed provider-setting fields, including secret presentation metadata;
+- model discovery strategy and manual-model fallback policy;
+- setup-guide fields used by human and JSON CLI output.
+
+The catalog covers every user-selectable runtime provider registered by
+`workflow-plugin-agent`, excluding test-only `mock`. Duplicate runtime aliases,
+such as `bedrock` and `anthropic_bedrock`, resolve to one canonical visible
+entry while remaining accepted on input.
+
+Provider-specific network calls and SDK behavior remain in
+`workflow-plugin-agent/provider`. Ratchet supplies settings and renders
+responses; it does not implement AWS, OpenAI, Anthropic, or model APIs.
+
+The CLI adapter and Bubble Tea wizard both consume catalog entries. Neither may
+define a second provider list. Contract tests compare catalog coverage to the
+CLI setup surface and TUI navigation surface.
+
+#### TUI Flow
+
+The TUI wizard becomes a catalog-driven state machine:
+
+1. Choose a categorized provider from a scrollable, filterable list.
+2. Complete only the auth/setup path declared by the entry.
+3. Enter declared settings and optional base URL.
+4. Run settings-aware model discovery asynchronously.
+5. Choose a discovered model or enter one manually when allowed.
+6. Review non-secret values and submit once to the daemon.
+
+Secrets remain transient in the TUI model and are sent only to the existing
+daemon `AddProvider` RPC. The daemon stores them through its existing secrets
+provider and adds them to its existing redactor. Secret settings are not
+included in review text, errors, or snapshots.
+
+CLI-backed providers use their catalog setup strategy and health checks rather
+than API model discovery. ChatGPT subscription auth reuses the current device
+flow. Cloud and compatible providers pass their catalog-declared settings to
+the existing settings-aware model lister. Unsupported listing falls back to a
+manual model field instead of trapping the user.
+
+### 2. Daemon-Supervised Background ACP Drain
+
+Add a daemon-owned background drain manager and gRPC operations for start,
+stop, status, and list. The CLI surface is:
+
+```text
+ratchet acp queue background start <queue> --agent <profile> --acknowledge-unattended
+ratchet acp queue background status [<queue>]
+ratchet acp queue background stop <queue>
+```
+
+Start is rejected unless unattended execution is explicitly acknowledged.
+Only built-in agents and trusted stored ACP launch profiles are eligible.
+Arbitrary persisted argv, shell commands, and untrusted custom profiles are not
+accepted.
+
+Each persisted policy contains the queue ID, profile name, launch fingerprint,
+enabled state, timestamps, and last terminal outcome. It contains no prompts,
+responses, environment values, or credentials. State is written atomically
+with owner-only permissions in the existing ratchet state tree.
+
+At daemon startup, enabled entries resume only when the launch profile still
+exists, remains trusted, and matches the pinned fingerprint. Any mismatch moves
+the entry to `blocked` without launching an agent. A failed agent run moves the
+entry to `error` and stops automatic retries; an operator must explicitly start
+it again. This prevents cost-amplifying retry loops.
+
+Stop first disables the persisted policy, then cancels the active drain through
+the existing cancellation path. Queue claim ownership, cancellation, and stale
+recovery continue to use existing ACP client logic. The manager does not
+duplicate queue semantics.
+
+The manager uses Go contexts and daemon lifecycle hooks on all platforms. It
+does not use `nohup`, shell detachment, cron, launchd, systemd, or Windows Task
+Scheduler.
+
+### 3. Managed Hook Policy and Audit
+
+Add an optional administrator-owned YAML document at the platform path:
+
+| platform | default path |
+|---|---|
+| Linux | `/etc/ratchet/managed-hooks.yaml` |
+| macOS | `/Library/Application Support/ratchet/managed-hooks.yaml` |
+| Windows | `%ProgramData%\\ratchet\\managed-hooks.yaml` |
+
+Tests inject a path directly. Environment variables do not override the
+production policy path because an unprivileged process environment is not an
+administrative trust boundary.
+
+The policy mode is one of:
+
+- `additive`: managed hooks run with eligible user, project, and plugin hooks;
+- `managed-only`: user, project, and plugin hooks remain discoverable for
+  diagnostics but are suppressed at execution time.
+
+Managed hooks have immutable source provenance and are trusted by the
+administrator-owned file boundary. Local trust and disable commands reject
+attempts to alter them. Plugin hooks are filtered only after plugin merge so
+managed-only cannot be bypassed by reload order.
+
+A missing managed file means no managed policy. An existing malformed file is
+a fail-closed error during daemon startup and hook reload. The runtime must not
+silently continue with unmanaged hooks after an administrator attempted to
+install policy.
+
+Hook execution appends owner-readable JSONL records containing timestamp,
+event, hook configuration hash, source kind, result class, and duration. The
+record excludes command text, environment, input payload, stdout, stderr, and
+error text. If future fields contain text, they must pass through the existing
+`secrets.Redactor`; no second redaction implementation is introduced.
+
+`ratchet hooks list` exposes source and suppression status. `ratchet hooks
+policy` reports effective mode and policy source. `ratchet hooks audit` reads
+the local metadata stream in human or JSON form.
+
+## Data Flow
+
+```mermaid
+flowchart LR
+    Catalog[Provider catalog] --> CLI[provider CLI]
+    Catalog --> TUI[TUI wizard]
+    CLI --> RPC[daemon provider RPC]
+    TUI --> RPC
+    RPC --> Secrets[existing secrets provider + Redactor]
+    RPC --> Models[workflow-plugin-agent model listers]
+
+    BGCLI[background drain CLI] --> BGRPC[daemon background RPC]
+    BGRPC --> Manager[drain manager]
+    Manager --> Profiles[trusted ACP profiles]
+    Manager --> Queue[existing queue drain/claim/cancel]
+
+    Admin[managed policy file] --> Loader[hook loader]
+    UserProject[user/project hooks] --> Loader
+    Plugins[plugin hooks] --> Merge[post-plugin policy merge]
+    Loader --> Merge
+    Merge --> Runner[hook runner]
+    Runner --> Audit[metadata-only JSONL audit]
+```
+
+## Error Handling
+
+- Catalog validation fails tests on duplicate aliases, unknown strategies,
+  missing required fields, or runtime-provider coverage gaps.
+- Provider setup keeps user-entered non-secret state when discovery fails and
+  offers manual entry only when the catalog allows it.
+- Daemon background start validates acknowledgement, trust, fingerprint, and
+  queue/profile existence before persistence and launch.
+- Background worker panics and terminal agent errors are contained, recorded as
+  outcome classes, and do not trigger automatic retry.
+- Managed policy parse or validation errors identify the file and field without
+  including hook commands or environment values.
+- Audit append failure is surfaced for managed hook execution; managed hooks do
+  not run unaudited. Unmanaged-hook audit behavior remains best effort unless a
+  managed policy requires auditing.
+
+## Security Review
+
+- **Credential custody:** unchanged. Provider credentials remain in the
+  daemon's existing secret provider; the existing `secrets.Redactor` protects
+  runtime errors. No secrets are persisted in catalog metadata, background
+  policy, or hook audit.
+- **Unattended execution:** opt-in is explicit and profile identity is pinned.
+  Profile trust/fingerprint drift blocks resume. Persisted arbitrary commands
+  are prohibited.
+- **Administrative policy:** production paths are fixed by OS convention and
+  rely on administrator-managed file permissions. Managed-only applies after
+  plugin loading and cannot be weakened by user state.
+- **Audit minimization:** audit records carry hashes and outcome classes, not
+  executable commands or content. Files use owner-only permissions and atomic
+  append/open behavior where supported.
+- **Denial/cost controls:** background errors stop instead of retrying forever;
+  only one worker may own a queue policy; start is idempotent for an identical
+  active policy.
+- **Dependencies:** no TypeScript runtime, AWS reimplementation, new provider
+  SDK, remote service, or secret/redaction subsystem is added.
+
+## Infrastructure Impact
+
+No cloud infrastructure, migration, production deployment, or remote service
+is required. The daemon gains local state and one optional local policy read.
+Release artifacts remain the existing GoReleaser matrix, including Windows.
+
+## Multi-Component Validation
+
+| boundary | proof |
+|---|---|
+| Catalog to CLI | Contract tests enumerate every visible catalog entry through setup list/guide commands and accepted aliases. |
+| Catalog to TUI | State-machine tests traverse auth, settings, discovery, manual fallback, CLI-backed setup, and secret review suppression from catalog entries. |
+| TUI runtime | Fresh PTY smoke tests open provider/model setup, verify scrolling/filtering and readable framing, then exit from a fresh process. |
+| Daemon restart | Integration test persists an enabled policy, restarts the service, proves matching trusted profile resumes, then proves fingerprint drift blocks launch. |
+| Queue lifecycle | Existing claim/cancel/stale paths are exercised through the daemon manager with fake agents and deterministic contexts. |
+| Managed hooks | Loader/engine tests cover missing, malformed, additive, managed-only, plugin reload, immutable trust/disable, and audit failure behavior. |
+| Windows | `GOOS=windows` build, existing ConPTY smoke, and path/lifecycle unit tests run before merge; CI Windows jobs remain required. |
+| Release | Tag points to the merged commit; archives, checksums, Homebrew update path, and installed `ratchet --version` are verified. |
+
+## PR and Release Boundaries
+
+1. Provider catalog and unified CLI/TUI wizard.
+2. Daemon-supervised background ACP drains.
+3. Managed hook policy and audit.
+
+Each PR is independently tested, reviewed, merged, and released. Later PRs
+rebase onto the released predecessor. The prerequisite TUI smoke stabilization
+PR is not part of this three-PR scope.
+
+## Assumptions
+
+- `workflow-plugin-agent` remains the source of provider runtime and model
+  listing behavior; ratchet can validate its visible catalog against the
+  current registry surface.
+- The daemon is the only ratchet process expected to supervise durable local
+  jobs.
+- A trusted ACP profile name plus descriptor fingerprint is sufficient stable
+  launch identity for this local policy.
+- Administrators protect managed policy files with OS permissions appropriate
+  to their deployment.
+- Missing administrator policy is normal; malformed present policy is an
+  intentional configuration error.
+
+## Out of Scope
+
+- Remote fleet policy, centralized audit upload, or a management SDK.
+- Arbitrary background shell commands, detached processes, or schedule syntax.
+- New provider SDKs, model APIs, secret stores, or redaction types.
+- Autonomous mutation of ratchet's own source or prompts.
+- VS Code-style harness optimization experiments; this is the next planned
+  cluster after the three PRs and will use current source/documentation rather
+  than memory.
+
+## Approaches Considered
+
+### Provider Setup
+
+1. **Chosen: shared UI-agnostic catalog.** One capability definition feeds both
+   renderers while auth/network behavior stays in existing packages.
+2. Daemon-rendered wizard RPC. Rejected because protobuf would own presentation
+   policy and make local UI iteration a daemon contract change.
+3. Separate CLI/TUI implementations with conformance tests. Rejected because
+   tests would detect drift after duplication instead of removing its cause.
+
+### Background Drain
+
+1. **Chosen: daemon-owned workers and persisted policy.** Reuses lifecycle,
+   claims, cancellation, and cross-platform contexts.
+2. Detached foreground command or cron wrapper. Rejected because supervision,
+   cancellation, restart semantics, and Windows behavior are unreliable.
+3. Persist arbitrary launch argv. Rejected because it creates an unattended
+   command-execution store with weak identity and audit semantics.
+
+### Managed Hooks
+
+1. **Chosen: fixed OS policy path, explicit precedence, post-plugin filtering.**
+   This provides a real administrative boundary and observable enforcement.
+2. Pre-seed the existing trust store. Rejected because users could still add or
+   run hooks and plugin reload could bypass managed-only intent.
+3. Remote policy service. Rejected as unnecessary infrastructure and an
+   inappropriate expansion of this local-first slice.
+
+## Self-Challenge
+
+- The provider wizard refactor has the broadest visible UI blast radius. It
+  must preserve navigation/back behavior, keep values on recoverable errors,
+  and prove long lists do not hide controls or overflow terminals.
+- The most dangerous background assumption is that restart equals permission
+  to execute. The fingerprint/trust/acknowledgement gates are therefore
+  negative integration tests, not documentation promises.
+- The managed-hook failure boundary must distinguish absent policy from broken
+  policy. Treating both as optional would silently defeat administration;
+  treating both as fatal would make unmanaged installs unusable.
+- Metadata-only audit is intentionally less convenient for debugging. Command
+  output belongs in an explicitly redacted diagnostic path, not a durable
+  privileged execution log.
+- A provider catalog can become a new source of truth that lags the plugin.
+  Registry coverage tests and alias validation make that drift fail CI.
+
+## Rollback
+
+Each PR can be reverted independently. Catalog rollback restores the existing
+CLI and TUI paths without changing stored provider records. Background rollback
+stops workers before removing RPC/state handling; persisted metadata can remain
+ignored and contains no content. Managed-hook rollback must be coordinated with
+administrators because removing enforcement weakens policy; revert only after
+removing or migrating the managed file and preserving audit records.
