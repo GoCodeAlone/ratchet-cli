@@ -278,3 +278,39 @@ explicit fail-stop secret-provider contract.
 
 **Verdict reasoning:** FAIL; real TUI submission and non-cancellable secret-call
 semantics remain Important.
+
+## Cycle 6: Durable Provider Saves
+
+**Status:** FAIL
+
+**Findings (Critical):** none.
+
+**Findings (Important):**
+
+- `D34` [Concurrency] Per-alias execution lacks admission semantics during a
+  hung non-cancellable `Set`; different operation IDs must be rejected without
+  retaining credentials, while same-ID calls attach to the active result.
+
+**Findings (Minor):**
+
+- `D35` Cleanup workers need deduplication, a fixed concurrency cap, bounded
+  backoff, and retirement.
+- `D36` Startup gates cleanup discovery/journaling; physical deletion is async,
+  so “serially sweeps before acceptance” is stale wording.
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Guidance/precedent | Clean | Existing Go/provider/registry/Windows shapes preserved. |
+| Assumptions/failures | Finding | Alias serialization alone does not prevent queued abandoned saves. |
+| YAGNI/security | Clean | Durable primitives and E2E secret proof are justified/minimal. |
+| Infrastructure | Finding | Cleanup fan-out is uncapped. |
+| Integration/UI/rollback/runtime | Clean | Full TUI save, lock quiescence, and provider context semantics are covered. |
+| Simpler alternative | Finding | One admitted alias operation plus busy rejection avoids a queue. |
+
+**Alternatives:** single admitted operation per alias; bounded deduplicated
+cleanup pool; synchronized ownership map without idle alias goroutines.
+
+**Verdict reasoning:** FAIL; same-alias admission during a hung operation remains
+Important, while cleanup bounds and wording are Minor.
