@@ -374,6 +374,10 @@ strategy and focused tests that:
   aliases proceeding, and deterministic restart recovery;
 - cleanup rows deduplicate by secret name and a two-worker pool proves bounded
   concurrency/backoff and idle retirement;
+- worker panic becomes classified durable failure and releases alias/cleanup
+  ownership; poison cleanup rows cannot starve later due rows;
+- a short provider-row critical section orders save apply/finalize with remove,
+  default, and model updates without enclosing secret-provider calls;
 - an OS-level lock is acquired before PID/socket cleanup, migration, or secret
   reconciliation and retained for daemon lifetime on Unix and Windows;
 - startup finalizes applied operations, fails inherited pending, journals only
@@ -435,6 +439,12 @@ redactor registration/cache invalidation before `committed`. Daemon startup
 first acquires a lifetime OS lock, then finalizes applied rows, fails inherited
 pending rows, journals unreferenced reserved orphans/cleanup, accepts RPCs, and
 processes physical deletion asynchronously.
+
+Recover worker panics into classified durable failures and always retire
+ownership. Persist cleanup `next_attempt_at`; a due-row dispatcher feeds two
+short workers so failed rows release slots. Use a short provider-row mutex from
+SQL apply through terminal finalization and for remove/default/model updates;
+never hold it across secret-provider methods.
 
 Expose a metadata-only operation query and use it for bounded CLI/TUI
 reconciliation. All CLI writers use signal-aware save contexts plus detached

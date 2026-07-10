@@ -44,13 +44,19 @@ journaled. RPC handlers wait only until their context ends; a non-cancellable
 secret `Set` continues with its reservation live. Replacement UUIDs are accepted
 only after terminal state or startup recovery. Ownership entries then retire.
 
+Worker boundaries recover panics, record classified failure without raw panic
+text, and release ownership. A short provider-row mutex spans SQL apply through
+terminal finalization and is shared by default/model/remove row mutations; it
+never surrounds a secret-provider call.
+
 `provider_secret_cleanup` stores only server secret name, attempt count,
 classified outcome, and timestamps. Startup runs before RPCs: secret `List`
 failure is fatal; applied rows are finalized; inherited pending rows become
 failed; unreferenced reserved-prefix keys are queued. Startup discovery and
 journaling complete before RPC acceptance; cleanup rows are unique by secret
-name and feed a two-worker pool with bounded exponential retry. Not-found
-succeeds, other failures remain queued, and workers retire when idle. Runtime
+name and persist `next_attempt_at` with bounded exponential retry. One due-row
+dispatcher feeds at most two short workers; poison rows release slots and later
+due rows still run. Not-found succeeds and other failures remain queued. Runtime
 cleanup rechecks references before delete.
 Provider update/removal queues the prior key in its SQL transaction.
 Legacy-prefix keys are touched only when a row explicitly retires them.

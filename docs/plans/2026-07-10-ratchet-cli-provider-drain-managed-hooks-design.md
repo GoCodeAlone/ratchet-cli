@@ -280,6 +280,12 @@ flowchart LR
   admitted: same-ID calls attach; another gets `AliasBusy` without retention.
   Pending rows reserve keys before `Set`; a two-worker deduplicated cleanup pool
   excludes provider references and pending/applied reservations.
+- **Worker safety/order:** worker guards recover panics into classified durable
+  failure and release ownership. A short provider-row mutex spans apply through
+  terminal finalization and orders default/model/remove row mutations, but never
+  wraps secret-provider calls. Cleanup retry persists `next_attempt_at`; one
+  due-row dispatcher feeds two short workers so poison rows cannot starve later
+  entries.
 - **Unattended execution:** opt-in is explicit and profile identity is pinned.
   Profile trust/fingerprint drift blocks resume. Persisted arbitrary commands
   are prohibited.

@@ -314,3 +314,34 @@ cleanup pool; synchronized ownership map without idle alias goroutines.
 
 **Verdict reasoning:** FAIL; same-alias admission during a hung operation remains
 Important, while cleanup bounds and wording are Minor.
+
+## Cycle 7: Durable Provider Saves
+
+**Status:** PASS
+
+**Findings (Critical/Important):** none.
+
+**Findings (Minor):**
+
+- `D37` Worker boundaries should recover panics, classify failure, preserve
+  durable rows, and retire ownership.
+- `D38` Default/model provider mutations need explicit ordering with applied
+  saves; use the same short row-mutation critical section.
+- `D39` Cleanup retries should persist `next_attempt_at`; a due-row dispatcher
+  feeds at most two short workers so poison entries cannot monopolize slots.
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Guidance/security/intent/rollback | Clean | Existing Go, secret, Windows, integration, and downgrade boundaries hold. |
+| Assumptions/precedent/failure | Finding (Minor) | Panic, sibling row mutation, and cleanup fairness need conservative implementation details. |
+| Artifact/YAGNI/UI | Clean | Files and primitives remain established and justified. |
+| Infra/runtime | Finding (Minor) | Due-row retry metadata prevents worker starvation. |
+| Multi-component/integration | Clean | Full persistent-root TUI durable-save proof is specified. |
+
+**Alternatives:** unified row mutation executor; due-row cleanup dispatcher;
+shared panic-safe worker guard.
+
+**Verdict reasoning:** PASS; all Critical/Important findings D1-D36 are resolved.
+D37-D39 are straightforward conservative implementation refinements.
