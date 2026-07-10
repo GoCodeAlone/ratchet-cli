@@ -30,7 +30,9 @@ type OnboardingDoneMsg struct {
 }
 
 // OnboardingCancelledMsg signals provider setup should return to its caller.
-type OnboardingCancelledMsg struct{}
+type OnboardingCancelledMsg struct {
+	Provider *pb.Provider
+}
 
 // NavigateToOnboardingMsg signals the app to switch to the onboarding page.
 type NavigateToOnboardingMsg struct{}
@@ -43,11 +45,6 @@ type providerAddedMsg struct {
 
 type providerTestedMsg struct {
 	result *pb.TestProviderResult
-	err    error
-	flowID uint64
-}
-
-type providerRemovedMsg struct {
 	err    error
 	flowID uint64
 }
@@ -118,6 +115,8 @@ const (
 	stepTestConnection
 )
 
+const providerOperationTimeout = 30 * time.Second
+
 // anthropicAuthChoice identifies which Anthropic sign-in option was selected.
 type anthropicAuthChoice int
 
@@ -130,7 +129,6 @@ const (
 type onboardingDeps struct {
 	listModels        func(context.Context, string, string, string, map[string]string) ([]providerauth.ModelInfo, error)
 	addProvider       func(context.Context, *pb.AddProviderReq) (*pb.Provider, error)
-	removeProvider    func(context.Context, string) error
 	testProvider      func(context.Context, string) (*pb.TestProviderResult, error)
 	startGitHubDevice func(context.Context) (*providerauth.DeviceCodeResult, error)
 	pollGitHubDevice  func(context.Context, string, int) (string, error)
@@ -224,13 +222,13 @@ type OnboardingModel struct {
 	spinner           spinner.Model
 	testing           bool
 	adding            bool
-	removing          bool
 	cancelAfterAdd    bool
 	providerOpContext context.Context
 	providerOpCancel  context.CancelFunc
 	testResult        *pb.TestProviderResult
 	testError         string
 	added             bool // provider has been added to daemon
+	savedProvider     *pb.Provider
 
 	width  int
 	height int
@@ -245,9 +243,6 @@ func defaultOnboardingDeps(c *client.Client) onboardingDeps {
 		listModels: providerauth.ListModelsWithSettings,
 		addProvider: func(ctx context.Context, req *pb.AddProviderReq) (*pb.Provider, error) {
 			return c.AddProvider(ctx, req)
-		},
-		removeProvider: func(ctx context.Context, alias string) error {
-			return c.RemoveProvider(ctx, alias)
 		},
 		testProvider: func(ctx context.Context, alias string) (*pb.TestProviderResult, error) {
 			return c.TestProvider(ctx, alias)
@@ -504,16 +499,24 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 			m.testError = redactProviderError(msg.err, m.authToken)
 			return m, nil
 		}
+		if msg.provider == nil {
+			m.finishProviderOperation()
+			m.testing = false
+			m.testError = "add provider returned no provider"
+			return m, nil
+		}
 		m.added = true
+		m.savedProvider = msg.provider
 		if m.cancelAfterAdd {
 			m.cancelAfterAdd = false
 			m.finishProviderOperation()
-			ctx := m.beginProviderOperation()
 			m.testing = false
-			m.removing = true
-			return m, tea.Batch(m.spinner.Tick, m.removeProvider(ctx, msg.provider.Alias))
+			provider := msg.provider
+			return m, func() tea.Msg { return OnboardingDoneMsg{Provider: provider} }
 		}
-		return m, m.testProvider(m.providerOpContext, msg.provider.Alias)
+		m.finishProviderOperation()
+		ctx := m.beginProviderOperation()
+		return m, m.testProvider(ctx, msg.provider.Alias)
 
 	case providerTestedMsg:
 		if msg.flowID != m.flowID {
@@ -525,30 +528,18 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 			m.testError = redactProviderError(msg.err, m.authToken)
 			return m, nil
 		}
+		if msg.result == nil {
+			m.testError = "test provider returned no result"
+			return m, nil
+		}
 		m.testResult = msg.result
 		if !msg.result.Success {
 			m.testError = redactProviderText(msg.result.Message, m.authToken)
 		}
 		return m, nil
 
-	case providerRemovedMsg:
-		if msg.flowID != m.flowID {
-			return m, nil
-		}
-		m.finishProviderOperation()
-		m.removing = false
-		if msg.err != nil {
-			m.testError = "remove failed: " + redactProviderError(msg.err, m.authToken)
-			return m, nil
-		}
-		m.added = false
-		m.step = stepReview
-		m.testResult = nil
-		m.testError = ""
-		return m, nil
-
 	case spinner.TickMsg:
-		if m.testing || m.removing || m.authing || m.fetchingModels || m.pullingModel || (m.step == stepCLISetup && m.cliCommandPath == "" && m.cliError == "") {
+		if m.testing || m.authing || m.fetchingModels || m.pullingModel || (m.step == stepCLISetup && m.cliCommandPath == "" && m.cliError == "") {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
 			return m, cmd
@@ -617,7 +608,8 @@ func (m OnboardingModel) updateSelectProvider(msg tea.Msg) (OnboardingModel, tea
 				m.cursor = 0
 				return m, nil
 			}
-			return m, func() tea.Msg { return OnboardingCancelledMsg{} }
+			provider := m.savedProvider
+			return m, func() tea.Msg { return OnboardingCancelledMsg{Provider: provider} }
 		case "/":
 			m.filtering = true
 			return m, m.filterInput.Focus()
@@ -1212,15 +1204,20 @@ func setupOllama(ctx context.Context, baseURL string) (string, error) {
 			pollErr := c.Health(pollCtx)
 			pollCancel()
 			if pollErr == nil {
-				if err := cmd.Process.Release(); err != nil {
-					_ = cmd.Process.Kill()
-					_ = cmd.Wait()
-					return "failed", fmt.Errorf("release ollama server process: %w", err)
-				}
+				_ = waitForBackgroundProcess(cmd)
 				return "ready", nil
 			}
 		}
 	}
+}
+
+func waitForBackgroundProcess(cmd *exec.Cmd) <-chan error {
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+		close(done)
+	}()
+	return done
 }
 
 // installOllamaQuiet installs Ollama silently (output suppressed for TUI).
@@ -1566,7 +1563,7 @@ func (m OnboardingModel) startTest() (OnboardingModel, tea.Cmd) {
 	if m.providerOpCancel != nil {
 		m.providerOpCancel()
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), providerOperationTimeout)
 	m.providerOpContext = ctx
 	m.providerOpCancel = cancel
 	m.step = stepTestConnection
@@ -1621,17 +1618,11 @@ func (m OnboardingModel) testProvider(ctx context.Context, alias string) tea.Cmd
 	}
 }
 
-func (m OnboardingModel) removeProvider(ctx context.Context, alias string) tea.Cmd {
-	return func() tea.Msg {
-		return providerRemovedMsg{err: m.deps.removeProvider(ctx, alias), flowID: m.flowID}
-	}
-}
-
 func (m *OnboardingModel) beginProviderOperation() context.Context {
 	if m.providerOpCancel != nil {
 		m.providerOpCancel()
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), providerOperationTimeout)
 	m.providerOpContext = ctx
 	m.providerOpCancel = cancel
 	return ctx
@@ -1649,6 +1640,29 @@ func (m *OnboardingModel) finishProviderOperation() {
 	m.providerOpCancel = nil
 }
 
+// Cancel stops asynchronous setup work before the TUI exits.
+func (m *OnboardingModel) Cancel() {
+	for _, cancel := range []context.CancelFunc{
+		m.authCancel,
+		m.modelFetchCancel,
+		m.ollamaSetupCancel,
+		m.pullCancel,
+		m.cliCheckCancel,
+		m.providerOpCancel,
+	} {
+		if cancel != nil {
+			cancel()
+		}
+	}
+	m.authCancel = nil
+	m.modelFetchCancel = nil
+	m.ollamaSetupCancel = nil
+	m.pullCancel = nil
+	m.cliCheckCancel = nil
+	m.providerOpCancel = nil
+	m.providerOpContext = nil
+}
+
 func providerAlias(entry providerauth.SetupEntry) string {
 	if entry.DefaultAlias != "" {
 		return entry.DefaultAlias
@@ -1658,7 +1672,7 @@ func providerAlias(entry providerauth.SetupEntry) string {
 
 func (m OnboardingModel) updateTestConnection(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
-		if m.testing || m.removing {
+		if m.testing {
 			if keyMsg.String() == "esc" {
 				if m.adding {
 					m.cancelAfterAdd = true
@@ -1672,6 +1686,10 @@ func (m OnboardingModel) updateTestConnection(msg tea.Msg) (OnboardingModel, tea
 		if m.testResult != nil && m.testResult.Success {
 			switch keyMsg.String() {
 			case "enter", " ":
+				if m.savedProvider != nil {
+					provider := m.savedProvider
+					return m, func() tea.Msg { return OnboardingDoneMsg{Provider: provider} }
+				}
 				p := m.selectedProvider()
 				model := m.selectedModelID()
 				return m, func() tea.Msg {
@@ -1700,10 +1718,10 @@ func (m OnboardingModel) updateTestConnection(msg tea.Msg) (OnboardingModel, tea
 			return m.startTest()
 		case "b", "esc":
 			if m.added {
-				ctx := m.beginProviderOperation()
-				p := m.selectedProvider()
-				m.removing = true
-				return m, tea.Batch(m.spinner.Tick, m.removeProvider(ctx, providerAlias(p)))
+				m.step = stepReview
+				m.testResult = nil
+				m.testError = ""
+				return m, nil
 			}
 			m.step = stepReview
 			m.testResult = nil
@@ -2000,13 +2018,10 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 
 	case stepTestConnection:
 		p := m.selectedProvider()
-		if m.removing {
-			sb.WriteString(m.spinner.View() + " Removing the failed provider configuration...\n\n")
-			sb.WriteString(mutedStyle.Render("Esc: cancel"))
-		} else if m.adding {
+		if m.adding {
 			sb.WriteString(m.spinner.View() + " Saving " + p.DisplayName + " configuration...\n\n")
 			if m.cancelAfterAdd {
-				sb.WriteString(mutedStyle.Render("Cancel requested; waiting to remove the saved provider"))
+				sb.WriteString(mutedStyle.Render("Cancel requested; setup will finish after save"))
 			} else {
 				sb.WriteString(mutedStyle.Render("Esc: cancel after save"))
 			}

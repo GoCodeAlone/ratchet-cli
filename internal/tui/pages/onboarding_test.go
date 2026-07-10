@@ -4,13 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -36,7 +39,7 @@ func TestOnboardingUsesCompleteProviderCatalogWithoutLocalTable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read onboarding.go: %v", err)
 	}
-	for _, forbidden := range []string{"var providerTypes", "type providerTypeInfo"} {
+	for _, forbidden := range []string{"var providerTypes", "type providerTypeInfo", "removeProvider"} {
 		if strings.Contains(string(source), forbidden) {
 			t.Errorf("onboarding.go retains local provider definition %q", forbidden)
 		}
@@ -804,12 +807,6 @@ func TestOnboardingPullAndCLICheckViewsBoundStatusAndShowRecovery(t *testing.T) 
 	if !strings.Contains(view, "Esc: cancel") {
 		t.Fatalf("provider test view missing recovery:\n%s", view)
 	}
-	model.testing = false
-	model.removing = true
-	view = model.View(theme.Dark(), 80, 24)
-	if !strings.Contains(view, "Esc: cancel") {
-		t.Fatalf("provider removal view missing recovery:\n%s", view)
-	}
 }
 
 func TestOnboardingReviewEscReturnsToModelSelection(t *testing.T) {
@@ -838,13 +835,8 @@ func TestOnboardingCLINativeTestFailureBackReturnsToReview(t *testing.T) {
 	}
 }
 
-func TestOnboardingTestFailureWaitsForProviderRemovalBeforeReview(t *testing.T) {
-	var removedAlias string
+func TestOnboardingTestFailureBackKeepsSavedProvider(t *testing.T) {
 	deps := testOnboardingDeps()
-	deps.removeProvider = func(_ context.Context, alias string) error {
-		removedAlias = alias
-		return nil
-	}
 	model := newOnboarding(nil, theme.Dark(), deps)
 	model.providerIdx = onboardingProviderIndex(t, model, "bedrock")
 	model.step = stepTestConnection
@@ -852,12 +844,21 @@ func TestOnboardingTestFailureWaitsForProviderRemovalBeforeReview(t *testing.T) 
 	model.testError = "connection failed"
 
 	model, cmd := model.updateTestConnection(tea.KeyPressMsg{Code: 'b', Text: "b"})
-	if cmd == nil || model.step != stepTestConnection || !model.removing {
-		t.Fatalf("removal start = step:%v removing:%v cmd:%v", model.step, model.removing, cmd)
+	if cmd != nil || model.step != stepReview || !model.added {
+		t.Fatalf("back state = cmd:%v step:%v added:%v", cmd, model.step, model.added)
 	}
-	model, _ = model.Update(runOnboardingCmd(t, cmd))
-	if removedAlias != "bedrock" || model.step != stepReview || model.removing || model.added {
-		t.Fatalf("removal result = alias:%q step:%v removing:%v added:%v", removedAlias, model.step, model.removing, model.added)
+}
+
+func TestOnboardingCancelReportsPreviouslySavedProvider(t *testing.T) {
+	saved := &pb.Provider{Alias: "bedrock", Type: "bedrock", BaseUrl: "https://example.invalid", IsDefault: true}
+	model := newOnboarding(nil, theme.Dark(), testOnboardingDeps())
+	model.step = stepSelectProvider
+	model.savedProvider = saved
+
+	_, cmd := model.updateSelectProvider(tea.KeyPressMsg{Code: tea.KeyEsc})
+	msg, ok := runOnboardingCmd(t, cmd).(OnboardingCancelledMsg)
+	if !ok || msg.Provider != saved {
+		t.Fatalf("cancel message = %#v", msg)
 	}
 }
 
@@ -888,19 +889,19 @@ func TestOnboardingProviderTestEscCancelsOperation(t *testing.T) {
 	}
 }
 
-func TestOnboardingAddSuccessRacingCancelRemovesCommittedProvider(t *testing.T) {
+func TestOnboardingAddSuccessRacingEscKeepsCommittedProviderAndSkipsTest(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
-	var removedAlias string
+	testCalls := 0
 	deps := testOnboardingDeps()
 	deps.addProvider = func(_ context.Context, req *pb.AddProviderReq) (*pb.Provider, error) {
 		close(started)
 		<-release
 		return &pb.Provider{Alias: req.Alias, Type: req.Type}, nil
 	}
-	deps.removeProvider = func(_ context.Context, alias string) error {
-		removedAlias = alias
-		return nil
+	deps.testProvider = func(context.Context, string) (*pb.TestProviderResult, error) {
+		testCalls++
+		return &pb.TestProviderResult{Success: true}, nil
 	}
 	model := newOnboarding(nil, theme.Dark(), deps)
 	model.providerIdx = onboardingProviderIndex(t, model, "bedrock")
@@ -911,14 +912,129 @@ func TestOnboardingAddSuccessRacingCancelRemovesCommittedProvider(t *testing.T) 
 	go func() { result <- batch[len(batch)-1]() }()
 	<-started
 	model, _ = model.updateTestConnection(tea.KeyPressMsg{Code: tea.KeyEsc})
+	view := model.View(theme.Dark(), 80, 24)
+	if !strings.Contains(view, "finish after save") || strings.Contains(strings.ToLower(view), "remove") {
+		t.Fatalf("cancel-after-save view:\n%s", view)
+	}
 	close(release)
 	model, cmd = model.Update(<-result)
-	if cmd == nil || !model.added || !model.removing {
-		t.Fatalf("raced add state = cmd:%v added:%v removing:%v", cmd, model.added, model.removing)
+	if cmd == nil || !model.added || model.testing || testCalls != 0 {
+		t.Fatalf("raced add state = cmd:%v added:%v testing:%v tests:%d", cmd, model.added, model.testing, testCalls)
 	}
+	done, ok := runOnboardingCmd(t, cmd).(OnboardingDoneMsg)
+	if !ok || done.Provider.GetAlias() != "bedrock" {
+		t.Fatalf("cancel-after-save message = %#v", done)
+	}
+}
+
+func TestOnboardingProviderAddHasDeadline(t *testing.T) {
+	deps := testOnboardingDeps()
+	deps.addProvider = func(ctx context.Context, _ *pb.AddProviderReq) (*pb.Provider, error) {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			return nil, errors.New("provider add context has no deadline")
+		}
+		if remaining := time.Until(deadline); remaining <= 0 || remaining > 31*time.Second {
+			return nil, fmt.Errorf("provider add deadline = %s", remaining)
+		}
+		return &pb.Provider{Alias: "bedrock", Type: "bedrock"}, nil
+	}
+	model := newOnboarding(nil, theme.Dark(), deps)
+	model.providerIdx = onboardingProviderIndex(t, model, "bedrock")
+	model.selectedModel = "test-model"
+	_, cmd := model.startTest()
+	msg := runOnboardingCmd(t, cmd).(providerAddedMsg)
+	if msg.err != nil {
+		t.Fatalf("provider add: %v", msg.err)
+	}
+}
+
+func TestOnboardingProviderTestHasDeadline(t *testing.T) {
+	deps := testOnboardingDeps()
+	deps.testProvider = func(ctx context.Context, _ string) (*pb.TestProviderResult, error) {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			return nil, errors.New("provider test context has no deadline")
+		}
+		if remaining := time.Until(deadline); remaining <= 0 || remaining > 31*time.Second {
+			return nil, fmt.Errorf("provider test deadline = %s", remaining)
+		}
+		return &pb.TestProviderResult{Success: true}, nil
+	}
+	model := newOnboarding(nil, theme.Dark(), deps)
+	model.providerIdx = onboardingProviderIndex(t, model, "bedrock")
+	model.step = stepTestConnection
+	model.added = true
+
+	model, cmd := model.updateTestConnection(tea.KeyPressMsg{Code: 'r', Text: "r"})
 	model, _ = model.Update(runOnboardingCmd(t, cmd))
-	if removedAlias != "bedrock" || model.added || model.removing || model.step != stepReview {
-		t.Fatalf("compensated cancellation = alias:%q added:%v removing:%v step:%v", removedAlias, model.added, model.removing, model.step)
+	if model.testError != "" || model.testResult == nil || !model.testResult.Success {
+		t.Fatalf("provider test = result:%v error:%q", model.testResult, model.testError)
+	}
+}
+
+func TestOnboardingRejectsNilSuccessfulProviderResponses(t *testing.T) {
+	model := newOnboarding(nil, theme.Dark(), testOnboardingDeps())
+	model.step = stepTestConnection
+	model.testing = true
+	model.adding = true
+	model.providerOpContext = t.Context()
+
+	model, cmd := model.Update(providerAddedMsg{flowID: model.flowID})
+	if cmd != nil || model.testing || model.adding || !strings.Contains(model.testError, "no provider") {
+		t.Fatalf("nil add response = cmd:%v testing:%v adding:%v error:%q", cmd, model.testing, model.adding, model.testError)
+	}
+
+	model.testing = true
+	model, cmd = model.Update(providerTestedMsg{flowID: model.flowID})
+	if cmd != nil || model.testing || !strings.Contains(model.testError, "no result") {
+		t.Fatalf("nil test response = cmd:%v testing:%v error:%q", cmd, model.testing, model.testError)
+	}
+}
+
+func TestOnboardingCancelStopsAllActiveWork(t *testing.T) {
+	model := newOnboarding(nil, theme.Dark(), testOnboardingDeps())
+	contexts := make([]context.Context, 0, 6)
+	newCancel := func() context.CancelFunc {
+		ctx, cancel := context.WithCancel(t.Context())
+		contexts = append(contexts, ctx)
+		return cancel
+	}
+	model.authCancel = newCancel()
+	model.modelFetchCancel = newCancel()
+	model.ollamaSetupCancel = newCancel()
+	model.pullCancel = newCancel()
+	model.cliCheckCancel = newCancel()
+	model.providerOpCancel = newCancel()
+
+	model.Cancel()
+
+	for i, ctx := range contexts {
+		select {
+		case <-ctx.Done():
+		default:
+			t.Errorf("active context %d was not canceled", i)
+		}
+	}
+}
+
+func TestWaitForBackgroundProcessReapsChild(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "-test.run=^TestOnboardingBackgroundProcessHelper$")
+	cmd.Env = append(os.Environ(), "RATCHET_ONBOARDING_PROCESS_HELPER=1")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start helper: %v", err)
+	}
+	if err := <-waitForBackgroundProcess(cmd); err != nil {
+		t.Fatalf("wait helper: %v", err)
+	}
+	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+		t.Fatalf("helper process was not reaped: %#v", cmd.ProcessState)
+	}
+}
+
+func TestOnboardingBackgroundProcessHelper(t *testing.T) {
+	if os.Getenv("RATCHET_ONBOARDING_PROCESS_HELPER") != "1" {
+		return
 	}
 }
 
@@ -930,7 +1046,6 @@ func testOnboardingDeps() onboardingDeps {
 		addProvider: func(_ context.Context, req *pb.AddProviderReq) (*pb.Provider, error) {
 			return &pb.Provider{Alias: req.Alias, Type: req.Type, Model: req.Model}, nil
 		},
-		removeProvider: func(context.Context, string) error { return nil },
 		testProvider: func(context.Context, string) (*pb.TestProviderResult, error) {
 			return &pb.TestProviderResult{Success: true}, nil
 		},

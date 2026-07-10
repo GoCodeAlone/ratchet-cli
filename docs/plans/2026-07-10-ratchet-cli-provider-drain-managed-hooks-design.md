@@ -416,3 +416,14 @@ provider removal before review/re-add.
 Scope: no manifest change; corrections satisfy Tasks 2-4.
 Evidence: `go test ./internal/provider ./cmd/ratchet ./internal/tui/pages -count=1`
 must pass before PR 2.
+
+### Backport 2026-07-10: Provider upsert commit boundary
+
+Cause: daemon `AddProvider` is an alias-keyed upsert, so wizard compensation by
+alias could delete a pre-existing provider and could not restore its prior
+secret. Change: Review confirmation is the commit boundary; navigation never
+deletes a saved provider, save/test RPCs are bounded, cancellation reports any
+committed provider to the app, and explicit provider removal remains a separate
+user command. Scope: no manifest change; this corrects Task 4 lifecycle
+semantics. Evidence: focused lifecycle tests cover save/cancel races, failed
+test navigation, nil RPC results, process reaping, and app cache reconciliation.

@@ -164,6 +164,19 @@ func TestAppOnboardingCancelWithoutProviderQuits(t *testing.T) {
 	}
 }
 
+func TestAppOnboardingCancelRetainsProviderSavedByWizard(t *testing.T) {
+	app := readyChatApp(t, "root-session-12345678")
+	app.page = pageOnboarding
+	app.providers = nil
+	provider := &pb.Provider{Alias: "configured", Type: "anthropic", BaseUrl: "https://example.invalid", IsDefault: true}
+
+	model, cmd := app.Update(pages.OnboardingCancelledMsg{Provider: provider})
+	app = model.(App)
+	if cmd == nil || app.page != pageChat || len(app.providers) != 1 || app.providers[0] != provider {
+		t.Fatalf("saved cancel state = cmd:%v page:%v providers:%v", cmd, app.page, app.providers)
+	}
+}
+
 func TestAppOnboardingDoneUpdatesProviderStateForLaterCancellation(t *testing.T) {
 	app := readyChatApp(t, "root-session-12345678")
 	app.page = pageOnboarding
@@ -181,6 +194,18 @@ func TestAppOnboardingDoneUpdatesProviderStateForLaterCancellation(t *testing.T)
 	app = model.(App)
 	if app.page != pageChat {
 		t.Fatalf("post-success cancel page = %v, want pageChat", app.page)
+	}
+}
+
+func TestAppRecordProviderRetainsDefaultForExistingPointer(t *testing.T) {
+	configured := &pb.Provider{Alias: "configured", Type: "anthropic", IsDefault: true}
+	app := readyChatApp(t, "root-session-12345678")
+	app.providers = []*pb.Provider{nil, configured}
+
+	app.recordProvider(configured)
+
+	if !configured.GetIsDefault() || app.providers[1] != configured {
+		t.Fatalf("recorded provider = default:%v providers:%v", configured.GetIsDefault(), app.providers)
 	}
 }
 

@@ -150,6 +150,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+c" {
+			if a.page == pageOnboarding {
+				a.onboarding.Cancel()
+			}
 			return a, tea.Quit
 		}
 		if a.page == pageSessionTree && msg.String() == "esc" {
@@ -211,27 +214,11 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case pages.OnboardingDoneMsg:
-		if msg.Provider != nil {
-			if msg.Provider.GetIsDefault() {
-				for _, provider := range a.providers {
-					provider.IsDefault = false
-				}
-			}
-			replaced := false
-			for i, provider := range a.providers {
-				if provider.GetAlias() == msg.Provider.GetAlias() {
-					a.providers[i] = msg.Provider
-					replaced = true
-					break
-				}
-			}
-			if !replaced {
-				a.providers = append(a.providers, msg.Provider)
-			}
-		}
+		a.recordProvider(msg.Provider)
 		return a.transitionToChat()
 
 	case pages.OnboardingCancelledMsg:
+		a.recordProvider(msg.Provider)
 		if len(a.providers) > 0 {
 			return a.transitionToChat()
 		}
@@ -348,6 +335,26 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return a, tea.Batch(cmds...)
+}
+
+func (a *App) recordProvider(configured *pb.Provider) {
+	if configured == nil {
+		return
+	}
+	if configured.GetIsDefault() {
+		for _, provider := range a.providers {
+			if provider != nil && provider != configured {
+				provider.IsDefault = false
+			}
+		}
+	}
+	for i, provider := range a.providers {
+		if provider.GetAlias() == configured.GetAlias() {
+			a.providers[i] = configured
+			return
+		}
+	}
+	a.providers = append(a.providers, configured)
 }
 
 func (a App) transitionFromSplash() (tea.Model, tea.Cmd) {
