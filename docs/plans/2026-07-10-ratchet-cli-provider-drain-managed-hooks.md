@@ -326,8 +326,13 @@ git commit -m "refactor(provider): drive CLI from catalog"
 - Modify generated: `internal/proto/ratchet.pb.go`
 - Modify generated: `internal/proto/ratchet_grpc.pb.go`
 - Modify: `.github/workflows/ci.yml`
+- Modify: `internal/releaseguard/workflow_test.go`
 - Modify: `internal/daemon/engine.go`
 - Modify: `internal/daemon/daemon.go`
+- Create: `internal/daemon/provider_operations.go`
+- Create: `internal/daemon/provider_operations_test.go`
+- Create: `internal/daemon/provider_cleanup.go`
+- Create: `internal/daemon/provider_cleanup_test.go`
 - Create: `internal/daemon/lock_unix.go`
 - Create: `internal/daemon/lock_windows.go`
 - Create: `internal/daemon/lock_unix_test.go`
@@ -335,6 +340,7 @@ git commit -m "refactor(provider): drive CLI from catalog"
 - Modify: `internal/daemon/service.go`
 - Modify: `internal/daemon/integration_test.go`
 - Modify: `internal/client/client.go`
+- Create: `internal/client/provider_save_test.go`
 - Modify: `cmd/ratchet/cmd_provider.go`
 - Modify: `cmd/ratchet/cmd_provider_test.go`
 - Modify: `internal/tui/app.go`
@@ -391,101 +397,181 @@ strategy and focused tests that:
 - views at 80x24 and 120x40 contain no overflow and always show actionable
   navigation/help text.
 
-**Step 2: Prove red**
+**Checkpoint 4A: Generate the dedicated RPC contract**
 
-Run:
+Add failing `TestProviderOperationRPCContract` and client compile-contract tests
+for `CommitProviderSave`, `GetProviderOperation`, operation states, timestamps,
+classified failure, and the narrow result (`alias/type/model/is_default`, no
+base URL/settings/credential/error). Run:
 
 ```bash
-go test ./internal/daemon -run 'ProviderOperation|ProviderSecret' -count=1
-go test ./cmd/ratchet -run 'Provider.*Operation' -count=1
-go test ./internal/tui/pages -run 'Onboarding|ProviderCatalog' -count=1
+go test ./internal/daemon ./internal/client -run 'ProviderOperationRPCContract|ProviderSaveClient' -count=1
 ```
 
-Expected: FAIL because `providerTypes` is hardcoded, no dependency-injected
-catalog flow exists, operation RPC/types are absent, and alias-stable secret
-writes can mutate active credentials before SQL commit.
+Expected red: compile failure with undefined operation messages/RPCs. Add the
+protobuf messages and RPCs, run `make proto`, implement client adapters, rerun
+the command to PASS, then commit `feat(provider): add durable save contract`.
 
-**Step 3: Implement the catalog-driven state**
+**Checkpoint 4B: Implement schema, operation execution, and cleanup**
 
-Remove `providerTypeInfo` and `providerTypes`. Add selection filter/viewport,
-generic non-secret setting inputs, manual-model input, review state, and a
-selected `provider.SetupEntry`. Retain specialized Anthropic, Copilot,
-ChatGPT, and Ollama commands behind catalog strategies.
+Write these tests before implementation:
 
-Keep all input components at stable dimensions. At widths below 90 columns,
-wrap descriptions and show one concise navigation line. Do not display numeric
-shortcuts beyond nine entries; arrows/enter/filter remain authoritative.
+- `TestProviderOperationSchemaUpgradesLegacyDatabase` creates the previous
+  `llm_providers` schema, runs initialization twice, and asserts both new tables;
+- `TestProviderOperationSchemaFailureStopsStartup` creates a conflicting view
+  and requires initialization failure before service construction;
+- `TestCommitProviderSaveRollbackPreservesActiveSecret` forces SQL apply failure
+  after a new secret write and proves the prior pointer/value remains active;
+- `TestCommitProviderSaveReplayAliasBusyAndConflict` covers same-ID attachment,
+  different-ID same-alias `AliasBusy` without a row/credential, terminal replay,
+  and cross-alias UUID conflict;
+- `TestProviderOperationBlockingSecretAdmissionAndRestart` uses a provider whose
+  `Set` ignores context: caller times out, reservation stays pending, unrelated
+  alias succeeds, replacement ID is busy, and restart classifies recovery;
+- `TestProviderOperationWorkerPanicReleasesOwnership` proves classified failure
+  without raw panic text and accepts a later operation;
+- `TestProviderCleanupDispatcherFairness` proves unique rows, at most two active
+  deletes, persisted `next_attempt_at`, poison-row slot release, and idle wakeup;
+- `TestProviderMutationOrdering` overlaps save apply/finalize with remove,
+  default, and model update and asserts linearized final state;
+- `TestProviderOperationPayloadContainsNoSensitiveFields` checks SQL rows,
+  protobuf JSON, status, and logs against credential/base-URL/settings sentinels.
 
-Use `provider.ListModelsWithSettings`, never the settings-blind call. CLI-backed
-entries run their existing command health check asynchronously and let the
-external CLI own model choice. The only secret input is the daemon API-key
-field; setting values are non-secret by catalog validation.
+Run red:
 
-Add a two-phase provider-save journal per ADR 0006. Required table migrations
-fail startup. New clients send canonical UUIDs; the daemon generates a separate
-UUID for `provider-v2-` secret keys and accepts empty IDs only for legacy
-compatibility. New clients call `CommitProviderSave`; old daemons return
-`Unimplemented` without mutation. Pending creation reserves the server secret
-key and is unconditional first-write-wins for the same alias; another
-alias conflicts. SQL atomically switches the provider pointer, stores an
-`applied` result without base URL, and queues the old secret.
-Rollback deletes only the inactive new version and durably queues failed
-cleanup. Daemon-owned per-alias workers serialize save/remove through terminal
-state while unrelated aliases proceed. Same-ID callers attach; other IDs fail
-busy without journaling/retaining credentials. A two-worker deduplicated cleanup
-pool rechecks provider and pending/applied references. RPC deadlines bound waiting, not non-cancellable
-secret calls. A daemon-owned bounded finalizer and operation-query retry perform
-redactor registration/cache invalidation before `committed`. Daemon startup
-first acquires a lifetime OS lock, then finalizes applied rows, fails inherited
-pending rows, journals unreferenced reserved orphans/cleanup, accepts RPCs, and
-processes physical deletion asynchronously.
+```bash
+go test ./internal/daemon -run 'ProviderOperationSchema|CommitProviderSave|ProviderOperationBlocking|ProviderOperationWorkerPanic|ProviderCleanupDispatcher|ProviderMutationOrdering|ProviderOperationPayload' -count=1
+```
 
-Recover worker panics into classified durable failures and always retire
-ownership. Persist cleanup `next_attempt_at`; a due-row dispatcher feeds two
-short workers so failed rows release slots. Use a short provider-row mutex from
-SQL apply through terminal finalization and for remove/default/model updates;
-never hold it across secret-provider methods.
+Expected: named tests FAIL because the required tables/executor/dispatcher do
+not exist and legacy `AddProvider` mutates alias-stable secrets before commit.
 
-Expose a metadata-only operation query and use it for bounded CLI/TUI
-reconciliation. All CLI writers use signal-aware save contexts plus detached
-reconciliation so interruption preserves the UUID. First interrupt displays
-reconciliation; second exits nonzero with the ID, and
-`provider operation <id>` exposes status. First-write replay lasts 24 hours;
-expired/unresolved retries use a new UUID.
-Do not persist credentials, base URLs, raw requests/settings/errors, or a
-credential hash. Keep retired values in the existing additive Redactor until
-restart; do not introduce a second redaction or secret abstraction.
-Treat startup secret `List` as fail-stop before RPC acceptance. Journal cleanup
-before starting asynchronous `Delete`; shutdown stops accepting work but does
-not wait forever for a provider method that ignores context.
+Implement ADR 0006 in `provider_operations.go` and `provider_cleanup.go`.
+Required migrations fail startup. `CommitProviderSave` requires a canonical
+UUID; legacy `AddProvider` delegates with a server UUID. Journal pending with a
+server-only `provider-v2-<unix>-<uuid>` reservation before `Set`. Admit one ID
+per alias; same-ID callers attach and another ID fails busy without retention.
+Per-alias daemon workers continue non-cancellable calls after caller timeout.
+SQL atomically switches the pointer, queues the old key, and stores `applied`;
+a daemon-context/query-assisted finalizer registers Redactor, invalidates cache,
+and marks committed. A short row mutex orders apply/finalize/remove/default/model
+without enclosing secret calls. Panic guards classify failure and retire owners.
+
+Startup `List` is fail-stop, resolves inherited pending/applied rows, journals
+unreferenced reserved keys, and then starts one due-row dispatcher feeding two
+short cleanup workers. Cleanup rows key by secret name, persist
+`next_attempt_at`, recheck provider/nonterminal references, and never sleep while
+holding a worker slot. Terminal operations retain 24 hours. Rerun the red
+command to PASS and commit `feat(provider): make saves durable`.
+
+**Checkpoint 4C: Enforce single-daemon ownership on Unix and Windows**
+
+Add `TestDaemonLockExcludesSecondOwner`,
+`TestDaemonLockReleasesAfterClose`, and helper-process
+`TestDaemonLockReleasesAfterProcessExit` in both platform test files. Run:
+
+```bash
+go test ./internal/daemon -run 'DaemonLock' -count=1
+```
+
+Expected red: undefined lock constructor. Implement owner-only lock-file open,
+nonblocking Unix `flock`, Windows `LockFileEx`, and release-on-close. Acquire
+before `IsRunning`, socket cleanup, PID write, migration, or reconciliation and
+hold through daemon lifetime. Add exact native CI steps:
+
+```yaml
+- name: Run Windows daemon lock tests
+  run: go test ./internal/daemon -run 'DaemonLock' -count=1
+- name: Run Windows ConPTY provider save
+  run: go test -tags tui_smoke ./internal/tui -run 'WindowsConPTYProviderSave' -count=1 -timeout=10m
+```
+
+Add failing `TestCIRequiresWindowsProviderDurability` before editing the workflow:
+
+```bash
+go test ./internal/releaseguard -run 'CIRequiresWindowsProviderDurability' -count=1
+```
+
+Expected red: the `windows-conpty-smoke` job lacks both exact run steps. After
+the YAML edit, the releaseguard test must PASS.
+
+Local Unix tests must PASS; Windows tests are compile-checked locally and must
+run natively in PR CI. Commit `fix(daemon): enforce exclusive ownership`.
+
+**Checkpoint 4D: Route every CLI save through durable operations**
+
+Add failing `TestProviderDurableSaveDeadlineAndReconciliation`,
+`TestProviderDurableSaveInterruptAndForceExit`,
+`TestProviderOperationStatusCommand`, and a source guard enumerating generic,
+ChatGPT, Ollama, and CLI-native writers. Run:
+
+```bash
+go test ./cmd/ratchet -run 'Provider.*Operation|ProviderDurableSave' -count=1
+```
+
+Expected red: missing helper/status command and direct `AddProvider` writers.
+Implement one helper using a canonical UUID, signal-aware 30-second RPC, and a
+separate 10-second operation poll. First interrupt prints reconciliation status;
+second exits nonzero and prints the ID. Add
+`provider operation <id> [--json]`. Nil success responses fail cleanly. Rerun to
+PASS and commit `refactor(provider): use durable saves`.
+
+**Checkpoint 4E: Finish the catalog-driven TUI state machine**
+
+Run the existing/new state tests first:
+
+```bash
+go test ./internal/tui/pages -run 'Onboarding|ProviderCatalog' -count=1
+go test ./internal/tui -run 'Provider|Onboarding|SlashExit' -count=1 -timeout=10m
+```
+
+Expected red: hardcoded provider state plus missing durable-save routing,
+reconciliation, Ctrl+C wait, nil auth/list guards, and normalized credential/
+endpoint handling. Implement catalog filter/viewport/settings/manual model,
+specialized auth/CLI/Ollama strategies, bounded render/help, and one
+`CommitProviderSave` submission. Review confirmation is the commit boundary;
+navigation never deletes an upsert. Reconciliation handles pending/applied/
+committed/failed/unresolved and preserves committed provider state in the app.
+Rerun both commands to PASS and commit
+`feat(tui): unify provider setup wizard`.
 
 **Step 4: Verify state and render behavior**
 
 ```bash
 make proto
-gofmt -w internal/daemon/engine.go internal/daemon/daemon.go internal/daemon/lock_unix.go internal/daemon/lock_windows.go internal/daemon/lock_unix_test.go internal/daemon/lock_windows_test.go internal/daemon/service.go internal/daemon/integration_test.go internal/client/client.go cmd/ratchet/cmd_provider.go cmd/ratchet/cmd_provider_test.go internal/tui/app.go internal/tui/app_session_tree_test.go internal/tui/pages/onboarding.go internal/tui/pages/onboarding_test.go
+gofmt -w internal/daemon/engine.go internal/daemon/daemon.go internal/daemon/provider_operations.go internal/daemon/provider_operations_test.go internal/daemon/provider_cleanup.go internal/daemon/provider_cleanup_test.go internal/daemon/lock_unix.go internal/daemon/lock_windows.go internal/daemon/lock_unix_test.go internal/daemon/lock_windows_test.go internal/daemon/service.go internal/daemon/integration_test.go internal/client/client.go internal/client/provider_save_test.go cmd/ratchet/cmd_provider.go cmd/ratchet/cmd_provider_test.go internal/tui/app.go internal/tui/app_session_tree_test.go internal/tui/pages/onboarding.go internal/tui/pages/onboarding_test.go
 go test ./internal/daemon -run 'ProviderOperation|ProviderSecret|ProviderCRUD|DaemonLock' -count=1
 go test ./cmd/ratchet -run 'Provider.*Operation|Provider.*Catalog|ProviderSetupGuide|ProviderModelSelection' -count=1
 go test ./internal/tui/pages -run 'Onboarding|ProviderCatalog' -count=1
 go test ./internal/tui -run 'Provider|Onboarding|SlashExit' -count=1 -timeout=10m
+go test ./internal/releaseguard -run 'CIRequiresWindowsProviderDurability' -count=1
 ```
 
 Expected: PASS; daemon tests prove replay/rollback/restart/cleanup and registry
 resolution; all current save callers carry UUIDs; render tests report all lines
 within configured widths and secret sentinels absent.
 
-**Step 5: Commit**
+**Step 5: Verify checkpoint commits and rollback**
 
 ```bash
-git add .github/workflows/ci.yml internal/proto internal/daemon/engine.go internal/daemon/daemon.go internal/daemon/lock_unix.go internal/daemon/lock_windows.go internal/daemon/lock_unix_test.go internal/daemon/lock_windows_test.go internal/daemon/service.go internal/daemon/integration_test.go internal/client/client.go cmd/ratchet/cmd_provider.go cmd/ratchet/cmd_provider_test.go internal/tui/app.go internal/tui/app_session_tree_test.go internal/tui/pages/onboarding.go internal/tui/pages/onboarding_test.go
-git commit -m "feat(tui): unify provider setup wizard"
+git status --short
+git log --oneline --grep='provider\|daemon.*ownership\|tui.*provider'
 ```
+
+Expected: clean worktree and commits for contract, durable engine, daemon lock,
+CLI routing, and TUI state. Rollback within PR 2: revert those checkpoint commits
+in reverse order; additive tables/lock file remain harmless to the parent binary,
+then run the Task 5 downgrade smoke before merge.
 
 ### Task 5: Prove, Document, Merge, and Release Unified Provider Setup
 
 **Files:**
+- Modify: `.github/workflows/ci.yml`
+- Modify: `internal/releaseguard/workflow_test.go`
 - Modify: `cmd/ratchet-tui-smoke/main.go`
 - Modify: `cmd/ratchet-tui-smoke/main_windows.go`
+- Modify: `cmd/ratchet/harness_smoke_unix_test.go`
+- Create: `cmd/ratchet/provider_downgrade_smoke_unix_test.go`
 - Modify: `internal/daemon/service_tui_smoke.go`
 - Modify: `internal/daemon/service_tui_smoke_test.go`
 - Modify: `internal/tui/tui_binary_smoke_unix_test.go`
@@ -497,6 +583,22 @@ git commit -m "feat(tui): unify provider setup wizard"
 - Modify: `cmd/ratchet/harness_docs_test.go`
 
 **Step 1: Add a fresh-process TUI integration proof**
+
+First add failing tests named `TestTUIBinarySmokeProviderSave`,
+`TestTUIBinaryWindowsConPTYProviderSave`,
+`TestTUISmokeProviderSavePersistsSecretBoundary`,
+`TestHarnessSmokeDurableProviderSaveRestart`, and
+`TestHarnessSmokeDurableProviderDowngrade`. Run red:
+
+```bash
+go test -tags tui_smoke ./internal/daemon -run 'TUISmokeProviderSave' -count=1
+go test -tags tui_smoke ./internal/tui -run 'TUIBinary.*ProviderSave' -count=1 -timeout=12m
+go test ./cmd/ratchet -run 'HarnessSmokeDurableProvider' -count=1 -timeout=12m
+```
+
+Expected: FAIL because smoke state is in-memory/discarded, the binaries do not
+accept a caller-owned root, the production lifecycle does not expose operation
+status/restart proof, and the parent-version harness does not exist.
 
 Add a dedicated PTY/ConPTY scenario that launches the smoke binary, submits
 `/provider add`, observes catalog entries beyond the former five (at least
@@ -528,6 +630,28 @@ versions remain, cleanup failures stay queued and retry, provider removal queues
 its current version, and the real registry resolves the new credential after an
 upsert. Verify operation rows/RPC/status/log snapshots contain no sentinel.
 
+Extend the production-binary harness with a local OpenAI-compatible fixture.
+Launch built `dist/ratchet` under isolated HOME/state, save through the CLI,
+parse its operation ID, invoke `provider operation <id> --json`, restart the
+production daemon, list/test the provider, and shut down through RPC. The
+downgrade harness uses `git worktree add --detach ... origin/master` (CI checkout
+must use `fetch-depth: 0`), builds the parent binary, stops the current daemon,
+observes socket/PID removal and lock release, then starts the parent and proves
+it resolves the versioned secret against the same local fixture. Cleanup always
+removes the temporary worktree.
+
+Update `tui-smoke` checkout to `fetch-depth: 0` and add this Linux step:
+
+```yaml
+- name: Run production provider durability smoke
+  run: go test ./cmd/ratchet -run 'HarnessSmokeDurableProvider' -count=1 -timeout=12m
+```
+
+The `windows-conpty-smoke` job must retain the Task 4 exact `DaemonLock` and
+`WindowsConPTYProviderSave` commands. Extend
+`TestCIRequiresWindowsProviderDurability` to assert the Linux checkout depth and
+production command as well as both Windows commands.
+
 **Step 3: Update human documentation and guards**
 
 Document one setup flow, category/provider matrix, CLI/TUI parity guarantee,
@@ -542,6 +666,7 @@ go test ./internal/provider ./cmd/ratchet ./internal/tui/pages -count=1
 go test ./internal/daemon -run 'ProviderOperation|ProviderSecret|TUISmoke' -count=1
 go test ./internal/tui -run 'ProviderSetup|TUIBinarySmoke' -count=1 -timeout=12m
 go test ./cmd/ratchet -run HarnessEmulationDocs -count=1
+go test ./cmd/ratchet -run 'HarnessSmokeDurableProvider' -count=1 -timeout=12m
 go test ./...
 go vet ./...
 golangci-lint run --new-from-rev=origin/master
@@ -557,15 +682,19 @@ starting the daemon.
 **Step 5: Commit and complete PR 2**
 
 ```bash
-git add cmd/ratchet-tui-smoke/main.go cmd/ratchet-tui-smoke/main_windows.go internal/daemon/service_tui_smoke.go internal/daemon/service_tui_smoke_test.go internal/tui/tui_binary_smoke_unix_test.go internal/tui/tui_binary_smoke_windows_test.go README.md docs/harness-emulation.md docs/competitor-parity.md docs/policy-matrix.md cmd/ratchet/harness_docs_test.go
+git add .github/workflows/ci.yml internal/releaseguard/workflow_test.go cmd/ratchet-tui-smoke/main.go cmd/ratchet-tui-smoke/main_windows.go cmd/ratchet/harness_smoke_unix_test.go cmd/ratchet/provider_downgrade_smoke_unix_test.go internal/daemon/service_tui_smoke.go internal/daemon/service_tui_smoke_test.go internal/tui/tui_binary_smoke_unix_test.go internal/tui/tui_binary_smoke_windows_test.go README.md docs/harness-emulation.md docs/competitor-parity.md docs/policy-matrix.md cmd/ratchet/harness_docs_test.go
 git commit -m "docs: explain unified provider setup"
 ```
 
 Follow Global Execution Rules 4-5 and verify the released Homebrew binary opens
 `provider setup list --json` with the full catalog.
 
-Rollback: revert PR 2, restore the previous plugin pin, rebuild, and prove the
-prior CLI/TUI starts. Stored provider rows remain schema-compatible.
+Rollback: run `ratchet daemon stop`, wait for socket/PID removal and lock
+release, inspect/allow pending cleanup to settle when available, revert PR 2 and
+the plugin pin, rebuild the parent binary, then run
+`TestHarnessSmokeDurableProviderDowngrade` to prove the old daemon starts and
+resolves a versioned provider secret. Additive operation/cleanup tables remain
+ignored and schema-compatible.
 
 ### Task 6: Bind ACP Profile Trust and Build the Background Policy Manager
 
