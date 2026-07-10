@@ -715,7 +715,7 @@ or PR base: stacked and future PR bases can already contain the RPC.
     log=$(mktemp)
     trap 'rm -f "$log"' EXIT
     if ! go test -json ./cmd/ratchet -run '^TestHarnessSmokeDurableProviderDowngrade$' -count=1 -timeout=12m >"$log"; then
-      cat "$log"
+      jq -c 'select(.Action == "fail" or .Action == "skip") | {Action,Package,Test,Elapsed}' "$log" >&2 || true
       exit 1
     fi
     jq -e 'select(.Action == "pass" and .Test == "TestHarnessSmokeDurableProviderDowngrade")' "$log" >/dev/null
@@ -731,7 +731,8 @@ compatibility boundary to a revision that already contains `CommitProviderSave`.
 It must also require `shell: bash`, an owned `mktemp` transcript with cleanup,
 the anchored JSON test selector whose exit is checked before parsing, and an
 exact `jq` pass-event assertion so a failed, renamed, or deleted test cannot
-satisfy CI.
+satisfy CI. It must reject raw transcript output such as `cat "$log"` and
+require the fixed failure projection that excludes `.Output`.
 
 **Step 3: Update human documentation and guards**
 
@@ -753,7 +754,7 @@ go test ./cmd/ratchet -run 'HarnessSmokeDurableProvider' -count=1 -timeout=12m
   trap 'rm -f "$log"' EXIT
   export RATCHET_DOWNGRADE_BASE_SHA=8cb5602166ffe529a0f05101dff583bad0919415
   if ! go test -json ./cmd/ratchet -run '^TestHarnessSmokeDurableProviderDowngrade$' -count=1 -timeout=12m >"$log"; then
-    cat "$log"
+    jq -c 'select(.Action == "fail" or .Action == "skip") | {Action,Package,Test,Elapsed}' "$log" >&2 || true
     exit 1
   fi
   jq -e 'select(.Action == "pass" and .Test == "TestHarnessSmokeDurableProviderDowngrade")' "$log" >/dev/null
@@ -769,7 +770,10 @@ go test ./cmd/ratchet -run HarnessSmokeVersionHelpAndDaemonStatus -count=1
 
 Expected: all exit 0; TUI output includes Bedrock/custom choices; Windows build
 succeeds; version command prints the development version and exits without
-starting the daemon.
+starting the daemon. Every new downgrade-harness failure message containing
+subprocess state passes paths and all credential sentinels through the existing
+`harnessredact` helper; the CI/local wrapper never prints raw JSON `Output`
+events.
 
 **Step 5: Commit and complete PR 2**
 

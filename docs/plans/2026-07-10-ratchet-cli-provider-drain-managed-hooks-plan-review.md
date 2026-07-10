@@ -467,3 +467,58 @@ inventory helper with category/count-only diagnostics.
 
 **Verdict reasoning:** FAIL; P26-P28 are addressed, but P29 leaves the gate
 capable of false success. Task 5 now addresses P29-P32 for Cycle 9.
+
+## Cycle 9: Durable Provider Saves
+
+**Status:** FAIL
+
+**Findings (Critical):** none.
+
+**Findings (Important):**
+
+- `P33` A failed secret-leak test printed raw `go test -json` `Output` events,
+  potentially publishing the credential under test to CI logs. _Resolution:
+  failure output is now a fixed `{Action,Package,Test,Elapsed}` projection;
+  releaseguard rejects raw transcript output, and harness failures must use the
+  existing `harnessredact` helper for paths and sentinels._
+
+**Findings (Minor):** none after convergence.
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | P33 closes a direct secret-in-logs conflict. |
+| Assumptions under attack | Finding | P33 rejects treating a JSON test transcript as safe by default. |
+| Repo-precedent conflicts | Finding | Raw transcript output bypassed existing `harnessredact` precedent. |
+| Artifact-class precedent | Clean | Transcript remains test-owned and trap-cleaned. |
+| YAGNI violations | Clean | JSON verification and inventory proof address demonstrated defects. |
+| Missing failure modes | Finding | P33 covers a leaking application whose test runner republishes the leak. |
+| Security / privacy at architecture level | Finding | Failure reporting is now metadata-only. |
+| Infrastructure impact | Finding | CI no longer persists raw failed transcript output. |
+| Multi-component validation | Clean | New/old daemons, file secrets, DB, restart cleanup, and final save are covered. |
+| Declared integration proof | Clean | Sorted provider inventory preserves unrelated baseline state. |
+| Contributed UI rendering proof | Clean | Real PTY/ConPTY navigation and submission remain covered. |
+| Rollback story | Finding | Rollback wrapper now shares metadata-only failure reporting. |
+| Simpler alternative not considered | Finding | A safe fixed `jq` projection provides enough gate diagnostics. |
+| User-intent drift | Finding | P33 contradicted secret-safe autonomous release. |
+| Existence / runtime-validity | Clean | Pinned SHA and shell tooling remain valid. |
+| Over/under-decomposition | Clean | Manifest remains 11 tasks and 4 PRs. |
+| Verification-class mismatch | Finding | Security verification no longer violates its own property on failure. |
+| Auth/authz chain composition | Clean | No new network authz chain exists. |
+| Hidden serial dependencies | Clean | Transcript ownership and cleanup convergence are isolated/ordered. |
+| Missing rollback wiring | Clean | Proof, stop, lock release, revert, and rebuild remain executable. |
+| Missing integration proof | Clean | Exact inventories close physical cleanup proof. |
+| Missing declared integration matrix | Clean | All declared real boundaries retain named evidence. |
+| Missing contributed UI route proof | Clean | Actual TUI shell/provider content remain exercised. |
+| Infrastructure verification mismatch | Clean | Producer exit and exact pass event are checked without a pipeline. |
+| Plugin-loader runtime layout | Clean | No external plugin process is added. |
+| Config-validation schema rules | Clean | Migration and mixed-version startup coverage remain complete. |
+| Identifier / naming-convention match | Clean | Key namespaces, IDs, SHA, RPCs, and env names remain consistent. |
+| Planned-code compile-validity | Clean | Shell blocks and Go checkpoint order remain valid. |
+
+**Alternatives:** safe JSON projection; redacted diagnostic sidecar; no failure
+transcript.
+
+**Verdict reasoning:** FAIL; P29-P32 are resolved, but P33 leaves a direct
+failure-path credential leak. Task 5 now addresses P33 for Cycle 10.
