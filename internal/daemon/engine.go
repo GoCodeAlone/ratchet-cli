@@ -38,6 +38,7 @@ type EngineContext struct {
 	Hooks            *hooks.HookConfig
 	Debug            bool // enable request/response debug logging to ~/.ratchet/debug.log
 	ExtensionMu      sync.RWMutex
+	ProviderRowsMu   sync.Mutex
 	// Plugin-contributed capabilities
 	PluginSkills   []skills.Skill
 	PluginAgents   []agent.AgentDefinition
@@ -261,6 +262,35 @@ func initDB(db *sql.DB) error {
 			settings TEXT NOT NULL DEFAULT '{}',
 			is_default INTEGER DEFAULT 0
 		)`,
+		`CREATE TABLE IF NOT EXISTS provider_operations (
+			operation_id TEXT PRIMARY KEY,
+			alias TEXT NOT NULL,
+			state TEXT NOT NULL,
+			failure TEXT NOT NULL DEFAULT '',
+			secret_name TEXT NOT NULL DEFAULT '',
+			result_type TEXT NOT NULL DEFAULT '',
+			result_model TEXT NOT NULL DEFAULT '',
+			result_is_default INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			expires_at DATETIME NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS provider_operations_alias_state
+			ON provider_operations(alias, state)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS provider_operations_active_alias
+			ON provider_operations(alias) WHERE state IN ('pending', 'applied')`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS provider_operations_reserved_secret
+			ON provider_operations(secret_name) WHERE secret_name != ''`,
+		`CREATE TABLE IF NOT EXISTS provider_secret_cleanup (
+			secret_name TEXT PRIMARY KEY,
+			attempt_count INTEGER NOT NULL DEFAULT 0,
+			failure TEXT NOT NULL DEFAULT '',
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			next_attempt_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS provider_secret_cleanup_due
+			ON provider_secret_cleanup(next_attempt_at, created_at)`,
 		`CREATE TABLE IF NOT EXISTS permissions (
 			tool_name TEXT NOT NULL,
 			scope TEXT NOT NULL,

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
@@ -78,9 +79,18 @@ func TestAddProviderArmsSecretRedactor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddProvider() error = %v", err)
 	}
+	var secretName string
+	if err := h.DB.QueryRowContext(ctx,
+		`SELECT secret_name FROM llm_providers WHERE alias = 'redact-test'`,
+	).Scan(&secretName); err != nil {
+		t.Fatalf("query secret name: %v", err)
+	}
+	if !strings.HasPrefix(secretName, "provider-v2-") {
+		t.Fatalf("secret name = %q, want versioned provider key", secretName)
+	}
 
 	got := h.Svc.engine.SecretRedactor.Redact("provider leaked sk-new-provider-secret")
-	want := "provider leaked [REDACTED:provider_redact-test]"
+	want := "provider leaked [REDACTED:" + secretName + "]"
 	if got != want {
 		t.Fatalf("SecretRedactor.Redact() = %q, want %q", got, want)
 	}
