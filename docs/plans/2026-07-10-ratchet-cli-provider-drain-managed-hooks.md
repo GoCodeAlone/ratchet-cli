@@ -682,30 +682,35 @@ and requires `git show <base>:internal/proto/ratchet.proto` not to contain
 `CommitProviderSave`; otherwise it fails as vacuous. It adds a detached worktree,
 builds both binaries into `t.TempDir()`, stops the current daemon, observes
 socket/PID removal and lock release, then starts the parent and proves it resolves
-the versioned secret against the same local fixture. Cleanup always removes the
-temporary worktree. Post-merge reruns must set an explicitly older base SHA.
+the versioned secret against the same local fixture. The parent then upserts the
+same alias with a second sentinel through legacy `AddProvider`; after another
+clean stop, the current binary restarts, resolves the parent-written active
+secret, journals and retires only the now-unreferenced v2 version, and performs
+one more durable save that retires the legacy key without exposing any sentinel.
+Assert provider pointers, operation states, active credentials, and cleanup rows
+after each transition. Cleanup always removes the temporary worktree.
 
 Update `tui-smoke` checkout to `fetch-depth: 0`. Keep the restart proof
-evergreen on every event and run the old-protocol downgrade proof only on pull
-requests, whose base revision is the compatibility boundary under review:
+evergreen on every event and use the verified pre-RPC compatibility revision for
+the mixed-version proof. Do not derive this boundary from an event predecessor
+or PR base: stacked and future PR bases can already contain the RPC.
 
 ```yaml
 - name: Run production provider durability smoke
   run: go test ./cmd/ratchet -run 'HarnessSmokeDurableProviderSaveRestart' -count=1 -timeout=12m
 - name: Run production provider downgrade smoke
-  if: github.event_name == 'pull_request'
   env:
-    RATCHET_DOWNGRADE_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+    RATCHET_DOWNGRADE_BASE_SHA: 8cb5602166ffe529a0f05101dff583bad0919415
   run: go test ./cmd/ratchet -run 'HarnessSmokeDurableProviderDowngrade' -count=1 -timeout=12m
 ```
 
 The `windows-conpty-smoke` job must retain the Task 4 exact `DaemonLock` and
 `WindowsConPTYProviderSave` commands. Extend
 `TestCIRequiresWindowsProviderDurability` to assert the Linux checkout depth and
-both production commands, the downgrade step's PR-only condition and PR-base
-`RATCHET_DOWNGRADE_BASE_SHA`, and both Windows commands. It must reject
-`github.event.before` so ordinary pushes cannot become coupled to a predecessor
-that already contains `CommitProviderSave`.
+both production commands, the exact pinned `RATCHET_DOWNGRADE_BASE_SHA`, and both
+Windows commands. It must reject `github.event.before` and
+`github.event.pull_request.base.sha` so later events cannot silently move the
+compatibility boundary to a revision that already contains `CommitProviderSave`.
 
 **Step 3: Update human documentation and guards**
 
@@ -722,6 +727,8 @@ go test ./internal/daemon -run 'ProviderOperation|ProviderSecret|TUISmoke' -coun
 go test ./internal/tui -run 'ProviderSetup|TUIBinarySmoke' -count=1 -timeout=12m
 go test ./cmd/ratchet -run HarnessEmulationDocs -count=1
 go test ./cmd/ratchet -run 'HarnessSmokeDurableProvider' -count=1 -timeout=12m
+RATCHET_DOWNGRADE_BASE_SHA=8cb5602166ffe529a0f05101dff583bad0919415 \
+  go test -v ./cmd/ratchet -run '^TestHarnessSmokeDurableProviderDowngrade$' -count=1 -timeout=12m
 go test ./...
 go vet ./...
 golangci-lint run --new-from-rev=origin/master
@@ -745,12 +752,14 @@ git commit -m "docs: explain unified provider setup"
 Follow Global Execution Rules 4-5 and verify the released Homebrew binary opens
 `provider setup list --json` with the full catalog.
 
-Rollback: run `ratchet daemon stop`, wait for socket/PID removal and lock
-release, inspect/allow pending cleanup to settle when available, revert PR 2 and
-the plugin pin, rebuild the parent binary, then run
-`TestHarnessSmokeDurableProviderDowngrade` to prove the old daemon starts and
-resolves a versioned provider secret. Additive operation/cleanup tables remain
-ignored and schema-compatible.
+Rollback: before reverting the commit that owns the compatibility harness, run
+the exact pinned Step 4 downgrade command with `-v` and require the output line
+`--- PASS: TestHarnessSmokeDurableProviderDowngrade`. Then run
+`ratchet daemon stop`, wait for socket/PID removal and lock release,
+inspect/allow pending cleanup to settle when available, revert PR 2 and the
+plugin pin, and rebuild the parent binary. Additive operation/cleanup tables
+remain ignored and schema-compatible; never use a no-match `go test -run` after
+the revert as rollback evidence.
 
 ### Task 6: Bind ACP Profile Trust and Build the Background Policy Manager
 

@@ -277,3 +277,68 @@ revision; workflow-dispatch compatibility input; explicit red/green base SHA.
 evergreen-CI defect. Task 5 now limits downgrade proof to the PR compatibility
 boundary while preserving restart coverage on every event; P20-P21 are also
 resolved for the next cycle.
+
+## Cycle 6: Durable Provider Saves
+
+**Status:** FAIL
+
+**Findings (Critical):** none.
+
+**Findings (Important):**
+
+- `P22` A PR base is not permanently pre-RPC; stacked and future PR bases make
+  the old-protocol check fail vacuously. _Resolution: CI and local proof now use
+  verified pre-RPC revision `8cb5602166ffe529a0f05101dff583bad0919415` and
+  releaseguard rejects event-derived revisions._
+- `P23` Downgrade proof covered new-to-old reads but not legacy mutation followed
+  by re-upgrade, despite ADR 0006's cleanup claim. _Resolution: Task 5 now
+  requires new save → old read/upsert → new restart/cleanup → new durable save,
+  with pointers, credentials, journal, and cleanup assertions._
+- `P24` The rollback procedure reverted the test before running it, allowing a
+  no-match `go test -run` success. _Resolution: the named verbose proof must run
+  and emit its PASS line before reverting the harness._
+
+**Findings (Minor):**
+
+- `P25` Broad local verification omitted the downgrade opt-in and skipped it.
+  _Resolution: Step 4 repeats the exact pinned command with `-v`._
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Clean | Go, existing secrets/Redactor, Windows, real consumers, release checks, and portfolio closeout remain covered. |
+| Assumptions under attack | Finding | P22 disproves permanent pre-RPC PR bases. |
+| Repo-precedent conflicts | Finding | P22 would bind permanent CI to an introducing-PR-only condition. |
+| Artifact-class precedent | Finding | P24 allowed a named rollback smoke to disappear before execution. |
+| YAGNI violations | Clean | Journal, lock, cleanup, and RPC remain justified by the failure model. |
+| Missing failure modes | Finding | P22/P23 cover future bases and legacy mutation followed by re-upgrade. |
+| Security / privacy at architecture level | Clean | Sentinel checks still span SQL, RPC, logs, terminal output, files, and redaction. |
+| Infrastructure impact | Finding | P22 could block all later PR CI. |
+| Multi-component validation | Finding | P23 adds the missing old-writer/new-startup boundary. |
+| Declared integration proof | Finding | P23 closes the mixed-version cleanup claim. |
+| Contributed UI rendering proof | Clean | PTY/ConPTY still exercises catalog and persistent save state. |
+| Rollback story | Finding | P23/P24 correct lifecycle coverage and execution order. |
+| Simpler alternative not considered | Finding | The verified pinned revision is simpler than event history. |
+| User-intent drift | Finding | P22/P24 undermined reliable autonomous merge and rollback. |
+| Existence / runtime-validity | Finding | The pinned SHA exists, is reachable with full history, and lacks the RPC; the post-revert test did not exist. |
+| Over/under-decomposition | Clean | Internal checkpoints preserve the locked manifest. |
+| Verification-class mismatch | Finding | P23-P25 add bidirectional, non-vacuous, explicit local proof. |
+| Auth/authz chain composition | Clean | No new network authz chain is introduced. |
+| Hidden serial dependencies | Finding | P24 ordered test execution after deleting the test. |
+| Missing rollback wiring | Finding | The prior rollback order was not executable. |
+| Missing integration proof | Finding | P23 adds legacy mutation and upgraded cleanup/finalization. |
+| Missing declared integration matrix | Finding | The mixed-version matrix claim now maps to the full lifecycle. |
+| Missing contributed UI route proof | Clean | The actual shell and provider content remain exercised. |
+| Infrastructure verification mismatch | Finding | Releaseguard now enforces a stable compatibility boundary. |
+| Plugin-loader runtime layout | Clean | No external plugin executable is added. |
+| Config-validation schema rules | Clean | Additive schema, upgrade, conflict, and repeat initialization remain named. |
+| Identifier / naming-convention match | Clean | RPC, command, environment, and JSON identifiers match repository conventions. |
+| Planned-code compile-validity | Clean | Generated proto and package test ordering remain valid. |
+
+**Alternatives:** pinned compatibility boundary; conditional historical proof;
+bidirectional compatibility lifecycle; verifier retained outside reverted code.
+
+**Verdict reasoning:** FAIL; P19-P21 are resolved, but P22 transferred the
+event-history defect to future PRs and P23-P25 exposed incomplete/vacuous
+rollback proof. Task 5 now addresses all four findings for Cycle 7.
