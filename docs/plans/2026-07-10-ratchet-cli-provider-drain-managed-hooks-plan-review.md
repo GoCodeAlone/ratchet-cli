@@ -178,3 +178,37 @@ and validated base SHA; checkpoint-local closeout.
 
 **Verdict reasoning:** FAIL; checkpoint compilation, hermetic runtime build, and
 non-vacuous downgrade identity require correction.
+
+## Cycle 4: Durable Provider Saves
+
+**Status:** FAIL
+
+**Findings (Critical):** none.
+
+**Findings (Important):**
+
+- `P16` Dedicated CI never supplies `RATCHET_DOWNGRADE_BASE_SHA`; ordinary and
+  post-merge suites would fail the non-vacuity check. Wire PR base/push-before
+  only into the downgrade step and skip explicitly elsewhere.
+
+**Findings (Minor):**
+
+- `P17` Successful provider-save automation needs stable JSON with
+  `operation_id`, not human-text parsing.
+- `P18` Checkpoint 4E needs exact durable TUI delta test names and must not claim
+  the already-removed hardcoded table as its red reason.
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Guidance/security/integration | Clean | Production, UI, secret, and Windows proofs remain complete. |
+| Assumptions/runtime/rollback | Finding | CI event base identity is not automatically available to tests. |
+| Decomposition/compile | Clean | Checkpoint ownership and temporary builds are corrected. |
+| Naming/TDD | Finding (Minor) | Stable operation JSON and exact TUI test names needed. |
+
+**Alternatives:** event-specific base SHA; opt-in downgrade test; stable save
+JSON; named TUI delta tests.
+
+**Verdict reasoning:** FAIL; CI must supply a distinct older SHA only to the
+merge-gating downgrade step.
