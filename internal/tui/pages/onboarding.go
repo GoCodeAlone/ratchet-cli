@@ -29,6 +29,9 @@ type OnboardingDoneMsg struct {
 	Provider *pb.Provider
 }
 
+// OnboardingCancelledMsg signals provider setup should return to its caller.
+type OnboardingCancelledMsg struct{}
+
 // NavigateToOnboardingMsg signals the app to switch to the onboarding page.
 type NavigateToOnboardingMsg struct{}
 
@@ -138,6 +141,7 @@ type onboardingDeps struct {
 	lookPath          func(string) (string, error)
 	checkCLI          func(context.Context, string, string) error
 	workingDir        func() (string, error)
+	setupOllama       func(context.Context, string) (string, error)
 }
 
 // OnboardingModel is the multi-step provider setup wizard.
@@ -188,6 +192,7 @@ type OnboardingModel struct {
 	ollamaChoiceCursor int    // 0 = "I have a server", 1 = "Set up Ollama"
 	ollamaSetupStatus  string // "checking", "not_installed", "starting", "ready", "failed"
 	ollamaSetupError   string
+	ollamaSetupCancel  context.CancelFunc
 
 	// Model pull (stepPullModel)
 	pullingModel       bool
@@ -266,7 +271,8 @@ func defaultOnboardingDeps(c *client.Client) onboardingDeps {
 			_, err := exec.CommandContext(ctx, path, providerauth.CLIHealthCheckArgs(providerType)...).Output()
 			return err
 		},
-		workingDir: os.Getwd,
+		workingDir:  os.Getwd,
+		setupOllama: setupOllama,
 	}
 }
 
@@ -576,7 +582,9 @@ func (m OnboardingModel) updateSelectProvider(msg tea.Msg) (OnboardingModel, tea
 			if m.filterInput.Value() != "" {
 				m.filterInput.SetValue("")
 				m.cursor = 0
+				return m, nil
 			}
+			return m, func() tea.Msg { return OnboardingCancelledMsg{} }
 		case "/":
 			m.filtering = true
 			return m, m.filterInput.Focus()
@@ -799,9 +807,7 @@ func (m OnboardingModel) updateEnterSettings(msg tea.Msg) (OnboardingModel, tea.
 				m.baseURLInput.SetValue(p.DefaultBaseURL)
 				return m, m.baseURLInput.Focus()
 			case stepOllamaSetup:
-				m.step = stepOllamaSetup
-				m.ollamaSetupStatus = "checking"
-				return m, tea.Batch(m.spinner.Tick, m.checkOllama())
+				return m.beginOllamaSetup()
 			default:
 				return m.transitionToModelStrategy()
 			}
@@ -1075,73 +1081,91 @@ func (m OnboardingModel) updateOllamaChoice(msg tea.Msg) (OnboardingModel, tea.C
 			if len(p.Settings) > 0 {
 				return m.beginSettings(stepOllamaSetup)
 			}
-			m.step = stepOllamaSetup
-			m.ollamaSetupStatus = "checking"
-			m.ollamaSetupError = ""
-			return m, tea.Batch(m.spinner.Tick, m.checkOllama())
+			return m.beginOllamaSetup()
 		}
 	}
 	return m, nil
 }
 
-// checkOllama checks if Ollama is reachable, installs it if missing, and starts it.
-// The full flow: health check → install if needed → start server → poll until ready.
-func (m OnboardingModel) checkOllama() tea.Cmd {
+func (m OnboardingModel) beginOllamaSetup() (OnboardingModel, tea.Cmd) {
+	ctx, cancel := context.WithCancel(context.Background())
+	m.ollamaSetupCancel = cancel
+	m.step = stepOllamaSetup
+	m.ollamaSetupStatus = "checking"
+	m.ollamaSetupError = ""
+	return m, tea.Batch(m.spinner.Tick, m.checkOllama(ctx))
+}
+
+func (m OnboardingModel) checkOllama(ctx context.Context) tea.Cmd {
 	return func() tea.Msg {
-		baseURL := m.baseURLInput.Value()
-		c := wfprovider.NewOllamaClient(baseURL)
+		status, err := m.deps.setupOllama(ctx, m.baseURLInput.Value())
+		return ollamaSetupMsg{status: status, err: err, flowID: m.flowID}
+	}
+}
 
-		// 1. Check if already running.
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		err := c.Health(ctx)
-		cancel()
-		if err == nil {
-			return ollamaSetupMsg{status: "ready", flowID: m.flowID}
+// setupOllama checks reachability, installs Ollama if missing, and starts it.
+func setupOllama(ctx context.Context, baseURL string) (string, error) {
+	c := wfprovider.NewOllamaClient(baseURL)
+	healthCtx, healthCancel := context.WithTimeout(ctx, 3*time.Second)
+	err := c.Health(healthCtx)
+	healthCancel()
+	if err == nil {
+		return "ready", nil
+	}
+
+	if _, lookErr := exec.LookPath("ollama"); lookErr != nil {
+		if installErr := installOllamaQuiet(ctx); installErr != nil {
+			return "failed", fmt.Errorf("install ollama: %w", installErr)
 		}
-
-		// 2. Install if binary not found.
-		if _, lookErr := exec.LookPath("ollama"); lookErr != nil {
-			if installErr := installOllamaQuiet(); installErr != nil {
-				return ollamaSetupMsg{status: "failed", err: fmt.Errorf("install ollama: %w", installErr), flowID: m.flowID}
-			}
-			// Verify install worked.
-			if _, lookErr = exec.LookPath("ollama"); lookErr != nil {
-				return ollamaSetupMsg{status: "failed", err: fmt.Errorf("ollama not found after install"), flowID: m.flowID}
-			}
+		if _, lookErr = exec.LookPath("ollama"); lookErr != nil {
+			return "failed", fmt.Errorf("ollama not found after install")
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return "failed", err
+	}
 
-		// 3. Start ollama serve in background.
-		cmd := exec.Command("ollama", "serve")
-		cmd.Stdout = nil
-		cmd.Stderr = nil
-		if startErr := cmd.Start(); startErr != nil {
-			return ollamaSetupMsg{status: "failed", err: fmt.Errorf("start ollama: %w", startErr), flowID: m.flowID}
-		}
+	cmd := exec.Command("ollama", "serve")
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if startErr := cmd.Start(); startErr != nil {
+		return "failed", fmt.Errorf("start ollama: %w", startErr)
+	}
 
-		// 4. Poll health for up to 15 seconds.
-		deadline := time.Now().Add(15 * time.Second)
-		for time.Now().Before(deadline) {
-			pollCtx, pollCancel := context.WithTimeout(context.Background(), 2*time.Second)
-			if pollErr := c.Health(pollCtx); pollErr == nil {
-				pollCancel()
-				return ollamaSetupMsg{status: "ready", flowID: m.flowID}
-			}
+	deadline := time.NewTimer(15 * time.Second)
+	defer deadline.Stop()
+	poll := time.NewTicker(500 * time.Millisecond)
+	defer poll.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return "failed", ctx.Err()
+		case <-deadline.C:
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return "failed", fmt.Errorf("ollama did not become ready within 15s")
+		case <-poll.C:
+			pollCtx, pollCancel := context.WithTimeout(ctx, 2*time.Second)
+			pollErr := c.Health(pollCtx)
 			pollCancel()
-			time.Sleep(500 * time.Millisecond)
+			if pollErr == nil {
+				return "ready", nil
+			}
 		}
-		return ollamaSetupMsg{status: "failed", err: fmt.Errorf("ollama did not become ready within 15s"), flowID: m.flowID}
 	}
 }
 
 // installOllamaQuiet installs Ollama silently (output suppressed for TUI).
-func installOllamaQuiet() error {
+func installOllamaQuiet(ctx context.Context) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("brew", "install", "ollama")
+		cmd = exec.CommandContext(ctx, "brew", "install", "ollama")
 	case "linux":
 		script := `set -e; t=$(mktemp); curl -fsSL https://ollama.com/install.sh -o "$t"; sh "$t"; rm -f "$t"`
-		cmd = exec.Command("sh", "-c", script)
+		cmd = exec.CommandContext(ctx, "sh", "-c", script)
 	default:
 		return fmt.Errorf("automatic install not supported on %s — install from https://ollama.com/download", runtime.GOOS)
 	}
@@ -1164,6 +1188,10 @@ func (m OnboardingModel) updateOllamaSetup(msg tea.Msg) (OnboardingModel, tea.Cm
 		if msg.flowID != m.flowID {
 			return m, nil
 		}
+		if m.ollamaSetupCancel != nil {
+			m.ollamaSetupCancel()
+			m.ollamaSetupCancel = nil
+		}
 		m.ollamaSetupStatus = msg.status
 		if msg.err != nil {
 			m.ollamaSetupError = msg.err.Error()
@@ -1184,6 +1212,10 @@ func (m OnboardingModel) updateOllamaSetup(msg tea.Msg) (OnboardingModel, tea.Cm
 		return m, cmd
 	case tea.KeyPressMsg:
 		if msg.String() == "esc" {
+			if m.ollamaSetupCancel != nil {
+				m.ollamaSetupCancel()
+				m.ollamaSetupCancel = nil
+			}
 			m.flowID++
 			m.step = stepOllamaChoice
 			m.ollamaChoiceCursor = 0
@@ -1629,6 +1661,8 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 			maxVisible := 3
 			if h >= 36 {
 				maxVisible = 12
+			} else if m.filtering {
+				maxVisible = 1
 			}
 			start := max(0, cursor-maxVisible+1)
 			end := min(len(indices), start+maxVisible)
@@ -1764,9 +1798,10 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 		choices := append(slices.Clone(m.recommendedModels), "Custom model name")
 		writeChoiceList(&sb, choices, m.pullCursor, selectedStyle, mutedStyle)
 		if m.pullingModel {
-			fmt.Fprintf(&sb, "\n%s Pulling %s... %.0f%%\n", m.spinner.View(), m.pullModelName, m.pullProgress)
+			status := fitText(fmt.Sprintf("Pulling %s... %.0f%%", m.pullModelName, m.pullProgress), contentWidth-2)
+			fmt.Fprintf(&sb, "\n%s %s\n", m.spinner.View(), status)
 		} else if m.pullError != "" {
-			sb.WriteString("\n" + errorStyle.Render("Pull failed: "+m.pullError) + "\n")
+			sb.WriteString("\n" + errorStyle.Render(fitText("Pull failed: "+m.pullError, contentWidth)) + "\n")
 		}
 		sb.WriteString("\n" + mutedStyle.Render("↑/↓: select  Enter: pull  Esc: back"))
 
@@ -1808,7 +1843,8 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 		p := m.selectedProvider()
 		sb.WriteString("Checking " + p.DisplayName + "\n\n")
 		if m.cliError == "" {
-			sb.WriteString(m.spinner.View() + " Looking for " + p.CLICommand + " on PATH...\n")
+			sb.WriteString(m.spinner.View() + " Looking for " + p.CLICommand + " on PATH...\n\n")
+			sb.WriteString(mutedStyle.Render("Esc: cancel"))
 		} else {
 			sb.WriteString(errorStyle.Render("CLI setup check failed") + "\n\n")
 			sb.WriteString(wrapMuted.Render(m.cliError) + "\n\n")

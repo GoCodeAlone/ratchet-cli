@@ -141,6 +141,29 @@ func TestAppEscClosesSessionTreeWithoutChangingSession(t *testing.T) {
 	}
 }
 
+func TestAppOnboardingCancelReturnsExistingProviderToChat(t *testing.T) {
+	app := readyChatApp(t, "root-session-12345678")
+	app.page = pageOnboarding
+	app.providers = []*pb.Provider{{Alias: "existing", Type: "anthropic"}}
+
+	model, _ := app.Update(pages.OnboardingCancelledMsg{})
+	app = model.(App)
+	if app.page != pageChat {
+		t.Fatalf("page = %v, want pageChat", app.page)
+	}
+}
+
+func TestAppOnboardingCancelWithoutProviderQuits(t *testing.T) {
+	app := readyChatApp(t, "root-session-12345678")
+	app.page = pageOnboarding
+	app.providers = nil
+
+	_, cmd := app.Update(pages.OnboardingCancelledMsg{})
+	if cmd == nil || cmd() != (tea.QuitMsg{}) {
+		t.Fatalf("cancel command = %v", cmd)
+	}
+}
+
 func TestAppEscClosesJobPanel(t *testing.T) {
 	app := readyChatApp(t, "root-session-12345678")
 	model, _ := app.Update(ctrlKey('j'))

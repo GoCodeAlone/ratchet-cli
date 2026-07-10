@@ -213,6 +213,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case pages.OnboardingDoneMsg:
 		return a.transitionToChat()
 
+	case pages.OnboardingCancelledMsg:
+		if len(a.providers) > 0 {
+			return a.transitionToChat()
+		}
+		return a, tea.Quit
+
 	case pages.NavigateToOnboardingMsg:
 		a.onboarding = pages.NewOnboarding(a.client, a.theme)
 		a.page = pageOnboarding

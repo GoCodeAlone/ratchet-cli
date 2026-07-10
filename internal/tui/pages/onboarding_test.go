@@ -143,6 +143,14 @@ func TestOnboardingProviderFilterEscClearsAfterApplyingFilter(t *testing.T) {
 	if model.step != stepSelectProvider || model.filterInput.Value() != "" {
 		t.Fatalf("cleared filter state = step:%v value:%q", model.step, model.filterInput.Value())
 	}
+	model, cmd := model.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if model.step != stepSelectProvider || cmd == nil {
+		t.Fatalf("root Esc state = step:%v cmd:%v", model.step, cmd)
+	}
+	msg := runOnboardingCmd(t, cmd)
+	if _, ok := msg.(OnboardingCancelledMsg); !ok {
+		t.Fatalf("root Esc message = %T", msg)
+	}
 }
 
 func TestOnboardingIgnoresStaleAsyncResultAfterLeavingFlow(t *testing.T) {
@@ -252,6 +260,22 @@ func TestOnboardingManualModelFallbackPreservesSettings(t *testing.T) {
 	}
 }
 
+func TestOnboardingEmptyModelDiscoveryOffersManualEntry(t *testing.T) {
+	deps := testOnboardingDeps()
+	deps.listModels = func(context.Context, string, string, string, map[string]string) ([]providerauth.ModelInfo, error) {
+		return nil, nil
+	}
+	model := newOnboarding(nil, theme.Dark(), deps)
+	model.providerIdx = onboardingProviderIndex(t, model, "openai")
+	model.authToken = "secret"
+	model.baseURLInput.SetValue("https://api.openai.com/v1")
+	model, cmd := model.transitionToModelStrategy()
+	model, _ = model.Update(runOnboardingCmd(t, cmd))
+	if model.step != stepSelectModel || !model.enteringManualModel {
+		t.Fatalf("empty discovery state = step:%v manual:%v", model.step, model.enteringManualModel)
+	}
+}
+
 func TestOnboardingChatGPTDeviceFlowTransitionsToModelDiscovery(t *testing.T) {
 	deps := testOnboardingDeps()
 	deps.startOpenAIDevice = func(context.Context) (*providerauth.DeviceCodeResult, error) {
@@ -335,6 +359,32 @@ func TestOnboardingOllamaExistingServerStrategyReachesReview(t *testing.T) {
 	model, _ = model.updateSelectModel(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if model.step != stepReview {
 		t.Fatalf("review step = %v", model.step)
+	}
+}
+
+func TestOnboardingOllamaSetupEscCancelsOperation(t *testing.T) {
+	started := make(chan struct{})
+	cancelled := make(chan struct{})
+	deps := testOnboardingDeps()
+	deps.setupOllama = func(ctx context.Context, _ string) (string, error) {
+		close(started)
+		<-ctx.Done()
+		close(cancelled)
+		return "failed", ctx.Err()
+	}
+	model := newOnboarding(nil, theme.Dark(), deps)
+	model.providerIdx = onboardingProviderIndex(t, model, "ollama")
+	model, cmd := model.beginOllamaSetup()
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok || len(batch) < 2 {
+		t.Fatalf("setup command = %T", cmd())
+	}
+	go batch[len(batch)-1]() //nolint:errcheck
+	<-started
+	model, _ = model.updateOllamaSetup(tea.KeyPressMsg{Code: tea.KeyEsc})
+	<-cancelled
+	if model.step != stepOllamaChoice || model.ollamaSetupCancel != nil {
+		t.Fatalf("cancelled setup = step:%v cancel:%v", model.step, model.ollamaSetupCancel)
 	}
 }
 
@@ -477,6 +527,23 @@ func TestOnboardingProviderListFitsCommonTerminalWidths(t *testing.T) {
 	}
 }
 
+func TestOnboardingFilteredProviderListFitsShortTerminal(t *testing.T) {
+	model := newOnboarding(nil, theme.Dark(), testOnboardingDeps())
+	model.filtering = true
+	model.filterInput.SetValue("i")
+	indices := model.filteredProviderIndices()
+	for cursor := range indices {
+		model.cursor = cursor
+		view := model.View(theme.Dark(), 80, 24)
+		if lines := len(strings.Split(view, "\n")); lines > 24 {
+			t.Errorf("filtered cursor %d rendered %d lines", cursor, lines)
+		}
+		if !strings.Contains(view, "Esc:") || !strings.Contains(view, "filter") {
+			t.Errorf("filtered cursor %d missing filter recovery", cursor)
+		}
+	}
+}
+
 func TestOnboardingReviewWrapsLongValuesWithinTerminalWidth(t *testing.T) {
 	model := newOnboarding(nil, theme.Dark(), testOnboardingDeps())
 	model.providerIdx = onboardingProviderIndex(t, model, "custom")
@@ -525,6 +592,34 @@ func TestOnboardingReviewWrapsLongValuesWithinTerminalWidth(t *testing.T) {
 				t.Errorf("long model value lacks an explicit truncation marker:\n%s", view)
 			}
 		})
+	}
+}
+
+func TestOnboardingPullAndCLICheckViewsBoundStatusAndShowRecovery(t *testing.T) {
+	longValue := strings.Repeat("unbroken-status-segment-", 10)
+	model := newOnboarding(nil, theme.Dark(), testOnboardingDeps())
+	model.providerIdx = onboardingProviderIndex(t, model, "ollama")
+	model.step = stepPullModel
+	model.recommendedModels = recommendedOllamaModels()
+	model.pullingModel = true
+	model.pullModelName = longValue
+	view := model.View(theme.Dark(), 80, 24)
+	if !strings.Contains(view, "...") {
+		t.Fatalf("pull progress lacks truncation marker:\n%s", view)
+	}
+	for _, line := range strings.Split(view, "\n") {
+		if width := lipgloss.Width(line); width > 80 {
+			t.Fatalf("pull progress width = %d: %q", width, line)
+		}
+	}
+
+	model.providerIdx = onboardingProviderIndex(t, model, "codex_cli")
+	model.step = stepCLISetup
+	model.pullingModel = false
+	model.cliError = ""
+	view = model.View(theme.Dark(), 80, 24)
+	if !strings.Contains(view, "Esc: cancel") {
+		t.Fatalf("CLI check view missing recovery:\n%s", view)
 	}
 }
 
@@ -604,6 +699,9 @@ func testOnboardingDeps() onboardingDeps {
 		lookPath:   func(command string) (string, error) { return "/test/bin/" + command, nil },
 		checkCLI:   func(context.Context, string, string) error { return nil },
 		workingDir: func() (string, error) { return "/test/workspace", nil },
+		setupOllama: func(context.Context, string) (string, error) {
+			return "ready", nil
+		},
 	}
 }
 
