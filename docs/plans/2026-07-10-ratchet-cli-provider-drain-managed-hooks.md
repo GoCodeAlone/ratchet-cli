@@ -326,6 +326,11 @@ git commit -m "refactor(provider): drive CLI from catalog"
 - Modify generated: `internal/proto/ratchet.pb.go`
 - Modify generated: `internal/proto/ratchet_grpc.pb.go`
 - Modify: `internal/daemon/engine.go`
+- Modify: `internal/daemon/daemon.go`
+- Create: `internal/daemon/lock_unix.go`
+- Create: `internal/daemon/lock_windows.go`
+- Create: `internal/daemon/lock_unix_test.go`
+- Create: `internal/daemon/lock_windows_test.go`
 - Modify: `internal/daemon/service.go`
 - Modify: `internal/daemon/integration_test.go`
 - Modify: `internal/client/client.go`
@@ -353,16 +358,17 @@ strategy and focused tests that:
   setup step, and a source guard rejects a second TUI-owned provider table;
 - review omits secret values and masks credential presence;
 - submit sends alias/type/model/base URL/settings once;
-- every CLI/TUI save sends a canonical UUID operation ID; hostile IDs are
-  rejected and never form secret keys;
-- operation replay is first-write-wins, conflicting alias/safe request shape is
-  rejected, excluded sensitive fields are ignored on replay, and operation RPC
-  payloads contain no credential/settings/raw error;
+- every CLI/TUI save requires the daemon capability, sends a canonical UUID,
+  uses a signal-aware 30-second call, and reconciles separately for 10 seconds;
+- operation replay is unconditional first-write-wins for the same alias, another
+  alias conflicts, and operation RPCs omit credentials/settings/base URLs/errors;
 - SQL rollback preserves the active secret; commit updates registry/redactor
   before success; old-secret cleanup is durable and retryable;
-- startup marks inherited pending operations failed, sweeps only unreferenced
-  reserved-prefix secrets before RPC acceptance, and prunes terminal operations
-  only after the 24-hour retention window;
+- an OS-level lock is acquired before PID/socket cleanup, migration, or secret
+  reconciliation and retained for daemon lifetime on Unix and Windows;
+- startup finalizes applied operations, fails inherited pending, sweeps only
+  unreferenced reserved-prefix secrets before RPC acceptance, and prunes
+  terminal operations after 24 hours;
 - ambiguous save responses poll pending/not-found operation state with bounded
   backoff; commit resolves, failed reports a class, and unresolved pauses exit;
 - nil daemon responses and whitespace credentials/base URLs fail safely;
@@ -371,7 +377,13 @@ strategy and focused tests that:
 
 **Step 2: Prove red**
 
-Run: `go test ./internal/tui/pages -run 'Onboarding|ProviderCatalog' -count=1`
+Run:
+
+```bash
+go test ./internal/daemon -run 'ProviderOperation|ProviderSecret' -count=1
+go test ./cmd/ratchet -run 'Provider.*Operation' -count=1
+go test ./internal/tui/pages -run 'Onboarding|ProviderCatalog' -count=1
+```
 
 Expected: FAIL because `providerTypes` is hardcoded, no dependency-injected
 catalog flow exists, operation RPC/types are absent, and alias-stable secret
@@ -396,17 +408,22 @@ field; setting values are non-secret by catalog validation.
 Add a two-phase provider-save journal per ADR 0006. Required table migrations
 fail startup. New clients send canonical UUIDs; the daemon generates a separate
 UUID for `provider-v2-` secret keys and accepts empty IDs only for legacy
-compatibility. Pending creation is first-write-wins; replay returns the stored
-non-secret result, while alias/safe-shape conflicts fail. The safe shape excludes
-base URLs, settings, credentials, and credential hashes. SQL atomically switches
-the provider pointer, stores an `applied` result, and queues the old secret.
+compatibility. Mutation first checks the daemon's advertised capability.
+Pending creation is unconditional first-write-wins for the same alias; another
+alias conflicts. SQL atomically switches the provider pointer, stores an
+`applied` result without base URL, and queues the old secret.
 Rollback deletes only the inactive new version and durably queues failed
-cleanup. Redactor registration and cache invalidation precede `committed`.
-Startup finalizes applied rows, fails inherited pending rows, sweeps reserved
-orphans, retries cleanup, then accepts RPCs.
+cleanup. A daemon-owned bounded finalizer and operation-query retry perform
+redactor registration/cache invalidation before `committed`. Daemon startup
+first acquires a lifetime OS lock, then finalizes applied rows, fails inherited
+pending rows, sweeps unreferenced reserved orphans, retries cleanup, and accepts
+RPCs.
 
 Expose a metadata-only operation query and use it for bounded CLI/TUI
-reconciliation. Do not persist credentials, raw requests/settings/errors, or a
+reconciliation. All CLI writers use signal-aware save contexts plus detached
+reconciliation so interruption preserves the UUID. Advertise the capability in
+version checks and refuse provider mutations against unsupported old daemons.
+Do not persist credentials, base URLs, raw requests/settings/errors, or a
 credential hash. Keep retired values in the existing additive Redactor until
 restart; do not introduce a second redaction or secret abstraction.
 
@@ -414,7 +431,7 @@ restart; do not introduce a second redaction or secret abstraction.
 
 ```bash
 make proto
-gofmt -w internal/daemon/engine.go internal/daemon/service.go internal/daemon/integration_test.go internal/client/client.go cmd/ratchet/cmd_provider.go cmd/ratchet/cmd_provider_test.go internal/tui/app.go internal/tui/app_session_tree_test.go internal/tui/pages/onboarding.go internal/tui/pages/onboarding_test.go
+gofmt -w internal/daemon/engine.go internal/daemon/daemon.go internal/daemon/lock_unix.go internal/daemon/lock_windows.go internal/daemon/lock_unix_test.go internal/daemon/lock_windows_test.go internal/daemon/service.go internal/daemon/integration_test.go internal/client/client.go cmd/ratchet/cmd_provider.go cmd/ratchet/cmd_provider_test.go internal/tui/app.go internal/tui/app_session_tree_test.go internal/tui/pages/onboarding.go internal/tui/pages/onboarding_test.go
 go test ./internal/daemon -run 'ProviderOperation|ProviderSecret|ProviderCRUD' -count=1
 go test ./cmd/ratchet -run 'Provider.*Operation|Provider.*Catalog|ProviderSetupGuide|ProviderModelSelection' -count=1
 go test ./internal/tui/pages -run 'Onboarding|ProviderCatalog' -count=1
@@ -428,7 +445,7 @@ within configured widths and secret sentinels absent.
 **Step 5: Commit**
 
 ```bash
-git add internal/proto internal/daemon/engine.go internal/daemon/service.go internal/daemon/integration_test.go internal/client/client.go cmd/ratchet/cmd_provider.go cmd/ratchet/cmd_provider_test.go internal/tui/app.go internal/tui/app_session_tree_test.go internal/tui/pages/onboarding.go internal/tui/pages/onboarding_test.go
+git add internal/proto internal/daemon/engine.go internal/daemon/daemon.go internal/daemon/lock_unix.go internal/daemon/lock_windows.go internal/daemon/lock_unix_test.go internal/daemon/lock_windows_test.go internal/daemon/service.go internal/daemon/integration_test.go internal/client/client.go cmd/ratchet/cmd_provider.go cmd/ratchet/cmd_provider_test.go internal/tui/app.go internal/tui/app_session_tree_test.go internal/tui/pages/onboarding.go internal/tui/pages/onboarding_test.go
 git commit -m "feat(tui): unify provider setup wizard"
 ```
 
@@ -496,7 +513,7 @@ starting the daemon.
 **Step 5: Commit and complete PR 2**
 
 ```bash
-git add internal/tui/tui_binary_smoke_unix_test.go internal/tui/tui_binary_smoke_windows_test.go README.md docs/harness-emulation.md docs/competitor-parity.md docs/policy-matrix.md cmd/ratchet/harness_docs_test.go
+git add internal/daemon/service_tui_smoke.go internal/daemon/service_tui_smoke_test.go internal/tui/tui_binary_smoke_unix_test.go internal/tui/tui_binary_smoke_windows_test.go README.md docs/harness-emulation.md docs/competitor-parity.md docs/policy-matrix.md cmd/ratchet/harness_docs_test.go
 git commit -m "docs: explain unified provider setup"
 ```
 

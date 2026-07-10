@@ -14,49 +14,56 @@ prove which request committed.
 
 ## Decision
 
-All current CLI/TUI callers send a canonical UUID operation ID; the daemon
-validates it and generates an ID only for legacy clients. A metadata-only
-`provider_operations` journal uses pending/applied/committed/failed states and
-first-write-wins replay. Alias or safe-shape reuse conflicts; the safe shape
-contains no base URL, settings, credential, or credential hash. Fields excluded
-from the shape are ignored on replay, never rewritten.
+All current CLI/TUI callers require the daemon's `provider_save_operations`
+capability and send a canonical UUID operation ID; unsupported daemons fail the
+mutation instead of silently falling back. The daemon validates IDs and
+generates one only for legacy clients. A metadata-only `provider_operations`
+journal uses pending/applied/committed/failed states and unconditional
+first-write-wins replay. Same-alias reuse returns the first result regardless of
+later payload; another alias conflicts. UUID randomness, not persisted request
+fingerprints, prevents accidental reuse.
 
-The operation ID is a unique key. Same-alias/same-shape `committed` returns its
-stored result; `pending`/`applied` reports in-progress; `failed` stays terminal;
-alias/shape mismatch returns a deterministic conflict. The safe shape is type,
-model, max tokens, default flag, and credential-presence only.
-
-The daemon independently generates a UUID secret version under reserved prefix
-`provider-v2-`. It journals pending, writes through the existing
+The daemon independently generates a secret version as
+`provider-v2-<unix-seconds>-<uuid>` using server time and UUID only. It journals
+pending, writes through the existing
 `secrets.Provider`, then atomically commits the provider pointer, cleanup entry,
 non-secret result, and `applied` state. Rollback deletes only the inactive new
 version. Post-commit code registers redaction, invalidates the provider cache,
 marks `committed`, then retires queued old secrets. Operation queries expose
 `applied` as pending. No client input forms a secret key.
 
+Post-commit finalization uses a daemon-owned bounded context. Operation queries
+also finalize `applied` rows before returning, so RPC cancellation does not
+strand them until restart.
+
 `provider_secret_cleanup` stores only server secret name, attempt count,
 classified outcome, and timestamps. Startup runs before RPCs: secret `List`
-failure is fatal; prior pending rows become failed; applied rows are finalized;
-unreferenced reserved-prefix keys are queued; not-found deletion succeeds;
-other deletion failures remain queued. Runtime cleanup rechecks that a key is
-unreferenced before delete. Provider update/removal queues the prior key in its
-SQL transaction. Legacy-prefix keys are touched only when a row explicitly
-retires them.
+failure is fatal; applied rows are finalized; inherited pending rows become
+failed; unreferenced reserved-prefix keys are queued. Not-found deletion succeeds;
+other failures remain queued. Runtime cleanup rechecks references before delete.
+Provider update/removal queues the prior key in its SQL transaction.
+Legacy-prefix keys are touched only when a row explicitly retires them.
 
 The operation RPC exposes only ID, alias, state, classified failure, timestamps,
-expiry, and existing non-secret `Provider`. Clients poll pending/not-found with
-bounded backoff; unresolved state pauses exit. Rejected: alias restore cannot
-recover secrets; list reconciliation races; transactional-store requirements
-would exclude existing Workflow providers.
+expiry, type, model, and default flag; it omits base URL, settings, credentials,
+requests, and raw errors. Clients poll pending/not-found with bounded backoff;
+unresolved state pauses exit. Rejected: alias restore cannot recover secrets;
+list reconciliation races; transactional-store requirements would exclude
+existing Workflow providers.
 
 ## Consequences
 
 - Active credentials remain unchanged when SQL commit fails.
 - Ambiguous responses reconcile across restart and later alias writes; terminal
   rows live 24 hours, while client reconciliation is bounded to 10 seconds.
+- CLI saves use signal-aware 30-second calls and a separate 10-second
+  reconciliation context, preserving operation identity after interruption.
+- The daemon acquires and retains an OS-level exclusive data-directory lock
+  before PID/socket cleanup, migration, or reconciliation. Unix `flock` and
+  Windows `LockFileEx` prevent concurrent owners; crash closes release the lock.
 - Startup, before RPC acceptance, finalizes `applied` rows whose provider points
-  at their secret version, marks prior `pending` rows failed, then serially
-  sweeps unreferenced reserved-prefix secrets plus durable cleanup entries.
+  at their secret version, fails inherited `pending`, then serially sweeps
+  unreferenced reserved-prefix secrets and cleanup entries.
 - Guarantees are logical/process-crash atomicity within the existing provider
   contract; storage power-loss durability is not newly claimed.
 - Old redaction values may remain over-redacted until restart; secret values are

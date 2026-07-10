@@ -247,6 +247,12 @@ flowchart LR
   with bounded backoff. Pending, applied, not-found, and temporary RPC failure
   remain unresolved until the deadline; committed returns the stored provider;
   failed returns a classified outcome. Unresolved exit requests stay in the UI.
+- Every current CLI writer uses a signal-aware 30-second save context and a
+  separate 10-second reconciliation context. TUI/CLI mutations first require
+  the daemon's `provider_save_operations` version capability; unsupported old
+  daemons fail the mutation after reload rather than silently degrading.
+- Applied-operation finalization uses daemon-owned timeouts and is retried by
+  operation queries and startup, independent of the canceled caller context.
 - Nil provider/list/test/auth success responses and whitespace-only required
   credentials or endpoints are explicit recoverable errors.
 - Daemon background start validates acknowledgement, trust, fingerprint, and
@@ -264,7 +270,8 @@ flowchart LR
 - **Credential custody:** credentials remain in the daemon's existing secret
   provider; server-generated UUID versions use reserved `provider-v2-` keys.
   Client IDs are canonical UUIDs but never form secret keys. Operation rows and
-  RPCs exclude credentials, request bodies, settings, and raw errors. Existing
+  RPCs exclude credentials, request bodies, settings, base URLs, and raw errors.
+  Server keys contain only a reserved prefix, server timestamp, and UUID. Existing
   `secrets.Redactor` protects runtime errors and may safely over-redact retired
   values until restart.
 - **Unattended execution:** opt-in is explicit and profile identity is pinned.
@@ -287,10 +294,11 @@ flowchart LR
 No cloud infrastructure, production deployment, or remote service is required.
 PR 2 adds required local SQLite `provider_operations` and
 `provider_secret_cleanup` tables; migration failure is fatal before RPC
-acceptance. Terminal operations retain 24 hours. Startup finalizes applied rows
-after registry/redactor refresh, marks inherited pending rows failed, then
-serially sweeps only unreferenced `provider-v2-` secrets and durable cleanup
-entries through the existing provider interface.
+acceptance. Terminal operations retain 24 hours. An OS-level exclusive lock is
+held for daemon lifetime and acquired before PID/socket cleanup, migration, or
+reconciliation (`flock` on Unix; `LockFileEx` on Windows). Startup then finalizes
+applied rows after registry/redactor refresh, fails inherited pending rows, and
+serially sweeps only unreferenced `provider-v2-` secrets plus durable cleanup.
 Release artifacts remain the existing GoReleaser matrix, including Windows.
 
 ## Multi-Component Validation
@@ -314,7 +322,7 @@ Release artifacts remain the existing GoReleaser matrix, including Windows.
 |---|---|---|
 | `workflow-plugin-agent/orchestrator.ProviderRegistry` types | runtime-integrated | Upstream API test plus ratchet catalog coverage test against a real registry instance. |
 | `workflow-plugin-agent/provider` model listing | runtime-integrated | CLI/TUI tests pass real settings into its lister boundary; credentialed live provider calls remain deferred CI. |
-| Existing daemon provider RPC, registry, and secrets provider/Redactor | runtime-integrated | Real daemon tests exercise versioned secret pointer commit/rollback, operation query/replay, registry resolution, redactor ordering, restart cleanup, and secret-free TUI/output. |
+| Existing daemon provider RPC, registry, and secrets provider/Redactor | runtime-integrated | Real daemon tests exercise capability negotiation, versioned secret pointer commit/rollback, operation query/replay/finalization, registry resolution, redactor ordering, age-gated cleanup, and secret-free TUI/output. |
 | Bubble Tea provider/model wizard | runtime-integrated | State tests plus real PTY navigation/render proof. |
 | Daemon gRPC/client background API | runtime-integrated | Started daemon, real client, fake ACP process, persisted restart and stop proof. |
 | ACP profile store and queue claim/cancel/recovery | runtime-integrated | Real stores and existing drain path; trust-hash drift has a negative launch proof. |
@@ -415,8 +423,10 @@ that supplies their runtime proof.
 
 Each PR can be reverted independently. PR 2's additive operation/cleanup tables
 are ignored by older binaries; provider rows keep exact versioned secret names,
-which existing registries resolve. Legacy clients without operation IDs remain
-accepted. Before downgrade, process pending cleanup where possible; old writers
+which existing registries resolve. The additive daemon lock file is ignored by
+older binaries. Legacy clients without operation IDs remain
+accepted; new writers refuse an old daemon without the capability. Before
+downgrade, process pending cleanup where possible; old writers
 may leave inactive `provider-v2-` versions, which a later upgraded startup
 sweeps without touching referenced or legacy-prefix secrets. Background
 rollback stops workers before removing RPC/state handling. Managed-hook rollback
@@ -451,11 +461,14 @@ Cause: round-five review proved alias-stable secret mutation and one-shot list
 reconciliation cannot make an upsert atomic or authoritative. Change: use
 two-phase pending/applied/terminal operations, server-derived versioned keys,
 idempotent replay, durable old-secret cleanup, and a metadata-only operation RPC.
-All current CLI/TUI writers use canonical UUIDs; legacy empty IDs remain
-compatible. Startup resolves pending/applied rows and reserved-prefix orphans
-before RPC acceptance; migration failure is fatal. SQL records `applied`; cache
-invalidation and redactor registration precede externally visible `committed`
-success. See `decisions/0006-make-provider-saves-durable.md`.
+All current CLI/TUI writers require a version capability, use canonical UUIDs,
+bounded signal-aware saves, and detached reconciliation; legacy empty IDs remain
+compatible. The lifetime lock excludes concurrent startup; startup resolves
+pending/applied rows and orphans before RPC acceptance; migration failure is
+fatal. SQL records `applied`; a
+daemon-context/query-assisted finalizer performs cache/redactor work before
+externally visible `committed`. See
+`decisions/0006-make-provider-saves-durable.md`.
 Scope: no manifest change; Task 4 gains daemon/proto/client correction work and
 Task 5 gains restart/cleanup/runtime proof. Evidence required: hostile IDs,
 duplicate/replay conflict, secret rollback, registry resolution, restart states,
