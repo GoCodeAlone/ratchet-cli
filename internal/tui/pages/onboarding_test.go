@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"slices"
 	"strings"
@@ -41,6 +44,32 @@ func TestOnboardingUsesCompleteProviderCatalogWithoutLocalTable(t *testing.T) {
 	if !strings.Contains(string(source), "providerauth.Catalog()") {
 		t.Error("onboarding.go does not load the shared provider catalog")
 	}
+	fset := token.NewFileSet()
+	parsed, err := parser.ParseFile(fset, "onboarding.go", source, 0)
+	if err != nil {
+		t.Fatalf("parse onboarding.go: %v", err)
+	}
+	for _, declaration := range parsed.Decls {
+		general, ok := declaration.(*ast.GenDecl)
+		if ok && general.Tok == token.VAR {
+			t.Errorf("onboarding.go declares package-owned variable state at %s", fset.Position(general.Pos()))
+		}
+	}
+	ast.Inspect(parsed, func(node ast.Node) bool {
+		literal, ok := node.(*ast.CompositeLit)
+		if !ok {
+			return true
+		}
+		array, ok := literal.Type.(*ast.ArrayType)
+		if !ok {
+			return true
+		}
+		selector, ok := array.Elt.(*ast.SelectorExpr)
+		if ok && selector.Sel.Name == "SetupEntry" {
+			t.Errorf("onboarding.go declares a local SetupEntry table at %s", fset.Position(literal.Pos()))
+		}
+		return true
+	})
 }
 
 func TestOnboardingEveryCatalogEntryReachesDeclaredFirstStep(t *testing.T) {
@@ -101,6 +130,50 @@ func TestOnboardingProviderFilterEscClearsBeforeLeavingSelection(t *testing.T) {
 	}
 }
 
+func TestOnboardingProviderFilterEscClearsAfterApplyingFilter(t *testing.T) {
+	model := newOnboarding(nil, theme.Dark(), testOnboardingDeps())
+	model.filtering = true
+	model.filterInput.SetValue("bedrock")
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if model.filtering || model.filterInput.Value() != "bedrock" {
+		t.Fatalf("applied filter state = filtering:%v value:%q", model.filtering, model.filterInput.Value())
+	}
+
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if model.step != stepSelectProvider || model.filterInput.Value() != "" {
+		t.Fatalf("cleared filter state = step:%v value:%q", model.step, model.filterInput.Value())
+	}
+}
+
+func TestOnboardingIgnoresStaleAsyncResultAfterLeavingFlow(t *testing.T) {
+	model := newOnboarding(nil, theme.Dark(), testOnboardingDeps())
+	model.cursor = onboardingProviderIndex(t, model, "openai_chatgpt")
+	model, _ = model.advanceFromProvider()
+	model, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if model.step != stepSelectProvider {
+		t.Fatalf("cancelled step = %v", model.step)
+	}
+
+	model, cmd := model.Update(deviceCodeMsg{result: &providerauth.DeviceCodeResult{
+		DeviceCode: "stale-device", UserCode: "STALE", VerificationURI: "https://auth.example/device", ExpiresIn: 60, Interval: 1,
+	}})
+	if cmd != nil || model.step != stepSelectProvider || model.deviceUserCode != "" {
+		t.Fatalf("stale result applied = step:%v code:%q cmd:%v", model.step, model.deviceUserCode, cmd)
+	}
+	staleFlowID := model.flowID - 1
+	model, cmd = model.Update(modelsListMsg{
+		models: []providerauth.ModelInfo{{ID: "stale-model", Name: "Stale model"}},
+		flowID: staleFlowID,
+	})
+	if cmd != nil || len(model.fetchedModels) != 0 || model.step != stepSelectProvider {
+		t.Fatalf("stale model result applied = step:%v models:%v cmd:%v", model.step, model.fetchedModels, cmd)
+	}
+	model, cmd = model.Update(cliCheckMsg{path: "/stale/bin", workingDir: "/stale/work", flowID: staleFlowID})
+	if cmd != nil || model.cliCommandPath != "" || model.step != stepSelectProvider {
+		t.Fatalf("stale CLI result applied = step:%v path:%q cmd:%v", model.step, model.cliCommandPath, cmd)
+	}
+}
+
 func TestOnboardingFilteredSelectionClearsFilterBeforeReturning(t *testing.T) {
 	model := newOnboarding(nil, theme.Dark(), testOnboardingDeps())
 	model.filterInput.SetValue("bedrock")
@@ -148,6 +221,10 @@ func TestOnboardingBedrockSettingsReachModelDiscovery(t *testing.T) {
 	if model.step != stepSelectModel || len(model.fetchedModels) != 1 {
 		t.Fatalf("model state = step:%v models:%v", model.step, model.fetchedModels)
 	}
+	model, _ = model.updateSelectModel(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if model.step != stepReview {
+		t.Fatalf("review step = %v", model.step)
+	}
 }
 
 func TestOnboardingManualModelFallbackPreservesSettings(t *testing.T) {
@@ -193,6 +270,90 @@ func TestOnboardingChatGPTDeviceFlowTransitionsToModelDiscovery(t *testing.T) {
 	model, cmd = model.Update(runOnboardingCmd(t, cmd))
 	if model.authToken != "CHATGPT-TOKEN-BUNDLE" || model.step != stepFetchModels || cmd == nil {
 		t.Fatalf("auth state = token:%q step:%v cmd:%v", model.authToken, model.step, cmd)
+	}
+	model, _ = model.Update(runOnboardingCmd(t, cmd))
+	model, _ = model.updateSelectModel(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if model.step != stepReview {
+		t.Fatalf("review step = %v", model.step)
+	}
+}
+
+func TestOnboardingAnthropicBrowserAuthUsesInjectedDependency(t *testing.T) {
+	var started bool
+	deps := testOnboardingDeps()
+	deps.startAnthropic = func(context.Context) (string, error) {
+		started = true
+		return "ANTHROPIC-OAUTH-TOKEN", nil
+	}
+	model := newOnboarding(nil, theme.Dark(), deps)
+	model.cursor = onboardingProviderIndex(t, model, "anthropic")
+	model, _ = model.advanceFromProvider()
+	model.cursor = int(anthropicChoiceConsoleOAuth)
+	model, cmd := model.updateAnthropicAuthChoice(tea.KeyPressMsg{Code: tea.KeyEnter})
+	model, cmd = model.Update(runOnboardingCmd(t, cmd))
+	if !started || model.authToken != "ANTHROPIC-OAUTH-TOKEN" || model.step != stepFetchModels || cmd == nil {
+		t.Fatalf("Anthropic auth = started:%v token:%q step:%v cmd:%v", started, model.authToken, model.step, cmd)
+	}
+	model, _ = model.Update(runOnboardingCmd(t, cmd))
+	model, _ = model.updateSelectModel(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if model.step != stepReview {
+		t.Fatalf("review step = %v", model.step)
+	}
+}
+
+func TestOnboardingCopilotDeviceStrategyReachesReview(t *testing.T) {
+	model := newOnboarding(nil, theme.Dark(), testOnboardingDeps())
+	model.cursor = onboardingProviderIndex(t, model, "copilot")
+	model, cmd := model.advanceFromProvider()
+	model, cmd = model.Update(runOnboardingCmd(t, cmd))
+	model, cmd = model.Update(runOnboardingCmd(t, cmd))
+	if model.authToken != "github-token" || model.step != stepFetchModels || cmd == nil {
+		t.Fatalf("Copilot auth = token:%q step:%v cmd:%v", model.authToken, model.step, cmd)
+	}
+	model, _ = model.Update(runOnboardingCmd(t, cmd))
+	model, _ = model.updateSelectModel(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if model.step != stepReview {
+		t.Fatalf("review step = %v", model.step)
+	}
+}
+
+func TestOnboardingOllamaExistingServerStrategyReachesReview(t *testing.T) {
+	model := newOnboarding(nil, theme.Dark(), testOnboardingDeps())
+	model.cursor = onboardingProviderIndex(t, model, "ollama")
+	model, _ = model.advanceFromProvider()
+	model.ollamaChoiceCursor = 0
+	model, _ = model.updateOllamaChoice(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if model.step != stepEnterSettings {
+		t.Fatalf("settings step = %v", model.step)
+	}
+	model, _ = model.updateEnterSettings(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if model.step != stepEnterBaseURL {
+		t.Fatalf("base URL step = %v", model.step)
+	}
+	model, cmd := model.updateEnterBaseURL(tea.KeyPressMsg{Code: tea.KeyEnter})
+	model, _ = model.Update(runOnboardingCmd(t, cmd))
+	model, _ = model.updateSelectModel(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if model.step != stepReview {
+		t.Fatalf("review step = %v", model.step)
+	}
+}
+
+func TestOnboardingManualModelStrategyReachesReview(t *testing.T) {
+	model := newOnboarding(nil, theme.Dark(), testOnboardingDeps())
+	model.providerIdx = onboardingProviderIndex(t, model, "openai_azure")
+	model.authToken = "azure-secret"
+	model, _ = model.advanceAfterCredential()
+	for _, value := range []string{"resource", "deployment", "2024-10-21"} {
+		model.settingInput.SetValue(value)
+		model, _ = model.updateEnterSettings(tea.KeyPressMsg{Code: tea.KeyEnter})
+	}
+	if model.step != stepSelectModel || !model.enteringManualModel {
+		t.Fatalf("manual model state = step:%v entering:%v", model.step, model.enteringManualModel)
+	}
+	model.manualModelInput.SetValue("deployment-model")
+	model, _ = model.updateSelectModel(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if model.step != stepReview {
+		t.Fatalf("review step = %v", model.step)
 	}
 }
 
@@ -290,14 +451,26 @@ func TestOnboardingReviewSuppressesSecretAndSubmitsSettingsOnce(t *testing.T) {
 
 func TestOnboardingProviderListFitsCommonTerminalWidths(t *testing.T) {
 	for _, size := range []struct{ width, height int }{{80, 24}, {120, 40}} {
+		for cursor := range providerauth.Catalog() {
+			model := newOnboarding(nil, theme.Dark(), testOnboardingDeps())
+			model.cursor = cursor
+			view := model.View(theme.Dark(), size.width, size.height)
+			lines := strings.Split(view, "\n")
+			if len(lines) > size.height {
+				t.Errorf("%dx%d cursor %d rendered %d lines", size.width, size.height, cursor, len(lines))
+			}
+			for lineNo, line := range lines {
+				if got := lipgloss.Width(line); got > size.width {
+					t.Errorf("%dx%d cursor %d line %d width = %d: %q", size.width, size.height, cursor, lineNo+1, got, line)
+				}
+			}
+			if !strings.Contains(view, "filter") {
+				t.Errorf("%dx%d cursor %d view missing navigation", size.width, size.height, cursor)
+			}
+		}
 		model := newOnboarding(nil, theme.Dark(), testOnboardingDeps())
 		model.cursor = len(model.providers) - 1
 		view := model.View(theme.Dark(), size.width, size.height)
-		for lineNo, line := range strings.Split(view, "\n") {
-			if got := lipgloss.Width(line); got > size.width {
-				t.Errorf("%dx%d line %d width = %d: %q", size.width, size.height, lineNo+1, got, line)
-			}
-		}
 		if !strings.Contains(view, "filter") || !strings.Contains(view, "External CLI agents") || !strings.Contains(view, "Cursor CLI") {
 			t.Errorf("%dx%d view missing navigation/selection:\n%s", size.width, size.height, view)
 		}
@@ -327,6 +500,17 @@ func TestOnboardingReviewWrapsLongValuesWithinTerminalWidth(t *testing.T) {
 			model.step = stepCLISetup
 			model.cliError = longError
 		}},
+		{"discovered model", func(model *OnboardingModel) {
+			model.step = stepSelectModel
+			model.enteringManualModel = false
+			model.fetchedModels = []providerauth.ModelInfo{{ID: longError, Name: longError}}
+			model.modelCursor = 0
+		}},
+		{"successful test", func(model *OnboardingModel) {
+			model.step = stepTestConnection
+			model.testResult = &pb.TestProviderResult{Success: true}
+			model.selectedModel = longError
+		}},
 	} {
 		t.Run(state.name, func(t *testing.T) {
 			stateModel := model
@@ -336,6 +520,9 @@ func TestOnboardingReviewWrapsLongValuesWithinTerminalWidth(t *testing.T) {
 				if got := lipgloss.Width(line); got > 80 {
 					t.Errorf("line %d width = %d: %q", lineNo+1, got, line)
 				}
+			}
+			if (state.name == "discovered model" || state.name == "successful test") && !strings.Contains(view, "...") {
+				t.Errorf("long model value lacks an explicit truncation marker:\n%s", view)
 			}
 		})
 	}
@@ -410,9 +597,13 @@ func testOnboardingDeps() onboardingDeps {
 			return &providerauth.DeviceCodeResult{DeviceCode: "openai-device", UserCode: "OPENAI-CODE", VerificationURI: "https://auth.openai.com/device", ExpiresIn: 60, Interval: 1}, nil
 		},
 		pollOpenAIDevice: func(context.Context, string, string, int) (string, error) { return "openai-token", nil },
-		lookPath:         func(command string) (string, error) { return "/test/bin/" + command, nil },
-		checkCLI:         func(context.Context, string, string) error { return nil },
-		workingDir:       func() (string, error) { return "/test/workspace", nil },
+		startAnthropic:   func(context.Context) (string, error) { return "anthropic-token", nil },
+		startAnthropicMax: func(context.Context) (string, error) {
+			return "anthropic-max-token", nil
+		},
+		lookPath:   func(command string) (string, error) { return "/test/bin/" + command, nil },
+		checkCLI:   func(context.Context, string, string) error { return nil },
+		workingDir: func() (string, error) { return "/test/workspace", nil },
 	}
 }
 

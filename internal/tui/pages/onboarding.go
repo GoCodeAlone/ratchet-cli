@@ -35,49 +35,65 @@ type NavigateToOnboardingMsg struct{}
 type providerAddedMsg struct {
 	provider *pb.Provider
 	err      error
+	flowID   uint64
 }
 
 type providerTestedMsg struct {
 	result *pb.TestProviderResult
 	err    error
+	flowID uint64
 }
 
-type providerRemovedMsg struct{ err error }
+type providerRemovedMsg struct {
+	err    error
+	flowID uint64
+}
 
 // browserAuthResultMsg carries the result of a browser-based auth flow.
 type browserAuthResultMsg struct {
-	token string
-	err   error
+	token  string
+	err    error
+	flowID uint64
 }
 
 // deviceCodeMsg carries the result of a GitHub device code request.
 type deviceCodeMsg struct {
 	result *providerauth.DeviceCodeResult
 	err    error
+	flowID uint64
 }
 
 // modelsListMsg carries the result of a live model listing.
 type modelsListMsg struct {
 	models []providerauth.ModelInfo
 	err    error
+	flowID uint64
 }
 
 // pullProgressMsg carries a model pull progress update (0–100).
-type pullProgressMsg struct{ pct float64 }
+type pullProgressMsg struct {
+	pct    float64
+	flowID uint64
+}
 
 // pullDoneMsg signals a model pull completed or failed.
-type pullDoneMsg struct{ err error }
+type pullDoneMsg struct {
+	err    error
+	flowID uint64
+}
 
 // ollamaSetupMsg carries the result of the async Ollama health/start check.
 type ollamaSetupMsg struct {
 	status string // "ready", "not_installed", "failed"
 	err    error
+	flowID uint64
 }
 
 type cliCheckMsg struct {
 	path       string
 	workingDir string
 	err        error
+	flowID     uint64
 }
 
 type onboardingStep int
@@ -117,6 +133,8 @@ type onboardingDeps struct {
 	pollGitHubDevice  func(context.Context, string, int) (string, error)
 	startOpenAIDevice func(context.Context) (*providerauth.DeviceCodeResult, error)
 	pollOpenAIDevice  func(context.Context, string, string, int) (string, error)
+	startAnthropic    func(context.Context) (string, error)
+	startAnthropicMax func(context.Context) (string, error)
 	lookPath          func(string) (string, error)
 	checkCLI          func(context.Context, string, string) error
 	workingDir        func() (string, error)
@@ -124,8 +142,9 @@ type onboardingDeps struct {
 
 // OnboardingModel is the multi-step provider setup wizard.
 type OnboardingModel struct {
-	deps onboardingDeps
-	step onboardingStep
+	deps   onboardingDeps
+	step   onboardingStep
+	flowID uint64
 
 	// Provider selection
 	// cursor is used for navigation within the current step (provider list,
@@ -234,6 +253,14 @@ func defaultOnboardingDeps(c *client.Client) onboardingDeps {
 			result := <-providerauth.PollOpenAIChatGPTDeviceFlow(ctx, deviceCode, userCode, interval)
 			return result.Token, result.Err
 		},
+		startAnthropic: func(ctx context.Context) (string, error) {
+			result := <-providerauth.StartAnthropicOAuth(ctx)
+			return result.Token, result.Err
+		},
+		startAnthropicMax: func(ctx context.Context) (string, error) {
+			result := <-providerauth.StartAnthropicMaxOAuth(ctx)
+			return result.Token, result.Err
+		},
 		lookPath: exec.LookPath,
 		checkCLI: func(ctx context.Context, providerType, path string) error {
 			_, err := exec.CommandContext(ctx, path, providerauth.CLIHealthCheckArgs(providerType)...).Output()
@@ -313,6 +340,9 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		return m, nil
 
 	case deviceCodeMsg:
+		if msg.flowID != m.flowID {
+			return m, nil
+		}
 		if msg.err != nil {
 			// Device flow request failed — fall to API key paste
 			m.authing = false
@@ -330,6 +360,9 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		return m, m.pollDeviceFlow(ctx, msg.result.DeviceCode, msg.result.UserCode, msg.result.Interval)
 
 	case browserAuthResultMsg:
+		if msg.flowID != m.flowID {
+			return m, nil
+		}
 		m.authing = false
 		if m.authCancel != nil {
 			m.authCancel()
@@ -354,6 +387,9 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		return m.advanceAfterCredential()
 
 	case modelsListMsg:
+		if msg.flowID != m.flowID {
+			return m, nil
+		}
 		m.fetchingModels = false
 		if msg.err != nil {
 			m.modelsError = redactProviderError(msg.err, m.authToken)
@@ -383,6 +419,9 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		return m, nil
 
 	case cliCheckMsg:
+		if msg.flowID != m.flowID {
+			return m, nil
+		}
 		if msg.err != nil {
 			m.cliError = msg.err.Error()
 			return m, nil
@@ -394,10 +433,16 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		return m, nil
 
 	case pullProgressMsg:
+		if msg.flowID != m.flowID {
+			return m, nil
+		}
 		m.pullProgress = msg.pct
 		return m, m.readPullProgress()
 
 	case pullDoneMsg:
+		if msg.flowID != m.flowID {
+			return m, nil
+		}
 		m.pullingModel = false
 		if m.pullCancel != nil {
 			m.pullCancel()
@@ -413,6 +458,7 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 			m.pullModelName = ""
 			m.pullProgress = 0
 			m.pullingModel = false
+			m.flowID++
 			m.step = stepSelectProvider
 			m.cursor = m.providerIdx
 			return m, nil
@@ -421,6 +467,9 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		return m.transitionToFetchModels()
 
 	case providerAddedMsg:
+		if msg.flowID != m.flowID {
+			return m, nil
+		}
 		if msg.err != nil {
 			m.testing = false
 			m.testError = msg.err.Error()
@@ -430,6 +479,9 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		return m, m.testProvider(msg.provider.Alias)
 
 	case providerTestedMsg:
+		if msg.flowID != m.flowID {
+			return m, nil
+		}
 		m.testing = false
 		if msg.err != nil {
 			m.testError = msg.err.Error()
@@ -442,6 +494,9 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		return m, nil
 
 	case providerRemovedMsg:
+		if msg.flowID != m.flowID {
+			return m, nil
+		}
 		m.removing = false
 		if msg.err != nil {
 			m.testError = "remove failed: " + msg.err.Error()
@@ -517,6 +572,11 @@ func (m OnboardingModel) updateSelectProvider(msg tea.Msg) (OnboardingModel, tea
 		}
 		indices := m.filteredProviderIndices()
 		switch keyMsg.String() {
+		case "esc":
+			if m.filterInput.Value() != "" {
+				m.filterInput.SetValue("")
+				m.cursor = 0
+			}
 		case "/":
 			m.filtering = true
 			return m, m.filterInput.Focus()
@@ -569,6 +629,7 @@ func (m OnboardingModel) advanceFromProvider() (OnboardingModel, tea.Cmd) {
 		return m, nil
 	}
 	m.providerIdx = indices[m.cursor]
+	m.flowID++
 	p := m.selectedProvider()
 	m.filtering = false
 	m.filterInput.SetValue("")
@@ -784,20 +845,21 @@ func (m OnboardingModel) checkCLIProvider() tea.Cmd {
 		entry := m.selectedProvider()
 		path, err := m.deps.lookPath(entry.CLICommand)
 		if err != nil {
-			return cliCheckMsg{err: err}
+			return cliCheckMsg{err: err, flowID: m.flowID}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		if err := m.deps.checkCLI(ctx, entry.Type, path); err != nil {
-			return cliCheckMsg{err: fmt.Errorf("health check %s: %w", entry.DisplayName, err)}
+			return cliCheckMsg{err: fmt.Errorf("health check %s: %w", entry.DisplayName, err), flowID: m.flowID}
 		}
 		workingDir, err := m.deps.workingDir()
-		return cliCheckMsg{path: path, workingDir: workingDir, err: err}
+		return cliCheckMsg{path: path, workingDir: workingDir, err: err, flowID: m.flowID}
 	}
 }
 
 func (m OnboardingModel) updateCLISetup(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok && keyMsg.String() == "esc" {
+		m.flowID++
 		m.step = stepSelectProvider
 		m.cursor = 0
 		m.cliError = ""
@@ -839,7 +901,7 @@ func (m OnboardingModel) fetchModels() tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		models, err := m.deps.listModels(ctx, p.Type, m.authToken, m.baseURLInput.Value(), m.settings)
-		return modelsListMsg{models: models, err: err}
+		return modelsListMsg{models: models, err: err, flowID: m.flowID}
 	}
 }
 
@@ -852,7 +914,7 @@ func (m OnboardingModel) startDeviceFlow() tea.Cmd {
 		} else {
 			result, err = m.deps.startGitHubDevice(context.Background())
 		}
-		return deviceCodeMsg{result: result, err: err}
+		return deviceCodeMsg{result: result, err: err, flowID: m.flowID}
 	}
 }
 
@@ -865,23 +927,21 @@ func (m OnboardingModel) pollDeviceFlow(ctx context.Context, deviceCode, userCod
 		} else {
 			token, err = m.deps.pollGitHubDevice(ctx, deviceCode, interval)
 		}
-		return browserAuthResultMsg{token: token, err: err}
+		return browserAuthResultMsg{token: token, err: err, flowID: m.flowID}
 	}
 }
 
 func (m OnboardingModel) startAnthropicAuth(ctx context.Context) tea.Cmd {
 	return func() tea.Msg {
-		ch := providerauth.StartAnthropicOAuth(ctx)
-		result := <-ch
-		return browserAuthResultMsg{token: result.Token, err: result.Err}
+		token, err := m.deps.startAnthropic(ctx)
+		return browserAuthResultMsg{token: token, err: err, flowID: m.flowID}
 	}
 }
 
 func (m OnboardingModel) startAnthropicMaxAuth(ctx context.Context) tea.Cmd {
 	return func() tea.Msg {
-		ch := providerauth.StartAnthropicMaxOAuth(ctx)
-		result := <-ch
-		return browserAuthResultMsg{token: result.Token, err: result.Err}
+		token, err := m.deps.startAnthropicMax(ctx)
+		return browserAuthResultMsg{token: token, err: err, flowID: m.flowID}
 	}
 }
 
@@ -889,6 +949,7 @@ func (m OnboardingModel) updateAnthropicAuthChoice(msg tea.Msg) (OnboardingModel
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 		switch keyMsg.String() {
 		case "esc":
+			m.flowID++
 			m.step = stepSelectProvider
 			m.cursor = m.providerIdx
 			return m, nil
@@ -944,6 +1005,7 @@ func (m OnboardingModel) updateBrowserAuth(msg tea.Msg) (OnboardingModel, tea.Cm
 			}
 			m.authing = false
 			m.authError = ""
+			m.flowID++
 			m.step = stepSelectProvider
 			m.cursor = m.providerIdx
 			return m, nil
@@ -987,6 +1049,7 @@ func (m OnboardingModel) updateOllamaChoice(msg tea.Msg) (OnboardingModel, tea.C
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 		switch keyMsg.String() {
 		case "esc":
+			m.flowID++
 			m.step = stepSelectProvider
 			m.cursor = m.providerIdx
 			return m, nil
@@ -1033,17 +1096,17 @@ func (m OnboardingModel) checkOllama() tea.Cmd {
 		err := c.Health(ctx)
 		cancel()
 		if err == nil {
-			return ollamaSetupMsg{status: "ready"}
+			return ollamaSetupMsg{status: "ready", flowID: m.flowID}
 		}
 
 		// 2. Install if binary not found.
 		if _, lookErr := exec.LookPath("ollama"); lookErr != nil {
 			if installErr := installOllamaQuiet(); installErr != nil {
-				return ollamaSetupMsg{status: "failed", err: fmt.Errorf("install ollama: %w", installErr)}
+				return ollamaSetupMsg{status: "failed", err: fmt.Errorf("install ollama: %w", installErr), flowID: m.flowID}
 			}
 			// Verify install worked.
 			if _, lookErr = exec.LookPath("ollama"); lookErr != nil {
-				return ollamaSetupMsg{status: "failed", err: fmt.Errorf("ollama not found after install")}
+				return ollamaSetupMsg{status: "failed", err: fmt.Errorf("ollama not found after install"), flowID: m.flowID}
 			}
 		}
 
@@ -1052,7 +1115,7 @@ func (m OnboardingModel) checkOllama() tea.Cmd {
 		cmd.Stdout = nil
 		cmd.Stderr = nil
 		if startErr := cmd.Start(); startErr != nil {
-			return ollamaSetupMsg{status: "failed", err: fmt.Errorf("start ollama: %w", startErr)}
+			return ollamaSetupMsg{status: "failed", err: fmt.Errorf("start ollama: %w", startErr), flowID: m.flowID}
 		}
 
 		// 4. Poll health for up to 15 seconds.
@@ -1061,12 +1124,12 @@ func (m OnboardingModel) checkOllama() tea.Cmd {
 			pollCtx, pollCancel := context.WithTimeout(context.Background(), 2*time.Second)
 			if pollErr := c.Health(pollCtx); pollErr == nil {
 				pollCancel()
-				return ollamaSetupMsg{status: "ready"}
+				return ollamaSetupMsg{status: "ready", flowID: m.flowID}
 			}
 			pollCancel()
 			time.Sleep(500 * time.Millisecond)
 		}
-		return ollamaSetupMsg{status: "failed", err: fmt.Errorf("ollama did not become ready within 15s")}
+		return ollamaSetupMsg{status: "failed", err: fmt.Errorf("ollama did not become ready within 15s"), flowID: m.flowID}
 	}
 }
 
@@ -1098,6 +1161,9 @@ func recommendedOllamaModels() []string {
 func (m OnboardingModel) updateOllamaSetup(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case ollamaSetupMsg:
+		if msg.flowID != m.flowID {
+			return m, nil
+		}
 		m.ollamaSetupStatus = msg.status
 		if msg.err != nil {
 			m.ollamaSetupError = msg.err.Error()
@@ -1118,6 +1184,7 @@ func (m OnboardingModel) updateOllamaSetup(msg tea.Msg) (OnboardingModel, tea.Cm
 		return m, cmd
 	case tea.KeyPressMsg:
 		if msg.String() == "esc" {
+			m.flowID++
 			m.step = stepOllamaChoice
 			m.ollamaChoiceCursor = 0
 			return m, nil
@@ -1166,6 +1233,7 @@ func (m OnboardingModel) updateFetchModels(msg tea.Msg) (OnboardingModel, tea.Cm
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 		if keyMsg.String() == "esc" {
 			m.fetchingModels = false
+			m.flowID++
 			m.step = stepSelectProvider
 			m.cursor = m.providerIdx
 			return m, nil
@@ -1184,6 +1252,7 @@ func (m OnboardingModel) updatePullModel(msg tea.Msg) (OnboardingModel, tea.Cmd)
 			}
 			m.pullingModel = false
 			m.pullError = ""
+			m.flowID++
 			m.step = stepSelectProvider
 			m.cursor = m.providerIdx
 		}
@@ -1217,6 +1286,7 @@ func (m OnboardingModel) updatePullModel(msg tea.Msg) (OnboardingModel, tea.Cmd)
 		customIdx := len(m.recommendedModels) // index for the "Custom" row
 		switch keyMsg.String() {
 		case "esc":
+			m.flowID++
 			m.step = stepSelectProvider
 			m.cursor = m.providerIdx
 			return m, nil
@@ -1294,20 +1364,20 @@ func (m OnboardingModel) readPullProgress() tea.Cmd {
 		// Check doneCh first (non-blocking) to prioritize completion.
 		select {
 		case err := <-m.pullDoneCh:
-			return pullDoneMsg{err: err}
+			return pullDoneMsg{err: err, flowID: m.flowID}
 		default:
 		}
 		// Wait for either progress or done.
 		select {
 		case pct, ok := <-m.pullProgressCh:
 			if ok {
-				return pullProgressMsg{pct: pct}
+				return pullProgressMsg{pct: pct, flowID: m.flowID}
 			}
 			// progressCh closed — pull goroutine finished, read result.
 			err := <-m.pullDoneCh
-			return pullDoneMsg{err: err}
+			return pullDoneMsg{err: err, flowID: m.flowID}
 		case err := <-m.pullDoneCh:
-			return pullDoneMsg{err: err}
+			return pullDoneMsg{err: err, flowID: m.flowID}
 		}
 	}
 }
@@ -1412,7 +1482,7 @@ func (m OnboardingModel) addProvider(p providerauth.SetupEntry, model string) te
 		if len(m.settings) > 0 {
 			data, err := json.Marshal(m.settings)
 			if err != nil {
-				return providerAddedMsg{err: fmt.Errorf("encode provider settings: %w", err)}
+				return providerAddedMsg{err: fmt.Errorf("encode provider settings: %w", err), flowID: m.flowID}
 			}
 			settingsJSON = string(data)
 		}
@@ -1430,20 +1500,20 @@ func (m OnboardingModel) addProvider(p providerauth.SetupEntry, model string) te
 			IsDefault: true,
 		}
 		provider, err := m.deps.addProvider(context.Background(), req)
-		return providerAddedMsg{provider: provider, err: err}
+		return providerAddedMsg{provider: provider, err: err, flowID: m.flowID}
 	}
 }
 
 func (m OnboardingModel) testProvider(alias string) tea.Cmd {
 	return func() tea.Msg {
 		result, err := m.deps.testProvider(context.Background(), alias)
-		return providerTestedMsg{result: result, err: err}
+		return providerTestedMsg{result: result, err: err, flowID: m.flowID}
 	}
 }
 
 func (m OnboardingModel) removeProvider(alias string) tea.Cmd {
 	return func() tea.Msg {
-		return providerRemovedMsg{err: m.deps.removeProvider(context.Background(), alias)}
+		return providerRemovedMsg{err: m.deps.removeProvider(context.Background(), alias), flowID: m.flowID}
 	}
 }
 
@@ -1556,7 +1626,7 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 			if cursor >= len(indices) {
 				cursor = len(indices) - 1
 			}
-			maxVisible := 7
+			maxVisible := 3
 			if h >= 36 {
 				maxVisible = 12
 			}
@@ -1723,7 +1793,7 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 			if label == "" {
 				label = models[i].ID
 			}
-			sb.WriteString(style.Render(prefix+label) + "\n")
+			sb.WriteString(style.Render(fitText(prefix+label, contentWidth)) + "\n")
 		}
 		if m.selectedProvider().AllowManualModel {
 			prefix, style := "  ", mutedStyle
@@ -1785,7 +1855,7 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 			sb.WriteString(successStyle.Render("Connection successful") + "\n\n")
 			sb.WriteString("Provider: " + p.Type + "\n")
 			if model := m.selectedModelID(); model != "" {
-				sb.WriteString("Default model: " + model + "\n")
+				sb.WriteString(fitReviewValue("Default model", model, contentWidth) + "\n")
 			}
 			fmt.Fprintf(&sb, "Response time: %dms\n", m.testResult.LatencyMs)
 			sb.WriteString("\n" + mutedStyle.Render("Enter: start chatting"))
@@ -1839,7 +1909,10 @@ func settingLabel(entry providerauth.SetupEntry, key string) string {
 }
 
 func fitReviewValue(label, value string, width int) string {
-	text := label + ": " + value
+	return fitText(label+": "+value, width)
+}
+
+func fitText(text string, width int) string {
 	if width <= 3 || lipgloss.Width(text) <= width {
 		return text
 	}
