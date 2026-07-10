@@ -64,7 +64,7 @@
 |---|---|---|
 | Upstream orchestrator provider registry | runtime-integrated | Task 1 real registry API test; Task 2 catalog coverage against it. |
 | Upstream provider model listers | runtime-integrated | Task 3 CLI and Task 4 TUI pass typed settings into the real lister boundary with local HTTP fixtures. |
-| Daemon provider RPC + existing secret provider/Redactor | runtime-integrated | Task 5 daemon/TUI test stores a provider and proves secret absence from output/state snapshots. |
+| Daemon provider RPC + existing secret provider/Redactor/registry | runtime-integrated | Tasks 4-5 prove durable operation replay/query, versioned-secret commit/rollback/cleanup, registry refresh, redactor registration, and secret absence from output/state. |
 | Bubble Tea provider/model wizard | runtime-integrated | Task 4 state tests; Task 5 fresh PTY render/navigation proof. |
 | Daemon gRPC background API | runtime-integrated | Task 7 started service and real client; Task 8 built binary/fixture-agent proof. |
 | ACP profile/queue claim/cancel/recovery | runtime-integrated | Task 6 real stores and Task 8 restart/drift/stop proof. |
@@ -322,6 +322,17 @@ git commit -m "refactor(provider): drive CLI from catalog"
 ### Task 4: Rebuild the TUI Wizard Around the Catalog
 
 **Files:**
+- Modify: `internal/proto/ratchet.proto`
+- Modify generated: `internal/proto/ratchet.pb.go`
+- Modify generated: `internal/proto/ratchet_grpc.pb.go`
+- Modify: `internal/daemon/engine.go`
+- Modify: `internal/daemon/service.go`
+- Modify: `internal/daemon/integration_test.go`
+- Modify: `internal/client/client.go`
+- Modify: `cmd/ratchet/cmd_provider.go`
+- Modify: `cmd/ratchet/cmd_provider_test.go`
+- Modify: `internal/tui/app.go`
+- Modify: `internal/tui/app_session_tree_test.go`
 - Modify: `internal/tui/pages/onboarding.go`
 - Create: `internal/tui/pages/onboarding_test.go`
 
@@ -342,6 +353,19 @@ strategy and focused tests that:
   setup step, and a source guard rejects a second TUI-owned provider table;
 - review omits secret values and masks credential presence;
 - submit sends alias/type/model/base URL/settings once;
+- every CLI/TUI save sends a canonical UUID operation ID; hostile IDs are
+  rejected and never form secret keys;
+- operation replay is first-write-wins, conflicting alias/safe request shape is
+  rejected, excluded sensitive fields are ignored on replay, and operation RPC
+  payloads contain no credential/settings/raw error;
+- SQL rollback preserves the active secret; commit updates registry/redactor
+  before success; old-secret cleanup is durable and retryable;
+- startup marks inherited pending operations failed, sweeps only unreferenced
+  reserved-prefix secrets before RPC acceptance, and prunes terminal operations
+  only after the 24-hour retention window;
+- ambiguous save responses poll pending/not-found operation state with bounded
+  backoff; commit resolves, failed reports a class, and unresolved pauses exit;
+- nil daemon responses and whitespace credentials/base URLs fail safely;
 - views at 80x24 and 120x40 contain no overflow and always show actionable
   navigation/help text.
 
@@ -349,8 +373,9 @@ strategy and focused tests that:
 
 Run: `go test ./internal/tui/pages -run 'Onboarding|ProviderCatalog' -count=1`
 
-Expected: FAIL because `providerTypes` is hardcoded and no dependency-injected
-catalog flow exists.
+Expected: FAIL because `providerTypes` is hardcoded, no dependency-injected
+catalog flow exists, operation RPC/types are absent, and alias-stable secret
+writes can mutate active credentials before SQL commit.
 
 **Step 3: Implement the catalog-driven state**
 
@@ -368,27 +393,50 @@ entries run their existing command health check asynchronously and let the
 external CLI own model choice. The only secret input is the daemon API-key
 field; setting values are non-secret by catalog validation.
 
+Add a two-phase provider-save journal per ADR 0006. Required table migrations
+fail startup. New clients send canonical UUIDs; the daemon generates a separate
+UUID for `provider-v2-` secret keys and accepts empty IDs only for legacy
+compatibility. Pending creation is first-write-wins; replay returns the stored
+non-secret result, while alias/safe-shape conflicts fail. The safe shape excludes
+base URLs, settings, credentials, and credential hashes. SQL atomically switches
+the provider pointer, stores an `applied` result, and queues the old secret.
+Rollback deletes only the inactive new version and durably queues failed
+cleanup. Redactor registration and cache invalidation precede `committed`.
+Startup finalizes applied rows, fails inherited pending rows, sweeps reserved
+orphans, retries cleanup, then accepts RPCs.
+
+Expose a metadata-only operation query and use it for bounded CLI/TUI
+reconciliation. Do not persist credentials, raw requests/settings/errors, or a
+credential hash. Keep retired values in the existing additive Redactor until
+restart; do not introduce a second redaction or secret abstraction.
+
 **Step 4: Verify state and render behavior**
 
 ```bash
-gofmt -w internal/tui/pages/onboarding.go internal/tui/pages/onboarding_test.go
+make proto
+gofmt -w internal/daemon/engine.go internal/daemon/service.go internal/daemon/integration_test.go internal/client/client.go cmd/ratchet/cmd_provider.go cmd/ratchet/cmd_provider_test.go internal/tui/app.go internal/tui/app_session_tree_test.go internal/tui/pages/onboarding.go internal/tui/pages/onboarding_test.go
+go test ./internal/daemon -run 'ProviderOperation|ProviderSecret|ProviderCRUD' -count=1
+go test ./cmd/ratchet -run 'Provider.*Operation|Provider.*Catalog|ProviderSetupGuide|ProviderModelSelection' -count=1
 go test ./internal/tui/pages -run 'Onboarding|ProviderCatalog' -count=1
 go test ./internal/tui -run 'Provider|Onboarding|SlashExit' -count=1 -timeout=10m
 ```
 
-Expected: PASS; render tests report all lines within their configured widths
-and secret sentinels absent.
+Expected: PASS; daemon tests prove replay/rollback/restart/cleanup and registry
+resolution; all current save callers carry UUIDs; render tests report all lines
+within configured widths and secret sentinels absent.
 
 **Step 5: Commit**
 
 ```bash
-git add internal/tui/pages/onboarding.go internal/tui/pages/onboarding_test.go
+git add internal/proto internal/daemon/engine.go internal/daemon/service.go internal/daemon/integration_test.go internal/client/client.go cmd/ratchet/cmd_provider.go cmd/ratchet/cmd_provider_test.go internal/tui/app.go internal/tui/app_session_tree_test.go internal/tui/pages/onboarding.go internal/tui/pages/onboarding_test.go
 git commit -m "feat(tui): unify provider setup wizard"
 ```
 
 ### Task 5: Prove, Document, Merge, and Release Unified Provider Setup
 
 **Files:**
+- Modify: `internal/daemon/service_tui_smoke.go`
+- Modify: `internal/daemon/service_tui_smoke_test.go`
 - Modify: `internal/tui/tui_binary_smoke_unix_test.go`
 - Modify: `internal/tui/tui_binary_smoke_windows_test.go`
 - Modify: `README.md`
@@ -412,6 +460,13 @@ credential and settings. Assert the provider row/settings and rendered review
 contain no sentinel while the existing secrets provider resolves it and the
 existing redactor redacts it.
 
+Restart a real test daemon around persisted SQLite/secret state. Prove committed
+operation query/replay survives, inherited pending becomes classified failed,
+unreferenced `provider-v2-` secrets are swept before RPC acceptance, referenced
+versions remain, cleanup failures stay queued and retry, provider removal queues
+its current version, and the real registry resolves the new credential after an
+upsert. Verify operation rows/RPC/status/log snapshots contain no sentinel.
+
 **Step 3: Update human documentation and guards**
 
 Document one setup flow, category/provider matrix, CLI/TUI parity guarantee,
@@ -423,6 +478,7 @@ managed hooks deferred until their PRs merge.
 
 ```bash
 go test ./internal/provider ./cmd/ratchet ./internal/tui/pages -count=1
+go test ./internal/daemon -run 'ProviderOperation|ProviderSecret|TUISmoke' -count=1
 go test ./internal/tui -run 'ProviderSetup|TUIBinarySmoke' -count=1 -timeout=12m
 go test ./cmd/ratchet -run HarnessEmulationDocs -count=1
 go test ./...

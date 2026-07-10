@@ -243,6 +243,12 @@ flowchart LR
   missing required fields, or runtime-provider coverage gaps.
 - Provider setup keeps user-entered non-secret state when discovery fails and
   offers manual entry only when the catalog allows it.
+- Ambiguous provider-save responses poll operation state for at most 10 seconds
+  with bounded backoff. Pending, applied, not-found, and temporary RPC failure
+  remain unresolved until the deadline; committed returns the stored provider;
+  failed returns a classified outcome. Unresolved exit requests stay in the UI.
+- Nil provider/list/test/auth success responses and whitespace-only required
+  credentials or endpoints are explicit recoverable errors.
 - Daemon background start validates acknowledgement, trust, fingerprint, and
   session/profile existence before persistence and launch.
 - Background worker panics and terminal agent errors are contained, recorded as
@@ -255,10 +261,12 @@ flowchart LR
 
 ## Security Review
 
-- **Credential custody:** unchanged. Provider credentials remain in the
-  daemon's existing secret provider; the existing `secrets.Redactor` protects
-  runtime errors. No secrets are persisted in catalog metadata, background
-  policy, or hook audit.
+- **Credential custody:** credentials remain in the daemon's existing secret
+  provider; server-generated UUID versions use reserved `provider-v2-` keys.
+  Client IDs are canonical UUIDs but never form secret keys. Operation rows and
+  RPCs exclude credentials, request bodies, settings, and raw errors. Existing
+  `secrets.Redactor` protects runtime errors and may safely over-redact retired
+  values until restart.
 - **Unattended execution:** opt-in is explicit and profile identity is pinned.
   Profile trust/fingerprint drift blocks resume. Persisted arbitrary commands
   are prohibited.
@@ -276,8 +284,13 @@ flowchart LR
 
 ## Infrastructure Impact
 
-No cloud infrastructure, migration, production deployment, or remote service
-is required. The daemon gains local state and one optional local policy read.
+No cloud infrastructure, production deployment, or remote service is required.
+PR 2 adds required local SQLite `provider_operations` and
+`provider_secret_cleanup` tables; migration failure is fatal before RPC
+acceptance. Terminal operations retain 24 hours. Startup finalizes applied rows
+after registry/redactor refresh, marks inherited pending rows failed, then
+serially sweeps only unreferenced `provider-v2-` secrets and durable cleanup
+entries through the existing provider interface.
 Release artifacts remain the existing GoReleaser matrix, including Windows.
 
 ## Multi-Component Validation
@@ -287,6 +300,7 @@ Release artifacts remain the existing GoReleaser matrix, including Windows.
 | Upstream registry to catalog | A real `workflow-plugin-agent` registry exposes sorted runtime types; ratchet's contract test excludes only documented test types and requires every remaining type to resolve through the catalog. |
 | Catalog to CLI | Contract tests enumerate every visible catalog entry through setup list/guide commands and accepted aliases. |
 | Catalog to TUI | State-machine tests traverse auth, settings, discovery, manual fallback, CLI-backed setup, and secret review suppression from catalog entries. |
+| Provider save transaction | Real daemon + SQLite + stateful secret provider prove pending journal, idempotent replay/conflict, commit result, rollback preserving the active credential, cache invalidation, redactor registration, restart transition, cleanup retry, and exact operation polling. |
 | TUI runtime | Fresh PTY smoke tests open provider/model setup, verify scrolling/filtering and readable framing, then exit from a fresh process. |
 | Daemon restart | Integration test persists an enabled policy, restarts the service, proves matching trusted profile resumes, then proves fingerprint drift blocks launch. |
 | Queue lifecycle | Existing claim/cancel/stale paths are exercised through the daemon manager with fake agents and deterministic contexts. |
@@ -300,7 +314,7 @@ Release artifacts remain the existing GoReleaser matrix, including Windows.
 |---|---|---|
 | `workflow-plugin-agent/orchestrator.ProviderRegistry` types | runtime-integrated | Upstream API test plus ratchet catalog coverage test against a real registry instance. |
 | `workflow-plugin-agent/provider` model listing | runtime-integrated | CLI/TUI tests pass real settings into its lister boundary; credentialed live provider calls remain deferred CI. |
-| Existing daemon provider RPC and secrets provider/Redactor | runtime-integrated | Daemon integration test stores a provider through RPC and proves secret fields are absent from TUI review/output. |
+| Existing daemon provider RPC, registry, and secrets provider/Redactor | runtime-integrated | Real daemon tests exercise versioned secret pointer commit/rollback, operation query/replay, registry resolution, redactor ordering, restart cleanup, and secret-free TUI/output. |
 | Bubble Tea provider/model wizard | runtime-integrated | State tests plus real PTY navigation/render proof. |
 | Daemon gRPC/client background API | runtime-integrated | Started daemon, real client, fake ACP process, persisted restart and stop proof. |
 | ACP profile store and queue claim/cancel/recovery | runtime-integrated | Real stores and existing drain path; trust-hash drift has a negative launch proof. |
@@ -399,12 +413,15 @@ that supplies their runtime proof.
 
 ## Rollback
 
-Each PR can be reverted independently. Catalog rollback restores the existing
-CLI and TUI paths without changing stored provider records. Background rollback
-stops workers before removing RPC/state handling; persisted metadata can remain
-ignored and contains no content. Managed-hook rollback must be coordinated with
-administrators because removing enforcement weakens policy; revert only after
-removing or migrating the managed file and preserving audit records.
+Each PR can be reverted independently. PR 2's additive operation/cleanup tables
+are ignored by older binaries; provider rows keep exact versioned secret names,
+which existing registries resolve. Legacy clients without operation IDs remain
+accepted. Before downgrade, process pending cleanup where possible; old writers
+may leave inactive `provider-v2-` versions, which a later upgraded startup
+sweeps without touching referenced or legacy-prefix secrets. Background
+rollback stops workers before removing RPC/state handling. Managed-hook rollback
+must be coordinated with administrators because removing enforcement weakens
+policy; preserve audit records.
 
 ### Backport 2026-07-10: CLI setup semantics and failed-test cleanup
 
@@ -432,11 +449,15 @@ test navigation, nil RPC results, process reaping, and app cache reconciliation.
 
 Cause: round-five review proved alias-stable secret mutation and one-shot list
 reconciliation cannot make an upsert atomic or authoritative. Change: use
-operation-versioned secret names; commit the provider pointer and durable
-`provider_operations` result in one SQL transaction; query/poll that operation
-after ambiguous responses; fail startup on required schema migration failure.
-Old-secret retirement occurs only after commit; rollback deletes only the new
-inactive secret. See `decisions/0006-make-provider-saves-durable.md`. Scope: no
-manifest change; this replaces Task 4's rejected reconciliation implementation.
-Evidence required: secret rollback, operation restart/query, delayed commit,
-nil list, Ctrl+C wait, and Windows build tests.
+two-phase pending/applied/terminal operations, server-derived versioned keys,
+idempotent replay, durable old-secret cleanup, and a metadata-only operation RPC.
+All current CLI/TUI writers use canonical UUIDs; legacy empty IDs remain
+compatible. Startup resolves pending/applied rows and reserved-prefix orphans
+before RPC acceptance; migration failure is fatal. SQL records `applied`; cache
+invalidation and redactor registration precede externally visible `committed`
+success. See `decisions/0006-make-provider-saves-durable.md`.
+Scope: no manifest change; Task 4 gains daemon/proto/client correction work and
+Task 5 gains restart/cleanup/runtime proof. Evidence required: hostile IDs,
+duplicate/replay conflict, secret rollback, registry resolution, restart states,
+cleanup retry/sweep, delayed operation polling, nil list, Ctrl+C wait, CLI/TUI
+coverage, and Windows build tests.
