@@ -352,10 +352,17 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		if msg.flowID != m.flowID {
 			return m, nil
 		}
+		if m.authCancel != nil {
+			m.authCancel()
+			m.authCancel = nil
+		}
 		if msg.err != nil {
-			// Device flow request failed — fall to API key paste
 			m.authing = false
 			m.authError = msg.err.Error()
+			if m.selectedProvider().Auth == providerauth.AuthOpenAIChatGPT {
+				m.step = stepBrowserAuth
+				return m, nil
+			}
 			m.step = stepEnterAPIKey
 			m.apiKeyInput.Placeholder = "ghp_..."
 			return m, m.apiKeyInput.Focus()
@@ -486,7 +493,7 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		if msg.err != nil {
 			m.finishProviderOperation()
 			m.testing = false
-			m.testError = msg.err.Error()
+			m.testError = redactProviderError(msg.err, m.authToken)
 			return m, nil
 		}
 		m.added = true
@@ -499,12 +506,12 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		m.finishProviderOperation()
 		m.testing = false
 		if msg.err != nil {
-			m.testError = msg.err.Error()
+			m.testError = redactProviderError(msg.err, m.authToken)
 			return m, nil
 		}
 		m.testResult = msg.result
 		if !msg.result.Success {
-			m.testError = msg.result.Message
+			m.testError = redactProviderText(msg.result.Message, m.authToken)
 		}
 		return m, nil
 
@@ -515,7 +522,7 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		m.finishProviderOperation()
 		m.removing = false
 		if msg.err != nil {
-			m.testError = "remove failed: " + msg.err.Error()
+			m.testError = "remove failed: " + redactProviderError(msg.err, m.authToken)
 			return m, nil
 		}
 		m.added = false
@@ -681,9 +688,7 @@ func (m OnboardingModel) advanceFromProvider() (OnboardingModel, tea.Cmd) {
 		return m, nil
 
 	case providerauth.AuthGitHubDevice, providerauth.AuthOpenAIChatGPT:
-		m.step = stepBrowserAuth
-		m.authing = true
-		return m, tea.Batch(m.spinner.Tick, m.startDeviceFlow())
+		return m.beginDeviceFlow()
 
 	case providerauth.AuthAPIKey:
 		m.step = stepEnterAPIKey
@@ -931,14 +936,23 @@ func (m OnboardingModel) fetchModels() tea.Cmd {
 	}
 }
 
-func (m OnboardingModel) startDeviceFlow() tea.Cmd {
+func (m OnboardingModel) beginDeviceFlow() (OnboardingModel, tea.Cmd) {
+	ctx, cancel := context.WithCancel(context.Background())
+	m.authCancel = cancel
+	m.step = stepBrowserAuth
+	m.authing = true
+	m.authError = ""
+	return m, tea.Batch(m.spinner.Tick, m.startDeviceFlow(ctx))
+}
+
+func (m OnboardingModel) startDeviceFlow(ctx context.Context) tea.Cmd {
 	return func() tea.Msg {
 		var result *providerauth.DeviceCodeResult
 		var err error
 		if m.selectedProvider().Auth == providerauth.AuthOpenAIChatGPT {
-			result, err = m.deps.startOpenAIDevice(context.Background())
+			result, err = m.deps.startOpenAIDevice(ctx)
 		} else {
-			result, err = m.deps.startGitHubDevice(context.Background())
+			result, err = m.deps.startGitHubDevice(ctx)
 		}
 		return deviceCodeMsg{result: result, err: err, flowID: m.flowID}
 	}
@@ -1024,6 +1038,10 @@ func (m OnboardingModel) updateAnthropicAuthChoice(msg tea.Msg) (OnboardingModel
 func (m OnboardingModel) updateBrowserAuth(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 		switch keyMsg.String() {
+		case "r":
+			if !m.authing && (m.selectedProvider().Auth == providerauth.AuthOpenAIChatGPT || m.selectedProvider().Auth == providerauth.AuthGitHubDevice) {
+				return m.beginDeviceFlow()
+			}
 		case "esc":
 			if m.authCancel != nil {
 				m.authCancel()
@@ -1782,7 +1800,11 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 		} else if m.authError != "" {
 			sb.WriteString(errorStyle.Render("Authentication issue") + "\n\n")
 			sb.WriteString(wrapMuted.Render(m.authError) + "\n\n")
-			sb.WriteString(mutedStyle.Render("Esc: back"))
+			if p.Auth == providerauth.AuthOpenAIChatGPT || p.Auth == providerauth.AuthGitHubDevice {
+				sb.WriteString(mutedStyle.Render("r: retry  Esc: back"))
+			} else {
+				sb.WriteString(mutedStyle.Render("Esc: back"))
+			}
 		}
 
 	case stepEnterAPIKey:
@@ -2030,9 +2052,13 @@ func redactProviderError(err error, credential string) string {
 	if err == nil {
 		return ""
 	}
+	return redactProviderText(err.Error(), credential)
+}
+
+func redactProviderText(text, credential string) string {
 	redactor := secrets.NewRedactor()
 	redactor.AddValue("provider credential", credential)
-	return redactor.Redact(err.Error())
+	return redactor.Redact(text)
 }
 
 func (m OnboardingModel) stepCount() int {

@@ -211,6 +211,19 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case pages.OnboardingDoneMsg:
+		if msg.Provider != nil {
+			replaced := false
+			for i, provider := range a.providers {
+				if provider.GetAlias() == msg.Provider.GetAlias() {
+					a.providers[i] = msg.Provider
+					replaced = true
+					break
+				}
+			}
+			if !replaced {
+				a.providers = append(a.providers, msg.Provider)
+			}
+		}
 		return a.transitionToChat()
 
 	case pages.OnboardingCancelledMsg:

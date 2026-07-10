@@ -302,6 +302,59 @@ func TestOnboardingChatGPTDeviceFlowTransitionsToModelDiscovery(t *testing.T) {
 	}
 }
 
+func TestOnboardingDeviceStartFailureUsesProviderCompatibleRecovery(t *testing.T) {
+	chatGPTDeps := testOnboardingDeps()
+	chatGPTDeps.startOpenAIDevice = func(context.Context) (*providerauth.DeviceCodeResult, error) {
+		return nil, errors.New("device authorization unavailable")
+	}
+	model := newOnboarding(nil, theme.Dark(), chatGPTDeps)
+	model.cursor = onboardingProviderIndex(t, model, "openai_chatgpt")
+	model, cmd := model.advanceFromProvider()
+	model, _ = model.Update(runOnboardingCmd(t, cmd))
+	if model.step != stepBrowserAuth || model.authing || model.authError == "" {
+		t.Fatalf("ChatGPT recovery = step:%v authing:%v error:%q", model.step, model.authing, model.authError)
+	}
+	model, cmd = model.updateBrowserAuth(tea.KeyPressMsg{Code: 'r', Text: "r"})
+	if model.step != stepBrowserAuth || !model.authing || cmd == nil {
+		t.Fatalf("ChatGPT retry = step:%v authing:%v cmd:%v", model.step, model.authing, cmd)
+	}
+
+	githubDeps := testOnboardingDeps()
+	githubDeps.startGitHubDevice = func(context.Context) (*providerauth.DeviceCodeResult, error) {
+		return nil, errors.New("GitHub device authorization unavailable")
+	}
+	model = newOnboarding(nil, theme.Dark(), githubDeps)
+	model.cursor = onboardingProviderIndex(t, model, "copilot")
+	model, cmd = model.advanceFromProvider()
+	model, _ = model.Update(runOnboardingCmd(t, cmd))
+	if model.step != stepEnterAPIKey || model.apiKeyInput.Placeholder != "ghp_..." {
+		t.Fatalf("GitHub recovery = step:%v placeholder:%q", model.step, model.apiKeyInput.Placeholder)
+	}
+}
+
+func TestOnboardingDeviceStartEscCancelsRequest(t *testing.T) {
+	started := make(chan struct{})
+	cancelled := make(chan struct{})
+	deps := testOnboardingDeps()
+	deps.startOpenAIDevice = func(ctx context.Context) (*providerauth.DeviceCodeResult, error) {
+		close(started)
+		<-ctx.Done()
+		close(cancelled)
+		return nil, ctx.Err()
+	}
+	model := newOnboarding(nil, theme.Dark(), deps)
+	model.cursor = onboardingProviderIndex(t, model, "openai_chatgpt")
+	model, cmd := model.advanceFromProvider()
+	batch := cmd().(tea.BatchMsg)
+	go batch[len(batch)-1]() //nolint:errcheck
+	<-started
+	model, _ = model.updateBrowserAuth(tea.KeyPressMsg{Code: tea.KeyEsc})
+	<-cancelled
+	if model.step != stepSelectProvider || model.authCancel != nil {
+		t.Fatalf("cancelled device start = step:%v cancel:%v", model.step, model.authCancel)
+	}
+}
+
 func TestOnboardingAnthropicBrowserAuthUsesInjectedDependency(t *testing.T) {
 	var started bool
 	deps := testOnboardingDeps()
@@ -522,6 +575,48 @@ func TestOnboardingReviewSuppressesSecretAndSubmitsSettingsOnce(t *testing.T) {
 	}
 	if requests[0].ApiKey != secret || settings["region"] != "us-west-2" || strings.Contains(requests[0].Settings, secret) {
 		t.Fatalf("request = %+v settings=%v", requests[0], settings)
+	}
+}
+
+func TestOnboardingProviderBoundaryErrorsRedactCredential(t *testing.T) {
+	const secret = "SECRET-PROVIDER-BOUNDARY-SENTINEL"
+	for _, tc := range []struct {
+		name string
+		deps func() onboardingDeps
+	}{
+		{"add error", func() onboardingDeps {
+			deps := testOnboardingDeps()
+			deps.addProvider = func(context.Context, *pb.AddProviderReq) (*pb.Provider, error) {
+				return nil, errors.New("add echoed " + secret)
+			}
+			return deps
+		}},
+		{"test result", func() onboardingDeps {
+			deps := testOnboardingDeps()
+			deps.testProvider = func(context.Context, string) (*pb.TestProviderResult, error) {
+				return &pb.TestProviderResult{Success: false, Message: "test echoed " + secret}, nil
+			}
+			return deps
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			model := newOnboarding(nil, theme.Dark(), tc.deps())
+			model.providerIdx = onboardingProviderIndex(t, model, "bedrock")
+			model.authToken = secret
+			model.selectedModel = "test-model"
+			model, cmd := model.startTest()
+			model, cmd = model.Update(runOnboardingCmd(t, cmd))
+			if cmd != nil {
+				model, _ = model.Update(runOnboardingCmd(t, cmd))
+			}
+			view := model.View(theme.Dark(), 80, 24)
+			if strings.Contains(model.testError, secret) || strings.Contains(view, secret) {
+				t.Fatalf("provider error leaked credential: error=%q\n%s", model.testError, view)
+			}
+			if !strings.Contains(model.testError, "REDACTED") {
+				t.Fatalf("provider error lacks redaction marker: %q", model.testError)
+			}
+		})
 	}
 }
 
