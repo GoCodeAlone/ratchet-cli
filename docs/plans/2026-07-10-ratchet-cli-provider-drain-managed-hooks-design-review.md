@@ -153,3 +153,47 @@ writes.
 
 **Verdict reasoning:** FAIL; ten Important architecture gaps require revision
 before implementation.
+
+## Cycle 3: Durable Provider Saves
+
+**Status:** FAIL
+
+**Findings (Critical):** none.
+
+**Findings (Important):**
+
+- `D17` [Runtime/rollback] New clients can silently use an old daemon that lacks
+  operation RPC support; provider saves need capability gating.
+- `D18` [Assumption/infra] Immediate startup sweep assumes exclusive daemon
+  ownership; age/reference gates or an OS lock must protect live operations.
+- `D19` [Failure mode] Applied rows can remain pending without restart; use a
+  daemon-owned context and runtime/query-assisted finalization.
+- `D20` [Intent] CLI save calls remain unbounded and lose reconciliation state
+  on interrupt; all writers need signal-aware deadlines plus detached polling.
+
+**Findings (Minor):**
+
+- `D21` Partial conflict shapes omit behavior-changing fields; unconditional
+  first-write replay is simpler and honest.
+- `D22` Task 4 red commands and Task 5 commit file list are incomplete.
+- `D23` Operation history should not retain provider base URLs.
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Guidance/intent | Finding | Mixed-version and bounded CLI reliability remain open. |
+| Assumptions/failures | Finding | Exclusive startup and post-commit completion were unsafe assumptions. |
+| Repo/artifact precedent | Finding | Compatibility behavior, red commands, and commit files need wiring. |
+| YAGNI | Clean | Journals have concrete responsibilities. |
+| Security/infra | Finding | Endpoint retention and concurrent cleanup need correction. |
+| Multi-component/integration | Finding | Capability and live finalizer proof missing. |
+| UI | Clean | Native wizard proof remains declared. |
+| Rollback/runtime | Finding | New-client/old-daemon behavior unresolved. |
+| Simpler alternative | Finding | Unconditional operation replay avoids partial shape storage. |
+
+**Alternatives:** capability-gated saves; daemon-owned applied finalizer;
+unconditional first-write replay; cross-platform ownership lock.
+
+**Verdict reasoning:** FAIL; capability negotiation, conservative cleanup,
+runtime applied finalization, and bounded CLI saves require revision.
