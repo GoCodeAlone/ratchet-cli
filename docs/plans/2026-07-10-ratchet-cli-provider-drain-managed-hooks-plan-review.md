@@ -522,3 +522,40 @@ transcript.
 
 **Verdict reasoning:** FAIL; P29-P32 are resolved, but P33 leaves a direct
 failure-path credential leak. Task 5 now addresses P33 for Cycle 10.
+
+## Cycle 10: Durable Provider Saves
+
+**Status:** PASS
+
+**Findings (Critical):** none.
+
+**Findings (Important):** none.
+
+**Findings (Minor):**
+
+- `P34` Fixed failure projections still included `.Test`; a future data-derived
+  subtest name could leak metadata. _Resolution: projection now includes only
+  action, fixed package, and elapsed time._
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Project guidance / security | Finding (Minor) | P34 was the only residual no-secret-log risk and is resolved. |
+| Assumptions / missing failure modes | Finding (Minor) | P34 challenged static test names; producer/no-match/cleanup failures otherwise fail closed. |
+| Repo / artifact precedent | Clean | `harnessredact`, invocation-owned transcript, and trap cleanup match repo patterns. |
+| YAGNI | Clean | Durable journal, compatibility, and inventory proof address observed failures. |
+| Infrastructure / rollback | Clean | Producer exit and exact pass event are independent; proof precedes revert. |
+| Multi-component / declared integration | Clean | New/old daemons, DB, file secrets, registry, redactor, UI, and Windows have consumer evidence. |
+| UI rendering | Clean | PTY/ConPTY exercises real catalog navigation, bounded rendering, and submission. |
+| Simpler alternative / intent | Clean | The chosen minimum preserves CLI/TUI unification, secret safety, Windows, and release. |
+| Existence / runtime validity | Clean | Pinned SHA is ancestral/reachable/pre-RPC; Bash, `mktemp`, and `jq` are available. |
+| Decomposition / serial dependencies | Clean | Manifest remains 11 tasks/4 PRs; checkpoint order is explicit. |
+| Verification / auth / schema / naming / compile | Clean | Each change class has direct proof; no new auth chain; identifiers and commands are valid. |
+| Loader / contributed UI | Clean | No external plugin process or contribution route is introduced. |
+
+**Alternatives:** omit test names or classify all subtests with a constant. The
+plan uses the smaller omission.
+
+**Verdict reasoning:** PASS; P19-P33 are resolved without regression and P34 is
+incorporated. No Critical or unresolved Important finding remains.

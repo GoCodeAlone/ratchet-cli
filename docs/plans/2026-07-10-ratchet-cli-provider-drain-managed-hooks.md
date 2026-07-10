@@ -715,7 +715,7 @@ or PR base: stacked and future PR bases can already contain the RPC.
     log=$(mktemp)
     trap 'rm -f "$log"' EXIT
     if ! go test -json ./cmd/ratchet -run '^TestHarnessSmokeDurableProviderDowngrade$' -count=1 -timeout=12m >"$log"; then
-      jq -c 'select(.Action == "fail" or .Action == "skip") | {Action,Package,Test,Elapsed}' "$log" >&2 || true
+      jq -c 'select(.Action == "fail" or .Action == "skip") | {Action,Package,Elapsed}' "$log" >&2 || true
       exit 1
     fi
     jq -e 'select(.Action == "pass" and .Test == "TestHarnessSmokeDurableProviderDowngrade")' "$log" >/dev/null
@@ -754,7 +754,7 @@ go test ./cmd/ratchet -run 'HarnessSmokeDurableProvider' -count=1 -timeout=12m
   trap 'rm -f "$log"' EXIT
   export RATCHET_DOWNGRADE_BASE_SHA=8cb5602166ffe529a0f05101dff583bad0919415
   if ! go test -json ./cmd/ratchet -run '^TestHarnessSmokeDurableProviderDowngrade$' -count=1 -timeout=12m >"$log"; then
-    jq -c 'select(.Action == "fail" or .Action == "skip") | {Action,Package,Test,Elapsed}' "$log" >&2 || true
+    jq -c 'select(.Action == "fail" or .Action == "skip") | {Action,Package,Elapsed}' "$log" >&2 || true
     exit 1
   fi
   jq -e 'select(.Action == "pass" and .Test == "TestHarnessSmokeDurableProviderDowngrade")' "$log" >/dev/null
