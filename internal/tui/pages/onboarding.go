@@ -484,7 +484,7 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 			return m, nil
 		}
 		if msg.err != nil {
-			m.cancelProviderOperation()
+			m.finishProviderOperation()
 			m.testing = false
 			m.testError = msg.err.Error()
 			return m, nil
@@ -496,7 +496,7 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		if msg.flowID != m.flowID {
 			return m, nil
 		}
-		m.cancelProviderOperation()
+		m.finishProviderOperation()
 		m.testing = false
 		if msg.err != nil {
 			m.testError = msg.err.Error()
@@ -512,7 +512,7 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		if msg.flowID != m.flowID {
 			return m, nil
 		}
-		m.cancelProviderOperation()
+		m.finishProviderOperation()
 		m.removing = false
 		if msg.err != nil {
 			m.testError = "remove failed: " + msg.err.Error()
@@ -1585,10 +1585,14 @@ func (m *OnboardingModel) beginProviderOperation() context.Context {
 	return ctx
 }
 
-func (m *OnboardingModel) cancelProviderOperation() {
+func (m *OnboardingModel) requestProviderOperationCancel() {
 	if m.providerOpCancel != nil {
 		m.providerOpCancel()
 	}
+}
+
+func (m *OnboardingModel) finishProviderOperation() {
+	m.requestProviderOperationCancel()
 	m.providerOpContext = nil
 	m.providerOpCancel = nil
 }
@@ -1604,7 +1608,7 @@ func (m OnboardingModel) updateTestConnection(msg tea.Msg) (OnboardingModel, tea
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 		if m.testing || m.removing {
 			if keyMsg.String() == "esc" {
-				m.cancelProviderOperation()
+				m.requestProviderOperationCancel()
 			}
 			return m, nil
 		}

@@ -751,6 +751,41 @@ func TestOnboardingProviderTestEscCancelsOperation(t *testing.T) {
 	}
 }
 
+func TestOnboardingAddSuccessRacingCancelKeepsCancelledContext(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	deps := testOnboardingDeps()
+	deps.addProvider = func(_ context.Context, req *pb.AddProviderReq) (*pb.Provider, error) {
+		close(started)
+		<-release
+		return &pb.Provider{Alias: req.Alias, Type: req.Type}, nil
+	}
+	deps.testProvider = func(ctx context.Context, _ string) (*pb.TestProviderResult, error) {
+		if ctx == nil {
+			t.Fatal("test provider received nil context")
+		}
+		return nil, ctx.Err()
+	}
+	model := newOnboarding(nil, theme.Dark(), deps)
+	model.providerIdx = onboardingProviderIndex(t, model, "bedrock")
+	model.selectedModel = "test-model"
+	model, cmd := model.startTest()
+	batch := cmd().(tea.BatchMsg)
+	result := make(chan tea.Msg, 1)
+	go func() { result <- batch[len(batch)-1]() }()
+	<-started
+	model, _ = model.updateTestConnection(tea.KeyPressMsg{Code: tea.KeyEsc})
+	close(release)
+	model, cmd = model.Update(<-result)
+	if cmd == nil || !model.added || model.providerOpContext == nil {
+		t.Fatalf("raced add state = cmd:%v added:%v context:%v", cmd, model.added, model.providerOpContext)
+	}
+	model, _ = model.Update(cmd())
+	if model.providerOpContext != nil || model.providerOpCancel != nil || !strings.Contains(model.testError, "canceled") {
+		t.Fatalf("raced cancellation result = context:%v cancel:%v error:%q", model.providerOpContext, model.providerOpCancel, model.testError)
+	}
+}
+
 func testOnboardingDeps() onboardingDeps {
 	return onboardingDeps{
 		listModels: func(context.Context, string, string, string, map[string]string) ([]providerauth.ModelInfo, error) {
