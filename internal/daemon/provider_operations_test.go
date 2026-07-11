@@ -17,6 +17,7 @@ import (
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 	ratchetplugin "github.com/GoCodeAlone/workflow-plugin-agent/orchestrator"
 	"github.com/GoCodeAlone/workflow/secrets"
+	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -114,6 +115,8 @@ func TestCommitProviderSaveReplayAliasBusyAndConflict(t *testing.T) {
 	provider := newOperationSecrets()
 	started := make(chan struct{})
 	release := make(chan struct{})
+	releaseOnce := sync.OnceFunc(func() { close(release) })
+	defer releaseOnce()
 	provider.setHook = func(_ context.Context, _, value string) error {
 		if value == "first-secret" {
 			close(started)
@@ -158,7 +161,7 @@ func TestCommitProviderSaveReplayAliasBusyAndConflict(t *testing.T) {
 		t.Fatalf("conflict failure = %s, want operation conflict", conflict.GetFailure())
 	}
 
-	close(release)
+	releaseOnce()
 	if op := <-firstDone; op.GetState() != pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED {
 		t.Fatalf("first operation = %+v, want committed", op)
 	}
@@ -196,15 +199,17 @@ func TestProviderOperationBlockingSecretAdmissionAndRestart(t *testing.T) {
 	svc, db := newProviderOperationTestService(t, provider)
 	blockedID := "70b4ec9e-5144-4587-bb43-7124143d56ad"
 
-	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
-	defer cancel()
+	ctx, expire := newDeadlineSignalContext(t.Context())
 	done := make(chan error, 1)
 	go func() {
 		_, err := svc.CommitProviderSave(ctx, providerSaveRequest(blockedID, "blocked", "blocked-secret"))
 		done <- err
 	}()
-	<-started
-	if err := <-done; status.Code(err) != codes.DeadlineExceeded {
+	if err := waitProviderSecretAdmission(started, done, time.After(5*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	expire()
+	if err := waitProviderSaveResult(done, time.After(5*time.Second)); status.Code(err) != codes.DeadlineExceeded {
 		t.Fatalf("blocked save code = %v, want DeadlineExceeded (err=%v)", status.Code(err), err)
 	}
 	assertOperationState(t, db, blockedID, "pending")
@@ -255,6 +260,125 @@ func TestProviderOperationBlockingSecretAdmissionAndRestart(t *testing.T) {
 	if err := newProviderOperationManager(svc.engine).Start(t.Context()); err == nil {
 		t.Fatal("provider operation startup succeeded when secret List failed")
 	}
+}
+
+func TestWaitProviderSecretAdmissionOutcomes(t *testing.T) {
+	workerErr := errors.New("worker failed")
+	tests := []struct {
+		name    string
+		started bool
+		done    bool
+		doneErr error
+		timeout bool
+		wantErr error
+		wantMsg string
+	}{
+		{name: "admitted", started: true},
+		{name: "worker error", done: true, doneErr: workerErr, wantErr: workerErr},
+		{name: "worker success", done: true, wantMsg: "returned before secret admission"},
+		{name: "timeout", timeout: true, wantMsg: "timed out waiting for blocked secret admission"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			started := make(chan struct{})
+			done := make(chan error, 1)
+			timeout := make(chan time.Time)
+			if tt.started {
+				close(started)
+			}
+			if tt.done {
+				done <- tt.doneErr
+			}
+			if tt.timeout {
+				close(timeout)
+			}
+
+			err := waitProviderSecretAdmission(started, done, timeout)
+			if tt.wantErr != nil && !errors.Is(err, tt.wantErr) {
+				t.Fatalf("wait error = %v, want %v", err, tt.wantErr)
+			}
+			if tt.wantErr == nil && tt.wantMsg == "" && err != nil {
+				t.Fatalf("wait error = %v, want nil", err)
+			}
+			if tt.wantMsg != "" && !strings.Contains(err.Error(), tt.wantMsg) {
+				t.Fatalf("wait error = %q, want substring %q", err, tt.wantMsg)
+			}
+		})
+	}
+}
+
+func TestDeadlineSignalContextPreservesCancellationCause(t *testing.T) {
+	t.Run("manual deadline", func(t *testing.T) {
+		ctx, expire := newDeadlineSignalContext(t.Context())
+		expire()
+		expire()
+		<-ctx.Done()
+		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			t.Fatalf("context error = %v, want DeadlineExceeded", ctx.Err())
+		}
+	})
+	t.Run("parent cancellation", func(t *testing.T) {
+		parent, cancel := context.WithCancel(t.Context())
+		ctx, expire := newDeadlineSignalContext(parent)
+		cancel()
+		<-ctx.Done()
+		if !errors.Is(ctx.Err(), context.Canceled) {
+			t.Fatalf("context error = %v, want Canceled", ctx.Err())
+		}
+		expire()
+		if !errors.Is(ctx.Err(), context.Canceled) {
+			t.Fatalf("context error after expiry = %v, want stable Canceled", ctx.Err())
+		}
+	})
+}
+
+func TestWaitProviderSaveResultTimesOut(t *testing.T) {
+	done := make(chan error)
+	timeout := make(chan time.Time)
+	close(timeout)
+
+	err := waitProviderSaveResult(done, timeout)
+	if err == nil || !strings.Contains(err.Error(), "timed out waiting for blocked provider save") {
+		t.Fatalf("wait error = %v, want timeout", err)
+	}
+}
+
+func waitProviderSecretAdmission(started <-chan struct{}, done <-chan error, timeout <-chan time.Time) error {
+	select {
+	case <-started:
+		return nil
+	case err := <-done:
+		if err == nil {
+			return errors.New("blocked save returned before secret admission")
+		}
+		return fmt.Errorf("blocked save returned before secret admission: %w", err)
+	case <-timeout:
+		return errors.New("timed out waiting for blocked secret admission")
+	}
+}
+
+func waitProviderSaveResult(done <-chan error, timeout <-chan time.Time) error {
+	select {
+	case err := <-done:
+		return err
+	case <-timeout:
+		return errors.New("timed out waiting for blocked provider save")
+	}
+}
+
+type deadlineSignalContext struct {
+	context.Context
+}
+
+func newDeadlineSignalContext(parent context.Context) (context.Context, func()) {
+	ctx, cancel := context.WithCancelCause(parent)
+	return deadlineSignalContext{Context: ctx}, func() {
+		cancel(context.DeadlineExceeded)
+	}
+}
+
+func (c deadlineSignalContext) Err() error {
+	return context.Cause(c.Context)
 }
 
 func TestAddProviderMapsAliasBusyToAborted(t *testing.T) {
@@ -536,7 +660,7 @@ func newProviderOperationTestService(t *testing.T, provider secrets.Provider) (*
 
 func openProviderOperationTestDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", "file:"+strings.ReplaceAll(t.Name(), "/", "-")+"?mode=memory&cache=shared")
+	db, err := sql.Open("sqlite", "file:"+strings.ReplaceAll(t.Name(), "/", "-")+"-"+uuid.NewString()+"?mode=memory&cache=shared")
 	if err != nil {
 		t.Fatal(err)
 	}
