@@ -31,6 +31,7 @@ const (
 	BackgroundOutcomePolicyInvalid     = "policy_invalid"
 	BackgroundOutcomeWorkerError       = "worker_error"
 	BackgroundOutcomeWorkerPanic       = "worker_panic"
+	BackgroundOutcomeCompleted         = "completed"
 	BackgroundOutcomeStateWriteFailed  = "state_write_failed"
 	BackgroundOutcomeAuditAppendFailed = "audit_append_failed"
 )
@@ -42,41 +43,53 @@ var (
 	ErrBackgroundProfileUntrusted        = errors.New("acp background profile trust is invalid")
 	ErrBackgroundProfileIneligible       = errors.New("acp background profile is ineligible")
 	ErrBackgroundManagerClosed           = errors.New("acp background manager is closed")
+	ErrBackgroundTransitionBusy          = errors.New("acp background session transition is busy")
+	ErrBackgroundPersistenceDegraded     = errors.New("acp background persistence is degraded")
 )
 
 type BackgroundPolicy struct {
-	SessionID      string    `json:"sessionId"`
-	Profile        string    `json:"profile"`
-	DescriptorHash string    `json:"descriptorHash"`
-	PolicyVersion  int       `json:"policyVersion"`
-	AcknowledgedAt time.Time `json:"acknowledgedAt"`
-	Enabled        bool      `json:"enabled"`
-	State          string    `json:"state"`
-	Outcome        string    `json:"outcome"`
-	StartedAt      time.Time `json:"startedAt,omitzero"`
-	UpdatedAt      time.Time `json:"updatedAt"`
+	SessionID           string    `json:"sessionId"`
+	Profile             string    `json:"profile"`
+	DescriptorHash      string    `json:"descriptorHash"`
+	PolicyVersion       int       `json:"policyVersion"`
+	AcknowledgedAt      time.Time `json:"acknowledgedAt"`
+	Enabled             bool      `json:"enabled"`
+	State               string    `json:"state"`
+	Outcome             string    `json:"outcome"`
+	PersistenceDegraded bool      `json:"persistenceDegraded,omitzero"`
+	StartedAt           time.Time `json:"startedAt,omitzero"`
+	UpdatedAt           time.Time `json:"updatedAt"`
 }
 
 type BackgroundStatus struct {
-	SessionID      string
-	Profile        string
-	DescriptorHash string
-	PolicyVersion  int
-	AcknowledgedAt time.Time
-	Enabled        bool
-	State          string
-	Outcome        string
-	StartedAt      time.Time
-	UpdatedAt      time.Time
+	SessionID           string
+	Profile             string
+	DescriptorHash      string
+	PolicyVersion       int
+	AcknowledgedAt      time.Time
+	Enabled             bool
+	State               string
+	Outcome             string
+	PersistenceDegraded bool
+	StartedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 type BackgroundStore struct {
 	path string
-	mu   sync.Mutex
 }
 
 type backgroundFile struct {
 	Policies []BackgroundPolicy `json:"policies"`
+}
+
+type backgroundTransition struct {
+	Policy BackgroundPolicy `json:"policy"`
+	Action string           `json:"action"`
+}
+
+type backgroundTransitionFile struct {
+	Transitions []backgroundTransition `json:"transitions"`
 }
 
 func NewBackgroundStore(path string) *BackgroundStore {
@@ -102,9 +115,10 @@ func (s *BackgroundStore) List() ([]BackgroundPolicy, error) {
 	if s == nil || strings.TrimSpace(s.path) == "" {
 		return nil, errors.New("acp background policy path is required")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	data, err := s.load()
+	lock := backgroundPathLock(s.path)
+	lock.Lock()
+	defer lock.Unlock()
+	data, err := s.load(s.path)
 	if err != nil {
 		return nil, err
 	}
@@ -140,9 +154,10 @@ func (s *BackgroundStore) Upsert(policy BackgroundPolicy) error {
 	if policy.Profile == "" {
 		return errors.New("acp background profile is required")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	data, err := s.load()
+	lock := backgroundPathLock(s.path)
+	lock.Lock()
+	defer lock.Unlock()
+	data, err := s.load(s.path)
 	if err != nil {
 		return err
 	}
@@ -156,9 +171,9 @@ func (s *BackgroundStore) Upsert(policy BackgroundPolicy) error {
 	return s.save(data)
 }
 
-func (s *BackgroundStore) load() (backgroundFile, error) {
+func (s *BackgroundStore) load(path string) (backgroundFile, error) {
 	var data backgroundFile
-	b, err := os.ReadFile(s.path)
+	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return data, nil
 	}
@@ -169,7 +184,7 @@ func (s *BackgroundStore) load() (backgroundFile, error) {
 		return data, nil
 	}
 	if err := json.Unmarshal(b, &data); err != nil {
-		return backgroundFile{}, fmt.Errorf("read background policies %s: %w", s.path, err)
+		return backgroundFile{}, fmt.Errorf("read background policies %s: %w", path, err)
 	}
 	return data, nil
 }
@@ -178,7 +193,90 @@ func (s *BackgroundStore) save(data backgroundFile) error {
 	slices.SortFunc(data.Policies, func(a, b BackgroundPolicy) int {
 		return strings.Compare(a.SessionID, b.SessionID)
 	})
-	return writeJSONFileAtomic(s.path, data, 0o600)
+	return backgroundWriteJSONAtomic(s.path, data)
+}
+
+func (s *BackgroundStore) putTransition(transition backgroundTransition) error {
+	path := s.transitionPath()
+	lock := backgroundPathLock(path)
+	lock.Lock()
+	defer lock.Unlock()
+	data, err := s.loadTransitions(path)
+	if err != nil {
+		return err
+	}
+	for i := range data.Transitions {
+		if data.Transitions[i].Policy.SessionID == transition.Policy.SessionID {
+			data.Transitions[i] = transition
+			return backgroundWriteJSONAtomic(path, data)
+		}
+	}
+	data.Transitions = append(data.Transitions, transition)
+	slices.SortFunc(data.Transitions, func(a, b backgroundTransition) int {
+		return strings.Compare(a.Policy.SessionID, b.Policy.SessionID)
+	})
+	return backgroundWriteJSONAtomic(path, data)
+}
+
+func (s *BackgroundStore) listTransitions() ([]backgroundTransition, error) {
+	path := s.transitionPath()
+	lock := backgroundPathLock(path)
+	lock.Lock()
+	defer lock.Unlock()
+	data, err := s.loadTransitions(path)
+	if err != nil {
+		return nil, err
+	}
+	return slices.Clone(data.Transitions), nil
+}
+
+func (s *BackgroundStore) removeTransition(sessionID string) error {
+	path := s.transitionPath()
+	lock := backgroundPathLock(path)
+	lock.Lock()
+	defer lock.Unlock()
+	data, err := s.loadTransitions(path)
+	if err != nil {
+		return err
+	}
+	next := data.Transitions[:0]
+	for _, transition := range data.Transitions {
+		if transition.Policy.SessionID != sessionID {
+			next = append(next, transition)
+		}
+	}
+	if len(next) == len(data.Transitions) {
+		return nil
+	}
+	if len(next) == 0 {
+		return backgroundRemoveFile(path)
+	}
+	data.Transitions = next
+	return backgroundWriteJSONAtomic(path, data)
+}
+
+func (s *BackgroundStore) transitionPath() string {
+	ext := filepath.Ext(s.path)
+	base := strings.TrimSuffix(s.path, ext)
+	return base + "-transitions" + ext
+}
+
+func (s *BackgroundStore) loadTransitions(path string) (backgroundTransitionFile, error) {
+	var data backgroundTransitionFile
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return data, nil
+	}
+	if err != nil {
+		return backgroundTransitionFile{}, err
+	}
+	if len(b) == 0 {
+		return data, nil
+	}
+	if err := json.Unmarshal(b, &data); err != nil {
+		return backgroundTransitionFile{}, fmt.Errorf("read background transitions %s: %w", path, err)
+	}
+	return data, nil
 }
 
 type ResolvedBackgroundProfile struct {
@@ -236,7 +334,8 @@ type backgroundWorker struct {
 	profile        string
 	descriptorHash string
 	policy         BackgroundPolicy
-	cancel         context.CancelFunc
+	cancel         context.CancelCauseFunc
+	done           chan struct{}
 }
 
 type backgroundTerminalGuard struct {
@@ -254,21 +353,28 @@ type BackgroundManager struct {
 	watch    WatchOptions
 	now      func() time.Time
 
-	ctx      context.Context
-	cancel   context.CancelFunc
-	mu       sync.Mutex
-	closed   bool
-	active   map[string]backgroundWorker
-	terminal map[string]backgroundTerminalGuard
-	wg       sync.WaitGroup
+	ctx         context.Context
+	cancel      context.CancelCauseFunc
+	mu          sync.Mutex
+	resumeMu    sync.Mutex
+	closed      bool
+	active      map[string]*backgroundWorker
+	transitions map[string]struct{}
+	terminal    map[string]backgroundTerminalGuard
+	wg          sync.WaitGroup
 }
+
+var (
+	errBackgroundStop     = errors.New("acp background stop requested")
+	errBackgroundShutdown = errors.New("acp background shutdown requested")
+)
 
 func NewBackgroundManager(sessions *Store, store *BackgroundStore, audit *BackgroundAudit, opts BackgroundManagerOptions) *BackgroundManager {
 	ctx := opts.Context
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancelCause(ctx)
 	watcher := opts.Watcher
 	if watcher == nil {
 		watcher = WatchQueue
@@ -278,17 +384,18 @@ func NewBackgroundManager(sessions *Store, store *BackgroundStore, audit *Backgr
 		now = func() time.Time { return time.Now().UTC() }
 	}
 	return &BackgroundManager{
-		sessions: sessions,
-		store:    store,
-		audit:    audit,
-		resolver: opts.Resolver,
-		watcher:  watcher,
-		watch:    opts.WatchOptions,
-		now:      now,
-		ctx:      ctx,
-		cancel:   cancel,
-		active:   make(map[string]backgroundWorker),
-		terminal: make(map[string]backgroundTerminalGuard),
+		sessions:    sessions,
+		store:       store,
+		audit:       audit,
+		resolver:    opts.Resolver,
+		watcher:     watcher,
+		watch:       opts.WatchOptions,
+		now:         now,
+		ctx:         ctx,
+		cancel:      cancel,
+		active:      make(map[string]*backgroundWorker),
+		transitions: make(map[string]struct{}),
+		terminal:    make(map[string]backgroundTerminalGuard),
 	}
 }
 
@@ -323,6 +430,15 @@ func (m *BackgroundManager) Start(sessionID, profile string, acknowledged bool) 
 	if err := m.validate(); err != nil {
 		return BackgroundStatus{}, err
 	}
+	if err := m.reserveTransition(sessionID); err != nil {
+		return BackgroundStatus{}, err
+	}
+	transitionReserved := true
+	defer func() {
+		if transitionReserved {
+			m.releaseTransition(sessionID)
+		}
+	}()
 	if _, err := m.sessions.Get(sessionID); err != nil {
 		return BackgroundStatus{}, err
 	}
@@ -332,17 +448,15 @@ func (m *BackgroundManager) Start(sessionID, profile string, acknowledged bool) 
 	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.closed {
-		return BackgroundStatus{}, ErrBackgroundManagerClosed
-	}
 	if worker, ok := m.active[sessionID]; ok {
+		m.mu.Unlock()
 		if worker.profile == profile && worker.descriptorHash == resolved.DescriptorHash && resolved.TrustValid {
 			policy, err := m.store.Get(sessionID)
 			return backgroundStatus(policy), err
 		}
 		return BackgroundStatus{}, fmt.Errorf("%w: %s", ErrBackgroundPolicyConflict, sessionID)
 	}
+	m.mu.Unlock()
 
 	now := m.currentTime()
 	policy := BackgroundPolicy{
@@ -351,30 +465,42 @@ func (m *BackgroundManager) Start(sessionID, profile string, acknowledged bool) 
 		DescriptorHash: resolved.DescriptorHash,
 		PolicyVersion:  BackgroundPolicyVersion,
 		AcknowledgedAt: now,
-		Enabled:        true,
 		UpdatedAt:      now,
 	}
 	if !resolved.TrustValid || strings.TrimSpace(resolved.DescriptorHash) == "" {
+		policy.Enabled = false
 		policy.State = BackgroundStateBlocked
 		policy.Outcome = BackgroundOutcomeProfileUntrusted
-		if err := m.persistAndAudit(policy, BackgroundAuditBlock); err != nil {
-			return backgroundStatus(policy), err
-		}
-		return backgroundStatus(policy), ErrBackgroundProfileUntrusted
+		result := m.persistTerminal(policy, BackgroundAuditBlock)
+		m.rememberTerminal(result)
+		return backgroundStatus(result.policy), errors.Join(ErrBackgroundProfileUntrusted, result.err)
 	}
 	if err := resolved.Spec.Validate(); err != nil {
 		return BackgroundStatus{}, fmt.Errorf("%w: %s", ErrBackgroundProfileIneligible, profile)
 	}
+	policy.Enabled = true
 	policy.State = BackgroundStateRunning
 	policy.Outcome = BackgroundOutcomeStarted
 	policy.StartedAt = now
 	persisted, err := m.persistBeforeLaunch(policy, BackgroundAuditStart)
 	if err != nil {
-		m.terminal[sessionID] = backgroundTerminalGuard{status: backgroundStatus(persisted)}
 		return backgroundStatus(persisted), err
 	}
+	m.mu.Lock()
+	if m.closed || m.ctx.Err() != nil {
+		m.mu.Unlock()
+		persisted.Enabled = false
+		persisted.State = BackgroundStateDisabled
+		persisted.Outcome = BackgroundOutcomeStopped
+		result := m.persistTerminal(persisted, BackgroundAuditStop)
+		m.rememberTerminal(result)
+		return backgroundStatus(result.policy), errors.Join(ErrBackgroundManagerClosed, result.err)
+	}
+	delete(m.transitions, sessionID)
+	transitionReserved = false
 	delete(m.terminal, sessionID)
-	m.launch(persisted, resolved)
+	m.launchLocked(persisted, resolved)
+	m.mu.Unlock()
 	return backgroundStatus(persisted), nil
 }
 
@@ -383,8 +509,10 @@ func (m *BackgroundManager) Stop(sessionID string) (BackgroundStatus, error) {
 		return BackgroundStatus{}, err
 	}
 	sessionID = strings.TrimSpace(sessionID)
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	if err := m.reserveTransition(sessionID); err != nil {
+		return BackgroundStatus{}, err
+	}
+	defer m.releaseTransition(sessionID)
 	policy, err := m.store.Get(sessionID)
 	if err != nil {
 		return BackgroundStatus{}, err
@@ -393,15 +521,25 @@ func (m *BackgroundManager) Stop(sessionID string) (BackgroundStatus, error) {
 	policy.State = BackgroundStateDisabled
 	policy.Outcome = BackgroundOutcomeStopped
 	policy.UpdatedAt = m.currentTime()
-	if err := m.store.Upsert(policy); err != nil {
-		return backgroundStatus(policy), err
+	result := m.persistTerminal(policy, BackgroundAuditStop)
+	if result.err != nil {
+		m.rememberTerminal(result)
+		return backgroundStatus(result.policy), result.err
 	}
-	auditErr := m.appendAudit(policy, BackgroundAuditStop)
+	m.mu.Lock()
 	delete(m.terminal, sessionID)
 	if worker, ok := m.active[sessionID]; ok {
-		worker.cancel()
+		worker.cancel(errBackgroundStop)
+		m.mu.Unlock()
+		<-worker.done
+	} else {
+		m.mu.Unlock()
 	}
-	return backgroundStatus(policy), auditErr
+	status, err := m.Get(sessionID)
+	if err != nil {
+		return backgroundStatus(result.policy), err
+	}
+	return status, nil
 }
 
 func (m *BackgroundManager) Get(sessionID string) (BackgroundStatus, error) {
@@ -410,8 +548,9 @@ func (m *BackgroundManager) Get(sessionID string) (BackgroundStatus, error) {
 	}
 	sessionID = strings.TrimSpace(sessionID)
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if guard, ok := m.terminal[sessionID]; ok {
+	guard, ok := m.terminal[sessionID]
+	m.mu.Unlock()
+	if ok {
 		return guard.status, nil
 	}
 	policy, err := m.store.Get(sessionID)
@@ -423,22 +562,26 @@ func (m *BackgroundManager) List() ([]BackgroundStatus, error) {
 		return nil, err
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	terminal := make(map[string]backgroundTerminalGuard, len(m.terminal))
+	for sessionID, guard := range m.terminal {
+		terminal[sessionID] = guard
+	}
+	m.mu.Unlock()
 	policies, err := m.store.List()
 	if err != nil {
 		return nil, err
 	}
-	statuses := make([]BackgroundStatus, 0, len(policies)+len(m.terminal))
+	statuses := make([]BackgroundStatus, 0, len(policies)+len(terminal))
 	seen := make(map[string]struct{}, len(policies))
 	for _, policy := range policies {
 		seen[policy.SessionID] = struct{}{}
-		if guard, ok := m.terminal[policy.SessionID]; ok {
+		if guard, ok := terminal[policy.SessionID]; ok {
 			statuses = append(statuses, guard.status)
 			continue
 		}
 		statuses = append(statuses, backgroundStatus(policy))
 	}
-	for sessionID, guard := range m.terminal {
+	for sessionID, guard := range terminal {
 		if _, ok := seen[sessionID]; !ok {
 			statuses = append(statuses, guard.status)
 		}
@@ -451,10 +594,13 @@ func (m *BackgroundManager) Resume() error {
 	if err := m.validate(); err != nil {
 		return err
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.closed {
+	m.resumeMu.Lock()
+	defer m.resumeMu.Unlock()
+	if m.managerDone() {
 		return ErrBackgroundManagerClosed
+	}
+	if err := m.reconcileTransitions(); err != nil {
+		return err
 	}
 	policies, err := m.store.List()
 	if err != nil {
@@ -464,53 +610,71 @@ func (m *BackgroundManager) Resume() error {
 		if !policy.Enabled {
 			continue
 		}
-		if _, guarded := m.terminal[policy.SessionID]; guarded {
-			continue
+		if err := m.reserveTransition(policy.SessionID); err != nil {
+			if errors.Is(err, ErrBackgroundTransitionBusy) {
+				continue
+			}
+			return err
 		}
-		if _, ok := m.active[policy.SessionID]; ok {
+		if m.hasActiveWorker(policy.SessionID) {
+			m.releaseTransition(policy.SessionID)
 			continue
 		}
 		if policy.PolicyVersion != BackgroundPolicyVersion || policy.AcknowledgedAt.IsZero() {
 			if err := m.block(policy, BackgroundOutcomePolicyInvalid); err != nil {
+				m.releaseTransition(policy.SessionID)
 				return err
 			}
+			m.releaseTransition(policy.SessionID)
 			continue
 		}
 		if _, err := m.sessions.Get(policy.SessionID); err != nil {
 			if errors.Is(err, ErrSessionNotFound) {
 				if err := m.block(policy, BackgroundOutcomeSessionMissing); err != nil {
+					m.releaseTransition(policy.SessionID)
 					return err
 				}
+				m.releaseTransition(policy.SessionID)
 				continue
 			}
+			m.releaseTransition(policy.SessionID)
 			return err
 		}
 		resolved, err := m.resolver(policy.Profile)
 		if err != nil {
 			if errors.Is(err, ErrProfileNotFound) || errors.Is(err, ErrUnknownAgent) {
 				if err := m.block(policy, BackgroundOutcomeProfileMissing); err != nil {
+					m.releaseTransition(policy.SessionID)
 					return err
 				}
+				m.releaseTransition(policy.SessionID)
 				continue
 			}
+			m.releaseTransition(policy.SessionID)
 			return err
 		}
 		if !resolved.TrustValid {
 			if err := m.block(policy, BackgroundOutcomeProfileUntrusted); err != nil {
+				m.releaseTransition(policy.SessionID)
 				return err
 			}
+			m.releaseTransition(policy.SessionID)
 			continue
 		}
 		if resolved.DescriptorHash != policy.DescriptorHash {
 			if err := m.block(policy, BackgroundOutcomeProfileDrift); err != nil {
+				m.releaseTransition(policy.SessionID)
 				return err
 			}
+			m.releaseTransition(policy.SessionID)
 			continue
 		}
 		if err := resolved.Spec.Validate(); err != nil {
 			if err := m.block(policy, BackgroundOutcomeProfileUntrusted); err != nil {
+				m.releaseTransition(policy.SessionID)
 				return err
 			}
+			m.releaseTransition(policy.SessionID)
 			continue
 		}
 		now := m.currentTime()
@@ -520,11 +684,25 @@ func (m *BackgroundManager) Resume() error {
 		policy.UpdatedAt = now
 		persisted, err := m.persistBeforeLaunch(policy, BackgroundAuditResume)
 		if err != nil {
-			m.terminal[policy.SessionID] = backgroundTerminalGuard{status: backgroundStatus(persisted)}
+			m.releaseTransition(policy.SessionID)
 			return err
 		}
+		m.mu.Lock()
+		if m.closed || m.ctx.Err() != nil {
+			m.mu.Unlock()
+			persisted.Enabled = false
+			persisted.State = BackgroundStateDisabled
+			persisted.Outcome = BackgroundOutcomeStopped
+			persisted.UpdatedAt = m.currentTime()
+			result := m.persistTerminal(persisted, BackgroundAuditStop)
+			m.rememberTerminal(result)
+			m.releaseTransition(policy.SessionID)
+			return errors.Join(ErrBackgroundManagerClosed, result.err)
+		}
 		delete(m.terminal, policy.SessionID)
-		m.launch(persisted, resolved)
+		delete(m.transitions, policy.SessionID)
+		m.launchLocked(persisted, resolved)
+		m.mu.Unlock()
 	}
 	return nil
 }
@@ -536,9 +714,9 @@ func (m *BackgroundManager) Shutdown() {
 	m.mu.Lock()
 	if !m.closed {
 		m.closed = true
-		m.cancel()
+		m.cancel(errBackgroundShutdown)
 		for _, worker := range m.active {
-			worker.cancel()
+			worker.cancel(errBackgroundShutdown)
 		}
 	}
 	m.mu.Unlock()
@@ -564,17 +742,19 @@ func (m *BackgroundManager) validate() error {
 	return nil
 }
 
-func (m *BackgroundManager) launch(policy BackgroundPolicy, resolved ResolvedBackgroundProfile) {
-	ctx, cancel := context.WithCancel(m.ctx)
-	m.active[policy.SessionID] = backgroundWorker{
+func (m *BackgroundManager) launchLocked(policy BackgroundPolicy, resolved ResolvedBackgroundProfile) {
+	ctx, cancel := context.WithCancelCause(m.ctx)
+	worker := &backgroundWorker{
 		profile:        policy.Profile,
 		descriptorHash: policy.DescriptorHash,
 		policy:         policy,
 		cancel:         cancel,
+		done:           make(chan struct{}),
 	}
+	m.active[policy.SessionID] = worker
 	m.wg.Go(func() {
 		outcome, err := m.watchWorker(ctx, resolved, policy.SessionID)
-		m.workerDone(policy.SessionID, ctx, outcome, err)
+		m.workerDone(policy.SessionID, worker, ctx, outcome, err)
 	})
 }
 
@@ -589,59 +769,73 @@ func (m *BackgroundManager) watchWorker(ctx context.Context, resolved ResolvedBa
 	return BackgroundOutcomeWorkerError, err
 }
 
-func (m *BackgroundManager) workerDone(sessionID string, ctx context.Context, outcome string, workerErr error) {
+func (m *BackgroundManager) workerDone(sessionID string, worker *backgroundWorker, ctx context.Context, outcome string, workerErr error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	worker, ok := m.active[sessionID]
-	delete(m.active, sessionID)
-	if workerErr == nil || errors.Is(workerErr, context.Canceled) || ctx.Err() != nil {
-		return
+	_, transitionReserved := m.transitions[sessionID]
+	if !transitionReserved {
+		m.transitions[sessionID] = struct{}{}
 	}
-	if !ok {
-		return
+	m.mu.Unlock()
+
+	ignoreCancellation := isExplicitCancellation(ctx, workerErr)
+	var result backgroundRecordingResult
+	if !ignoreCancellation {
+		policy := worker.policy
+		policy.Enabled = false
+		policy.UpdatedAt = m.currentTime()
+		action := BackgroundAuditError
+		switch workerErr {
+		case nil:
+			policy.State = BackgroundStateDisabled
+			policy.Outcome = BackgroundOutcomeCompleted
+			action = BackgroundAuditStop
+		default:
+			policy.State = BackgroundStateError
+			policy.Outcome = outcome
+		}
+		result = m.persistTerminal(policy, action)
 	}
-	policy := worker.policy
-	policy.Enabled = false
-	policy.State = BackgroundStateError
-	policy.Outcome = outcome
-	policy.UpdatedAt = m.currentTime()
-	stateErr := m.store.Upsert(policy)
-	auditErr := m.appendAudit(policy, BackgroundAuditError)
-	m.terminal[sessionID] = backgroundTerminalGuard{
-		status:        backgroundStatus(policy),
-		stateRecorded: stateErr == nil,
-		auditRecorded: auditErr == nil,
+
+	m.mu.Lock()
+	if current, ok := m.active[sessionID]; ok && current == worker {
+		delete(m.active, sessionID)
 	}
+	if !transitionReserved {
+		delete(m.transitions, sessionID)
+	}
+	if !ignoreCancellation {
+		m.terminal[sessionID] = backgroundTerminalGuard{
+			status:        backgroundStatus(result.policy),
+			stateRecorded: result.stateRecorded,
+			auditRecorded: result.auditRecorded,
+		}
+	}
+	close(worker.done)
+	m.mu.Unlock()
 }
 
 func (m *BackgroundManager) block(policy BackgroundPolicy, outcome string) error {
+	policy.Enabled = false
 	policy.State = BackgroundStateBlocked
 	policy.Outcome = outcome
 	policy.UpdatedAt = m.currentTime()
-	return m.persistAndAudit(policy, BackgroundAuditBlock)
-}
-
-func (m *BackgroundManager) persistAndAudit(policy BackgroundPolicy, action string) error {
-	if err := m.store.Upsert(policy); err != nil {
-		return err
-	}
-	return m.audit.Append(BackgroundAuditRecord{
-		At:             policy.UpdatedAt,
-		Action:         action,
-		SessionID:      policy.SessionID,
-		Profile:        policy.Profile,
-		DescriptorHash: policy.DescriptorHash,
-		Outcome:        policy.Outcome,
-	})
+	result := m.persistTerminal(policy, BackgroundAuditBlock)
+	m.rememberTerminal(result)
+	return result.err
 }
 
 func (m *BackgroundManager) persistBeforeLaunch(policy BackgroundPolicy, action string) (BackgroundPolicy, error) {
 	if err := m.store.Upsert(policy); err != nil {
-		return m.recordingFailure(policy, BackgroundOutcomeStateWriteFailed), err
+		failed := m.recordingFailure(policy, BackgroundOutcomeStateWriteFailed)
+		result := m.persistTerminal(failed, BackgroundAuditError)
+		m.rememberTerminal(result)
+		return result.policy, errors.Join(err, result.err)
 	}
 	if err := m.appendAudit(policy, action); err != nil {
 		failed := m.recordingFailure(policy, BackgroundOutcomeAuditAppendFailed)
-		return failed, errors.Join(err, m.store.Upsert(failed))
+		result := m.persistTerminal(failed, BackgroundAuditError)
+		m.rememberTerminal(result)
+		return result.policy, errors.Join(err, result.err)
 	}
 	return policy, nil
 }
@@ -652,6 +846,123 @@ func (m *BackgroundManager) recordingFailure(policy BackgroundPolicy, outcome st
 	policy.Outcome = outcome
 	policy.UpdatedAt = m.currentTime()
 	return policy
+}
+
+type backgroundRecordingResult struct {
+	policy        BackgroundPolicy
+	stateRecorded bool
+	auditRecorded bool
+	err           error
+}
+
+func (m *BackgroundManager) persistTerminal(policy BackgroundPolicy, action string) backgroundRecordingResult {
+	policy.Enabled = false
+	policy.PersistenceDegraded = true
+	transitionErr := m.store.putTransition(backgroundTransition{Policy: policy, Action: action})
+	stateErr := m.store.Upsert(policy)
+	auditErr := m.appendAudit(policy, action)
+	result := backgroundRecordingResult{
+		policy:        policy,
+		stateRecorded: stateErr == nil,
+		auditRecorded: auditErr == nil,
+	}
+	if stateErr != nil || auditErr != nil {
+		result.err = errors.Join(ErrBackgroundPersistenceDegraded, transitionErr, stateErr, auditErr)
+		return result
+	}
+	policy.PersistenceDegraded = false
+	finalStateErr := m.store.Upsert(policy)
+	if finalStateErr != nil {
+		policy.PersistenceDegraded = true
+		result.policy = policy
+		result.err = errors.Join(ErrBackgroundPersistenceDegraded, finalStateErr)
+		return result
+	}
+	clearErr := m.store.removeTransition(policy.SessionID)
+	if clearErr != nil {
+		policy.PersistenceDegraded = true
+		degradedStateErr := m.store.Upsert(policy)
+		result.policy = policy
+		result.stateRecorded = degradedStateErr == nil
+		result.err = errors.Join(ErrBackgroundPersistenceDegraded, clearErr, degradedStateErr)
+		return result
+	}
+	result.policy = policy
+	return result
+}
+
+func (m *BackgroundManager) rememberTerminal(result backgroundRecordingResult) {
+	m.mu.Lock()
+	m.terminal[result.policy.SessionID] = backgroundTerminalGuard{
+		status:        backgroundStatus(result.policy),
+		stateRecorded: result.stateRecorded,
+		auditRecorded: result.auditRecorded,
+	}
+	m.mu.Unlock()
+}
+
+func (m *BackgroundManager) reconcileTransitions() error {
+	transitions, err := m.store.listTransitions()
+	if err != nil {
+		return errors.Join(ErrBackgroundPersistenceDegraded, err)
+	}
+	var reconcileErr error
+	for _, transition := range transitions {
+		if err := m.reserveTransition(transition.Policy.SessionID); err != nil {
+			if errors.Is(err, ErrBackgroundTransitionBusy) {
+				continue
+			}
+			reconcileErr = errors.Join(reconcileErr, err)
+			continue
+		}
+		result := m.persistTerminal(transition.Policy, transition.Action)
+		m.rememberTerminal(result)
+		m.releaseTransition(transition.Policy.SessionID)
+		if result.err != nil {
+			reconcileErr = errors.Join(reconcileErr, result.err)
+		}
+	}
+	return reconcileErr
+}
+
+func (m *BackgroundManager) reserveTransition(sessionID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed || m.ctx.Err() != nil {
+		return ErrBackgroundManagerClosed
+	}
+	if _, busy := m.transitions[sessionID]; busy {
+		return fmt.Errorf("%w: %s", ErrBackgroundTransitionBusy, sessionID)
+	}
+	m.transitions[sessionID] = struct{}{}
+	return nil
+}
+
+func (m *BackgroundManager) releaseTransition(sessionID string) {
+	m.mu.Lock()
+	delete(m.transitions, sessionID)
+	m.mu.Unlock()
+}
+
+func (m *BackgroundManager) hasActiveWorker(sessionID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.active[sessionID]
+	return ok
+}
+
+func (m *BackgroundManager) managerDone() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.closed || m.ctx.Err() != nil
+}
+
+func isExplicitCancellation(ctx context.Context, workerErr error) bool {
+	if workerErr == nil || !errors.Is(workerErr, context.Canceled) {
+		return false
+	}
+	cause := context.Cause(ctx)
+	return errors.Is(cause, errBackgroundStop) || errors.Is(cause, errBackgroundShutdown)
 }
 
 func (m *BackgroundManager) appendAudit(policy BackgroundPolicy, action string) error {

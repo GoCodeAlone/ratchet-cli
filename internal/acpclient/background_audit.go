@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -31,7 +30,6 @@ type BackgroundAuditRecord struct {
 
 type BackgroundAudit struct {
 	path string
-	mu   sync.Mutex
 }
 
 func NewBackgroundAudit(path string) *BackgroundAudit {
@@ -73,12 +71,10 @@ func (a *BackgroundAudit) Append(record BackgroundAuditRecord) (err error) {
 		return err
 	}
 
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if err := os.MkdirAll(filepath.Dir(a.path), 0o755); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(a.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	lock := backgroundPathLock(a.path)
+	lock.Lock()
+	defer lock.Unlock()
+	f, err := backgroundOpenPrivateAppend(a.path)
 	if err != nil {
 		return err
 	}
@@ -87,9 +83,6 @@ func (a *BackgroundAudit) Append(record BackgroundAuditRecord) (err error) {
 			err = closeErr
 		}
 	}()
-	if err := f.Chmod(0o600); err != nil {
-		return err
-	}
 	if _, err := f.Write(append(line, '\n')); err != nil {
 		return err
 	}
@@ -100,8 +93,9 @@ func (a *BackgroundAudit) Read() ([]BackgroundAuditRecord, error) {
 	if a == nil || strings.TrimSpace(a.path) == "" {
 		return nil, errors.New("acp background audit path is required")
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	lock := backgroundPathLock(a.path)
+	lock.Lock()
+	defer lock.Unlock()
 	f, err := os.Open(a.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
