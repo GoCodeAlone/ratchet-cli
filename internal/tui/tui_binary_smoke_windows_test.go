@@ -143,7 +143,7 @@ func TestTUIBinaryWindowsConPTYProviderSave(t *testing.T) {
 	mustExpectConPTY(t, cp, "Connection successful", 15*time.Second, red)
 	cp.SendUnterminated("\r")
 	mustExpectConPTY(t, cp, "Message ratchet", 8*time.Second, red)
-	sendConPTYLine(cp, "/exit")
+	sendConPTYLine(cp, "/exit ")
 	if err := expectConPTYExit(cp, 8*time.Second); err != nil {
 		t.Fatalf("wait for provider smoke exit: %v\n%s", err, red(cp.Snapshot()))
 	}
