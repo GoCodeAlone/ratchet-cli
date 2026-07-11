@@ -300,8 +300,13 @@ func TestWaitProviderSecretAdmissionOutcomes(t *testing.T) {
 			if tt.wantErr == nil && tt.wantMsg == "" && err != nil {
 				t.Fatalf("wait error = %v, want nil", err)
 			}
-			if tt.wantMsg != "" && !strings.Contains(err.Error(), tt.wantMsg) {
-				t.Fatalf("wait error = %q, want substring %q", err, tt.wantMsg)
+			if tt.wantMsg != "" {
+				if err == nil {
+					t.Fatalf("wait error = nil, want substring %q", tt.wantMsg)
+				}
+				if !strings.Contains(err.Error(), tt.wantMsg) {
+					t.Fatalf("wait error = %q, want substring %q", err, tt.wantMsg)
+				}
 			}
 		})
 	}
