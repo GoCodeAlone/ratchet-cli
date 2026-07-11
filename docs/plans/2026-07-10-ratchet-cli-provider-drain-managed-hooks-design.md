@@ -573,3 +573,16 @@ trigger to hold the production-created cleanup row, then releases the gate and
 requires exact file-provider secret/journal convergence. Git/build diagnostics
 are redacted and worktree cleanup is registered before creation.
 Scope: no manifest change; this hardens Task 5's existing downgrade proof.
+
+### Backport 2026-07-11: Legacy provider failure status
+
+Cause: legacy synchronous `AddProvider` delegated to durable saves but flattened
+all terminal operation failures into gRPC `Internal`, hiding actionable busy,
+conflict, invalid-request, and unavailable-secret-store outcomes.
+Change: map durable failure enums to stable gRPC status codes and retain the
+non-secret provider-settings parse reason under a bounded validation prefix.
+Scope: no manifest change; this preserves Task 4's legacy compatibility while
+making Task 5 failure evidence actionable.
+Evidence: a blocked alias crosses the real `AddProvider` boundary as `Aborted`;
+table coverage fixes all failure mappings, and malformed settings retain the
+JSON parser reason without echoing the settings body.

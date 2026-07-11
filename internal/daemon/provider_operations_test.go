@@ -257,6 +257,74 @@ func TestProviderOperationBlockingSecretAdmissionAndRestart(t *testing.T) {
 	}
 }
 
+func TestAddProviderMapsAliasBusyToAborted(t *testing.T) {
+	provider := newOperationSecrets()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	provider.setHook = func(_ context.Context, _, value string) error {
+		if value == "blocked-secret" {
+			close(started)
+			<-release
+		}
+		return nil
+	}
+	svc, _ := newProviderOperationTestService(t, provider)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = svc.CommitProviderSave(t.Context(), providerSaveRequest(
+			"70b4ec9e-5144-4587-bb43-7124143d56ad", "blocked", "blocked-secret",
+		))
+	}()
+	<-started
+
+	_, err := svc.AddProvider(t.Context(), &pb.AddProviderReq{
+		Alias: "blocked", Type: "openai", Model: "replacement", ApiKey: "replacement-secret",
+	})
+	if got := status.Code(err); got != codes.Aborted {
+		t.Fatalf("AddProvider busy code = %v, want Aborted (err=%v)", got, err)
+	}
+	close(release)
+	<-done
+}
+
+func TestProviderSaveFailureErrorCodes(t *testing.T) {
+	tests := []struct {
+		failure pb.ProviderOperationFailure
+		code    codes.Code
+	}{
+		{pb.ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_INVALID_REQUEST, codes.InvalidArgument},
+		{pb.ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_OPERATION_CONFLICT, codes.AlreadyExists},
+		{pb.ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_ALIAS_BUSY, codes.Aborted},
+		{pb.ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_RESTART_RECOVERY, codes.Aborted},
+		{pb.ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_SECRET_STORE, codes.Unavailable},
+		{pb.ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_DATABASE, codes.Internal},
+		{pb.ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_FINALIZATION, codes.Internal},
+		{pb.ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_INTERNAL, codes.Internal},
+	}
+	for _, tt := range tests {
+		if got := status.Code(providerSaveFailureError(tt.failure)); got != tt.code {
+			t.Errorf("providerSaveFailureError(%s) code = %v, want %v", tt.failure, got, tt.code)
+		}
+	}
+}
+
+func TestValidateProviderSaveRequestExplainsInvalidSettings(t *testing.T) {
+	const malformed = `{"region":}`
+	_, _, err := validateProviderSaveRequest(&pb.CommitProviderSaveReq{
+		OperationId: "70b4ec9e-5144-4587-bb43-7124143d56ad",
+		Provider: &pb.AddProviderReq{
+			Alias: "custom", Type: "custom", Settings: malformed,
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid provider settings: invalid character") {
+		t.Fatalf("invalid settings error = %v", err)
+	}
+	if strings.Contains(err.Error(), malformed) {
+		t.Fatal("invalid settings error echoed the settings body")
+	}
+}
+
 func TestProviderOperationWorkerPanicReleasesOwnership(t *testing.T) {
 	provider := newOperationSecrets()
 	var logs bytes.Buffer

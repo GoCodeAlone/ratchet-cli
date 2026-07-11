@@ -541,8 +541,11 @@ func (s *Service) AddProvider(ctx context.Context, req *pb.AddProviderReq) (*pb.
 	if err != nil {
 		return nil, err
 	}
-	if op.GetState() != pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED || op.GetResult() == nil {
-		return nil, status.Errorf(codes.Internal, "provider save failed: %s", op.GetFailure())
+	if op.GetState() != pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED {
+		return nil, providerSaveFailureError(op.GetFailure())
+	}
+	if op.GetResult() == nil {
+		return nil, status.Error(codes.Internal, "provider save committed without a result")
 	}
 	return &pb.Provider{
 		Alias:     op.GetResult().GetAlias(),
@@ -551,6 +554,22 @@ func (s *Service) AddProvider(ctx context.Context, req *pb.AddProviderReq) (*pb.
 		BaseUrl:   req.GetBaseUrl(),
 		IsDefault: op.GetResult().GetIsDefault(),
 	}, nil
+}
+
+func providerSaveFailureError(failure pb.ProviderOperationFailure) error {
+	code := codes.Internal
+	switch failure {
+	case pb.ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_INVALID_REQUEST:
+		code = codes.InvalidArgument
+	case pb.ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_OPERATION_CONFLICT:
+		code = codes.AlreadyExists
+	case pb.ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_ALIAS_BUSY,
+		pb.ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_RESTART_RECOVERY:
+		code = codes.Aborted
+	case pb.ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_SECRET_STORE:
+		code = codes.Unavailable
+	}
+	return status.Errorf(code, "provider save failed: %s", failure)
 }
 
 func (s *Service) CommitProviderSave(ctx context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {

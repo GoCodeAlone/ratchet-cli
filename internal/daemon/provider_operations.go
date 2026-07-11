@@ -189,7 +189,7 @@ func validateProviderSaveRequest(req *pb.CommitProviderSaveReq) (*pb.AddProvider
 	}
 	settings, err := normalizeProviderSettings(provider.GetSettings())
 	if err != nil {
-		return nil, "", fmt.Errorf("invalid provider settings")
+		return nil, "", fmt.Errorf("invalid provider settings: %w", err)
 	}
 	return provider, settings, nil
 }
