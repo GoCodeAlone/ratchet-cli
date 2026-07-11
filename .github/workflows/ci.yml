@@ -102,6 +102,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
@@ -114,6 +116,20 @@ jobs:
         run: go test -tags tui_smoke ./internal/client -run 'ConnectSmokeUnix' -count=1
       - name: Run tagged daemon smoke tests
         run: go test -tags tui_smoke ./internal/daemon -run 'SmokeService|ListJobs' -count=1
+      - name: Run production provider durability smoke
+        run: go test ./cmd/ratchet -run 'HarnessSmokeDurableProviderSaveRestart' -count=1 -timeout=12m
+      - name: Run production provider downgrade smoke
+        shell: bash
+        env:
+          RATCHET_DOWNGRADE_BASE_SHA: 8cb5602166ffe529a0f05101dff583bad0919415
+        run: |
+          log=$(mktemp)
+          trap 'rm -f "$log"' EXIT
+          if ! go test -json ./cmd/ratchet -run '^TestHarnessSmokeDurableProviderDowngrade$' -count=1 -timeout=12m >"$log"; then
+            jq -c 'select(.Action == "fail" or .Action == "skip") | {Action,Package,Elapsed}' "$log" >&2 || true
+            exit 1
+          fi
+          jq -e 'select(.Action == "pass" and .Test == "TestHarnessSmokeDurableProviderDowngrade")' "$log" >/dev/null
 
   windows-conpty-smoke:
     name: Windows ConPTY Smoke

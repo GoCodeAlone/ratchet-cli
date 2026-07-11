@@ -605,6 +605,8 @@ then run the Task 5 downgrade smoke before merge.
 ### Task 5: Prove, Document, Merge, and Release Unified Provider Setup
 
 **Files:**
+- Modify: `go.mod`
+- Modify: `go.sum`
 - Modify: `.github/workflows/ci.yml`
 - Modify: `internal/releaseguard/workflow_test.go`
 - Modify: `cmd/ratchet-tui-smoke/main.go`

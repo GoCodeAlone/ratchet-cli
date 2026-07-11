@@ -10,7 +10,7 @@ require (
 	github.com/GoCodeAlone/acpx-go v0.2.1
 	github.com/GoCodeAlone/workflow v0.85.2
 	github.com/GoCodeAlone/workflow-plugin-acpx v0.1.0
-	github.com/GoCodeAlone/workflow-plugin-agent v0.12.7
+	github.com/GoCodeAlone/workflow-plugin-agent v0.12.8
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/coder/acp-go-sdk v0.6.3
 	github.com/creack/pty v1.1.24

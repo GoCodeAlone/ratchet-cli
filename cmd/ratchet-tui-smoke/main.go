@@ -4,7 +4,9 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -25,12 +27,15 @@ func main() {
 func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if err := configureSmokeTrust(); err != nil {
+		return err
+	}
 
-	tempRoot, err := os.MkdirTemp("", "ratchet-tui-smoke-*")
+	tempRoot, removeRoot, err := smokeRoot()
 	if err != nil {
 		return fmt.Errorf("create temp root: %w", err)
 	}
-	defer os.RemoveAll(tempRoot)
+	defer removeRoot()
 
 	socketPath := filepath.Join(tempRoot, "ratchet.sock")
 	session, cleanup, err := daemon.StartTUISmokeDaemon(ctx, tempRoot, socketPath)
@@ -46,4 +51,37 @@ func run() error {
 	defer c.Close()
 
 	return tui.Run(ctx, c, session)
+}
+
+func smokeRoot() (string, func(), error) {
+	if root := os.Getenv("RATCHET_TUI_SMOKE_ROOT"); root != "" {
+		if err := os.MkdirAll(root, 0700); err != nil {
+			return "", func() {}, err
+		}
+		return root, func() {}, nil
+	}
+	root, err := os.MkdirTemp("", "ratchet-tui-smoke-*")
+	if err != nil {
+		return "", func() {}, err
+	}
+	return root, func() { _ = os.RemoveAll(root) }, nil
+}
+
+func configureSmokeTrust() error {
+	certFile := os.Getenv("RATCHET_TUI_SMOKE_CA_FILE")
+	if certFile == "" {
+		return nil
+	}
+	certPEM, err := os.ReadFile(certFile)
+	if err != nil {
+		return fmt.Errorf("read smoke CA: %w", err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(certPEM) {
+		return fmt.Errorf("load smoke CA: no certificates found")
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig.RootCAs = roots
+	http.DefaultTransport = transport
+	return nil
 }

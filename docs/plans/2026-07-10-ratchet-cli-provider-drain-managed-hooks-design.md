@@ -324,7 +324,7 @@ Release artifacts remain the existing GoReleaser matrix, including Windows.
 | Catalog to CLI | Contract tests enumerate every visible catalog entry through setup list/guide commands and accepted aliases. |
 | Catalog to TUI | State-machine tests traverse auth, settings, discovery, manual fallback, CLI-backed setup, and secret review suppression from catalog entries. |
 | Provider save transaction | Real daemon + SQLite + stateful secret provider prove pending journal, idempotent replay/conflict, commit result, rollback preserving the active credential, cache invalidation, redactor registration, restart transition, cleanup retry, and exact operation polling. |
-| TUI runtime | A persistent smoke daemon plus local OpenAI-compatible HTTP fixture drives real PTY/ConPTY catalog navigation and one complete save through `CommitProviderSave`; tests inspect operation/provider/secret state, redaction, and sentinel-free output. |
+| TUI runtime | A persistent smoke daemon plus local OpenAI-compatible HTTPS fixture drives real PTY/ConPTY catalog navigation and one complete save through `CommitProviderSave`; tests inspect operation/provider/secret state, redaction, and sentinel-free output. Registry resolution consumes the rotated credential through a production-valid HTTPS endpoint rather than bypassing constructor security validation. |
 | Daemon restart | Integration test persists an enabled policy, restarts the service, proves matching trusted profile resumes, then proves fingerprint drift blocks launch. |
 | Queue lifecycle | Existing claim/cancel/stale paths are exercised through the daemon manager with fake agents and deterministic contexts. |
 | Managed hooks | Loader/engine tests cover missing, malformed, insecure ownership/link, additive, managed-only, plugin reload, immutable trust/disable, pre-launch audit failure, and terminal audit failure behavior. |
@@ -536,3 +536,40 @@ Change: promote the existing `x/sys` version to a direct dependency and use its
 platform-native `windows.Overlapped` type; Unix uses the sibling `unix.Flock`.
 Scope: no manifest change; Task 4 and PR 2 are unchanged.
 Evidence: Unix lock tests pass and the Windows daemon test binary cross-compiles.
+
+### Backport 2026-07-11: Native OpenAI token-limit config
+
+Cause: the fresh-process Custom provider smoke reached Genkit with Ratchet's
+nonzero token default, but `workflow-plugin-agent` passed
+`*ai.GenerationCommonConfig` to an adapter requiring
+`*openai.ChatCompletionNewParams`.
+Change: consume `workflow-plugin-agent` v0.12.8; direct OpenAI/Azure use
+`max_completion_tokens`, generic compatible endpoints retain `max_tokens`.
+Scope: no manifest change; dependency correction is required by Task 5's real
+save/test proof.
+Evidence: upstream PR #41 regression tests cross constructor, Genkit, and local
+HTTP boundaries; Ratchet `TestTUIBinarySmokeProviderSave` must reach a
+successful connection before persistence assertions.
+
+### Backport 2026-07-11: SQLite smoke connection pragmas
+
+Cause: modernc SQLite ignores `_journal_mode` and `_busy_timeout`; the restart
+proof exposed immediate `SQLITE_BUSY` despite the intended timeout.
+Change: configure smoke WAL and busy timeout through supported repeated
+`_pragma` parameters on service and inspection handles.
+Scope: no manifest change; this corrects Task 5's persistent restart fixture.
+Evidence: durable upsert/retry injection fails `database is locked` with the
+old DSN and converges with `_pragma=busy_timeout(5000)`.
+
+### Backport 2026-07-11: Mixed-version fixture dependency and journal proof
+
+Cause: the pre-RPC compatibility revision pins the pre-fix provider adapter, so
+its real Custom provider test cannot reach the mixed-version fixture; terminal
+cleanup state alone also cannot prove durable journaling.
+Change: preserve the historical source/proto boundary while pinning its detached
+build to released `workflow-plugin-agent` v0.12.8. The downgrade harness proves
+the current daemon lock is held before release, uses a deterministic database
+trigger to hold the production-created cleanup row, then releases the gate and
+requires exact file-provider secret/journal convergence. Git/build diagnostics
+are redacted and worktree cleanup is registered before creation.
+Scope: no manifest change; this hardens Task 5's existing downgrade proof.

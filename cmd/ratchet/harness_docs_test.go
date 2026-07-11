@@ -117,6 +117,58 @@ func TestHarnessEmulationDocsCoverPolicyMatrixLayers(t *testing.T) {
 	}
 }
 
+func TestHarnessDocsDescribeUnifiedProviderSetup(t *testing.T) {
+	readme := readHarnessDoc(t, "../../README.md")
+	harness := readHarnessDoc(t, "../../docs/harness-emulation.md")
+	parity := readHarnessDoc(t, "../../docs/competitor-parity.md")
+	matrix := readHarnessDoc(t, "../../docs/policy-matrix.md")
+	publicDocs := strings.Join([]string{readme, harness, parity, matrix}, "\n")
+
+	for _, required := range []string{
+		"same provider catalog",
+		"CLI and TUI",
+		"API providers",
+		"Compatible endpoints",
+		"Subscriptions",
+		"Cloud platforms",
+		"Local runtimes",
+		"CLI-backed agents",
+		"manual model ID",
+		"model discovery",
+		"resource",
+		"deployment_name",
+		"api_version",
+		"project_id",
+		"access_key_id",
+		"region",
+		"secret provider",
+		"secret reference",
+		"operation/status/log output",
+		"durable provider save",
+		"Windows ConPTY provider save",
+	} {
+		if !containsWords(publicDocs, required) {
+			t.Fatalf("unified provider docs missing %q", required)
+		}
+	}
+	for _, providerType := range []string{
+		"anthropic", "openai", "googleai", "openrouter", "cohere", "copilot_models",
+		"openai_compatible", "anthropic_compatible", "custom", "openai_chatgpt", "copilot",
+		"openai_azure", "anthropic_foundry", "anthropic_vertex", "bedrock", "ollama",
+		"llama_cpp", "claude_code", "copilot_cli", "codex_cli", "gemini_cli", "cursor_cli",
+	} {
+		if !strings.Contains(publicDocs, "`"+providerType+"`") {
+			t.Fatalf("unified provider docs missing canonical type %q", providerType)
+		}
+	}
+	lower := strings.ToLower(publicDocs)
+	for _, forbidden := range []string{"only five providers", "five providers"} {
+		if strings.Contains(lower, forbidden) {
+			t.Fatalf("unified provider docs retain stale claim %q", forbidden)
+		}
+	}
+}
+
 func TestHarnessDocsDescribeTUIBinaryEvidenceBoundaries(t *testing.T) {
 	readme := readHarnessDoc(t, "../../README.md")
 	harness := readHarnessDoc(t, "../../docs/harness-emulation.md")

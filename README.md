@@ -70,6 +70,35 @@ Use `ratchet provider setup list --json` and
 needs machine-readable install, auth, and verification steps without scraping
 the interactive setup command.
 
+### Provider Setup
+
+The CLI and TUI use the same provider catalog. Run `ratchet provider setup
+list`, `ratchet provider setup guide <provider>`, or `/provider add` in the TUI;
+both paths collect the same authentication, settings, endpoint, and model
+contract.
+
+| Category | Canonical provider types |
+|---|---|
+| API providers | `anthropic`, `openai`, `googleai`, `openrouter`, `cohere`, `copilot_models` |
+| Compatible endpoints | `openai_compatible`, `anthropic_compatible`, `custom` |
+| Subscriptions | `openai_chatgpt`, `copilot` |
+| Cloud platforms | `openai_azure`, `anthropic_foundry`, `anthropic_vertex`, `bedrock` |
+| Local runtimes | `ollama`, `llama_cpp` |
+| CLI-backed agents | `claude_code`, `copilot_cli`, `codex_cli`, `gemini_cli`, `cursor_cli` |
+
+Model discovery runs after authentication and settings collection. When
+discovery is empty or unavailable, entries that allow it offer a manual model
+ID instead of trapping the user. Compatible endpoints expose their base URL
+and declared settings. Cloud settings remain non-secret: Azure uses `resource`,
+`deployment_name`, and `api_version`; Foundry uses `resource`; Vertex uses
+`project_id` and `region`; Bedrock uses `access_key_id` and `region`.
+
+Credentials go to the daemon's existing secret provider. Persisted provider
+rows keep only a versioned secret reference; settings, review screens, and
+operation/status/log output exclude credential values. A durable provider save
+can be queried with `ratchet provider operation <id> --json` after a daemon
+restart.
+
 On first interactive use, ratchet starts or connects to its local daemon and
 opens the TUI. The daemon owns persisted sessions, team state, blackboard
 entries, trust grants, plugin state, routines, and workflow records. Most data
@@ -298,10 +327,11 @@ builds the untagged `ratchet` binary, starts it against a temp home/workdir,
 reaches the onboarding/provider setup boundary, and shuts the background daemon
 down by RPC; release-shaped startup smoke is not full TUI PTY proof.
 `ratchet-tui-smoke` is build-tagged test-only and is used for Unix PTY binary
-smoke of slash commands, shortcuts, trust state, session tree, and job panel
-flows. Windows ConPTY binary smoke drives the same test-only smoke binary
-through a ConPTY-backed TUI startup, mocked chat turn, slash help, and clean
-exit. GoReleaser snapshot release-check, draft release asset postcheck, tap
+smoke of slash commands, shortcuts, trust state, session tree, job panel, and
+durable provider save flows. Windows ConPTY binary smoke drives the same
+test-only smoke binary through startup, a mocked chat turn, slash help, clean
+exit, and a Windows ConPTY provider save with secret-boundary checks. GoReleaser
+snapshot release-check, draft release asset postcheck, tap
 preflight, generated-cask publish, and tap postcheck gates verify release
 artifacts and the Homebrew cask path before the GitHub release is made public.
 Windows cross-build/package archive inspection is release artifact proof, and

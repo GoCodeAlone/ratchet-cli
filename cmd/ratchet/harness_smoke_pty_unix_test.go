@@ -37,7 +37,7 @@ func startRatchetSmokePTY(t *testing.T, bin string, dir string, env []string, re
 
 	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: 42, Cols: 120})
 	if err != nil {
-		t.Fatalf("start pty: %v", err)
+		t.Fatalf("start pty: %s", red(err.Error()))
 	}
 	waitCh := make(chan error, 1)
 	s := &ratchetSmokePTY{t: t, ptmx: ptmx, cmd: cmd, waitCh: waitCh, red: red, alive: true}
@@ -82,6 +82,10 @@ func (s *ratchetSmokePTY) send(text string) {
 	if _, err := s.ptmx.Write([]byte(text)); err != nil {
 		s.t.Fatalf("pty write: %v", err)
 	}
+}
+
+func (s *ratchetSmokePTY) sendLine(text string) {
+	s.send(text + "\r")
 }
 
 func (s *ratchetSmokePTY) sendCtrl(c byte) {

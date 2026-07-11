@@ -56,8 +56,8 @@ github.com/GoCodeAlone/workflow v0.85.2 h1:u65GfzC0c1bkicOOvyPbgcB1rhodexWd7f+wR
 github.com/GoCodeAlone/workflow v0.85.2/go.mod h1:tqWHdWHCn2ESB4Rj6FiRjKchof9zjcs11o8AtfOiZaU=
 github.com/GoCodeAlone/workflow-plugin-acpx v0.1.0 h1:mwwaLAfsxEIYdIQ4wvV/PkT0Ol30ntGhiun6vArRexI=
 github.com/GoCodeAlone/workflow-plugin-acpx v0.1.0/go.mod h1:Bun12gpt+/WmqlAafEXpxSG1esbI3TAmwWFrgaR1xOY=
-github.com/GoCodeAlone/workflow-plugin-agent v0.12.7 h1:R3sVtDUsOvgq0JXcyD0+5lj8iu4pXvvFbJ6+/dHLSTw=
-github.com/GoCodeAlone/workflow-plugin-agent v0.12.7/go.mod h1:1lLcDxpcL6duN/Ly8lxCmAdCeZAH12aSfSFowSPNwjg=
+github.com/GoCodeAlone/workflow-plugin-agent v0.12.8 h1:FeT5+ONSLrJ7j/cyoL8AlBO4/p2Dk0ondIEhYkQu270=
+github.com/GoCodeAlone/workflow-plugin-agent v0.12.8/go.mod h1:1lLcDxpcL6duN/Ly8lxCmAdCeZAH12aSfSFowSPNwjg=
 github.com/GoCodeAlone/workflow-plugin-authz v0.5.13 h1:5vORZ5sUsVWEs4r/zmmy1cYSFGh8ZzhbVbgn0UhhoXs=
 github.com/GoCodeAlone/workflow-plugin-authz v0.5.13/go.mod h1:O5XEgNZmkqDN+bFGXWI/DUsav0v8brELSbEdxlW9lPQ=
 github.com/GoCodeAlone/yaegi v0.17.2 h1:WK6Y6e0t1a6U7r+S2dN3CGWW1PizYD3zO0zneToZPxM=
