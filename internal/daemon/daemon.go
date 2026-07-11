@@ -21,6 +21,11 @@ func Start(ctx context.Context, debug bool) error {
 	if err := EnsureDataDir(); err != nil {
 		return err
 	}
+	lock, err := acquireDaemonLock()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 

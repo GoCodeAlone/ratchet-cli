@@ -62,6 +62,7 @@ type Service struct {
 	trustMode        string
 	trustStore       *policy.PermissionStore
 	retroRecorder    *retro.Recorder
+	providerOps      *providerOperationManager
 }
 
 func NewService(ctx context.Context) (*Service, error) {
@@ -71,6 +72,11 @@ func NewService(ctx context.Context) (*Service, error) {
 	engine, err := NewEngineContext(ctx, DBPath())
 	if err != nil {
 		return nil, err
+	}
+	providerOps := newProviderOperationManager(engine)
+	if err := providerOps.Start(ctx); err != nil {
+		engine.Close()
+		return nil, fmt.Errorf("start provider operations: %w", err)
 	}
 	sm := NewSessionManager(engine.DB)
 	// Clean up stale sessions from previous daemon runs (24h expiry).
@@ -87,6 +93,7 @@ func NewService(ctx context.Context) (*Service, error) {
 		permGate:     newPermissionGate(),
 		approvalGate: NewApprovalGate(),
 		plans:        NewPlanManagerWithEngine(engine, engine.Hooks),
+		providerOps:  providerOps,
 	}
 	cfg, _ := config.Load()
 	routing := config.ModelRouting{}
@@ -149,6 +156,7 @@ func NewService(ctx context.Context) (*Service, error) {
 		}()
 	})
 	if err := svc.cron.Start(ctx); err != nil {
+		providerOps.Stop()
 		engine.Close()
 		return nil, fmt.Errorf("start cron scheduler: %w", err)
 	}
@@ -526,88 +534,56 @@ func (s *Service) RespondToPermission(ctx context.Context, req *pb.PermissionRes
 }
 
 func (s *Service) AddProvider(ctx context.Context, req *pb.AddProviderReq) (*pb.Provider, error) {
-	id := uuid.New().String()
-	// Only create a secret reference if an API key is provided.
-	// Providers like Ollama don't need keys — storing an empty secret_name
-	// prevents the ProviderRegistry from trying to resolve a nonexistent secret.
-	secretName := ""
-	if req.ApiKey != "" {
-		if !validProviderAliasForSecret(req.Alias) {
-			return nil, status.Errorf(codes.InvalidArgument, "invalid provider alias %q: use only letters, digits, '_' or '-'", req.Alias)
-		}
-		secretName = fmt.Sprintf("provider_%s", req.Alias)
-	}
-
-	isDefault := 0
-	if req.IsDefault {
-		isDefault = 1
-	}
-
-	tx, err := s.engine.DB.BeginTx(ctx, nil)
+	op, err := s.CommitProviderSave(ctx, &pb.CommitProviderSaveReq{
+		OperationId: uuid.NewString(),
+		Provider:    req,
+	})
 	if err != nil {
-		return nil, status.Errorf(codes.Internal, "begin transaction: %v", err)
+		return nil, err
 	}
-	defer tx.Rollback()
-
-	// Clear existing default if this is the new default
-	if req.IsDefault {
-		if _, err := tx.ExecContext(ctx, `UPDATE llm_providers SET is_default = 0`); err != nil {
-			return nil, status.Errorf(codes.Internal, "clear defaults: %v", err)
-		}
+	if op.GetState() != pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED {
+		return nil, providerSaveFailureError(op.GetFailure())
 	}
-
-	// Apply server-side default for max_tokens when the client omits it
-	// (protobuf default is 0, but providers expect a reasonable value).
-	maxTokens := req.MaxTokens
-	if maxTokens == 0 {
-		maxTokens = 4096
+	if op.GetResult() == nil {
+		return nil, status.Error(codes.Internal, "provider save committed without a result")
 	}
-
-	settings, err := normalizeProviderSettings(req.Settings)
-	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid provider settings: %v", err)
-	}
-
-	// Upsert: insert or update if alias already exists.
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO llm_providers (id, alias, type, model, secret_name, base_url, max_tokens, settings, is_default)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(alias) DO UPDATE SET
-		   type = excluded.type,
-		   model = excluded.model,
-		   secret_name = CASE WHEN excluded.secret_name = '' THEN secret_name ELSE excluded.secret_name END,
-		   base_url = CASE WHEN excluded.base_url = '' THEN base_url ELSE excluded.base_url END,
-		   settings = CASE WHEN excluded.settings = '{}' THEN settings ELSE excluded.settings END,
-		   max_tokens = excluded.max_tokens,
-		   is_default = excluded.is_default`,
-		id, req.Alias, req.Type, req.Model, secretName, req.BaseUrl, maxTokens, settings, isDefault,
-	); err != nil {
-		return nil, status.Errorf(codes.Internal, "insert provider: %v", err)
-	}
-
-	// Store API key after successful insert
-	if req.ApiKey != "" {
-		if err := s.engine.SecretsProvider.Set(ctx, secretName, req.ApiKey); err != nil {
-			return nil, status.Errorf(codes.Internal, "store api key: %v", err)
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return nil, status.Errorf(codes.Internal, "commit: %v", err)
-	}
-	if req.ApiKey != "" && s.engine.SecretsRedactor != nil {
-		s.engine.SecretsRedactor.AddValue(secretName, req.ApiKey)
-	}
-
-	s.engine.ProviderRegistry.InvalidateCacheAlias(req.Alias)
-
 	return &pb.Provider{
-		Alias:     req.Alias,
-		Type:      req.Type,
-		Model:     req.Model,
-		BaseUrl:   req.BaseUrl,
-		IsDefault: req.IsDefault,
+		Alias:     op.GetResult().GetAlias(),
+		Type:      op.GetResult().GetType(),
+		Model:     op.GetResult().GetModel(),
+		BaseUrl:   req.GetBaseUrl(),
+		IsDefault: op.GetResult().GetIsDefault(),
 	}, nil
+}
+
+func providerSaveFailureError(failure pb.ProviderOperationFailure) error {
+	code := codes.Internal
+	switch failure {
+	case pb.ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_INVALID_REQUEST:
+		code = codes.InvalidArgument
+	case pb.ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_OPERATION_CONFLICT:
+		code = codes.AlreadyExists
+	case pb.ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_ALIAS_BUSY,
+		pb.ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_RESTART_RECOVERY:
+		code = codes.Aborted
+	case pb.ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_SECRET_STORE:
+		code = codes.Unavailable
+	}
+	return status.Errorf(code, "provider save failed: %s", failure)
+}
+
+func (s *Service) CommitProviderSave(ctx context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+	if s.providerOps == nil {
+		return nil, status.Error(codes.FailedPrecondition, "provider operations are not initialized")
+	}
+	return s.providerOps.Commit(ctx, req)
+}
+
+func (s *Service) GetProviderOperation(ctx context.Context, req *pb.GetProviderOperationReq) (*pb.ProviderOperation, error) {
+	if s.providerOps == nil {
+		return nil, status.Error(codes.FailedPrecondition, "provider operations are not initialized")
+	}
+	return s.providerOps.Get(ctx, req.GetOperationId())
 }
 
 func normalizeProviderSettings(settings string) (string, error) {
@@ -681,14 +657,41 @@ func (s *Service) TestProvider(ctx context.Context, req *pb.TestProviderReq) (*p
 }
 
 func (s *Service) RemoveProvider(ctx context.Context, req *pb.RemoveProviderReq) (*pb.Empty, error) {
-	if _, err := s.engine.DB.ExecContext(ctx, `DELETE FROM llm_providers WHERE alias = ?`, req.Alias); err != nil {
+	if s.providerOps != nil {
+		releaseAlias := s.providerOps.acquireAlias(req.GetAlias())
+		defer releaseAlias()
+	}
+	s.engine.ProviderRowsMu.Lock()
+	defer s.engine.ProviderRowsMu.Unlock()
+	tx, err := s.engine.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "begin transaction: %v", err)
+	}
+	defer tx.Rollback()
+	var secretName string
+	err = tx.QueryRowContext(ctx, `SELECT secret_name FROM llm_providers WHERE alias = ?`, req.Alias).Scan(&secretName)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, status.Errorf(codes.Internal, "query provider: %v", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM llm_providers WHERE alias = ?`, req.Alias); err != nil {
 		return nil, status.Errorf(codes.Internal, "delete provider: %v", err)
 	}
+	if err := queueProviderSecretCleanupTx(ctx, tx, secretName); err != nil {
+		return nil, status.Errorf(codes.Internal, "queue provider secret cleanup: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, status.Errorf(codes.Internal, "commit: %v", err)
+	}
 	s.engine.ProviderRegistry.InvalidateCacheAlias(req.Alias)
+	if s.providerOps != nil {
+		s.providerOps.WakeCleanup()
+	}
 	return &pb.Empty{}, nil
 }
 
 func (s *Service) SetDefaultProvider(ctx context.Context, req *pb.SetDefaultProviderReq) (*pb.Empty, error) {
+	s.engine.ProviderRowsMu.Lock()
+	defer s.engine.ProviderRowsMu.Unlock()
 	tx, err := s.engine.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "begin transaction: %v", err)
@@ -725,6 +728,8 @@ func (s *Service) GetAgentStatus(ctx context.Context, req *pb.AgentStatusReq) (*
 }
 
 func (s *Service) UpdateProviderModel(ctx context.Context, req *pb.UpdateProviderModelReq) (*pb.Empty, error) {
+	s.engine.ProviderRowsMu.Lock()
+	defer s.engine.ProviderRowsMu.Unlock()
 	result, err := s.engine.DB.ExecContext(ctx, "UPDATE llm_providers SET model = ? WHERE alias = ?", req.Model, req.Alias)
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "update model: %v", err)

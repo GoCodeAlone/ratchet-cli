@@ -39,6 +39,8 @@ const (
 	RatchetDaemon_AddTrustGrant_FullMethodName          = "/ratchet.RatchetDaemon/AddTrustGrant"
 	RatchetDaemon_RevokeTrustGrant_FullMethodName       = "/ratchet.RatchetDaemon/RevokeTrustGrant"
 	RatchetDaemon_AddProvider_FullMethodName            = "/ratchet.RatchetDaemon/AddProvider"
+	RatchetDaemon_CommitProviderSave_FullMethodName     = "/ratchet.RatchetDaemon/CommitProviderSave"
+	RatchetDaemon_GetProviderOperation_FullMethodName   = "/ratchet.RatchetDaemon/GetProviderOperation"
 	RatchetDaemon_ListProviders_FullMethodName          = "/ratchet.RatchetDaemon/ListProviders"
 	RatchetDaemon_TestProvider_FullMethodName           = "/ratchet.RatchetDaemon/TestProvider"
 	RatchetDaemon_RemoveProvider_FullMethodName         = "/ratchet.RatchetDaemon/RemoveProvider"
@@ -123,6 +125,8 @@ type RatchetDaemonClient interface {
 	RevokeTrustGrant(ctx context.Context, in *RevokeTrustGrantReq, opts ...grpc.CallOption) (*TrustState, error)
 	// Providers
 	AddProvider(ctx context.Context, in *AddProviderReq, opts ...grpc.CallOption) (*Provider, error)
+	CommitProviderSave(ctx context.Context, in *CommitProviderSaveReq, opts ...grpc.CallOption) (*ProviderOperation, error)
+	GetProviderOperation(ctx context.Context, in *GetProviderOperationReq, opts ...grpc.CallOption) (*ProviderOperation, error)
 	ListProviders(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ProviderList, error)
 	TestProvider(ctx context.Context, in *TestProviderReq, opts ...grpc.CallOption) (*TestProviderResult, error)
 	RemoveProvider(ctx context.Context, in *RemoveProviderReq, opts ...grpc.CallOption) (*Empty, error)
@@ -412,6 +416,26 @@ func (c *ratchetDaemonClient) AddProvider(ctx context.Context, in *AddProviderRe
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Provider)
 	err := c.cc.Invoke(ctx, RatchetDaemon_AddProvider_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ratchetDaemonClient) CommitProviderSave(ctx context.Context, in *CommitProviderSaveReq, opts ...grpc.CallOption) (*ProviderOperation, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ProviderOperation)
+	err := c.cc.Invoke(ctx, RatchetDaemon_CommitProviderSave_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ratchetDaemonClient) GetProviderOperation(ctx context.Context, in *GetProviderOperationReq, opts ...grpc.CallOption) (*ProviderOperation, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ProviderOperation)
+	err := c.cc.Invoke(ctx, RatchetDaemon_GetProviderOperation_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1025,6 +1049,8 @@ type RatchetDaemonServer interface {
 	RevokeTrustGrant(context.Context, *RevokeTrustGrantReq) (*TrustState, error)
 	// Providers
 	AddProvider(context.Context, *AddProviderReq) (*Provider, error)
+	CommitProviderSave(context.Context, *CommitProviderSaveReq) (*ProviderOperation, error)
+	GetProviderOperation(context.Context, *GetProviderOperationReq) (*ProviderOperation, error)
 	ListProviders(context.Context, *Empty) (*ProviderList, error)
 	TestProvider(context.Context, *TestProviderReq) (*TestProviderResult, error)
 	RemoveProvider(context.Context, *RemoveProviderReq) (*Empty, error)
@@ -1161,6 +1187,12 @@ func (UnimplementedRatchetDaemonServer) RevokeTrustGrant(context.Context, *Revok
 }
 func (UnimplementedRatchetDaemonServer) AddProvider(context.Context, *AddProviderReq) (*Provider, error) {
 	return nil, status.Error(codes.Unimplemented, "method AddProvider not implemented")
+}
+func (UnimplementedRatchetDaemonServer) CommitProviderSave(context.Context, *CommitProviderSaveReq) (*ProviderOperation, error) {
+	return nil, status.Error(codes.Unimplemented, "method CommitProviderSave not implemented")
+}
+func (UnimplementedRatchetDaemonServer) GetProviderOperation(context.Context, *GetProviderOperationReq) (*ProviderOperation, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetProviderOperation not implemented")
 }
 func (UnimplementedRatchetDaemonServer) ListProviders(context.Context, *Empty) (*ProviderList, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListProviders not implemented")
@@ -1684,6 +1716,42 @@ func _RatchetDaemon_AddProvider_Handler(srv interface{}, ctx context.Context, de
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RatchetDaemonServer).AddProvider(ctx, req.(*AddProviderReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RatchetDaemon_CommitProviderSave_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CommitProviderSaveReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RatchetDaemonServer).CommitProviderSave(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RatchetDaemon_CommitProviderSave_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RatchetDaemonServer).CommitProviderSave(ctx, req.(*CommitProviderSaveReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RatchetDaemon_GetProviderOperation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetProviderOperationReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RatchetDaemonServer).GetProviderOperation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RatchetDaemon_GetProviderOperation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RatchetDaemonServer).GetProviderOperation(ctx, req.(*GetProviderOperationReq))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2674,6 +2742,14 @@ var RatchetDaemon_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "AddProvider",
 			Handler:    _RatchetDaemon_AddProvider_Handler,
+		},
+		{
+			MethodName: "CommitProviderSave",
+			Handler:    _RatchetDaemon_CommitProviderSave_Handler,
+		},
+		{
+			MethodName: "GetProviderOperation",
+			Handler:    _RatchetDaemon_GetProviderOperation_Handler,
 		},
 		{
 			MethodName: "ListProviders",

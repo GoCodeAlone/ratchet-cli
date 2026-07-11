@@ -4,8 +4,16 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"encoding/pem"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +21,235 @@ import (
 	"github.com/GoCodeAlone/ratchet-cli/internal/client"
 	"github.com/GoCodeAlone/ratchet-cli/internal/daemon"
 	"github.com/GoCodeAlone/ratchet-cli/internal/harnessredact"
+	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
+	"github.com/GoCodeAlone/workflow/secrets"
+	"google.golang.org/protobuf/encoding/protojson"
+	_ "modernc.org/sqlite"
 )
+
+func TestHarnessSmokeDurableProviderSaveRestart(t *testing.T) {
+	if raceEnabled {
+		t.Skip("production provider durability smoke is disabled under -race")
+	}
+	if runtime.GOOS == "darwin" {
+		t.Skip("macOS system verification ignores SSL_CERT_FILE; Linux CI owns the hermetic TLS fixture proof")
+	}
+	const sentinel = "HARNESS-PROVIDER-SECRET-SENTINEL"
+	fixture := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/chat/completions", "/v1/chat/completions":
+			_, _ = w.Write([]byte(`{"id":"chatcmpl-smoke","object":"chat.completion","model":"fixture-model","choices":[{"index":0,"message":{"role":"assistant","content":"provider smoke ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(fixture.Close)
+	proxy := newHarnessProviderConnectProxy(t, fixture.Listener.Addr().String())
+	t.Cleanup(proxy.Close)
+
+	bin := buildRatchetSmokeBinary(t)
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	state := filepath.Join(home, ".local", "state")
+	work := filepath.Join(root, "work")
+	certFile := filepath.Join(root, "provider-fixture-ca.pem")
+	for _, dir := range []string{home, state, work} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	certificate := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: fixture.Certificate().Raw})
+	if err := os.WriteFile(certFile, certificate, 0o600); err != nil {
+		t.Fatalf("write provider fixture certificate: %v", err)
+	}
+	providerBaseURL := "https://example.com"
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_STATE_HOME", state)
+	t.Setenv("SSL_CERT_FILE", certFile)
+	t.Setenv("HTTPS_PROXY", proxy.URL)
+	t.Setenv("NO_PROXY", "")
+	red := harnessredact.New(home, state, work, root, bin, certFile, fixture.URL, proxy.URL, providerBaseURL, daemon.SocketPath(), daemon.PIDPath(), sentinel).String
+	env := []string{
+		"HOME=" + home,
+		"USERPROFILE=" + home,
+		"XDG_STATE_HOME=" + state,
+		"SSL_CERT_FILE=" + certFile,
+		"HTTPS_PROXY=" + proxy.URL,
+		"NO_PROXY=",
+	}
+	t.Cleanup(bestEffortShutdownHarnessSmokeDaemon)
+
+	s := startRatchetSmokePTY(t, bin, work, env, red,
+		"provider", "add", "custom", "durable-smoke", "--model", "fixture-model", "--json")
+	s.waitFor("API key", 10*time.Second)
+	s.sendLine(sentinel)
+	s.waitFor("API compatibility", 10*time.Second)
+	s.sendLine("")
+	s.waitFor("Base URL", 10*time.Second)
+	s.sendLine(providerBaseURL)
+	addOutput := s.waitExit(20 * time.Second)
+	if strings.Contains(addOutput, sentinel) {
+		t.Fatal("provider add output exposed credential sentinel")
+	}
+	operationID := providerOperationIDFromSmokeOutput(t, addOutput, red)
+	waitForRatchetSmokePresent(t, daemon.SocketPath(), 5*time.Second)
+	waitForRatchetSmokePresent(t, daemon.PIDPath(), 5*time.Second)
+
+	operationOutput, err := runRatchetSmoke(t, bin, home, "provider", "operation", operationID, "--json")
+	if err != nil {
+		t.Fatalf("query provider operation: %v\n%s", err, red(operationOutput))
+	}
+	var persistedOperation pb.ProviderOperation
+	if err := protojson.Unmarshal([]byte(operationOutput), &persistedOperation); err != nil {
+		t.Fatalf("decode provider operation: %v\n%s", err, red(operationOutput))
+	}
+	if persistedOperation.GetOperationId() != operationID || persistedOperation.GetState() != pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED {
+		t.Fatalf("provider operation = id_match:%t state:%s", persistedOperation.GetOperationId() == operationID, persistedOperation.GetState())
+	}
+	if strings.Contains(operationOutput, sentinel) {
+		t.Fatal("provider operation output exposed credential sentinel")
+	}
+
+	db, err := sql.Open("sqlite", daemon.DBPath()+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatalf("open production smoke database: %v", err)
+	}
+	defer db.Close()
+	var secretName string
+	if err := db.QueryRow(`SELECT secret_name FROM llm_providers WHERE alias = 'durable-smoke'`).Scan(&secretName); err != nil {
+		t.Fatalf("query production provider pointer: %v", err)
+	}
+	if !strings.HasPrefix(secretName, "provider-v2-") {
+		t.Fatal("production provider secret is not versioned")
+	}
+	fileSecrets := secrets.NewFileProvider(filepath.Join(daemon.DataDir(), "secrets"))
+	if got, err := fileSecrets.Get(t.Context(), secretName); err != nil || got != sentinel {
+		t.Fatalf("production provider credential = present:%t err:%v", got == sentinel, err)
+	}
+
+	shutdownHarnessSmokeDaemon(t)
+	waitForRatchetSmokeMissing(t, daemon.SocketPath(), 5*time.Second)
+	waitForRatchetSmokeMissing(t, daemon.PIDPath(), 5*time.Second)
+	startOutput, err := runRatchetSmoke(t, bin, home, "daemon", "start", "--background")
+	if err != nil {
+		t.Fatalf("restart production daemon: %v\n%s", err, red(startOutput))
+	}
+	waitForRatchetSmokePresent(t, daemon.SocketPath(), 5*time.Second)
+	waitForRatchetSmokePresent(t, daemon.PIDPath(), 5*time.Second)
+
+	replayedOutput, err := runRatchetSmoke(t, bin, home, "provider", "operation", operationID, "--json")
+	if err != nil {
+		t.Fatalf("replay provider operation after restart: %v\n%s", err, red(replayedOutput))
+	}
+	var replayedOperation pb.ProviderOperation
+	if err := protojson.Unmarshal([]byte(replayedOutput), &replayedOperation); err != nil || replayedOperation.GetState() != pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED {
+		t.Fatalf("decode replayed provider operation: %v state:%s\n%s", err, replayedOperation.GetState(), red(replayedOutput))
+	}
+	listOutput, err := runRatchetSmoke(t, bin, home, "provider", "list")
+	if err != nil || !strings.Contains(listOutput, "durable-smoke") {
+		t.Fatalf("list provider after restart: %v\n%s", err, red(listOutput))
+	}
+	testOutput, err := runRatchetSmoke(t, bin, home, "provider", "test", "durable-smoke")
+	if err != nil || !strings.Contains(testOutput, "OK") {
+		t.Fatalf("test provider after restart: %v\n%s", err, red(testOutput))
+	}
+	for _, output := range []string{replayedOutput, listOutput, testOutput} {
+		if strings.Contains(output, sentinel) {
+			t.Fatal("provider restart output exposed credential sentinel")
+		}
+	}
+	shutdownHarnessSmokeDaemon(t)
+	waitForRatchetSmokeMissing(t, daemon.SocketPath(), 5*time.Second)
+	waitForRatchetSmokeMissing(t, daemon.PIDPath(), 5*time.Second)
+}
+
+func providerOperationIDFromSmokeOutput(t *testing.T, output string, red func(string) string) string {
+	t.Helper()
+	match := regexp.MustCompile(`"operation_id"\s*:\s*"([0-9a-f-]{36})"`).FindStringSubmatch(output)
+	if len(match) != 2 {
+		t.Fatalf("provider add output has no operation ID:\n%s", red(output))
+	}
+	return match[1]
+}
+
+func shutdownHarnessSmokeDaemon(t *testing.T) {
+	t.Helper()
+	c, err := client.Connect()
+	if err != nil {
+		t.Fatalf("connect to production smoke daemon: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	defer c.Close()
+	if err := c.Shutdown(ctx); err != nil {
+		t.Fatalf("shutdown production smoke daemon: %v", err)
+	}
+}
+
+func bestEffortShutdownHarnessSmokeDaemon() {
+	c, err := client.Connect()
+	if err != nil {
+		return
+	}
+	defer c.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_ = c.Shutdown(ctx)
+}
+
+func waitForRatchetSmokePresent(t *testing.T, path string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for daemon artifact category %q", filepath.Base(path))
+}
+
+func newHarnessProviderConnectProxy(t *testing.T, backendAddress string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodConnect {
+			http.Error(w, "CONNECT required", http.StatusMethodNotAllowed)
+			return
+		}
+		backend, err := net.Dial("tcp", backendAddress)
+		if err != nil {
+			http.Error(w, "fixture unavailable", http.StatusBadGateway)
+			return
+		}
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			_ = backend.Close()
+			http.Error(w, "hijacking unsupported", http.StatusInternalServerError)
+			return
+		}
+		clientConn, buffered, err := hijacker.Hijack()
+		if err != nil {
+			_ = backend.Close()
+			return
+		}
+		defer clientConn.Close()
+		defer backend.Close()
+		_, _ = buffered.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n")
+		_ = buffered.Flush()
+		copyDone := make(chan struct{})
+		go func() {
+			_, _ = io.Copy(backend, clientConn)
+			if tcp, ok := backend.(*net.TCPConn); ok {
+				_ = tcp.CloseWrite()
+			}
+			close(copyDone)
+		}()
+		_, _ = io.Copy(clientConn, backend)
+		<-copyDone
+	}))
+}
 
 func TestHarnessSmokeStartupOnboardingAndRPCShutdown(t *testing.T) {
 	if raceEnabled {

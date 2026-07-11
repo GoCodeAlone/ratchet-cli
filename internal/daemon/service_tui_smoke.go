@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/hooks"
@@ -19,7 +20,10 @@ import (
 )
 
 func newTUISmokeService(ctx context.Context, tempRoot string) (*Service, error) {
-	db, err := sql.Open("sqlite", ":memory:?_journal_mode=WAL&_busy_timeout=5000")
+	if err := os.MkdirAll(tempRoot, 0700); err != nil {
+		return nil, fmt.Errorf("create smoke root: %w", err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(tempRoot, "ratchet.db")+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, fmt.Errorf("open smoke db: %w", err)
 	}
@@ -33,9 +37,17 @@ func newTUISmokeService(ctx context.Context, tempRoot string) (*Service, error) 
 		return nil, fmt.Errorf("init smoke db: %w", err)
 	}
 
-	secretProvider := smokeSecretsProvider{}
+	secretsDir := filepath.Join(tempRoot, "secrets")
+	if err := os.MkdirAll(secretsDir, 0700); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("create smoke secrets directory: %w", err)
+	}
+	secretProvider := secrets.NewFileProvider(secretsDir)
 	redactor := secrets.NewRedactor()
-	_ = redactor.LoadFromProvider(ctx, secretProvider)
+	if err := redactor.LoadFromProvider(ctx, secretProvider); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("load smoke secrets redactor: %w", err)
+	}
 	engine := &EngineContext{
 		DB:               db,
 		ProviderRegistry: ratchetplugin.NewProviderRegistry(db, func() secrets.Provider { return secretProvider }),
@@ -49,6 +61,11 @@ func newTUISmokeService(ctx context.Context, tempRoot string) (*Service, error) 
 	if err := engine.MemoryStore.InitTables(); err != nil {
 		engine.Close()
 		return nil, fmt.Errorf("init smoke memory tables: %w", err)
+	}
+	providerOps := newProviderOperationManager(engine)
+	if err := providerOps.Start(ctx); err != nil {
+		engine.Close()
+		return nil, fmt.Errorf("start smoke provider operations: %w", err)
 	}
 	svc := &Service{
 		startedAt:        time.Now(),
@@ -67,9 +84,11 @@ func newTUISmokeService(ctx context.Context, tempRoot string) (*Service, error) 
 		trustMode:        "conservative",
 		trustDefaultMode: "conservative",
 		trustEngine:      policy.NewTrustEngine("conservative", nil, nil),
+		providerOps:      providerOps,
 	}
 	trustStore, err := policy.NewPermissionStore(engine.DB)
 	if err != nil {
+		providerOps.Stop()
 		engine.Close()
 		return nil, fmt.Errorf("init smoke trust store: %w", err)
 	}
@@ -99,6 +118,9 @@ func newTUISmokeServiceForTest(t interface {
 }
 
 func (s *Service) close() {
+	if s.providerOps != nil {
+		s.providerOps.Stop()
+	}
 	if s.engine != nil {
 		s.engine.Close()
 	}
@@ -131,17 +153,3 @@ func (p smokeJobProvider) ResumeJob(string) error {
 func (p smokeJobProvider) KillJob(string) error {
 	return fmt.Errorf("smoke jobs cannot be killed")
 }
-
-type smokeSecretsProvider struct{}
-
-func (smokeSecretsProvider) Name() string { return "smoke" }
-
-func (smokeSecretsProvider) Get(context.Context, string) (string, error) { return "", nil }
-
-func (smokeSecretsProvider) Set(context.Context, string, string) error { return nil }
-
-func (smokeSecretsProvider) Delete(context.Context, string) error { return nil }
-
-func (smokeSecretsProvider) List(context.Context) ([]string, error) { return nil, nil }
-
-var _ secrets.Provider = smokeSecretsProvider{}

@@ -20,11 +20,12 @@ type workflowJob struct {
 }
 
 type workflowStep struct {
-	Name string            `yaml:"name"`
-	Uses string            `yaml:"uses"`
-	Run  string            `yaml:"run"`
-	With map[string]string `yaml:"with"`
-	Env  map[string]string `yaml:"env"`
+	Name  string            `yaml:"name"`
+	Uses  string            `yaml:"uses"`
+	Run   string            `yaml:"run"`
+	Shell string            `yaml:"shell"`
+	With  map[string]string `yaml:"with"`
+	Env   map[string]string `yaml:"env"`
 }
 
 func TestCIReleaseCheckJob(t *testing.T) {
@@ -92,6 +93,57 @@ func TestCITUISmokeAndTapPreflightJobs(t *testing.T) {
 	requireRun(t, tap, "Run tap preflight", "RATCHET_RELEASE_GUARD_MODE=tap-preflight")
 	requireRun(t, tap, "Run tap preflight", "RATCHET_RELEASE_GUARD_TAP=")
 	requireRun(t, tap, "Run tap preflight", "go test -count=1 ./internal/releaseguard -run TestTapPreflight")
+}
+
+func TestCIRequiresWindowsProviderDurability(t *testing.T) {
+	workflow := loadWorkflow(t, ".github/workflows/ci.yml")
+	linuxSmoke := requireJob(t, workflow, "tui-smoke")
+	requireStep(t, linuxSmoke, func(step workflowStep) bool {
+		return step.Uses == "actions/checkout@v4" && step.With["fetch-depth"] == "0"
+	}, "TUI smoke checkout with fetch-depth 0")
+	requireRun(t, linuxSmoke, "Run production provider durability smoke",
+		"go test ./cmd/ratchet -run 'HarnessSmokeDurableProviderSaveRestart' -count=1 -timeout=12m")
+	var downgrade workflowStep
+	requireStep(t, linuxSmoke, func(step workflowStep) bool {
+		if step.Name != "Run production provider downgrade smoke" {
+			return false
+		}
+		downgrade = step
+		return true
+	}, "production provider downgrade smoke")
+	if downgrade.Shell != "bash" {
+		t.Fatalf("downgrade smoke shell = %q, want bash", downgrade.Shell)
+	}
+	if got := downgrade.Env["RATCHET_DOWNGRADE_BASE_SHA"]; got != "8cb5602166ffe529a0f05101dff583bad0919415" {
+		t.Fatalf("downgrade base SHA = %q", got)
+	}
+	for _, required := range []string{
+		`log=$(mktemp)`,
+		`trap 'rm -f "$log"' EXIT`,
+		`if ! go test -json ./cmd/ratchet -run '^TestHarnessSmokeDurableProviderDowngrade$' -count=1 -timeout=12m >"$log"; then`,
+		`select(.Action == "fail" or .Action == "skip") | {Action,Package,Elapsed}`,
+		`select(.Action == "pass" and .Test == "TestHarnessSmokeDurableProviderDowngrade")`,
+	} {
+		if !strings.Contains(downgrade.Run, required) {
+			t.Fatalf("downgrade smoke missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"github.event.before",
+		"github.event.pull_request.base.sha",
+		`cat "$log"`,
+		".Output",
+	} {
+		if strings.Contains(downgrade.Run, forbidden) || strings.Contains(downgrade.Env["RATCHET_DOWNGRADE_BASE_SHA"], forbidden) {
+			t.Fatalf("downgrade smoke contains forbidden moving/raw evidence %q", forbidden)
+		}
+	}
+
+	windowsSmoke := requireJob(t, workflow, "windows-conpty-smoke")
+	requireRun(t, windowsSmoke, "Run Windows daemon lock tests",
+		"go test ./internal/daemon -run 'DaemonLock' -count=1")
+	requireRun(t, windowsSmoke, "Run Windows ConPTY provider save",
+		"go test -tags tui_smoke ./internal/tui -run 'WindowsConPTYProviderSave' -count=1 -timeout=10m")
 }
 
 func TestReleaseWorkflowPrePublishGuards(t *testing.T) {

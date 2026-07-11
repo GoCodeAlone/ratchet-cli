@@ -131,6 +131,12 @@ func newE2EHarness(t *testing.T) *E2EHarness {
 	// CronScheduler: starts background goroutines; cancel via context cleanup.
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
+	providerOps := newProviderOperationManager(engine)
+	if err := providerOps.Start(ctx); err != nil {
+		t.Fatalf("start provider operations: %v", err)
+	}
+	t.Cleanup(providerOps.Stop)
+	svc.providerOps = providerOps
 
 	svc.cron = NewCronScheduler(db, func(sessionID, command string) {
 		go func() {

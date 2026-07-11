@@ -10,12 +10,13 @@ require (
 	github.com/GoCodeAlone/acpx-go v0.2.1
 	github.com/GoCodeAlone/workflow v0.85.2
 	github.com/GoCodeAlone/workflow-plugin-acpx v0.1.0
-	github.com/GoCodeAlone/workflow-plugin-agent v0.12.6
+	github.com/GoCodeAlone/workflow-plugin-agent v0.12.8
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/coder/acp-go-sdk v0.6.3
 	github.com/creack/pty v1.1.24
 	github.com/google/uuid v1.6.0
 	github.com/tochemey/goakt/v4 v4.2.12
+	golang.org/x/sys v0.46.0
 	golang.org/x/term v0.44.0
 	google.golang.org/grpc v1.81.1
 	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af
@@ -277,7 +278,6 @@ require (
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.46.0 // indirect

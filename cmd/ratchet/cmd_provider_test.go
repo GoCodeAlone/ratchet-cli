@@ -6,15 +6,593 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"os"
+	"os/exec"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
+	providerauth "github.com/GoCodeAlone/ratchet-cli/internal/provider"
 	wfprovider "github.com/GoCodeAlone/workflow-plugin-agent/provider"
+	"github.com/google/uuid"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
 )
+
+func TestProviderDurableSaveDeadlineAndReconciliation(t *testing.T) {
+	client := &providerSaveTestClient{}
+	callDeadline := make(chan time.Time, 1)
+	client.commit = func(ctx context.Context, _ *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			return nil, errors.New("provider save has no deadline")
+		}
+		callDeadline <- deadline
+		<-ctx.Done()
+		return nil, status.FromContextError(ctx.Err()).Err()
+	}
+	client.get = func(_ context.Context, operationID string) (*pb.ProviderOperation, error) {
+		client.queried = append(client.queried, operationID)
+		if len(client.queried) == 1 {
+			return &pb.ProviderOperation{OperationId: operationID, State: pb.ProviderOperationState_PROVIDER_OPERATION_STATE_PENDING}, nil
+		}
+		return committedProviderOperation(operationID), nil
+	}
+
+	started := time.Now()
+	op, err := commitProviderSave(t.Context(), client, &pb.AddProviderReq{Alias: "work", Type: "openai"}, providerSaveOptions{
+		CallTimeout:      25 * time.Millisecond,
+		ReconcileTimeout: time.Second,
+		PollInterval:     time.Millisecond,
+		Status:           io.Discard,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op.GetState() != pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED {
+		t.Fatalf("operation state = %s, want committed", op.GetState())
+	}
+	if got := (<-callDeadline).Sub(started); got < 20*time.Millisecond || got > 100*time.Millisecond {
+		t.Fatalf("provider save call deadline offset = %s, want approximately 25ms", got)
+	}
+	if _, err := uuid.Parse(op.GetOperationId()); err != nil {
+		t.Fatalf("operation ID = %q: %v", op.GetOperationId(), err)
+	}
+	if len(client.queried) != 2 || client.queried[0] != op.GetOperationId() || client.queried[1] != op.GetOperationId() {
+		t.Fatalf("queried IDs = %v, want stable operation ID", client.queried)
+	}
+	if got := nextProviderPollInterval(100 * time.Millisecond); got != 200*time.Millisecond {
+		t.Fatalf("next poll interval = %s, want 200ms", got)
+	}
+	if got := nextProviderPollInterval(750 * time.Millisecond); got != time.Second {
+		t.Fatalf("capped poll interval = %s, want 1s", got)
+	}
+}
+
+func TestProviderDurableSaveInterruptAndForceExit(t *testing.T) {
+	interrupts := make(chan os.Signal, 2)
+	commitStarted := make(chan struct{})
+	queryStarted := make(chan struct{})
+	client := &providerSaveTestClient{}
+	client.commit = func(ctx context.Context, _ *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+		close(commitStarted)
+		<-ctx.Done()
+		return nil, status.FromContextError(ctx.Err()).Err()
+	}
+	client.get = func(ctx context.Context, _ string) (*pb.ProviderOperation, error) {
+		close(queryStarted)
+		<-ctx.Done()
+		return nil, status.FromContextError(ctx.Err()).Err()
+	}
+	var statusOutput strings.Builder
+	done := make(chan error, 1)
+	go func() {
+		_, err := commitProviderSave(context.Background(), client, &pb.AddProviderReq{Alias: "work", Type: "openai"}, providerSaveOptions{
+			CallTimeout:      time.Second,
+			ReconcileTimeout: 5 * time.Second,
+			PollInterval:     time.Millisecond,
+			Interrupts:       interrupts,
+			Status:           &statusOutput,
+		})
+		done <- err
+	}()
+	<-commitStarted
+	interrupts <- os.Interrupt
+	<-queryStarted
+	interrupts <- os.Interrupt
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("second interrupt did not stop a blocked operation query")
+	}
+	if err == nil || !strings.Contains(err.Error(), "operation") {
+		t.Fatalf("forced-exit error = %v, want operation ID", err)
+	}
+	if !strings.Contains(statusOutput.String(), "reconciling provider operation") {
+		t.Fatalf("status output = %q", statusOutput.String())
+	}
+}
+
+func TestProviderDurableSaveFirstPollingInterruptDefersExit(t *testing.T) {
+	interrupts := make(chan os.Signal, 2)
+	queryStarted := make(chan struct{}, 2)
+	client := &providerSaveTestClient{
+		commit: func(context.Context, *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+			return nil, status.Error(codes.DeadlineExceeded, "ambiguous")
+		},
+		get: func(ctx context.Context, _ string) (*pb.ProviderOperation, error) {
+			queryStarted <- struct{}{}
+			<-ctx.Done()
+			return nil, status.FromContextError(ctx.Err()).Err()
+		},
+	}
+	var statusOutput strings.Builder
+	done := make(chan error, 1)
+	go func() {
+		_, err := commitProviderSave(context.Background(), client, &pb.AddProviderReq{Alias: "work", Type: "openai"}, providerSaveOptions{
+			CallTimeout:      time.Second,
+			ReconcileTimeout: 5 * time.Second,
+			PollInterval:     time.Millisecond,
+			Interrupts:       interrupts,
+			Status:           &statusOutput,
+		})
+		done <- err
+	}()
+
+	<-queryStarted
+	interrupts <- os.Interrupt
+	select {
+	case err := <-done:
+		t.Fatalf("first polling interrupt exited reconciliation: %v", err)
+	case <-queryStarted:
+	}
+	interrupts <- os.Interrupt
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "operation") {
+			t.Fatalf("second polling interrupt error = %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("second polling interrupt did not exit reconciliation")
+	}
+	if got := statusOutput.String(); !strings.Contains(got, "interrupt again to exit") {
+		t.Fatalf("status output = %q", got)
+	}
+}
+
+func TestProviderOperationStatusCommand(t *testing.T) {
+	operationID := "f1f183c5-b277-4c27-bc3d-50cdd20f7ed1"
+	client := &providerSaveTestClient{get: func(_ context.Context, got string) (*pb.ProviderOperation, error) {
+		if got != operationID {
+			t.Fatalf("operation ID = %q, want %q", got, operationID)
+		}
+		return committedProviderOperation(got), nil
+	}}
+	var out strings.Builder
+	if err := printProviderOperationStatus(t.Context(), client, []string{operationID, "--json"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	var operation pb.ProviderOperation
+	if err := protojson.Unmarshal([]byte(out.String()), &operation); err != nil {
+		t.Fatalf("decode status: %v\n%s", err, out.String())
+	}
+	if operation.GetOperationId() != operationID || operation.GetState() != pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED {
+		t.Fatalf("operation = %+v", &operation)
+	}
+	if err := printProviderOperationStatus(t.Context(), client, []string{operationID}, errWriter{}); err == nil || !strings.Contains(err.Error(), "write failed") {
+		t.Fatalf("human operation status output error = %v", err)
+	}
+}
+
+func TestProviderDurableSaveRejectsMismatchedOperationIdentity(t *testing.T) {
+	t.Run("initial response", func(t *testing.T) {
+		client := &providerSaveTestClient{commit: func(_ context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+			return committedProviderOperation(uuid.NewString()), nil
+		}}
+		_, err := commitProviderSave(t.Context(), client, &pb.AddProviderReq{Alias: "work", Type: "openai"}, providerSaveOptions{
+			CallTimeout:      time.Second,
+			ReconcileTimeout: time.Second,
+			PollInterval:     time.Millisecond,
+			Status:           io.Discard,
+		})
+		if err == nil || !strings.Contains(err.Error(), "operation ID") {
+			t.Fatalf("mismatched initial response error = %v", err)
+		}
+	})
+
+	t.Run("polled response", func(t *testing.T) {
+		client := &providerSaveTestClient{}
+		client.commit = func(_ context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+			return &pb.ProviderOperation{
+				OperationId: req.GetOperationId(),
+				State:       pb.ProviderOperationState_PROVIDER_OPERATION_STATE_PENDING,
+			}, nil
+		}
+		client.get = func(context.Context, string) (*pb.ProviderOperation, error) {
+			return committedProviderOperation(uuid.NewString()), nil
+		}
+		_, err := commitProviderSave(t.Context(), client, &pb.AddProviderReq{Alias: "work", Type: "openai"}, providerSaveOptions{
+			CallTimeout:      time.Second,
+			ReconcileTimeout: time.Second,
+			PollInterval:     time.Millisecond,
+			Status:           io.Discard,
+		})
+		if err == nil || !strings.Contains(err.Error(), "operation ID") {
+			t.Fatalf("mismatched polled response error = %v", err)
+		}
+	})
+}
+
+func TestProviderReconciliationErrorIncludesRecoveryID(t *testing.T) {
+	operationID := make(chan string, 1)
+	client := &providerSaveTestClient{}
+	client.commit = func(_ context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+		operationID <- req.GetOperationId()
+		return &pb.ProviderOperation{
+			OperationId: req.GetOperationId(),
+			State:       pb.ProviderOperationState_PROVIDER_OPERATION_STATE_PENDING,
+		}, nil
+	}
+	client.get = func(context.Context, string) (*pb.ProviderOperation, error) {
+		return nil, status.Error(codes.PermissionDenied, "denied")
+	}
+	_, err := commitProviderSave(t.Context(), client, &pb.AddProviderReq{Alias: "work", Type: "openai"}, providerSaveOptions{
+		CallTimeout:      time.Second,
+		ReconcileTimeout: time.Second,
+		PollInterval:     time.Millisecond,
+		Status:           io.Discard,
+	})
+	wantID := <-operationID
+	if err == nil || !strings.Contains(err.Error(), wantID) || !strings.Contains(err.Error(), "provider operation "+wantID) {
+		t.Fatalf("reconciliation error = %v, want recovery command for %s", err, wantID)
+	}
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("reconciliation status code = %s, want permission denied", status.Code(err))
+	}
+}
+
+func TestProviderAddJSONIncludesStableOperationID(t *testing.T) {
+	client := &providerSaveTestClient{}
+	client.commit = func(_ context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+		return committedProviderOperation(req.GetOperationId()), nil
+	}
+	client.get = func(_ context.Context, operationID string) (*pb.ProviderOperation, error) {
+		client.queried = append(client.queried, operationID)
+		return committedProviderOperation(operationID), nil
+	}
+	op, err := commitProviderSave(t.Context(), client, &pb.AddProviderReq{Alias: "work", Type: "openai"}, providerSaveOptions{
+		CallTimeout:      time.Second,
+		ReconcileTimeout: time.Second,
+		PollInterval:     time.Millisecond,
+		Status:           io.Discard,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var addOut strings.Builder
+	if err := writeProviderSaveResult(&addOut, op, true); err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		OperationID string `json:"operation_id"`
+		Alias       string `json:"alias"`
+		Type        string `json:"type"`
+		Model       string `json:"model"`
+		IsDefault   bool   `json:"is_default"`
+	}
+	if err := json.Unmarshal([]byte(addOut.String()), &payload); err != nil {
+		t.Fatalf("decode add output: %v\n%s", err, addOut.String())
+	}
+	if payload.OperationID != op.GetOperationId() || payload.Alias != "work" || payload.Type != "openai" || payload.Model != "test-model" || payload.IsDefault {
+		t.Fatalf("add payload = %+v, operation = %+v", payload, op)
+	}
+	var statusOut strings.Builder
+	if err := printProviderOperationStatus(t.Context(), client, []string{payload.OperationID, "--json"}, &statusOut); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.queried) != 1 || client.queried[0] != payload.OperationID {
+		t.Fatalf("status queried IDs = %v", client.queried)
+	}
+}
+
+func TestProviderHumanSaveOutputPropagatesWriteFailure(t *testing.T) {
+	err := writeProviderSaveResult(errWriter{}, committedProviderOperation(uuid.NewString()), false)
+	if err == nil || !strings.Contains(err.Error(), "write failed") {
+		t.Fatalf("human output error = %v", err)
+	}
+}
+
+func TestProviderJSONInteractiveOutputUsesStatusWriter(t *testing.T) {
+	var statusOutput strings.Builder
+	stdout := captureStdout(t, func() {
+		secret, err := promptProviderSecretTo(&statusOutput, "API key", func(int) ([]byte, error) {
+			return []byte(" secret "), nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if secret != "secret" {
+			t.Fatalf("secret = %q", secret)
+		}
+
+		results := make(chan providerauth.OAuthResult, 1)
+		results <- providerauth.OAuthResult{Token: "device-token"}
+		close(results)
+		token, err := runProviderDeviceFlow(t.Context(), &statusOutput,
+			func(context.Context, string) (*providerauth.DeviceCodeResult, error) {
+				return &providerauth.DeviceCodeResult{
+					DeviceCode:      "device-code",
+					UserCode:        "ABCD-EFGH",
+					VerificationURI: "https://example.test/device",
+					Interval:        1,
+				}, nil
+			},
+			func(context.Context, string, string, int) <-chan providerauth.OAuthResult {
+				return results
+			},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if token != "device-token" {
+			t.Fatalf("device token = %q", token)
+		}
+	})
+	if stdout != "" {
+		t.Fatalf("interactive JSON setup wrote to stdout: %q", stdout)
+	}
+	if got := statusOutput.String(); !strings.Contains(got, "API key: ") || !strings.Contains(got, "ABCD-EFGH") {
+		t.Fatalf("status output = %q", got)
+	}
+
+	source, err := os.ReadFile("cmd_provider.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, direct := range []string{"promptSecret: providerauth.PromptSecret", "deviceFlow: providerauth.DeviceFlow"} {
+		if strings.Contains(string(source), direct) {
+			t.Fatalf("generic JSON setup retains stdout-bound helper %q", direct)
+		}
+	}
+}
+
+func TestProviderDeviceFlowRejectsNilStartResponse(t *testing.T) {
+	_, err := runProviderDeviceFlow(
+		t.Context(),
+		io.Discard,
+		func(context.Context, string) (*providerauth.DeviceCodeResult, error) { return nil, nil },
+		func(context.Context, string, string, int) <-chan providerauth.OAuthResult {
+			t.Fatal("polled after nil device-flow response")
+			return nil
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "empty") {
+		t.Fatalf("nil device-flow response error = %v", err)
+	}
+}
+
+func TestGenericProviderAddJSONBoundary(t *testing.T) {
+	entry, ok := providerauth.LookupSetup("anthropic")
+	if !ok {
+		t.Fatal("anthropic provider setup is missing")
+	}
+	client := &providerSaveTestClient{commit: func(_ context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+		provider := req.GetProvider()
+		if provider.GetAlias() != "work" || provider.GetApiKey() != "secret" || provider.GetModel() != "test-model" {
+			t.Fatalf("provider request = %+v", provider)
+		}
+		return &pb.ProviderOperation{
+			OperationId: req.GetOperationId(),
+			State:       pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED,
+			Result: &pb.ProviderSaveResult{
+				Alias:     provider.GetAlias(),
+				Type:      provider.GetType(),
+				Model:     provider.GetModel(),
+				IsDefault: provider.GetIsDefault(),
+			},
+		}, nil
+	}}
+	var stdout strings.Builder
+	var stderr strings.Builder
+	err := runGenericProviderAdd(
+		t.Context(),
+		client,
+		entry,
+		[]string{"add", "anthropic", "work", "--model", "test-model", "--json"},
+		bufio.NewScanner(strings.NewReader("")),
+		&stdout,
+		&stderr,
+		func(_ *bufio.Scanner, out io.Writer) providerSetupDeps {
+			return providerSetupDeps{promptSecret: func(string) (string, error) {
+				fmt.Fprint(out, "credential prompt")
+				return "secret", nil
+			}}
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoder := json.NewDecoder(strings.NewReader(stdout.String()))
+	var payload struct {
+		OperationID string `json:"operation_id"`
+		Alias       string `json:"alias"`
+		Type        string `json:"type"`
+		Model       string `json:"model"`
+	}
+	if err := decoder.Decode(&payload); err != nil {
+		t.Fatalf("decode provider add JSON: %v\n%s", err, stdout.String())
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		t.Fatalf("provider add stdout contains more than one JSON value: %v\n%s", err, stdout.String())
+	}
+	if payload.OperationID == "" || payload.Alias != "work" || payload.Type != "anthropic" || payload.Model != "test-model" {
+		t.Fatalf("provider add payload = %+v", payload)
+	}
+	if got := stderr.String(); got != "credential prompt" {
+		t.Fatalf("provider add stderr = %q", got)
+	}
+}
+
+func TestProviderDurableSaveRejectsNilSuccessAndDirectWriters(t *testing.T) {
+	client := &providerSaveTestClient{commit: func(context.Context, *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+		return nil, nil
+	}}
+	if _, err := commitProviderSave(t.Context(), client, &pb.AddProviderReq{Alias: "work", Type: "openai"}, providerSaveOptions{
+		CallTimeout:      time.Second,
+		ReconcileTimeout: time.Second,
+		PollInterval:     time.Millisecond,
+		Status:           io.Discard,
+	}); err == nil {
+		t.Fatal("nil provider operation succeeded")
+	}
+	source, err := os.ReadFile("cmd_provider.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(source), ".AddProvider(") {
+		t.Fatal("cmd_provider.go contains a direct AddProvider writer")
+	}
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "cmd_provider.go", source, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wiring := map[string]string{
+		"handleProvider":           "runGenericProviderAdd",
+		"runGenericProviderAdd":    "saveProviderFromCLI",
+		"handleOpenAIChatGPTSetup": "saveProviderFromCLI",
+		"handleOllamaSetup":        "saveProviderFromCLI",
+		"handleCLIToolSetup":       "saveProviderFromCLI",
+	}
+	for function, helper := range wiring {
+		if !functionCallsIdentifier(file, function, helper) {
+			t.Errorf("%s does not call %s", function, helper)
+		}
+	}
+}
+
+func functionCallsIdentifier(file *ast.File, function, identifier string) bool {
+	for _, declaration := range file.Decls {
+		decl, ok := declaration.(*ast.FuncDecl)
+		if !ok || decl.Name.Name != function {
+			continue
+		}
+		found := false
+		ast.Inspect(decl.Body, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			callee, ok := call.Fun.(*ast.Ident)
+			if ok && callee.Name == identifier {
+				found = true
+				return false
+			}
+			return true
+		})
+		return found
+	}
+	return false
+}
+
+func TestWaitForProviderBackgroundProcess(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "-test.run=^TestProviderBackgroundProcessHelper$")
+	cmd.Env = append(os.Environ(), "RATCHET_PROVIDER_PROCESS_HELPER=1")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-waitForProviderBackgroundProcess(cmd):
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatal("background process was not reaped")
+	}
+
+	source, err := os.ReadFile("cmd_provider.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := parser.ParseFile(token.NewFileSet(), "cmd_provider.go", source, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, helper := range []string{"waitForProviderBackgroundProcess", "stopProviderBackgroundProcess"} {
+		if !functionCallsIdentifier(file, "startOllamaServer", helper) {
+			t.Errorf("startOllamaServer does not call %s", helper)
+		}
+	}
+}
+
+func TestStopProviderBackgroundProcessIsBounded(t *testing.T) {
+	t.Run("kill failure", func(t *testing.T) {
+		want := errors.New("kill denied")
+		err := stopProviderBackgroundProcess(providerProcessKillerFunc(func() error { return want }), make(chan error), time.Second)
+		if !errors.Is(err, want) {
+			t.Fatalf("stop error = %v, want %v", err, want)
+		}
+	})
+
+	t.Run("wait timeout", func(t *testing.T) {
+		started := time.Now()
+		err := stopProviderBackgroundProcess(providerProcessKillerFunc(func() error { return nil }), make(chan error), 20*time.Millisecond)
+		if err == nil || !strings.Contains(err.Error(), "exit") {
+			t.Fatalf("stop error = %v, want bounded exit timeout", err)
+		}
+		if elapsed := time.Since(started); elapsed > time.Second {
+			t.Fatalf("bounded stop took %s", elapsed)
+		}
+	})
+}
+
+type providerProcessKillerFunc func() error
+
+func (f providerProcessKillerFunc) Kill() error { return f() }
+
+func TestProviderBackgroundProcessHelper(t *testing.T) {
+	if os.Getenv("RATCHET_PROVIDER_PROCESS_HELPER") != "1" {
+		return
+	}
+}
+
+type providerSaveTestClient struct {
+	commit  func(context.Context, *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error)
+	get     func(context.Context, string) (*pb.ProviderOperation, error)
+	queried []string
+}
+
+func (c *providerSaveTestClient) CommitProviderSave(ctx context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+	return c.commit(ctx, req)
+}
+
+func (c *providerSaveTestClient) GetProviderOperation(ctx context.Context, operationID string) (*pb.ProviderOperation, error) {
+	return c.get(ctx, operationID)
+}
+
+func committedProviderOperation(operationID string) *pb.ProviderOperation {
+	return &pb.ProviderOperation{
+		OperationId: operationID,
+		Alias:       "work",
+		State:       pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED,
+		Result: &pb.ProviderSaveResult{
+			Alias: "work",
+			Type:  "openai",
+			Model: "test-model",
+		},
+	}
+}
 
 func TestProviderSetupListOutputsKnownGuides(t *testing.T) {
 	out := captureStdout(t, func() {
@@ -35,11 +613,16 @@ func TestProviderSetupListJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &rows); err != nil {
 		t.Fatalf("unmarshal setup list: %v\n%s", err, out)
 	}
-	if len(rows) < 7 {
-		t.Fatalf("guide count = %d, want at least 7", len(rows))
+	if len(rows) != len(providerauth.Catalog()) {
+		t.Fatalf("guide count = %d, want %d", len(rows), len(providerauth.Catalog()))
 	}
 	if rows[0].Alias == "" || rows[0].SetupCommand == "" || rows[0].CredentialBoundary == "" {
 		t.Fatalf("first guide missing fields: %+v", rows[0])
+	}
+	for _, entry := range providerauth.Catalog() {
+		if !slices.ContainsFunc(rows, func(row providerSetupGuide) bool { return row.ProviderType == entry.Type }) {
+			t.Errorf("setup list missing catalog provider %q", entry.Type)
+		}
 	}
 }
 
@@ -79,6 +662,62 @@ func TestProviderSetupGuideUnknownAlias(t *testing.T) {
 	})
 	if !strings.Contains(out, "unknown provider setup guide") {
 		t.Fatalf("stderr = %q", out)
+	}
+}
+
+func TestProviderSetupGuideResolvesRuntimeAliasToCanonicalEntry(t *testing.T) {
+	var out strings.Builder
+	if err := printProviderSetupGuide([]string{"anthropic_bedrock", "--json"}, &out, io.Discard); err != nil {
+		t.Fatalf("printProviderSetupGuide: %v", err)
+	}
+	var guide providerSetupGuide
+	if err := json.Unmarshal([]byte(out.String()), &guide); err != nil {
+		t.Fatalf("unmarshal guide: %v", err)
+	}
+	if guide.Alias != "bedrock" || guide.ProviderType != "bedrock" {
+		t.Fatalf("guide = %+v", guide)
+	}
+}
+
+func TestProviderSetupGuideResolvesEveryCatalogName(t *testing.T) {
+	for _, entry := range providerauth.Catalog() {
+		names := append([]string{entry.Type}, entry.Aliases...)
+		for _, name := range names {
+			t.Run(name, func(t *testing.T) {
+				var out strings.Builder
+				if err := printProviderSetupGuide([]string{name, "--json"}, &out, io.Discard); err != nil {
+					t.Fatalf("printProviderSetupGuide: %v", err)
+				}
+				var guide providerSetupGuide
+				if err := json.Unmarshal([]byte(out.String()), &guide); err != nil {
+					t.Fatalf("unmarshal guide: %v", err)
+				}
+				if guide.ProviderType != entry.Type {
+					t.Fatalf("guide.ProviderType = %q, want %q", guide.ProviderType, entry.Type)
+				}
+			})
+		}
+	}
+}
+
+func TestProviderDedicatedSetupDispatchComesFromCatalog(t *testing.T) {
+	for _, providerType := range []string{"openai_chatgpt", "claude_code", "copilot_cli", "codex_cli", "gemini_cli", "cursor_cli"} {
+		entry, ok := providerauth.LookupSetup(providerType)
+		if !ok {
+			t.Fatalf("LookupSetup(%q) not found", providerType)
+		}
+		if !requiresDedicatedProviderSetup(entry) {
+			t.Errorf("requiresDedicatedProviderSetup(%q) = false", providerType)
+		}
+		if entry.SetupCommand == "" {
+			t.Errorf("provider %q has no setup command", providerType)
+		}
+	}
+	for _, providerType := range []string{"anthropic", "copilot", "bedrock", "ollama", "custom"} {
+		entry, _ := providerauth.LookupSetup(providerType)
+		if requiresDedicatedProviderSetup(entry) {
+			t.Errorf("requiresDedicatedProviderSetup(%q) = true", providerType)
+		}
 	}
 }
 
@@ -270,92 +909,152 @@ func TestProviderSettingsJSON(t *testing.T) {
 	}
 }
 
-func TestBedrockProviderSettingsDefaultsRegion(t *testing.T) {
-	settings, err := bedrockProviderSettings(" AKIAEXAMPLE ", "")
-	if err != nil {
-		t.Fatalf("bedrockProviderSettings: %v", err)
+func TestCollectProviderSetupInputUsesBedrockSettingsForDiscovery(t *testing.T) {
+	entry, ok := providerauth.LookupSetup("anthropic_bedrock")
+	if !ok {
+		t.Fatal("bedrock setup entry not found")
 	}
-	if settings["access_key_id"] != "AKIAEXAMPLE" {
-		t.Fatalf("access_key_id = %q", settings["access_key_id"])
-	}
-	if settings["region"] != "us-east-1" {
-		t.Fatalf("region = %q", settings["region"])
-	}
-	if _, ok := settings["session_token"]; ok {
-		t.Fatalf("session_token should not be stored in settings: %#v", settings)
-	}
-}
-
-func TestPromptBedrockProviderCredentials(t *testing.T) {
-	scanner := bufio.NewScanner(strings.NewReader("AKIAEXAMPLE\nus-west-2\n"))
-	apiKey, settings, err := promptBedrockProviderCredentials(scanner, &strings.Builder{}, func(label string) (string, error) {
-		if label != "AWS secret access key" {
-			t.Fatalf("label = %q", label)
-		}
-		return " secret ", nil
+	scanner := bufio.NewScanner(strings.NewReader("AKIAEXAMPLE\nus-west-2\n\n"))
+	var out strings.Builder
+	input, err := collectProviderSetupInput(t.Context(), entry, "", false, scanner, &out, providerSetupDeps{
+		promptSecret: func(label string) (string, error) {
+			if label != "AWS secret access key" {
+				t.Fatalf("secret label = %q", label)
+			}
+			return "SECRET-SENTINEL", nil
+		},
+		listModels: func(_ context.Context, providerType, apiKey, baseURL string, settings map[string]string) ([]wfprovider.ModelInfo, error) {
+			if providerType != "bedrock" || apiKey != "SECRET-SENTINEL" || baseURL != "" {
+				t.Fatalf("discovery args = %q %q %q", providerType, apiKey, baseURL)
+			}
+			if settings["access_key_id"] != "AKIAEXAMPLE" || settings["region"] != "us-west-2" {
+				t.Fatalf("settings = %#v", settings)
+			}
+			return []wfprovider.ModelInfo{{ID: "anthropic.claude-test", Name: "Claude Test"}}, nil
+		},
 	})
 	if err != nil {
-		t.Fatalf("promptBedrockProviderCredentials: %v", err)
+		t.Fatalf("collectProviderSetupInput: %v", err)
 	}
-	if apiKey != "secret" {
-		t.Fatalf("apiKey = %q", apiKey)
+	if input.APIKey != "SECRET-SENTINEL" || input.Model != "anthropic.claude-test" {
+		t.Fatalf("input = %+v", input)
 	}
-	if settings["access_key_id"] != "AKIAEXAMPLE" || settings["region"] != "us-west-2" {
-		t.Fatalf("settings = %#v", settings)
+	if strings.Contains(out.String(), "SECRET-SENTINEL") {
+		t.Fatalf("output leaked credential: %q", out.String())
 	}
-	if _, ok := settings["session_token"]; ok {
-		t.Fatalf("session_token should not be stored in settings: %#v", settings)
+	settingsJSON, err := providerSettingsJSON(input.Settings)
+	if err != nil {
+		t.Fatalf("providerSettingsJSON: %v", err)
+	}
+	if strings.Contains(settingsJSON, "SECRET-SENTINEL") {
+		t.Fatalf("settings leaked credential: %s", settingsJSON)
 	}
 }
 
-func TestPromptBedrockProviderCredentialsRequiresSecret(t *testing.T) {
-	scanner := bufio.NewScanner(strings.NewReader("AKIAEXAMPLE\nus-west-2\n"))
-	_, _, err := promptBedrockProviderCredentials(scanner, &strings.Builder{}, func(string) (string, error) {
-		return " ", nil
+func TestCollectProviderSetupInputCustomPassesCompatibilityAndFallsBackToManualModel(t *testing.T) {
+	entry, ok := providerauth.LookupSetup("custom-endpoint")
+	if !ok {
+		t.Fatal("custom setup entry not found")
+	}
+	scanner := bufio.NewScanner(strings.NewReader("2\nhttps://models.example/v1\nmanual-model\n"))
+	input, err := collectProviderSetupInput(t.Context(), entry, "", false, scanner, io.Discard, providerSetupDeps{
+		promptSecret: func(string) (string, error) { return "", nil },
+		promptBaseURL: func(defaultURL string) (string, error) {
+			return promptProviderBaseURL(scanner, io.Discard, defaultURL)
+		},
+		listModels: func(_ context.Context, providerType, apiKey, baseURL string, settings map[string]string) ([]wfprovider.ModelInfo, error) {
+			if providerType != "custom" || apiKey != "" || baseURL != "https://models.example/v1" {
+				t.Fatalf("discovery args = %q %q %q", providerType, apiKey, baseURL)
+			}
+			if settings["api_compat"] != "anthropic" {
+				t.Fatalf("settings = %#v", settings)
+			}
+			return nil, errors.New("listing unsupported")
+		},
 	})
-	if err == nil {
-		t.Fatal("expected missing secret error")
+	if err != nil {
+		t.Fatalf("collectProviderSetupInput: %v", err)
+	}
+	if input.Model != "manual-model" || input.Settings["api_compat"] != "anthropic" {
+		t.Fatalf("input = %+v", input)
 	}
 }
 
-func TestProviderBaseURLPromptPolicy(t *testing.T) {
-	for _, providerType := range []string{"custom", "openai", "openai_compatible", "anthropic_compatible"} {
-		if !providerPromptsBaseURL(providerType) {
-			t.Fatalf("%s should prompt for base URL", providerType)
-		}
+func TestCollectProviderSetupInputManualCloudModel(t *testing.T) {
+	entry, ok := providerauth.LookupSetup("azure-openai")
+	if !ok {
+		t.Fatal("Azure OpenAI setup entry not found")
 	}
-	for _, providerType := range []string{"custom", "openai_compatible", "anthropic_compatible"} {
-		if !providerRequiresBaseURL(providerType) {
-			t.Fatalf("%s should require base URL", providerType)
-		}
+	scanner := bufio.NewScanner(strings.NewReader("resource-a\ndeployment-a\n\nmodel-a\n"))
+	input, err := collectProviderSetupInput(t.Context(), entry, "", false, scanner, io.Discard, providerSetupDeps{
+		promptSecret: func(string) (string, error) { return "secret", nil },
+		listModels: func(context.Context, string, string, string, map[string]string) ([]wfprovider.ModelInfo, error) {
+			t.Fatal("manual provider must not list models")
+			return nil, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("collectProviderSetupInput: %v", err)
 	}
-	if providerRequiresBaseURL("openai") {
-		t.Fatal("openai should allow the default upstream URL")
-	}
-	if providerPromptsBaseURL("bedrock") {
-		t.Fatal("bedrock should use AWS region/settings rather than base URL by default")
+	if input.Model != "model-a" || input.Settings["resource"] != "resource-a" ||
+		input.Settings["deployment_name"] != "deployment-a" || input.Settings["api_version"] != "2024-10-21" {
+		t.Fatalf("input = %+v", input)
 	}
 }
 
-func TestPromptCustomProviderCompatibilityDefaultsOpenAI(t *testing.T) {
+func TestCollectProviderSetupInputOtherManualCloudSettings(t *testing.T) {
+	tests := []struct {
+		provider string
+		input    string
+		want     map[string]string
+	}{
+		{provider: "anthropic_foundry", input: "foundry-resource\nfoundry-model\n", want: map[string]string{"resource": "foundry-resource"}},
+		{provider: "anthropic_vertex", input: "gcp-project\n\nvertex-model\n", want: map[string]string{"project_id": "gcp-project", "region": "us-east5"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.provider, func(t *testing.T) {
+			entry, ok := providerauth.LookupSetup(tt.provider)
+			if !ok {
+				t.Fatalf("LookupSetup(%q) not found", tt.provider)
+			}
+			result, err := collectProviderSetupInput(t.Context(), entry, "", false, bufio.NewScanner(strings.NewReader(tt.input)), io.Discard, providerSetupDeps{
+				promptSecret: func(string) (string, error) { return "secret", nil },
+			})
+			if err != nil {
+				t.Fatalf("collectProviderSetupInput: %v", err)
+			}
+			for key, want := range tt.want {
+				if got := result.Settings[key]; got != want {
+					t.Errorf("settings[%q] = %q, want %q", key, got, want)
+				}
+			}
+			if result.Model == "" {
+				t.Error("manual model is empty")
+			}
+		})
+	}
+}
+
+func TestCollectProviderSetupInputUsesGitHubDeviceFlow(t *testing.T) {
+	entry, ok := providerauth.LookupSetup("copilot")
+	if !ok {
+		t.Fatal("Copilot setup entry not found")
+	}
 	scanner := bufio.NewScanner(strings.NewReader("\n"))
-	settings, err := promptCustomProviderCompatibility(scanner, &strings.Builder{})
+	input, err := collectProviderSetupInput(t.Context(), entry, "", false, scanner, io.Discard, providerSetupDeps{
+		deviceFlow: func(context.Context) (string, error) { return "copilot-token", nil },
+		listModels: func(_ context.Context, providerType, apiKey, _ string, _ map[string]string) ([]wfprovider.ModelInfo, error) {
+			if providerType != "copilot" || apiKey != "copilot-token" {
+				t.Fatalf("discovery args = %q %q", providerType, apiKey)
+			}
+			return []wfprovider.ModelInfo{{ID: "gpt-copilot"}}, nil
+		},
+	})
 	if err != nil {
-		t.Fatalf("promptCustomProviderCompatibility: %v", err)
+		t.Fatalf("collectProviderSetupInput: %v", err)
 	}
-	if settings["api_compat"] != "openai" {
-		t.Fatalf("settings = %#v", settings)
-	}
-}
-
-func TestPromptCustomProviderCompatibilitySupportsAnthropic(t *testing.T) {
-	scanner := bufio.NewScanner(strings.NewReader("2\n"))
-	settings, err := promptCustomProviderCompatibility(scanner, &strings.Builder{})
-	if err != nil {
-		t.Fatalf("promptCustomProviderCompatibility: %v", err)
-	}
-	if settings["api_compat"] != "anthropic" {
-		t.Fatalf("settings = %#v", settings)
+	if input.APIKey != "copilot-token" || input.Model != "gpt-copilot" {
+		t.Fatalf("input = %+v", input)
 	}
 }
 
@@ -438,6 +1137,28 @@ func TestPromptProviderModelSelectionPromptsManualWhenEnumerationFails(t *testin
 	}
 	if !strings.Contains(out.String(), "could not list models") {
 		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestPromptProviderModelSelectionRedactsCredentialFromEnumerationError(t *testing.T) {
+	const credential = "SECRET-PROVIDER-CREDENTIAL"
+	scanner := bufio.NewScanner(strings.NewReader("manual-after-error\n"))
+	var out strings.Builder
+	model, err := promptProviderModelSelection(
+		t.Context(), "custom", credential, "https://models.example/v1", nil,
+		scanner, &out,
+		func(context.Context, string, string, string, map[string]string) ([]wfprovider.ModelInfo, error) {
+			return nil, errors.New("request rejected for " + credential)
+		},
+	)
+	if err != nil {
+		t.Fatalf("promptProviderModelSelection: %v", err)
+	}
+	if model != "manual-after-error" {
+		t.Fatalf("model = %q", model)
+	}
+	if strings.Contains(out.String(), credential) {
+		t.Fatalf("output leaked credential: %q", out.String())
 	}
 }
 

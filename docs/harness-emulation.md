@@ -9,7 +9,7 @@ possible.
 
 | Mode | Command | Backing path | Status | Smoke evidence |
 |---|---|---|---|---|
-| TUI | `ratchet` | daemon gRPC + Bubble Tea UI | Supported | Release-shaped startup smoke builds untagged `ratchet`, reaches onboarding/provider setup, and shuts the daemon down by RPC; Unix PTY binary smoke drives the build-tagged test-only TUI binary through slash commands and shortcuts. |
+| TUI | `ratchet` | daemon gRPC + Bubble Tea UI | Supported | Release-shaped startup smoke builds untagged `ratchet`, reaches onboarding/provider setup, and shuts the daemon down by RPC; Unix PTY binary smoke drives the build-tagged test-only TUI binary through slash commands, shortcuts, and a durable provider save. |
 | one-shot | `ratchet -p "prompt"` | daemon session + default provider | Supported when provider configured | CLI binary smoke covers command dispatch; mock provider roundtrip covers daemon path. |
 | doctor | `ratchet doctor [--json]` | local executable/config/state path inspection plus daemon status files | Supported credential-free | `TestRunDoctorJSON`; `TestHarnessSmokeVersionHelpAndDaemonStatus`. |
 | daemon | `ratchet daemon status` | pid/socket state under `~/.ratchet` | Supported | `TestHarnessSmokeVersionHelpAndDaemonStatus`. |
@@ -54,10 +54,11 @@ The TUI binary evidence has explicit boundaries:
 - `ratchet-tui-smoke` is build-tagged test-only and must not be packaged in
   public release artifacts;
 - Unix PTY binary smoke drives `ratchet-tui-smoke` through command rows marked
-  `pty-proven` in `internal/tui/commands/testdata/command_surface_spec.json`;
+  `pty-proven` in `internal/tui/commands/testdata/command_surface_spec.json` and
+  a durable provider save with secret-boundary and restart-state inspection;
 - Windows ConPTY binary smoke drives the test-only `ratchet-tui-smoke` binary
-  through TUI startup, mocked chat, slash help, and clean exit on a hosted
-  Windows runner;
+  through TUI startup, mocked chat, slash help, a Windows ConPTY provider save,
+  and clean exit on a hosted Windows runner;
 - Windows cross-build/package archive inspection remains release artifact
   proof for the packaged Windows archives;
 - Windows command binary startup smoke builds and runs native `ratchet.exe`
@@ -119,8 +120,15 @@ records with `messaging.text` for downstream Workflow messaging plugins; add
 notification-event JSON/JSONL exports and supply the target `channel`. Outbound
 Discord, Slack, Teams, email, webhook, or other service delivery stays in the
 existing messaging-core and channel plugins rather than built into ratchet-cli.
-`ratchet provider setup list` and `ratchet provider setup guide <provider>` give
-humans and automation a provider onboarding path before the TUI is usable.
+`ratchet provider setup list`, `ratchet provider setup guide <provider>`, and
+the TUI `/provider add` wizard use the same provider catalog and settings
+contract. The CLI and TUI cover API providers, Compatible endpoints,
+Subscriptions, Cloud platforms, Local runtimes, and CLI-backed agents. Both
+support model discovery with manual model ID fallback, cloud fields such as
+`resource`, `deployment_name`, `api_version`, `project_id`, `access_key_id`, and
+`region`, and durable operation/status/log output. Credentials cross the daemon
+boundary into its existing secret provider; provider rows retain a versioned
+secret reference rather than the credential value.
 `ratchet acp config zed` and `ratchet mcp config zed` merge ratchet into Zed's
 custom agent and MCP settings without writing provider secrets.
 `ratchet sessions export <id> --format jsonl --output <path>` writes

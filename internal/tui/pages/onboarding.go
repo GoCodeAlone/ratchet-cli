@@ -2,22 +2,30 @@ package pages
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/client"
-	providerauth "github.com/GoCodeAlone/ratchet-cli/internal/provider"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
+	providerauth "github.com/GoCodeAlone/ratchet-cli/internal/provider"
 	"github.com/GoCodeAlone/ratchet-cli/internal/tui/theme"
 	wfprovider "github.com/GoCodeAlone/workflow-plugin-agent/provider"
+	"github.com/GoCodeAlone/workflow/secrets"
+	"github.com/google/uuid"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // OnboardingDoneMsg signals provider setup is complete.
@@ -25,47 +33,78 @@ type OnboardingDoneMsg struct {
 	Provider *pb.Provider
 }
 
+// OnboardingCancelledMsg signals provider setup should return to its caller.
+type OnboardingCancelledMsg struct {
+	Provider *pb.Provider
+}
+
+// OnboardingQuitMsg signals that any durable save is resolved and the app may quit.
+type OnboardingQuitMsg struct {
+	Provider *pb.Provider
+}
+
 // NavigateToOnboardingMsg signals the app to switch to the onboarding page.
 type NavigateToOnboardingMsg struct{}
 
-type providerAddedMsg struct {
-	provider *pb.Provider
-	err      error
+type ProviderSaveResultMsg struct {
+	Provider    *pb.Provider
+	OperationID string
+	Unresolved  bool
+	Err         error
+	FlowID      uint64
 }
 
 type providerTestedMsg struct {
 	result *pb.TestProviderResult
 	err    error
+	flowID uint64
 }
 
 // browserAuthResultMsg carries the result of a browser-based auth flow.
 type browserAuthResultMsg struct {
-	token string
-	err   error
+	token  string
+	err    error
+	flowID uint64
 }
 
 // deviceCodeMsg carries the result of a GitHub device code request.
 type deviceCodeMsg struct {
 	result *providerauth.DeviceCodeResult
 	err    error
+	flowID uint64
 }
 
 // modelsListMsg carries the result of a live model listing.
 type modelsListMsg struct {
 	models []providerauth.ModelInfo
 	err    error
+	flowID uint64
 }
 
 // pullProgressMsg carries a model pull progress update (0–100).
-type pullProgressMsg struct{ pct float64 }
+type pullProgressMsg struct {
+	pct    float64
+	flowID uint64
+}
 
 // pullDoneMsg signals a model pull completed or failed.
-type pullDoneMsg struct{ err error }
+type pullDoneMsg struct {
+	err    error
+	flowID uint64
+}
 
 // ollamaSetupMsg carries the result of the async Ollama health/start check.
 type ollamaSetupMsg struct {
 	status string // "ready", "not_installed", "failed"
 	err    error
+	flowID uint64
+}
+
+type cliCheckMsg struct {
+	path       string
+	workingDir string
+	err        error
+	flowID     uint64
 }
 
 type onboardingStep int
@@ -77,68 +116,56 @@ const (
 	stepEnterAPIKey
 	stepOllamaChoice // "I already have a local server" vs "Set up Ollama for me"
 	stepOllamaSetup  // checking/starting Ollama before model pull
+	stepEnterSettings
 	stepEnterBaseURL
 	stepFetchModels
 	stepPullModel
 	stepSelectModel
+	stepCLISetup
+	stepReview
 	stepTestConnection
 )
 
-type authMethod string
+const providerOperationTimeout = 30 * time.Second
 
 const (
-	authAPIKey  authMethod = "api_key"
-	authBrowser authMethod = "browser" // Anthropic: browser OAuth, fallback to key paste
-	authGHCLI   authMethod = "gh_cli"  // Copilot: gh token → device flow → key paste
-	authNone    authMethod = "none"
+	providerReconciliationTimeout = 10 * time.Second
+	providerPollInterval          = 100 * time.Millisecond
 )
 
 // anthropicAuthChoice identifies which Anthropic sign-in option was selected.
 type anthropicAuthChoice int
 
 const (
-	anthropicChoiceAPIKey     anthropicAuthChoice = 0 // Enter API key directly
+	anthropicChoiceAPIKey       anthropicAuthChoice = 0 // Enter API key directly
 	anthropicChoiceConsoleOAuth anthropicAuthChoice = 1 // Console OAuth → creates API key
-	anthropicChoiceMaxOAuth   anthropicAuthChoice = 2 // Max/Pro subscription OAuth
+	anthropicChoiceMaxOAuth     anthropicAuthChoice = 2 // Max/Pro subscription OAuth
 )
 
-type providerTypeInfo struct {
-	name         string
-	displayName  string
-	auth         authMethod
-	needsBaseURL bool
-	defaultURL   string
-}
-
-var providerTypes = []providerTypeInfo{
-	{
-		name: "anthropic", displayName: "Anthropic (Claude)",
-		auth: authBrowser,
-	},
-	{
-		name: "copilot", displayName: "GitHub Copilot",
-		auth: authGHCLI,
-	},
-	{
-		name: "openai", displayName: "OpenAI (GPT)",
-		auth: authAPIKey, needsBaseURL: true,
-		defaultURL: "https://api.openai.com/v1",
-	},
-	{
-		name: "ollama", displayName: "Local models (Ollama / LM Studio / llama.cpp)",
-		auth: authNone, needsBaseURL: true,
-		defaultURL: "http://localhost:11434",
-	},
-	{
-		name: "gemini", displayName: "Google Gemini",
-		auth: authAPIKey,
-	},
+type onboardingDeps struct {
+	listModels               func(context.Context, string, string, string, map[string]string) ([]providerauth.ModelInfo, error)
+	commitProviderSave       func(context.Context, *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error)
+	getProviderOperation     func(context.Context, string) (*pb.ProviderOperation, error)
+	providerReconcileTimeout time.Duration
+	providerPollInterval     time.Duration
+	testProvider             func(context.Context, string) (*pb.TestProviderResult, error)
+	startGitHubDevice        func(context.Context) (*providerauth.DeviceCodeResult, error)
+	pollGitHubDevice         func(context.Context, string, int) (string, error)
+	startOpenAIDevice        func(context.Context) (*providerauth.DeviceCodeResult, error)
+	pollOpenAIDevice         func(context.Context, string, string, int) (string, error)
+	startAnthropic           func(context.Context) (string, error)
+	startAnthropicMax        func(context.Context) (string, error)
+	lookPath                 func(string) (string, error)
+	checkCLI                 func(context.Context, string, string) error
+	workingDir               func() (string, error)
+	setupOllama              func(context.Context, string) (string, error)
 }
 
 // OnboardingModel is the multi-step provider setup wizard.
 type OnboardingModel struct {
-	client *client.Client
+	deps   onboardingDeps
 	step   onboardingStep
+	flowID uint64
 
 	// Provider selection
 	// cursor is used for navigation within the current step (provider list,
@@ -146,6 +173,9 @@ type OnboardingModel struct {
 	// confirms a provider and never changes until a new provider is selected.
 	cursor      int
 	providerIdx int
+	providers   []providerauth.SetupEntry
+	filterInput textinput.Model
+	filtering   bool
 
 	// API key input (used for manual key entry and browser auth fallback)
 	apiKeyInput textinput.Model
@@ -153,25 +183,34 @@ type OnboardingModel struct {
 	// Base URL input
 	baseURLInput textinput.Model
 
+	// Provider-specific non-secret settings.
+	settingInput  textinput.Model
+	settingIdx    int
+	settingChoice int
+	settings      map[string]string
+	settingsError string
+	settingsNext  onboardingStep
+
 	// Browser/device auth state
-	authing               bool                // browser/gh/device auth in progress
+	authing               bool // browser/gh/device auth in progress
 	authError             string
-	authToken             string              // token obtained from auth flow
-	browserOpened         bool                // browser was opened for user
+	authToken             string // token obtained from auth flow
 	authCancel            context.CancelFunc
 	deviceUserCode        string              // device flow: code to display to user
 	deviceVerificationURI string              // device flow: URL to open
 	anthropicChoice       anthropicAuthChoice // which Anthropic auth option was selected
 
 	// Model listing
-	fetchingModels bool
-	fetchedModels  []providerauth.ModelInfo
-	modelsError    string
+	modelFetchCancel context.CancelFunc
+	fetchingModels   bool
+	fetchedModels    []providerauth.ModelInfo
+	modelsError      string
 
 	// Ollama choice and setup (stepOllamaChoice, stepOllamaSetup)
 	ollamaChoiceCursor int    // 0 = "I have a server", 1 = "Set up Ollama"
 	ollamaSetupStatus  string // "checking", "not_installed", "starting", "ready", "failed"
 	ollamaSetupError   string
+	ollamaSetupCancel  context.CancelFunc
 
 	// Model pull (stepPullModel)
 	pullingModel       bool
@@ -187,20 +226,85 @@ type OnboardingModel struct {
 	pullEnteringCustom bool
 
 	// Model selection
-	modelCursor int
+	modelCursor         int
+	selectedModel       string
+	manualModelInput    textinput.Model
+	enteringManualModel bool
+
+	// External CLI setup.
+	cliCommandPath string
+	cliWorkingDir  string
+	cliError       string
+	cliCheckCancel context.CancelFunc
 
 	// Connection test
-	spinner    spinner.Model
-	testing    bool
-	testResult *pb.TestProviderResult
-	testError  string
-	added      bool // provider has been added to daemon
+	spinner                     spinner.Model
+	testing                     bool
+	adding                      bool
+	cancelAfterAdd              bool
+	providerOpContext           context.Context
+	providerOpCancel            context.CancelFunc
+	providerReconcileContext    context.Context
+	providerReconcileCancel     context.CancelFunc
+	testResult                  *pb.TestProviderResult
+	testError                   string
+	added                       bool // provider has been added to daemon
+	savedProvider               *pb.Provider
+	providerOperationID         string
+	providerOperationUnresolved bool
+	quitRequested               bool
 
 	width  int
 	height int
 }
 
 func NewOnboarding(c *client.Client, t theme.Theme) OnboardingModel {
+	return newOnboarding(c, t, defaultOnboardingDeps(c))
+}
+
+func defaultOnboardingDeps(c *client.Client) onboardingDeps {
+	return onboardingDeps{
+		listModels: providerauth.ListModelsWithSettings,
+		commitProviderSave: func(ctx context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+			return c.CommitProviderSave(ctx, req)
+		},
+		getProviderOperation: func(ctx context.Context, operationID string) (*pb.ProviderOperation, error) {
+			return c.GetProviderOperation(ctx, operationID)
+		},
+		testProvider: func(ctx context.Context, alias string) (*pb.TestProviderResult, error) {
+			return c.TestProvider(ctx, alias)
+		},
+		startGitHubDevice: func(ctx context.Context) (*providerauth.DeviceCodeResult, error) {
+			return providerauth.StartGitHubDeviceFlow(ctx, providerauth.GithubCopilotClientID)
+		},
+		pollGitHubDevice: func(ctx context.Context, deviceCode string, interval int) (string, error) {
+			result := <-providerauth.PollGitHubDeviceFlow(ctx, providerauth.GithubCopilotClientID, deviceCode, interval)
+			return result.Token, result.Err
+		},
+		startOpenAIDevice: providerauth.StartOpenAIChatGPTDeviceFlow,
+		pollOpenAIDevice: func(ctx context.Context, deviceCode, userCode string, interval int) (string, error) {
+			result := <-providerauth.PollOpenAIChatGPTDeviceFlow(ctx, deviceCode, userCode, interval)
+			return result.Token, result.Err
+		},
+		startAnthropic: func(ctx context.Context) (string, error) {
+			result := <-providerauth.StartAnthropicOAuth(ctx)
+			return result.Token, result.Err
+		},
+		startAnthropicMax: func(ctx context.Context) (string, error) {
+			result := <-providerauth.StartAnthropicMaxOAuth(ctx)
+			return result.Token, result.Err
+		},
+		lookPath: exec.LookPath,
+		checkCLI: func(ctx context.Context, providerType, path string) error {
+			_, err := exec.CommandContext(ctx, path, providerauth.CLIHealthCheckArgs(providerType)...).Output()
+			return err
+		},
+		workingDir:  os.Getwd,
+		setupOllama: setupOllama,
+	}
+}
+
+func newOnboarding(_ *client.Client, t theme.Theme, deps onboardingDeps) OnboardingModel {
 	apiKey := textinput.New()
 	apiKey.Placeholder = "sk-..."
 	apiKey.EchoMode = textinput.EchoPassword
@@ -210,17 +314,30 @@ func NewOnboarding(c *client.Client, t theme.Theme) OnboardingModel {
 	baseURL := textinput.New()
 	baseURL.Placeholder = "http://localhost:11434"
 	baseURL.Prompt = ""
+	filter := textinput.New()
+	filter.Placeholder = "provider name or type"
+	filter.Prompt = "/ "
+	setting := textinput.New()
+	setting.Prompt = ""
+	manualModel := textinput.New()
+	manualModel.Placeholder = "provider model ID"
+	manualModel.Prompt = ""
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(t.Primary)
 
 	return OnboardingModel{
-		client:       c,
-		step:         stepSelectProvider,
-		apiKeyInput:  apiKey,
-		baseURLInput: baseURL,
-		spinner:      sp,
+		deps:             deps,
+		step:             stepSelectProvider,
+		providers:        providerauth.Catalog(),
+		filterInput:      filter,
+		apiKeyInput:      apiKey,
+		baseURLInput:     baseURL,
+		settingInput:     setting,
+		manualModelInput: manualModel,
+		settings:         make(map[string]string),
+		spinner:          sp,
 	}
 }
 
@@ -228,12 +345,21 @@ func (m OnboardingModel) Init() tea.Cmd {
 	return nil
 }
 
-func (m OnboardingModel) selectedProvider() providerTypeInfo {
-	return providerTypes[m.providerIdx]
+func (m OnboardingModel) selectedProvider() providerauth.SetupEntry {
+	if len(m.providers) == 0 {
+		return providerauth.SetupEntry{}
+	}
+	if m.providerIdx < 0 || m.providerIdx >= len(m.providers) {
+		return m.providers[0]
+	}
+	return m.providers[m.providerIdx]
 }
 
 // selectedModelID returns the ID of the currently selected model.
 func (m OnboardingModel) selectedModelID() string {
+	if m.selectedModel != "" {
+		return m.selectedModel
+	}
 	if m.modelCursor < len(m.fetchedModels) {
 		return m.fetchedModels[m.modelCursor].ID
 	}
@@ -241,26 +367,6 @@ func (m OnboardingModel) selectedModelID() string {
 }
 
 func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
-	// Global Esc: cancel any in-progress auth and return to provider selection.
-	// This fires regardless of the current step, so error screens and browser-wait
-	// screens all dismiss properly. For the API key entry step, the step-specific
-	// handler routes back to the Anthropic auth choice when appropriate.
-	if keyMsg, ok := msg.(tea.KeyPressMsg); ok && keyMsg.String() == "esc" {
-		if m.step != stepSelectProvider && m.step != stepEnterAPIKey && m.step != stepAnthropicAuthChoice && m.step != stepPullModel {
-			if m.authCancel != nil {
-				m.authCancel()
-				m.authCancel = nil
-			}
-			m.authing = false
-			m.authError = ""
-			m.step = stepSelectProvider
-			// Restore cursor to the previously-selected provider so the list
-			// highlights the right row when returning to the selection screen.
-			m.cursor = m.providerIdx
-			return m, nil
-		}
-	}
-
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -268,10 +374,20 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		return m, nil
 
 	case deviceCodeMsg:
+		if msg.flowID != m.flowID {
+			return m, nil
+		}
+		if m.authCancel != nil {
+			m.authCancel()
+			m.authCancel = nil
+		}
 		if msg.err != nil {
-			// Device flow request failed — fall to API key paste
 			m.authing = false
 			m.authError = msg.err.Error()
+			if m.selectedProvider().Auth == providerauth.AuthOpenAIChatGPT {
+				m.step = stepBrowserAuth
+				return m, nil
+			}
 			m.step = stepEnterAPIKey
 			m.apiKeyInput.Placeholder = "ghp_..."
 			return m, m.apiKeyInput.Focus()
@@ -279,20 +395,29 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		// Show user code and start polling
 		m.deviceUserCode = msg.result.UserCode
 		m.deviceVerificationURI = msg.result.VerificationURI
-		m.browserOpened = true
 		go providerauth.OpenBrowserURL(msg.result.VerificationURI) //nolint:errcheck
 		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(msg.result.ExpiresIn)*time.Second)
 		m.authCancel = cancel
-		return m, m.pollDeviceFlow(ctx, msg.result.DeviceCode, msg.result.Interval)
+		return m, m.pollDeviceFlow(ctx, msg.result.DeviceCode, msg.result.UserCode, msg.result.Interval)
 
 	case browserAuthResultMsg:
+		if msg.flowID != m.flowID {
+			return m, nil
+		}
 		m.authing = false
+		if m.authCancel != nil {
+			m.authCancel()
+			m.authCancel = nil
+		}
 		if msg.err != nil {
-			// Auth failed — fall back to API key paste
 			m.authError = msg.err.Error()
-			m.step = stepEnterAPIKey
 			p := m.selectedProvider()
-			if p.auth == authGHCLI {
+			if p.Auth == providerauth.AuthOpenAIChatGPT {
+				m.step = stepBrowserAuth
+				return m, nil
+			}
+			m.step = stepEnterAPIKey
+			if p.Auth == providerauth.AuthGitHubDevice {
 				m.apiKeyInput.Placeholder = "ghp_..."
 			} else {
 				m.apiKeyInput.Placeholder = "sk-ant-..."
@@ -300,12 +425,19 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 			return m, m.apiKeyInput.Focus()
 		}
 		m.authToken = msg.token
-		return m.transitionToFetchModels()
+		return m.advanceAfterCredential()
 
 	case modelsListMsg:
+		if msg.flowID != m.flowID {
+			return m, nil
+		}
+		if m.modelFetchCancel != nil {
+			m.modelFetchCancel()
+			m.modelFetchCancel = nil
+		}
 		m.fetchingModels = false
 		if msg.err != nil {
-			m.modelsError = msg.err.Error()
+			m.modelsError = redactProviderError(msg.err, m.authToken)
 		}
 		m.fetchedModels = msg.models
 		m.modelCursor = 0
@@ -313,7 +445,7 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		// Only trigger for actual Ollama servers (default base URL or localhost:11434),
 		// not for other OpenAI-compatible servers (LM Studio, vLLM) where the
 		// Ollama pull API won't work.
-		isOllamaServer := m.selectedProvider().name == "ollama" &&
+		isOllamaServer := m.selectedProvider().Type == "ollama" &&
 			(m.baseURLInput.Value() == "" || strings.Contains(m.baseURLInput.Value(), "localhost:11434") || strings.Contains(m.baseURLInput.Value(), "127.0.0.1:11434"))
 		if len(msg.models) == 0 && msg.err == nil && isOllamaServer {
 			m.step = stepPullModel
@@ -324,13 +456,42 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 			return m, nil
 		}
 		m.step = stepSelectModel
+		if len(msg.models) == 0 && m.selectedProvider().AllowManualModel {
+			m.enteringManualModel = true
+			m.manualModelInput.SetValue("")
+			return m, m.manualModelInput.Focus()
+		}
+		return m, nil
+
+	case cliCheckMsg:
+		if msg.flowID != m.flowID {
+			return m, nil
+		}
+		if m.cliCheckCancel != nil {
+			m.cliCheckCancel()
+			m.cliCheckCancel = nil
+		}
+		if msg.err != nil {
+			m.cliError = msg.err.Error()
+			return m, nil
+		}
+		m.cliCommandPath = msg.path
+		m.cliWorkingDir = msg.workingDir
+		m.cliError = ""
+		m.step = stepReview
 		return m, nil
 
 	case pullProgressMsg:
+		if msg.flowID != m.flowID {
+			return m, nil
+		}
 		m.pullProgress = msg.pct
 		return m, m.readPullProgress()
 
 	case pullDoneMsg:
+		if msg.flowID != m.flowID {
+			return m, nil
+		}
 		m.pullingModel = false
 		if m.pullCancel != nil {
 			m.pullCancel()
@@ -346,6 +507,7 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 			m.pullModelName = ""
 			m.pullProgress = 0
 			m.pullingModel = false
+			m.flowID++
 			m.step = stepSelectProvider
 			m.cursor = m.providerIdx
 			return m, nil
@@ -353,29 +515,79 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		// Pull succeeded — re-fetch models and proceed to selection.
 		return m.transitionToFetchModels()
 
-	case providerAddedMsg:
-		if msg.err != nil {
+	case ProviderSaveResultMsg:
+		if msg.FlowID != m.flowID {
+			return m, nil
+		}
+		if m.providerOperationID != "" && msg.OperationID != m.providerOperationID {
+			return m, nil
+		}
+		m.adding = false
+		m.providerOperationID = msg.OperationID
+		m.providerOperationUnresolved = msg.Unresolved
+		if msg.Err != nil {
+			m.finishProviderOperation()
 			m.testing = false
-			m.testError = msg.err.Error()
+			m.testError = redactProviderError(msg.Err, m.authToken)
+			if m.quitRequested && !msg.Unresolved {
+				m.quitRequested = false
+				return m, func() tea.Msg { return OnboardingQuitMsg{} }
+			}
+			return m, nil
+		}
+		if msg.Provider == nil {
+			m.finishProviderOperation()
+			m.testing = false
+			m.testError = "add provider returned no provider"
+			if m.quitRequested {
+				m.quitRequested = false
+				return m, func() tea.Msg { return OnboardingQuitMsg{} }
+			}
 			return m, nil
 		}
 		m.added = true
-		return m, m.testProvider(msg.provider.Alias)
+		m.savedProvider = msg.Provider
+		m.providerOperationUnresolved = false
+		if m.quitRequested {
+			m.quitRequested = false
+			m.finishProviderOperation()
+			m.testing = false
+			provider := msg.Provider
+			return m, func() tea.Msg { return OnboardingQuitMsg{Provider: provider} }
+		}
+		if m.cancelAfterAdd {
+			m.cancelAfterAdd = false
+			m.finishProviderOperation()
+			m.testing = false
+			provider := msg.Provider
+			return m, func() tea.Msg { return OnboardingDoneMsg{Provider: provider} }
+		}
+		m.finishProviderOperation()
+		ctx := m.beginProviderOperation()
+		return m, m.testProvider(ctx, msg.Provider.Alias)
 
 	case providerTestedMsg:
+		if msg.flowID != m.flowID {
+			return m, nil
+		}
+		m.finishProviderOperation()
 		m.testing = false
 		if msg.err != nil {
-			m.testError = msg.err.Error()
+			m.testError = redactProviderError(msg.err, m.authToken)
+			return m, nil
+		}
+		if msg.result == nil {
+			m.testError = "test provider returned no result"
 			return m, nil
 		}
 		m.testResult = msg.result
 		if !msg.result.Success {
-			m.testError = msg.result.Message
+			m.testError = redactProviderText(msg.result.Message, m.authToken)
 		}
 		return m, nil
 
 	case spinner.TickMsg:
-		if m.testing || m.authing || m.fetchingModels || m.pullingModel {
+		if m.testing || m.authing || m.fetchingModels || m.pullingModel || (m.step == stepCLISetup && m.cliCommandPath == "" && m.cliError == "") {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
 			return m, cmd
@@ -396,6 +608,8 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		return m.updateOllamaChoice(msg)
 	case stepOllamaSetup:
 		return m.updateOllamaSetup(msg)
+	case stepEnterSettings:
+		return m.updateEnterSettings(msg)
 	case stepEnterBaseURL:
 		return m.updateEnterBaseURL(msg)
 	case stepFetchModels:
@@ -404,6 +618,10 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		return m.updatePullModel(msg)
 	case stepSelectModel:
 		return m.updateSelectModel(msg)
+	case stepCLISetup:
+		return m.updateCLISetup(msg)
+	case stepReview:
+		return m.updateReview(msg)
 	case stepTestConnection:
 		return m.updateTestConnection(msg)
 	}
@@ -413,9 +631,38 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 
 func (m OnboardingModel) updateSelectProvider(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+		if m.filtering {
+			switch keyMsg.String() {
+			case "esc":
+				m.filtering = false
+				m.filterInput.SetValue("")
+				m.cursor = 0
+				return m, nil
+			case "enter":
+				m.filtering = false
+				m.cursor = 0
+				return m, nil
+			}
+			var cmd tea.Cmd
+			m.filterInput, cmd = m.filterInput.Update(msg)
+			m.cursor = 0
+			return m, cmd
+		}
+		indices := m.filteredProviderIndices()
 		switch keyMsg.String() {
+		case "esc":
+			if m.filterInput.Value() != "" {
+				m.filterInput.SetValue("")
+				m.cursor = 0
+				return m, nil
+			}
+			provider := m.savedProvider
+			return m, func() tea.Msg { return OnboardingCancelledMsg{Provider: provider} }
+		case "/":
+			m.filtering = true
+			return m, m.filterInput.Focus()
 		case "j", "down":
-			if m.cursor < len(providerTypes)-1 {
+			if m.cursor < len(indices)-1 {
 				m.cursor++
 			}
 		case "k", "up":
@@ -426,8 +673,8 @@ func (m OnboardingModel) updateSelectProvider(msg tea.Msg) (OnboardingModel, tea
 			return m.advanceFromProvider()
 		}
 		// Number shortcuts
-		for i := range providerTypes {
-			if keyMsg.String() == fmt.Sprintf("%d", i+1) && i < len(providerTypes) {
+		for i := 0; i < len(indices) && i < 9; i++ {
+			if keyMsg.String() == fmt.Sprintf("%d", i+1) {
 				m.cursor = i
 			}
 		}
@@ -435,99 +682,369 @@ func (m OnboardingModel) updateSelectProvider(msg tea.Msg) (OnboardingModel, tea
 	return m, nil
 }
 
+func (m OnboardingModel) filteredProviderIndices() []int {
+	query := strings.ToLower(strings.TrimSpace(m.filterInput.Value()))
+	indices := make([]int, 0, len(m.providers))
+	for i, entry := range m.providers {
+		if query == "" || providerEntryMatches(entry, query) {
+			indices = append(indices, i)
+		}
+	}
+	return indices
+}
+
+func providerEntryMatches(entry providerauth.SetupEntry, query string) bool {
+	values := []string{entry.Type, entry.DisplayName, string(entry.Category)}
+	values = append(values, entry.Aliases...)
+	for _, value := range values {
+		if strings.Contains(strings.ToLower(value), query) {
+			return true
+		}
+	}
+	return false
+}
+
 func (m OnboardingModel) advanceFromProvider() (OnboardingModel, tea.Cmd) {
-	// Lock in the selected provider index before cursor gets repurposed for sub-steps.
-	m.providerIdx = m.cursor
+	indices := m.filteredProviderIndices()
+	if len(indices) == 0 || m.cursor < 0 || m.cursor >= len(indices) {
+		return m, nil
+	}
+	m.providerIdx = indices[m.cursor]
+	m.flowID++
 	p := m.selectedProvider()
+	m.filtering = false
+	m.filterInput.SetValue("")
+	m.cursor = m.providerIdx
 	// Reset state
 	m.authToken = ""
 	m.authError = ""
-	m.browserOpened = false
 	m.deviceUserCode = ""
 	m.deviceVerificationURI = ""
 	m.fetchedModels = nil
 	m.modelsError = ""
+	m.settings = make(map[string]string)
+	m.settingsError = ""
+	m.selectedModel = ""
+	m.enteringManualModel = false
+	m.cliCommandPath = ""
+	m.cliWorkingDir = ""
+	m.cliError = ""
+	m.apiKeyInput.SetValue("")
+	m.baseURLInput.SetValue("")
 
-	switch p.auth {
-	case authBrowser:
+	if p.Setup == providerauth.SetupCLINative {
+		return m.beginCLISetup()
+	}
+
+	switch p.Auth {
+	case providerauth.AuthAnthropic:
 		// Anthropic: let user choose between Claude subscription OAuth or API key
 		m.step = stepAnthropicAuthChoice
 		m.cursor = 0
 		return m, nil
 
-	case authGHCLI:
-		// Copilot: always use explicit device flow (never auto-detect gh CLI token)
-		m.step = stepBrowserAuth
-		m.authing = true
-		return m, tea.Batch(m.spinner.Tick, m.startDeviceFlow())
+	case providerauth.AuthGitHubDevice, providerauth.AuthOpenAIChatGPT:
+		return m.beginDeviceFlow()
 
-	case authAPIKey:
+	case providerauth.AuthAPIKey:
 		m.step = stepEnterAPIKey
+		m.apiKeyInput.Placeholder = p.CredentialLabel
 		return m, m.apiKeyInput.Focus()
 
-	case authNone:
-		if p.name == "ollama" {
+	case providerauth.AuthNone:
+		if p.Type == "ollama" {
 			m.step = stepOllamaChoice
 			m.ollamaChoiceCursor = 0
 			return m, nil
 		}
-		if p.needsBaseURL {
-			m.step = stepEnterBaseURL
-			m.baseURLInput.SetValue(p.defaultURL)
-			return m, m.baseURLInput.Focus()
+		return m.advanceAfterCredential()
+	}
+	return m, nil
+}
+
+func (m OnboardingModel) advanceAfterCredential() (OnboardingModel, tea.Cmd) {
+	p := m.selectedProvider()
+	if len(p.Settings) > 0 {
+		next := stepFetchModels
+		if p.PromptBaseURL {
+			next = stepEnterBaseURL
 		}
+		return m.beginSettings(next)
+	}
+	if p.PromptBaseURL {
+		m.step = stepEnterBaseURL
+		m.baseURLInput.SetValue(p.DefaultBaseURL)
+		return m, m.baseURLInput.Focus()
+	}
+	return m.transitionToModelStrategy()
+}
+
+func (m OnboardingModel) beginSettings(next onboardingStep) (OnboardingModel, tea.Cmd) {
+	m.step = stepEnterSettings
+	m.settingsNext = next
+	m.settingIdx = 0
+	m.settingChoice = 0
+	m.settingsError = ""
+	m.prepareSettingInput()
+	return m, m.settingInput.Focus()
+}
+
+func (m *OnboardingModel) prepareSettingInput() {
+	p := m.selectedProvider()
+	if m.settingIdx < 0 || m.settingIdx >= len(p.Settings) {
+		return
+	}
+	field := p.Settings[m.settingIdx]
+	m.settingInput.Placeholder = field.Placeholder
+	value := m.settings[field.Key]
+	if value == "" {
+		value = field.Default
+	}
+	m.settingInput.SetValue(value)
+	m.settingChoice = 0
+	if len(field.Choices) > 0 {
+		for i, choice := range field.Choices {
+			if choice == value {
+				m.settingChoice = i
+				break
+			}
+		}
+	}
+}
+
+func (m OnboardingModel) updateEnterSettings(msg tea.Msg) (OnboardingModel, tea.Cmd) {
+	p := m.selectedProvider()
+	if m.settingIdx < 0 || m.settingIdx >= len(p.Settings) {
+		return m.transitionToModelStrategy()
+	}
+	field := p.Settings[m.settingIdx]
+	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+		switch keyMsg.String() {
+		case "esc":
+			m.settingsError = ""
+			if m.settingIdx > 0 {
+				m.settingIdx--
+				m.prepareSettingInput()
+				return m, m.settingInput.Focus()
+			}
+			if p.Type == "ollama" {
+				m.step = stepOllamaChoice
+				return m, nil
+			}
+			if p.Auth == providerauth.AuthAnthropic {
+				m.step = stepAnthropicAuthChoice
+				m.cursor = 0
+				return m, nil
+			}
+			if p.Auth == providerauth.AuthAPIKey {
+				m.step = stepEnterAPIKey
+				return m, m.apiKeyInput.Focus()
+			}
+			m.step = stepSelectProvider
+			m.cursor = 0
+			return m, nil
+		case "j", "down":
+			if len(field.Choices) > 0 && m.settingChoice < len(field.Choices)-1 {
+				m.settingChoice++
+			}
+		case "k", "up":
+			if len(field.Choices) > 0 && m.settingChoice > 0 {
+				m.settingChoice--
+			}
+		case "enter":
+			value := strings.TrimSpace(m.settingInput.Value())
+			if len(field.Choices) > 0 {
+				value = field.Choices[m.settingChoice]
+			}
+			if field.Required && value == "" {
+				m.settingsError = field.Label + " is required"
+				return m, nil
+			}
+			m.settingsError = ""
+			if value == "" {
+				delete(m.settings, field.Key)
+			} else {
+				m.settings[field.Key] = value
+			}
+			m.settingIdx++
+			if m.settingIdx < len(p.Settings) {
+				m.prepareSettingInput()
+				return m, m.settingInput.Focus()
+			}
+			switch m.settingsNext {
+			case stepEnterBaseURL:
+				m.step = stepEnterBaseURL
+				m.baseURLInput.SetValue(p.DefaultBaseURL)
+				return m, m.baseURLInput.Focus()
+			case stepOllamaSetup:
+				return m.beginOllamaSetup()
+			default:
+				return m.transitionToModelStrategy()
+			}
+		}
+		if len(field.Choices) > 0 {
+			for i := 0; i < len(field.Choices) && i < 9; i++ {
+				if keyMsg.String() == fmt.Sprintf("%d", i+1) {
+					m.settingChoice = i
+				}
+			}
+			return m, nil
+		}
+	}
+	var cmd tea.Cmd
+	m.settingInput, cmd = m.settingInput.Update(msg)
+	return m, cmd
+}
+
+func (m OnboardingModel) transitionToModelStrategy() (OnboardingModel, tea.Cmd) {
+	p := m.selectedProvider()
+	switch p.Model {
+	case providerauth.ModelExternal:
+		m.step = stepReview
+		return m, nil
+	case providerauth.ModelManual:
+		m.step = stepSelectModel
+		m.enteringManualModel = true
+		m.manualModelInput.SetValue("")
+		return m, m.manualModelInput.Focus()
+	case providerauth.ModelDynamic, providerauth.ModelOllama:
 		return m.transitionToFetchModels()
+	default:
+		m.modelsError = fmt.Sprintf("unsupported model strategy %q", p.Model)
+		m.step = stepSelectModel
+		return m, nil
+	}
+}
+
+func (m OnboardingModel) beginCLISetup() (OnboardingModel, tea.Cmd) {
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cliCheckCancel = cancel
+	m.step = stepCLISetup
+	return m, tea.Batch(m.spinner.Tick, m.checkCLIProvider(ctx))
+}
+
+func (m OnboardingModel) checkCLIProvider(ctx context.Context) tea.Cmd {
+	return func() tea.Msg {
+		entry := m.selectedProvider()
+		path, err := m.deps.lookPath(entry.CLICommand)
+		if err != nil {
+			return cliCheckMsg{err: err, flowID: m.flowID}
+		}
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		if err := m.deps.checkCLI(ctx, entry.Type, path); err != nil {
+			return cliCheckMsg{err: fmt.Errorf("health check %s: %w", entry.DisplayName, err), flowID: m.flowID}
+		}
+		workingDir, err := m.deps.workingDir()
+		return cliCheckMsg{path: path, workingDir: workingDir, err: err, flowID: m.flowID}
+	}
+}
+
+func (m OnboardingModel) updateCLISetup(msg tea.Msg) (OnboardingModel, tea.Cmd) {
+	if keyMsg, ok := msg.(tea.KeyPressMsg); ok && keyMsg.String() == "esc" {
+		if m.cliCheckCancel != nil {
+			m.cliCheckCancel()
+			m.cliCheckCancel = nil
+		}
+		m.flowID++
+		m.step = stepSelectProvider
+		m.cursor = 0
+		m.cliError = ""
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m OnboardingModel) updateReview(msg tea.Msg) (OnboardingModel, tea.Cmd) {
+	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+		switch keyMsg.String() {
+		case "enter", " ":
+			return m.startTest()
+		case "b", "esc":
+			if m.selectedProvider().Model == providerauth.ModelExternal {
+				m.step = stepSelectProvider
+				m.cursor = 0
+				return m, nil
+			}
+			m.step = stepSelectModel
+			return m, nil
+		}
 	}
 	return m, nil
 }
 
 // transitionToFetchModels starts the async model listing step.
 func (m OnboardingModel) transitionToFetchModels() (OnboardingModel, tea.Cmd) {
+	if m.modelFetchCancel != nil {
+		m.modelFetchCancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	m.modelFetchCancel = cancel
 	m.step = stepFetchModels
 	m.fetchingModels = true
 	m.fetchedModels = nil
 	m.modelsError = ""
-	return m, tea.Batch(m.spinner.Tick, m.fetchModels())
+	return m, tea.Batch(m.spinner.Tick, m.fetchModels(ctx))
 }
 
-func (m OnboardingModel) fetchModels() tea.Cmd {
+func (m OnboardingModel) fetchModels(ctx context.Context) tea.Cmd {
 	return func() tea.Msg {
-		p := providerTypes[m.providerIdx]
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		p := m.selectedProvider()
+		ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
-		models, err := providerauth.ListModels(ctx, p.name, m.authToken, m.baseURLInput.Value())
-		return modelsListMsg{models: models, err: err}
+		models, err := m.deps.listModels(ctx, p.Type, m.authToken, m.baseURLInput.Value(), m.settings)
+		return modelsListMsg{models: models, err: err, flowID: m.flowID}
 	}
 }
 
-func (m OnboardingModel) startDeviceFlow() tea.Cmd {
+func (m OnboardingModel) beginDeviceFlow() (OnboardingModel, tea.Cmd) {
+	ctx, cancel := context.WithCancel(context.Background())
+	m.authCancel = cancel
+	m.step = stepBrowserAuth
+	m.authing = true
+	m.authError = ""
+	m.deviceUserCode = ""
+	m.deviceVerificationURI = ""
+	return m, tea.Batch(m.spinner.Tick, m.startDeviceFlow(ctx))
+}
+
+func (m OnboardingModel) startDeviceFlow(ctx context.Context) tea.Cmd {
 	return func() tea.Msg {
-		result, err := providerauth.StartGitHubDeviceFlow(context.Background(), providerauth.GithubCopilotClientID)
-		return deviceCodeMsg{result: result, err: err}
+		var result *providerauth.DeviceCodeResult
+		var err error
+		if m.selectedProvider().Auth == providerauth.AuthOpenAIChatGPT {
+			result, err = m.deps.startOpenAIDevice(ctx)
+		} else {
+			result, err = m.deps.startGitHubDevice(ctx)
+		}
+		return deviceCodeMsg{result: result, err: err, flowID: m.flowID}
 	}
 }
 
-func (m OnboardingModel) pollDeviceFlow(ctx context.Context, deviceCode string, interval int) tea.Cmd {
+func (m OnboardingModel) pollDeviceFlow(ctx context.Context, deviceCode, userCode string, interval int) tea.Cmd {
 	return func() tea.Msg {
-		ch := providerauth.PollGitHubDeviceFlow(ctx, providerauth.GithubCopilotClientID, deviceCode, interval)
-		result := <-ch
-		return browserAuthResultMsg{token: result.Token, err: result.Err}
+		var token string
+		var err error
+		if m.selectedProvider().Auth == providerauth.AuthOpenAIChatGPT {
+			token, err = m.deps.pollOpenAIDevice(ctx, deviceCode, userCode, interval)
+		} else {
+			token, err = m.deps.pollGitHubDevice(ctx, deviceCode, interval)
+		}
+		return browserAuthResultMsg{token: token, err: err, flowID: m.flowID}
 	}
 }
 
 func (m OnboardingModel) startAnthropicAuth(ctx context.Context) tea.Cmd {
 	return func() tea.Msg {
-		ch := providerauth.StartAnthropicOAuth(ctx)
-		result := <-ch
-		return browserAuthResultMsg{token: result.Token, err: result.Err}
+		token, err := m.deps.startAnthropic(ctx)
+		return browserAuthResultMsg{token: token, err: err, flowID: m.flowID}
 	}
 }
 
 func (m OnboardingModel) startAnthropicMaxAuth(ctx context.Context) tea.Cmd {
 	return func() tea.Msg {
-		ch := providerauth.StartAnthropicMaxOAuth(ctx)
-		result := <-ch
-		return browserAuthResultMsg{token: result.Token, err: result.Err}
+		token, err := m.deps.startAnthropicMax(ctx)
+		return browserAuthResultMsg{token: token, err: err, flowID: m.flowID}
 	}
 }
 
@@ -535,6 +1052,7 @@ func (m OnboardingModel) updateAnthropicAuthChoice(msg tea.Msg) (OnboardingModel
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 		switch keyMsg.String() {
 		case "esc":
+			m.flowID++
 			m.step = stepSelectProvider
 			m.cursor = m.providerIdx
 			return m, nil
@@ -564,7 +1082,6 @@ func (m OnboardingModel) updateAnthropicAuthChoice(msg tea.Msg) (OnboardingModel
 				// Console OAuth — creates permanent API key via browser
 				m.step = stepBrowserAuth
 				m.authing = true
-				m.browserOpened = true
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				m.authCancel = cancel
 				return m, tea.Batch(m.spinner.Tick, m.startAnthropicAuth(ctx))
@@ -572,7 +1089,6 @@ func (m OnboardingModel) updateAnthropicAuthChoice(msg tea.Msg) (OnboardingModel
 				// Max/Pro subscription OAuth — token used as Bearer directly
 				m.step = stepBrowserAuth
 				m.authing = true
-				m.browserOpened = true
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				m.authCancel = cancel
 				return m, tea.Batch(m.spinner.Tick, m.startAnthropicMaxAuth(ctx))
@@ -585,6 +1101,10 @@ func (m OnboardingModel) updateAnthropicAuthChoice(msg tea.Msg) (OnboardingModel
 func (m OnboardingModel) updateBrowserAuth(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 		switch keyMsg.String() {
+		case "r":
+			if !m.authing && (m.selectedProvider().Auth == providerauth.AuthOpenAIChatGPT || m.selectedProvider().Auth == providerauth.AuthGitHubDevice) {
+				return m.beginDeviceFlow()
+			}
 		case "esc":
 			if m.authCancel != nil {
 				m.authCancel()
@@ -592,6 +1112,7 @@ func (m OnboardingModel) updateBrowserAuth(msg tea.Msg) (OnboardingModel, tea.Cm
 			}
 			m.authing = false
 			m.authError = ""
+			m.flowID++
 			m.step = stepSelectProvider
 			m.cursor = m.providerIdx
 			return m, nil
@@ -608,7 +1129,7 @@ func (m OnboardingModel) updateEnterAPIKey(msg tea.Msg) (OnboardingModel, tea.Cm
 			m.authError = ""
 			// Go back to Anthropic auth choice if this is an Anthropic provider
 			p := m.selectedProvider()
-			if p.auth == authBrowser {
+			if p.Auth == providerauth.AuthAnthropic {
 				m.step = stepAnthropicAuthChoice
 				m.cursor = 0 // reset auth choice cursor
 			} else {
@@ -617,17 +1138,12 @@ func (m OnboardingModel) updateEnterAPIKey(msg tea.Msg) (OnboardingModel, tea.Cm
 			}
 			return m, nil
 		case "enter":
-			if m.apiKeyInput.Value() == "" {
+			p := m.selectedProvider()
+			if p.CredentialRequired && m.apiKeyInput.Value() == "" {
 				return m, nil
 			}
 			m.authToken = m.apiKeyInput.Value()
-			p := m.selectedProvider()
-			if p.needsBaseURL {
-				m.step = stepEnterBaseURL
-				m.baseURLInput.SetValue(p.defaultURL)
-				return m, m.baseURLInput.Focus()
-			}
-			return m.transitionToFetchModels()
+			return m.advanceAfterCredential()
 		}
 	}
 
@@ -640,6 +1156,7 @@ func (m OnboardingModel) updateOllamaChoice(msg tea.Msg) (OnboardingModel, tea.C
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 		switch keyMsg.String() {
 		case "esc":
+			m.flowID++
 			m.step = stepSelectProvider
 			m.cursor = m.providerIdx
 			return m, nil
@@ -654,80 +1171,112 @@ func (m OnboardingModel) updateOllamaChoice(msg tea.Msg) (OnboardingModel, tea.C
 		case "enter":
 			p := m.selectedProvider()
 			if m.ollamaChoiceCursor == 0 {
-				// "I have a local server" → go to URL entry
+				m.baseURLInput.SetValue(p.DefaultBaseURL)
+				if len(p.Settings) > 0 {
+					return m.beginSettings(stepEnterBaseURL)
+				}
 				m.step = stepEnterBaseURL
-				m.baseURLInput.SetValue(p.defaultURL)
 				return m, m.baseURLInput.Focus()
 			}
-			// "Set up Ollama for me" → check/start Ollama first
-			m.baseURLInput.SetValue(p.defaultURL)
-			m.step = stepOllamaSetup
-			m.ollamaSetupStatus = "checking"
-			m.ollamaSetupError = ""
-			return m, tea.Batch(m.spinner.Tick, m.checkOllama())
+			m.baseURLInput.SetValue(p.DefaultBaseURL)
+			if len(p.Settings) > 0 {
+				return m.beginSettings(stepOllamaSetup)
+			}
+			return m.beginOllamaSetup()
 		}
 	}
 	return m, nil
 }
 
-// checkOllama checks if Ollama is reachable, installs it if missing, and starts it.
-// The full flow: health check → install if needed → start server → poll until ready.
-func (m OnboardingModel) checkOllama() tea.Cmd {
+func (m OnboardingModel) beginOllamaSetup() (OnboardingModel, tea.Cmd) {
+	ctx, cancel := context.WithCancel(context.Background())
+	m.ollamaSetupCancel = cancel
+	m.step = stepOllamaSetup
+	m.ollamaSetupStatus = "checking"
+	m.ollamaSetupError = ""
+	return m, tea.Batch(m.spinner.Tick, m.checkOllama(ctx))
+}
+
+func (m OnboardingModel) checkOllama(ctx context.Context) tea.Cmd {
 	return func() tea.Msg {
-		baseURL := m.baseURLInput.Value()
-		c := wfprovider.NewOllamaClient(baseURL)
-
-		// 1. Check if already running.
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		err := c.Health(ctx)
-		cancel()
-		if err == nil {
-			return ollamaSetupMsg{status: "ready"}
-		}
-
-		// 2. Install if binary not found.
-		if _, lookErr := exec.LookPath("ollama"); lookErr != nil {
-			if installErr := installOllamaQuiet(); installErr != nil {
-				return ollamaSetupMsg{status: "failed", err: fmt.Errorf("install ollama: %w", installErr)}
-			}
-			// Verify install worked.
-			if _, lookErr = exec.LookPath("ollama"); lookErr != nil {
-				return ollamaSetupMsg{status: "failed", err: fmt.Errorf("ollama not found after install")}
-			}
-		}
-
-		// 3. Start ollama serve in background.
-		cmd := exec.Command("ollama", "serve")
-		cmd.Stdout = nil
-		cmd.Stderr = nil
-		if startErr := cmd.Start(); startErr != nil {
-			return ollamaSetupMsg{status: "failed", err: fmt.Errorf("start ollama: %w", startErr)}
-		}
-
-		// 4. Poll health for up to 15 seconds.
-		deadline := time.Now().Add(15 * time.Second)
-		for time.Now().Before(deadline) {
-			pollCtx, pollCancel := context.WithTimeout(context.Background(), 2*time.Second)
-			if pollErr := c.Health(pollCtx); pollErr == nil {
-				pollCancel()
-				return ollamaSetupMsg{status: "ready"}
-			}
-			pollCancel()
-			time.Sleep(500 * time.Millisecond)
-		}
-		return ollamaSetupMsg{status: "failed", err: fmt.Errorf("ollama did not become ready within 15s")}
+		status, err := m.deps.setupOllama(ctx, m.baseURLInput.Value())
+		return ollamaSetupMsg{status: status, err: err, flowID: m.flowID}
 	}
 }
 
+// setupOllama checks reachability, installs Ollama if missing, and starts it.
+func setupOllama(ctx context.Context, baseURL string) (string, error) {
+	c := wfprovider.NewOllamaClient(baseURL)
+	healthCtx, healthCancel := context.WithTimeout(ctx, 3*time.Second)
+	err := c.Health(healthCtx)
+	healthCancel()
+	if err == nil {
+		return "ready", nil
+	}
+
+	if _, lookErr := exec.LookPath("ollama"); lookErr != nil {
+		if installErr := installOllamaQuiet(ctx); installErr != nil {
+			return "failed", fmt.Errorf("install ollama: %w", installErr)
+		}
+		if _, lookErr = exec.LookPath("ollama"); lookErr != nil {
+			return "failed", fmt.Errorf("ollama not found after install")
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return "failed", err
+	}
+
+	cmd := exec.Command("ollama", "serve")
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if startErr := cmd.Start(); startErr != nil {
+		return "failed", fmt.Errorf("start ollama: %w", startErr)
+	}
+
+	deadline := time.NewTimer(15 * time.Second)
+	defer deadline.Stop()
+	poll := time.NewTicker(500 * time.Millisecond)
+	defer poll.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return "failed", ctx.Err()
+		case <-deadline.C:
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return "failed", fmt.Errorf("ollama did not become ready within 15s")
+		case <-poll.C:
+			pollCtx, pollCancel := context.WithTimeout(ctx, 2*time.Second)
+			pollErr := c.Health(pollCtx)
+			pollCancel()
+			if pollErr == nil {
+				_ = waitForBackgroundProcess(cmd)
+				return "ready", nil
+			}
+		}
+	}
+}
+
+func waitForBackgroundProcess(cmd *exec.Cmd) <-chan error {
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+		close(done)
+	}()
+	return done
+}
+
 // installOllamaQuiet installs Ollama silently (output suppressed for TUI).
-func installOllamaQuiet() error {
+func installOllamaQuiet(ctx context.Context) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("brew", "install", "ollama")
+		cmd = exec.CommandContext(ctx, "brew", "install", "ollama")
 	case "linux":
 		script := `set -e; t=$(mktemp); curl -fsSL https://ollama.com/install.sh -o "$t"; sh "$t"; rm -f "$t"`
-		cmd = exec.Command("sh", "-c", script)
+		cmd = exec.CommandContext(ctx, "sh", "-c", script)
 	default:
 		return fmt.Errorf("automatic install not supported on %s — install from https://ollama.com/download", runtime.GOOS)
 	}
@@ -747,6 +1296,13 @@ func recommendedOllamaModels() []string {
 func (m OnboardingModel) updateOllamaSetup(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case ollamaSetupMsg:
+		if msg.flowID != m.flowID {
+			return m, nil
+		}
+		if m.ollamaSetupCancel != nil {
+			m.ollamaSetupCancel()
+			m.ollamaSetupCancel = nil
+		}
 		m.ollamaSetupStatus = msg.status
 		if msg.err != nil {
 			m.ollamaSetupError = msg.err.Error()
@@ -767,6 +1323,11 @@ func (m OnboardingModel) updateOllamaSetup(msg tea.Msg) (OnboardingModel, tea.Cm
 		return m, cmd
 	case tea.KeyPressMsg:
 		if msg.String() == "esc" {
+			if m.ollamaSetupCancel != nil {
+				m.ollamaSetupCancel()
+				m.ollamaSetupCancel = nil
+			}
+			m.flowID++
 			m.step = stepOllamaChoice
 			m.ollamaChoiceCursor = 0
 			return m, nil
@@ -780,18 +1341,29 @@ func (m OnboardingModel) updateEnterBaseURL(msg tea.Msg) (OnboardingModel, tea.C
 		switch keyMsg.String() {
 		case "esc":
 			p := m.selectedProvider()
-			if p.auth == authAPIKey {
+			if len(p.Settings) > 0 {
+				m.settingIdx = len(p.Settings) - 1
+				m.settingsNext = stepEnterBaseURL
+				m.step = stepEnterSettings
+				m.prepareSettingInput()
+				return m, m.settingInput.Focus()
+			}
+			if p.Auth == providerauth.AuthAPIKey || p.Auth == providerauth.AuthAnthropic || p.Auth == providerauth.AuthGitHubDevice {
 				m.step = stepEnterAPIKey
 				return m, m.apiKeyInput.Focus()
+			}
+			if p.Type == "ollama" {
+				m.step = stepOllamaChoice
+				return m, nil
 			}
 			m.step = stepSelectProvider
 			m.cursor = m.providerIdx
 			return m, nil
 		case "enter":
-			if m.baseURLInput.Value() == "" {
+			if m.selectedProvider().BaseURLRequired && m.baseURLInput.Value() == "" {
 				return m, nil
 			}
-			return m.transitionToFetchModels()
+			return m.transitionToModelStrategy()
 		}
 	}
 
@@ -804,6 +1376,11 @@ func (m OnboardingModel) updateFetchModels(msg tea.Msg) (OnboardingModel, tea.Cm
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
 		if keyMsg.String() == "esc" {
 			m.fetchingModels = false
+			if m.modelFetchCancel != nil {
+				m.modelFetchCancel()
+				m.modelFetchCancel = nil
+			}
+			m.flowID++
 			m.step = stepSelectProvider
 			m.cursor = m.providerIdx
 			return m, nil
@@ -822,6 +1399,7 @@ func (m OnboardingModel) updatePullModel(msg tea.Msg) (OnboardingModel, tea.Cmd)
 			}
 			m.pullingModel = false
 			m.pullError = ""
+			m.flowID++
 			m.step = stepSelectProvider
 			m.cursor = m.providerIdx
 		}
@@ -855,6 +1433,7 @@ func (m OnboardingModel) updatePullModel(msg tea.Msg) (OnboardingModel, tea.Cmd)
 		customIdx := len(m.recommendedModels) // index for the "Custom" row
 		switch keyMsg.String() {
 		case "esc":
+			m.flowID++
 			m.step = stepSelectProvider
 			m.cursor = m.providerIdx
 			return m, nil
@@ -932,40 +1511,71 @@ func (m OnboardingModel) readPullProgress() tea.Cmd {
 		// Check doneCh first (non-blocking) to prioritize completion.
 		select {
 		case err := <-m.pullDoneCh:
-			return pullDoneMsg{err: err}
+			return pullDoneMsg{err: err, flowID: m.flowID}
 		default:
 		}
 		// Wait for either progress or done.
 		select {
 		case pct, ok := <-m.pullProgressCh:
 			if ok {
-				return pullProgressMsg{pct: pct}
+				return pullProgressMsg{pct: pct, flowID: m.flowID}
 			}
 			// progressCh closed — pull goroutine finished, read result.
 			err := <-m.pullDoneCh
-			return pullDoneMsg{err: err}
+			return pullDoneMsg{err: err, flowID: m.flowID}
 		case err := <-m.pullDoneCh:
-			return pullDoneMsg{err: err}
+			return pullDoneMsg{err: err, flowID: m.flowID}
 		}
 	}
 }
 
 func (m OnboardingModel) updateSelectModel(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 	models := m.fetchedModels
+	if m.enteringManualModel {
+		if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+			switch keyMsg.String() {
+			case "esc":
+				if len(models) > 0 {
+					m.enteringManualModel = false
+					m.manualModelInput.SetValue("")
+					return m, nil
+				}
+				m.step = stepSelectProvider
+				m.cursor = 0
+				return m, nil
+			case "enter":
+				model := strings.TrimSpace(m.manualModelInput.Value())
+				if model == "" {
+					return m, nil
+				}
+				m.selectedModel = model
+				m.enteringManualModel = false
+				m.step = stepReview
+				return m, nil
+			}
+		}
+		var cmd tea.Cmd
+		m.manualModelInput, cmd = m.manualModelInput.Update(msg)
+		return m, cmd
+	}
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+		customIndex := len(models)
 		switch keyMsg.String() {
 		case "esc":
 			p := m.selectedProvider()
-			if p.needsBaseURL {
+			if p.PromptBaseURL {
 				m.step = stepEnterBaseURL
 				return m, m.baseURLInput.Focus()
 			}
-			// For browser/gh_cli auth, go back to provider selection
 			m.step = stepSelectProvider
-			m.cursor = m.providerIdx
+			m.cursor = 0
 			return m, nil
 		case "j", "down":
-			if m.modelCursor < len(models)-1 {
+			maxCursor := len(models) - 1
+			if m.selectedProvider().AllowManualModel {
+				maxCursor = customIndex
+			}
+			if m.modelCursor < maxCursor {
 				m.modelCursor++
 			}
 		case "k", "up":
@@ -973,8 +1583,15 @@ func (m OnboardingModel) updateSelectModel(msg tea.Msg) (OnboardingModel, tea.Cm
 				m.modelCursor--
 			}
 		case "enter", " ":
-			if len(models) > 0 {
-				return m.startTest()
+			if m.selectedProvider().AllowManualModel && m.modelCursor == customIndex {
+				m.enteringManualModel = true
+				m.manualModelInput.SetValue("")
+				return m, m.manualModelInput.Focus()
+			}
+			if m.modelCursor >= 0 && m.modelCursor < len(models) {
+				m.selectedModel = models[m.modelCursor].ID
+				m.step = stepReview
+				return m, nil
 			}
 		}
 		// Number shortcuts (1-9)
@@ -991,59 +1608,366 @@ func (m OnboardingModel) updateSelectModel(msg tea.Msg) (OnboardingModel, tea.Cm
 }
 
 func (m OnboardingModel) startTest() (OnboardingModel, tea.Cmd) {
+	ctx := m.beginProviderOperation()
+	reconcileCtx := m.beginProviderReconciliation()
 	m.step = stepTestConnection
 	m.testing = true
+	m.adding = true
+	m.cancelAfterAdd = false
 	m.testResult = nil
 	m.testError = ""
 	m.added = false
+	m.providerOperationID = uuid.NewString()
+	m.providerOperationUnresolved = false
+	m.quitRequested = false
 
 	p := m.selectedProvider()
 	model := m.selectedModelID()
 
 	return m, tea.Batch(
 		m.spinner.Tick,
-		m.addProvider(p, model),
+		m.addProvider(ctx, reconcileCtx, m.providerOperationID, p, model),
 	)
 }
 
-func (m OnboardingModel) addProvider(p providerTypeInfo, model string) tea.Cmd {
+func (m OnboardingModel) addProvider(ctx, reconcileCtx context.Context, operationID string, p providerauth.SetupEntry, model string) tea.Cmd {
 	return func() tea.Msg {
+		settingsJSON := ""
+		if len(m.settings) > 0 {
+			data, err := json.Marshal(m.settings)
+			if err != nil {
+				return ProviderSaveResultMsg{OperationID: operationID, Err: fmt.Errorf("encode provider settings: %w", err), FlowID: m.flowID}
+			}
+			settingsJSON = string(data)
+		}
+		baseURL := m.baseURLInput.Value()
+		if p.Model == providerauth.ModelExternal {
+			baseURL = m.cliWorkingDir
+		}
 		req := &pb.AddProviderReq{
-			Alias:     p.name,
-			Type:      p.name,
+			Alias:     providerAlias(p),
+			Type:      p.Type,
 			Model:     model,
 			ApiKey:    m.authToken,
-			BaseUrl:   m.baseURLInput.Value(),
+			BaseUrl:   baseURL,
+			Settings:  settingsJSON,
 			IsDefault: true,
 		}
-		provider, err := m.client.AddProvider(context.Background(), req)
-		return providerAddedMsg{provider: provider, err: err}
+		operation, err := m.deps.commitProviderSave(ctx, &pb.CommitProviderSaveReq{
+			OperationId: operationID,
+			Provider:    req,
+		})
+		if err != nil {
+			if !ambiguousOnboardingProviderSaveError(err) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+				return ProviderSaveResultMsg{OperationID: operationID, Err: err, FlowID: m.flowID}
+			}
+			operation, err = m.reconcileProviderOperation(reconcileCtx, operationID)
+		} else {
+			operation, err = m.resolveProviderOperation(reconcileCtx, operationID, operation)
+		}
+		if err != nil {
+			return ProviderSaveResultMsg{
+				OperationID: operationID,
+				Unresolved:  isProviderOperationUnresolved(err),
+				Err:         err,
+				FlowID:      m.flowID,
+			}
+		}
+		return ProviderSaveResultMsg{
+			Provider:    providerFromSaveOperation(operation),
+			OperationID: operationID,
+			FlowID:      m.flowID,
+		}
 	}
 }
 
-func (m OnboardingModel) testProvider(alias string) tea.Cmd {
-	return func() tea.Msg {
-		result, err := m.client.TestProvider(context.Background(), alias)
-		return providerTestedMsg{result: result, err: err}
+type providerOperationUnresolvedError struct {
+	operationID string
+	cause       error
+}
+
+func (e *providerOperationUnresolvedError) Error() string {
+	message := fmt.Sprintf("provider operation %s remains unresolved; query it with 'ratchet provider operation %s'", e.operationID, e.operationID)
+	if e.cause != nil {
+		return message + ": " + e.cause.Error()
 	}
+	return message
+}
+
+func (e *providerOperationUnresolvedError) Unwrap() error { return e.cause }
+
+func isProviderOperationUnresolved(err error) bool {
+	var unresolved *providerOperationUnresolvedError
+	return errors.As(err, &unresolved)
+}
+
+func (m OnboardingModel) resolveProviderOperation(ctx context.Context, operationID string, operation *pb.ProviderOperation) (*pb.ProviderOperation, error) {
+	if err := validateOnboardingProviderOperation(operationID, operation); err != nil {
+		return m.reconcileProviderOperation(ctx, operationID)
+	}
+	switch operation.GetState() {
+	case pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED:
+		if operation.GetResult() == nil {
+			return m.reconcileProviderOperation(ctx, operationID)
+		}
+		return operation, nil
+	case pb.ProviderOperationState_PROVIDER_OPERATION_STATE_FAILED:
+		return nil, fmt.Errorf("provider operation %s failed: %s", operationID, operation.GetFailure())
+	case pb.ProviderOperationState_PROVIDER_OPERATION_STATE_PENDING,
+		pb.ProviderOperationState_PROVIDER_OPERATION_STATE_APPLIED:
+		return m.reconcileProviderOperation(ctx, operationID)
+	default:
+		return m.reconcileProviderOperation(ctx, operationID)
+	}
+}
+
+func (m OnboardingModel) reconcileProviderOperation(parent context.Context, operationID string) (*pb.ProviderOperation, error) {
+	timeout := m.deps.providerReconcileTimeout
+	if timeout <= 0 {
+		timeout = providerReconciliationTimeout
+	}
+	pollInterval := m.deps.providerPollInterval
+	if pollInterval <= 0 {
+		pollInterval = providerPollInterval
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+	for {
+		operation, err := m.deps.getProviderOperation(ctx, operationID)
+		if err == nil {
+			if err := validateOnboardingProviderOperation(operationID, operation); err != nil {
+				return nil, &providerOperationUnresolvedError{operationID: operationID, cause: err}
+			}
+			switch operation.GetState() {
+			case pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED:
+				if operation.GetResult() == nil {
+					return nil, &providerOperationUnresolvedError{
+						operationID: operationID,
+						cause:       fmt.Errorf("committed response has no result"),
+					}
+				}
+				return operation, nil
+			case pb.ProviderOperationState_PROVIDER_OPERATION_STATE_FAILED:
+				return nil, fmt.Errorf("provider operation %s failed: %s", operationID, operation.GetFailure())
+			case pb.ProviderOperationState_PROVIDER_OPERATION_STATE_PENDING,
+				pb.ProviderOperationState_PROVIDER_OPERATION_STATE_APPLIED:
+			default:
+				return nil, &providerOperationUnresolvedError{
+					operationID: operationID,
+					cause:       fmt.Errorf("unknown operation state %s", operation.GetState()),
+				}
+			}
+		} else if !temporaryOnboardingProviderOperationError(err) {
+			return nil, &providerOperationUnresolvedError{operationID: operationID, cause: err}
+		}
+
+		timer := time.NewTimer(pollInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, &providerOperationUnresolvedError{operationID: operationID, cause: ctx.Err()}
+		case <-timer.C:
+			pollInterval = min(pollInterval*2, time.Second)
+		}
+	}
+}
+
+func validateOnboardingProviderOperation(expected string, operation *pb.ProviderOperation) error {
+	if operation == nil {
+		return fmt.Errorf("provider operation %s returned an empty response", expected)
+	}
+	parsed, err := uuid.Parse(operation.GetOperationId())
+	if err != nil || parsed.String() != operation.GetOperationId() {
+		return fmt.Errorf("provider operation ID %q is not canonical", operation.GetOperationId())
+	}
+	if operation.GetOperationId() != expected {
+		return fmt.Errorf("provider operation ID %q does not match request %q", operation.GetOperationId(), expected)
+	}
+	return nil
+}
+
+func providerFromSaveOperation(operation *pb.ProviderOperation) *pb.Provider {
+	result := operation.GetResult()
+	return &pb.Provider{
+		Alias:     result.GetAlias(),
+		Type:      result.GetType(),
+		Model:     result.GetModel(),
+		IsDefault: result.GetIsDefault(),
+	}
+}
+
+func ambiguousOnboardingProviderSaveError(err error) bool {
+	rpcStatus, ok := status.FromError(err)
+	if !ok {
+		return false
+	}
+	switch rpcStatus.Code() {
+	case codes.Canceled, codes.DeadlineExceeded, codes.Unavailable, codes.Internal, codes.Unknown, codes.Aborted:
+		return true
+	default:
+		return false
+	}
+}
+
+func temporaryOnboardingProviderOperationError(err error) bool {
+	switch status.Code(err) {
+	case codes.NotFound, codes.Canceled, codes.DeadlineExceeded, codes.Unavailable:
+		return true
+	default:
+		return false
+	}
+}
+
+func (m OnboardingModel) testProvider(ctx context.Context, alias string) tea.Cmd {
+	return func() tea.Msg {
+		result, err := m.deps.testProvider(ctx, alias)
+		return providerTestedMsg{result: result, err: err, flowID: m.flowID}
+	}
+}
+
+func (m OnboardingModel) retryProviderOperation() (OnboardingModel, tea.Cmd) {
+	ctx := m.beginProviderReconciliation()
+	operationID := m.providerOperationID
+	m.adding = true
+	m.testing = true
+	m.providerOperationUnresolved = false
+	m.testError = ""
+	return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+		operation, err := m.reconcileProviderOperation(ctx, operationID)
+		if err != nil {
+			return ProviderSaveResultMsg{
+				OperationID: operationID,
+				Unresolved:  isProviderOperationUnresolved(err),
+				Err:         err,
+				FlowID:      m.flowID,
+			}
+		}
+		return ProviderSaveResultMsg{
+			Provider:    providerFromSaveOperation(operation),
+			OperationID: operationID,
+			FlowID:      m.flowID,
+		}
+	})
+}
+
+func (m *OnboardingModel) beginProviderOperation() context.Context {
+	if m.providerOpCancel != nil {
+		m.providerOpCancel()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), providerOperationTimeout)
+	m.providerOpContext = ctx
+	m.providerOpCancel = cancel
+	return ctx
+}
+
+func (m *OnboardingModel) beginProviderReconciliation() context.Context {
+	if m.providerReconcileCancel != nil {
+		m.providerReconcileCancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	m.providerReconcileContext = ctx
+	m.providerReconcileCancel = cancel
+	return ctx
+}
+
+func (m *OnboardingModel) requestProviderOperationCancel() {
+	if m.providerOpCancel != nil {
+		m.providerOpCancel()
+	}
+}
+
+func (m *OnboardingModel) finishProviderOperation() {
+	m.requestProviderOperationCancel()
+	if m.providerReconcileCancel != nil {
+		m.providerReconcileCancel()
+	}
+	m.providerOpContext = nil
+	m.providerOpCancel = nil
+	m.providerReconcileContext = nil
+	m.providerReconcileCancel = nil
+}
+
+// RequestQuit defers application exit until an in-flight save reaches a terminal state.
+func (m OnboardingModel) RequestQuit() (OnboardingModel, tea.Cmd, bool) {
+	if m.adding || m.providerOperationUnresolved {
+		m.quitRequested = true
+		return m, nil, false
+	}
+	if m.savedProvider != nil {
+		m.Cancel()
+		provider := m.savedProvider
+		return m, func() tea.Msg { return OnboardingQuitMsg{Provider: provider} }, false
+	}
+	m.Cancel()
+	return m, nil, true
+}
+
+// Cancel stops asynchronous setup work before the TUI exits.
+func (m *OnboardingModel) Cancel() {
+	for _, cancel := range []context.CancelFunc{
+		m.authCancel,
+		m.modelFetchCancel,
+		m.ollamaSetupCancel,
+		m.pullCancel,
+		m.cliCheckCancel,
+		m.providerOpCancel,
+		m.providerReconcileCancel,
+	} {
+		if cancel != nil {
+			cancel()
+		}
+	}
+	m.authCancel = nil
+	m.modelFetchCancel = nil
+	m.ollamaSetupCancel = nil
+	m.pullCancel = nil
+	m.cliCheckCancel = nil
+	m.providerOpCancel = nil
+	m.providerOpContext = nil
+	m.providerReconcileCancel = nil
+	m.providerReconcileContext = nil
+}
+
+func providerAlias(entry providerauth.SetupEntry) string {
+	if entry.DefaultAlias != "" {
+		return entry.DefaultAlias
+	}
+	return entry.Type
 }
 
 func (m OnboardingModel) updateTestConnection(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+		if m.providerOperationUnresolved {
+			if keyMsg.String() == "r" {
+				return m.retryProviderOperation()
+			}
+			return m, nil
+		}
 		if m.testing {
+			if keyMsg.String() == "esc" {
+				if m.adding {
+					m.cancelAfterAdd = true
+				} else {
+					m.requestProviderOperationCancel()
+				}
+			}
 			return m, nil
 		}
 
 		if m.testResult != nil && m.testResult.Success {
 			switch keyMsg.String() {
 			case "enter", " ":
+				if m.savedProvider != nil {
+					provider := m.savedProvider
+					return m, func() tea.Msg { return OnboardingDoneMsg{Provider: provider} }
+				}
 				p := m.selectedProvider()
 				model := m.selectedModelID()
 				return m, func() tea.Msg {
 					return OnboardingDoneMsg{
 						Provider: &pb.Provider{
-							Alias:     p.name,
-							Type:      p.name,
+							Alias:     providerAlias(p),
+							Type:      p.Type,
 							Model:     model,
 							IsDefault: true,
 						},
@@ -1056,19 +1980,21 @@ func (m OnboardingModel) updateTestConnection(msg tea.Msg) (OnboardingModel, tea
 		switch keyMsg.String() {
 		case "r":
 			if m.added {
+				ctx := m.beginProviderOperation()
 				m.testing = true
 				m.testError = ""
 				p := m.selectedProvider()
-				return m, tea.Batch(m.spinner.Tick, m.testProvider(p.name))
+				return m, tea.Batch(m.spinner.Tick, m.testProvider(ctx, providerAlias(p)))
 			}
 			return m.startTest()
 		case "b", "esc":
 			if m.added {
-				p := m.selectedProvider()
-				go m.client.RemoveProvider(context.Background(), p.name) //nolint:errcheck
-				m.added = false
+				m.step = stepReview
+				m.testResult = nil
+				m.testError = ""
+				return m, nil
 			}
-			m.step = stepSelectModel
+			m.step = stepReview
 			m.testResult = nil
 			m.testError = ""
 			return m, nil
@@ -1078,8 +2004,7 @@ func (m OnboardingModel) updateTestConnection(msg tea.Msg) (OnboardingModel, tea
 }
 
 func (m OnboardingModel) View(t theme.Theme, width, height int) string {
-	w := width
-	h := height
+	w, h := width, height
 	if m.width > 0 {
 		w = m.width
 	}
@@ -1087,332 +2012,408 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 		h = m.height
 	}
 
+	cardWidth := 62
+	if w > 0 && cardWidth > w-6 {
+		cardWidth = w - 6
+	}
+	if cardWidth < 24 {
+		cardWidth = 24
+	}
+	contentWidth := cardWidth - 6
+
 	var sb strings.Builder
 	titleStyle := lipgloss.NewStyle().Foreground(t.Primary).Bold(true)
+	selectedStyle := lipgloss.NewStyle().Foreground(t.Foreground).Bold(true)
 	mutedStyle := lipgloss.NewStyle().Foreground(t.Muted)
 	successStyle := lipgloss.NewStyle().Foreground(t.Success)
 	errorStyle := lipgloss.NewStyle().Foreground(t.Error)
+	wrapMuted := mutedStyle.Width(contentWidth)
 
 	sb.WriteString(titleStyle.Render("Welcome to ratchet") + "\n\n")
-
-	// Step progress dots
-	steps := m.stepCount()
-	current := m.currentStepIndex()
 	var dots []string
-	for i := 0; i < steps; i++ {
-		if i <= current {
-			dots = append(dots, lipgloss.NewStyle().Foreground(t.Primary).Render("●"))
-		} else {
-			dots = append(dots, mutedStyle.Render("○"))
+	for i := 0; i < m.stepCount(); i++ {
+		style := mutedStyle
+		dot := "○"
+		if i <= m.currentStepIndex() {
+			style = lipgloss.NewStyle().Foreground(t.Primary)
+			dot = "●"
 		}
+		dots = append(dots, style.Render(dot))
 	}
 	sb.WriteString(strings.Join(dots, " ") + "\n\n")
 
 	switch m.step {
 	case stepSelectProvider:
 		sb.WriteString("Select your AI provider:\n\n")
-		for i, p := range providerTypes {
-			cursor := "  "
-			style := mutedStyle
-			if i == m.cursor {
-				cursor = "▶ "
-				style = lipgloss.NewStyle().Foreground(t.Foreground).Bold(true)
-			}
-			label := fmt.Sprintf("%s%d. %s", cursor, i+1, p.displayName)
-			sb.WriteString(style.Render(label) + "\n")
+		if m.filtering {
+			sb.WriteString("Filter: " + m.filterInput.View() + "\n\n")
 		}
-		sb.WriteString("\n" + mutedStyle.Render(fmt.Sprintf("↑/↓ or 1-%d: select  Enter: confirm", len(providerTypes))))
+		indices := m.filteredProviderIndices()
+		if len(indices) == 0 {
+			sb.WriteString(errorStyle.Render("No providers match this filter.") + "\n")
+		} else {
+			cursor := m.cursor
+			if cursor >= len(indices) {
+				cursor = len(indices) - 1
+			}
+			maxVisible := 3
+			if h >= 36 {
+				maxVisible = 12
+			} else if m.filtering {
+				maxVisible = 1
+			}
+			start := max(0, cursor-maxVisible+1)
+			end := min(len(indices), start+maxVisible)
+			if start > 0 {
+				sb.WriteString(mutedStyle.Render("  ... more above") + "\n")
+			}
+			var lastCategory providerauth.Category
+			for visibleIndex := start; visibleIndex < end; visibleIndex++ {
+				entry := m.providers[indices[visibleIndex]]
+				if entry.Category != lastCategory {
+					sb.WriteString(titleStyle.Render(categoryLabel(entry.Category)) + "\n")
+					lastCategory = entry.Category
+				}
+				prefix := "  "
+				style := mutedStyle
+				if visibleIndex == cursor {
+					prefix = "▶ "
+					style = selectedStyle
+				}
+				shortcut := "  "
+				if visibleIndex < 9 {
+					shortcut = fmt.Sprintf("%d.", visibleIndex+1)
+				}
+				sb.WriteString(style.Render(fmt.Sprintf("%s%-2s %s", prefix, shortcut, entry.DisplayName)) + "\n")
+			}
+			if end < len(indices) {
+				sb.WriteString(mutedStyle.Render("  ... more below") + "\n")
+			}
+			selected := m.providers[indices[cursor]]
+			sb.WriteString("\n" + wrapMuted.Render(selected.Description) + "\n")
+		}
+		help := "↑/↓: select  /: filter  Enter: confirm  Esc: cancel"
+		if m.filtering || m.filterInput.Value() != "" {
+			help = "↑/↓: select  /: filter  Enter: confirm  Esc: clear filter"
+		}
+		sb.WriteString("\n" + mutedStyle.Render(help))
 
 	case stepAnthropicAuthChoice:
 		sb.WriteString("Sign in with Anthropic\n\n")
 		choices := []string{
 			"Enter API key (recommended)",
-			"Console OAuth (creates API key via browser)",
+			"Console OAuth (creates an API key)",
 			"Max/Pro subscription OAuth (experimental)",
 		}
-		for i, label := range choices {
-			cursor := "  "
-			style := mutedStyle
-			if i == m.cursor {
-				cursor = "▶ "
-				style = lipgloss.NewStyle().Foreground(t.Foreground).Bold(true)
-			}
-			sb.WriteString(style.Render(fmt.Sprintf("%s%d. %s", cursor, i+1, label)) + "\n")
-		}
+		writeChoiceList(&sb, choices, m.cursor, selectedStyle, mutedStyle)
 		sb.WriteString("\n" + mutedStyle.Render("↑/↓ or 1-3: select  Enter: confirm  Esc: back"))
 
 	case stepBrowserAuth:
 		p := m.selectedProvider()
-		if m.authing {
-			if p.auth == authGHCLI && m.deviceUserCode != "" {
-				// Device flow: show user code
-				sb.WriteString("Sign in with GitHub Copilot\n\n")
-				codeStyle := lipgloss.NewStyle().Bold(true).Foreground(t.Accent)
-				sb.WriteString("Your code: " + codeStyle.Render(m.deviceUserCode) + "\n\n")
-				sb.WriteString(m.spinner.View() + " Waiting for authorization...\n\n")
-				sb.WriteString(mutedStyle.Render("Enter the code at "+m.deviceVerificationURI) + "\n")
-				sb.WriteString(mutedStyle.Render("Esc: cancel"))
-			} else if p.auth == authGHCLI {
-				sb.WriteString(m.spinner.View() + " Checking for GitHub CLI auth...\n")
-			} else if m.anthropicChoice == anthropicChoiceMaxOAuth {
-				sb.WriteString("Sign in with Claude Max / Pro\n\n")
-				sb.WriteString(m.spinner.View() + " Waiting for browser sign-in...\n\n")
-				sb.WriteString(mutedStyle.Render("Authorize at claude.ai — token used as Bearer.") + "\n")
-				sb.WriteString(mutedStyle.Render("Experimental: API access may have restrictions.") + "\n")
-				sb.WriteString(mutedStyle.Render("Esc: cancel and enter key manually"))
-			} else {
-				sb.WriteString("Sign in with " + p.displayName + "\n\n")
-				sb.WriteString(m.spinner.View() + " Waiting for browser sign-in...\n\n")
-				sb.WriteString(mutedStyle.Render("Complete sign-in in your browser.") + "\n")
-				sb.WriteString(mutedStyle.Render("A permanent API key will be created for you.") + "\n")
-				sb.WriteString(mutedStyle.Render("Esc: cancel and enter key manually"))
+		if m.authing && m.deviceUserCode != "" {
+			sb.WriteString("Sign in with " + p.DisplayName + "\n\n")
+			codeStyle := lipgloss.NewStyle().Bold(true).Foreground(t.Accent)
+			sb.WriteString("Your code: " + codeStyle.Render(m.deviceUserCode) + "\n\n")
+			sb.WriteString(m.spinner.View() + " Waiting for authorization...\n\n")
+			sb.WriteString(wrapMuted.Render("Enter the code at "+m.deviceVerificationURI) + "\n")
+			sb.WriteString(mutedStyle.Render("Esc: cancel"))
+		} else if m.authing {
+			sb.WriteString("Sign in with " + p.DisplayName + "\n\n")
+			sb.WriteString(m.spinner.View() + " Waiting for browser sign-in...\n\n")
+			if m.anthropicChoice == anthropicChoiceMaxOAuth {
+				sb.WriteString(wrapMuted.Render("Experimental subscription access may have API restrictions.") + "\n")
 			}
+			sb.WriteString(mutedStyle.Render("Esc: cancel"))
 		} else if m.authError != "" {
 			sb.WriteString(errorStyle.Render("Authentication issue") + "\n\n")
-			sb.WriteString(mutedStyle.Render(m.authError) + "\n\n")
-			sb.WriteString(mutedStyle.Render("Falling back to manual key entry..."))
+			sb.WriteString(wrapMuted.Render(m.authError) + "\n\n")
+			if p.Auth == providerauth.AuthOpenAIChatGPT || p.Auth == providerauth.AuthGitHubDevice {
+				sb.WriteString(mutedStyle.Render("r: retry  Esc: back"))
+			} else {
+				sb.WriteString(mutedStyle.Render("Esc: back"))
+			}
 		}
 
 	case stepEnterAPIKey:
 		p := m.selectedProvider()
-		switch p.auth {
-		case authBrowser:
-			sb.WriteString("Enter your Anthropic API key:\n\n")
-			sb.WriteString(mutedStyle.Render("Get one at console.anthropic.com/settings/keys") + "\n")
-			sb.WriteString(mutedStyle.Render("Keys start with sk-ant-api03-...") + "\n\n")
-		case authGHCLI:
-			sb.WriteString("Paste your GitHub token:\n\n")
-			sb.WriteString(mutedStyle.Render("Run: gh auth token") + "\n")
-			sb.WriteString(mutedStyle.Render("Or create a fine-grained PAT at github.com/settings/tokens") + "\n\n")
-		default:
-			fmt.Fprintf(&sb, "Enter your %s API key:\n\n", p.displayName)
-			switch p.name {
-			case "openai":
-				sb.WriteString(mutedStyle.Render("Get one at platform.openai.com/api-keys") + "\n\n")
-			case "gemini":
-				sb.WriteString(mutedStyle.Render("Get one at aistudio.google.com/apikey") + "\n\n")
-			}
+		sb.WriteString("Configure " + p.DisplayName + "\n\n")
+		if p.AuthHint != "" {
+			sb.WriteString(wrapMuted.Render(p.AuthHint) + "\n\n")
 		}
-		sb.WriteString("Key: " + m.apiKeyInput.View() + "\n\n")
-		sb.WriteString(mutedStyle.Render("Your key is stored locally and never shared.") + "\n")
+		sb.WriteString(p.CredentialLabel + ": " + m.apiKeyInput.View() + "\n\n")
+		sb.WriteString(wrapMuted.Render("The credential is stored through the daemon secrets provider and is not shown again.") + "\n")
 		sb.WriteString(mutedStyle.Render("Enter: continue  Esc: back"))
 
+	case stepOllamaChoice:
+		sb.WriteString("How would you like to set up Ollama?\n\n")
+		choices := []string{
+			"Use an existing local model server",
+			"Install/start Ollama and download a model",
+		}
+		writeChoiceList(&sb, choices, m.ollamaChoiceCursor, selectedStyle, mutedStyle)
+		sb.WriteString("\n" + mutedStyle.Render("↑/↓: select  Enter: confirm  Esc: back"))
+
 	case stepOllamaSetup:
-		switch m.ollamaSetupStatus {
-		case "checking":
-			sb.WriteString(m.spinner.View() + " Setting up Ollama...\n\n")
-			sb.WriteString(mutedStyle.Render("Checking installation, starting server...") + "\n\n")
-			sb.WriteString(mutedStyle.Render("Esc: cancel"))
-		case "failed":
+		if m.ollamaSetupStatus == "failed" {
 			sb.WriteString(errorStyle.Render("Ollama setup failed") + "\n\n")
-			if m.ollamaSetupError != "" {
-				sb.WriteString(mutedStyle.Render(m.ollamaSetupError) + "\n\n")
-			}
+			sb.WriteString(wrapMuted.Render(m.ollamaSetupError) + "\n\n")
 			sb.WriteString(mutedStyle.Render("Esc: back"))
-		default:
+		} else {
 			sb.WriteString(m.spinner.View() + " Setting up Ollama...\n\n")
+			sb.WriteString(wrapMuted.Render("Checking the installation and starting the local server.") + "\n\n")
 			sb.WriteString(mutedStyle.Render("Esc: cancel"))
 		}
 
-	case stepOllamaChoice:
-		sb.WriteString("How would you like to set up local models?\n\n")
-		choices := []string{
-			"I already have a local server running (Ollama, LM Studio, etc.)",
-			"Set up Ollama for me (install + download a model)",
-		}
-		for i, label := range choices {
-			cursor := "  "
-			style := mutedStyle
-			if i == m.ollamaChoiceCursor {
-				cursor = "▶ "
-				style = lipgloss.NewStyle().Foreground(t.Foreground).Bold(true)
+	case stepEnterSettings:
+		p := m.selectedProvider()
+		if m.settingIdx >= 0 && m.settingIdx < len(p.Settings) {
+			field := p.Settings[m.settingIdx]
+			fmt.Fprintf(&sb, "Configure %s\n\n%s (%d/%d)\n\n", p.DisplayName, field.Label, m.settingIdx+1, len(p.Settings))
+			if len(field.Choices) > 0 {
+				writeChoiceList(&sb, field.Choices, m.settingChoice, selectedStyle, mutedStyle)
+			} else {
+				sb.WriteString(m.settingInput.View() + "\n")
 			}
-			sb.WriteString(style.Render(fmt.Sprintf("%s%s", cursor, label)) + "\n")
+			if m.settingsError != "" {
+				sb.WriteString("\n" + errorStyle.Render(m.settingsError) + "\n")
+			}
+			sb.WriteString("\n" + mutedStyle.Render("↑/↓: select  Enter: continue  Esc: back"))
 		}
-		sb.WriteString("\n")
-		sb.WriteString(mutedStyle.Render("↑/↓: navigate  Enter: select  Esc: back"))
 
 	case stepEnterBaseURL:
 		p := m.selectedProvider()
-		if p.name == "ollama" {
-			sb.WriteString("Enter your local model server URL:\n\n")
-			sb.WriteString("URL: " + m.baseURLInput.View() + "\n\n")
-			sb.WriteString(mutedStyle.Render("Default works for Ollama. LM Studio, vLLM, llama.cpp also supported.") + "\n\n")
-			sb.WriteString(mutedStyle.Render("Enter: continue  Esc: back"))
-		} else {
-			fmt.Fprintf(&sb, "Enter the %s server URL:\n\n", p.displayName)
-			sb.WriteString("URL: " + m.baseURLInput.View() + "\n\n")
-			sb.WriteString(mutedStyle.Render("Enter: continue  Esc: back"))
+		sb.WriteString("Configure " + p.DisplayName + " endpoint\n\n")
+		sb.WriteString("URL: " + m.baseURLInput.View() + "\n\n")
+		if p.Type == "ollama" {
+			sb.WriteString(wrapMuted.Render("The default works for Ollama; compatible local servers are also supported.") + "\n\n")
 		}
+		sb.WriteString(mutedStyle.Render("Enter: continue  Esc: back"))
 
 	case stepFetchModels:
 		p := m.selectedProvider()
-		if p.auth != authNone {
-			sb.WriteString(successStyle.Render("Authenticated!") + "\n\n")
-		} else {
-			sb.WriteString(successStyle.Render("Connected!") + "\n\n")
-		}
-		sb.WriteString(m.spinner.View() + " Loading available models from " + p.displayName + "...\n\n")
+		sb.WriteString(m.spinner.View() + " Loading models from " + p.DisplayName + "...\n\n")
 		sb.WriteString(mutedStyle.Render("Esc: cancel"))
 
 	case stepPullModel:
-		customIdx := len(m.recommendedModels)
 		if m.pullEnteringCustom {
-			sb.WriteString("Enter model name to pull:\n\n")
-			sb.WriteString("Model: " + m.pullCustomInput.View() + "\n\n")
+			sb.WriteString("Enter model name to pull:\n\nModel: " + m.pullCustomInput.View() + "\n\n")
 			sb.WriteString(mutedStyle.Render("Enter: pull  Esc: back"))
-		} else {
-			sb.WriteString("No models installed. Pull one to get started:\n\n")
-			for i, name := range m.recommendedModels {
-				cursor := "  "
-				style := mutedStyle
-				if i == m.pullCursor {
-					cursor = "▶ "
-					style = lipgloss.NewStyle().Foreground(t.Foreground).Bold(true)
-				}
-				sb.WriteString(style.Render(fmt.Sprintf("%s%d. %s", cursor, i+1, name)) + "\n")
-			}
-			// Custom row
-			customCursor := "  "
-			customStyle := mutedStyle
-			if m.pullCursor == customIdx {
-				customCursor = "▶ "
-				customStyle = lipgloss.NewStyle().Foreground(t.Foreground).Bold(true)
-			}
-			sb.WriteString(customStyle.Render(fmt.Sprintf("%s%d. Custom (enter model name)", customCursor, customIdx+1)) + "\n")
-			if m.pullingModel {
-				fmt.Fprintf(&sb, "\n%s Pulling %s... %.0f%%\n", m.spinner.View(), m.pullModelName, m.pullProgress)
-			} else if m.pullError != "" {
-				sb.WriteString("\n" + errorStyle.Render("Pull failed: "+m.pullError) + "\n")
-				sb.WriteString(mutedStyle.Render("Enter: retry  Esc: back"))
-			} else {
-				sb.WriteString("\n" + mutedStyle.Render(fmt.Sprintf("↑/↓ or 1-%d: select  Enter: pull  Esc: back", customIdx+1)))
-			}
+			break
 		}
+		sb.WriteString("No models are installed. Pull one to continue:\n\n")
+		choices := append(slices.Clone(m.recommendedModels), "Custom model name")
+		writeChoiceList(&sb, choices, m.pullCursor, selectedStyle, mutedStyle)
+		if m.pullingModel {
+			status := fitText(fmt.Sprintf("Pulling %s... %.0f%%", m.pullModelName, m.pullProgress), contentWidth-2)
+			fmt.Fprintf(&sb, "\n%s %s\n", m.spinner.View(), status)
+		} else if m.pullError != "" {
+			sb.WriteString("\n" + errorStyle.Render(fitText("Pull failed: "+m.pullError, contentWidth)) + "\n")
+		}
+		sb.WriteString("\n" + mutedStyle.Render("↑/↓: select  Enter: pull  Esc: back"))
 
 	case stepSelectModel:
-		models := m.fetchedModels
-		if m.modelsError != "" || len(models) == 0 {
-			sb.WriteString(errorStyle.Render("Could not fetch models") + "\n\n")
+		if m.enteringManualModel {
+			sb.WriteString("Enter the provider model ID:\n\nModel: " + m.manualModelInput.View() + "\n\n")
 			if m.modelsError != "" {
-				sb.WriteString(mutedStyle.Render(m.modelsError) + "\n\n")
+				sb.WriteString(wrapMuted.Render("Automatic discovery was unavailable: "+m.modelsError) + "\n\n")
 			}
-			if m.selectedProvider().name == "ollama" {
-				sb.WriteString(mutedStyle.Render("Is your local model server running?") + "\n")
-				sb.WriteString(mutedStyle.Render("To set up Ollama from scratch, run:") + "\n")
-				sb.WriteString(mutedStyle.Render("  ratchet provider setup ollama") + "\n\n")
-			}
-			sb.WriteString(mutedStyle.Render("Esc: back"))
-		} else {
-			sb.WriteString("Select your default model:\n\n")
-			// Show up to 15 models with scrolling
-			maxVisible := 15
-			start := 0
-			if m.modelCursor >= maxVisible {
-				start = m.modelCursor - maxVisible + 1
-			}
-			end := start + maxVisible
-			if end > len(models) {
-				end = len(models)
-			}
-			if start > 0 {
-				sb.WriteString(mutedStyle.Render("  ... more above") + "\n")
-			}
-			for i := start; i < end; i++ {
-				cursor := "  "
-				style := mutedStyle
-				if i == m.modelCursor {
-					cursor = "▶ "
-					style = lipgloss.NewStyle().Foreground(t.Foreground).Bold(true)
-				}
-				label := models[i].Name
-				if models[i].Name != models[i].ID {
-					label = fmt.Sprintf("%s (%s)", models[i].Name, models[i].ID)
-				}
-				sb.WriteString(style.Render(cursor+label) + "\n")
-			}
-			if end < len(models) {
-				sb.WriteString(mutedStyle.Render("  ... more below") + "\n")
-			}
-			sb.WriteString("\n" + mutedStyle.Render("Other models can be used later."))
-			sb.WriteString("\n" + mutedStyle.Render("↑/↓: select  Enter: confirm  Esc: back"))
+			sb.WriteString(mutedStyle.Render("Enter: continue  Esc: back"))
+			break
 		}
+		sb.WriteString("Select your default model:\n\n")
+		models := m.fetchedModels
+		maxVisible := 10
+		start := max(0, m.modelCursor-maxVisible+1)
+		end := min(len(models), start+maxVisible)
+		for i := start; i < end; i++ {
+			prefix, style := "  ", mutedStyle
+			if i == m.modelCursor {
+				prefix, style = "▶ ", selectedStyle
+			}
+			label := models[i].Name
+			if label == "" {
+				label = models[i].ID
+			}
+			sb.WriteString(style.Render(fitText(prefix+label, contentWidth)) + "\n")
+		}
+		if m.selectedProvider().AllowManualModel {
+			prefix, style := "  ", mutedStyle
+			if m.modelCursor == len(models) {
+				prefix, style = "▶ ", selectedStyle
+			}
+			sb.WriteString(style.Render(prefix+"Enter model ID manually") + "\n")
+		}
+		sb.WriteString("\n" + mutedStyle.Render("↑/↓: select  Enter: confirm  Esc: back"))
+
+	case stepCLISetup:
+		p := m.selectedProvider()
+		sb.WriteString("Checking " + p.DisplayName + "\n\n")
+		if m.cliError == "" {
+			sb.WriteString(m.spinner.View() + " Looking for " + p.CLICommand + " on PATH...\n\n")
+			sb.WriteString(mutedStyle.Render("Esc: cancel"))
+		} else {
+			sb.WriteString(errorStyle.Render("CLI setup check failed") + "\n\n")
+			sb.WriteString(wrapMuted.Render(m.cliError) + "\n\n")
+			sb.WriteString(wrapMuted.Render(p.InstallHint) + "\n\n")
+			sb.WriteString(mutedStyle.Render("Esc: back"))
+		}
+
+	case stepReview:
+		p := m.selectedProvider()
+		sb.WriteString("Review provider setup\n\n")
+		sb.WriteString("Provider: " + p.DisplayName + "\n")
+		if model := m.selectedModelID(); model != "" {
+			sb.WriteString(fitReviewValue("Model", model, contentWidth) + "\n")
+		}
+		if m.cliCommandPath != "" {
+			sb.WriteString(fitReviewValue("Command", m.cliCommandPath, contentWidth) + "\n")
+		}
+		if m.cliWorkingDir != "" {
+			sb.WriteString(fitReviewValue("Working directory", m.cliWorkingDir, contentWidth) + "\n")
+		}
+		if baseURL := strings.TrimSpace(m.baseURLInput.Value()); baseURL != "" {
+			sb.WriteString(fitReviewValue("Endpoint", baseURL, contentWidth) + "\n")
+		}
+		if m.authToken != "" {
+			sb.WriteString(successStyle.Render("Credential configured") + "\n")
+		}
+		keys := make([]string, 0, len(m.settings))
+		for key := range m.settings {
+			keys = append(keys, key)
+		}
+		slices.Sort(keys)
+		for _, key := range keys {
+			sb.WriteString(fitReviewValue(settingLabel(p, key), m.settings[key], contentWidth) + "\n")
+		}
+		sb.WriteString("\n" + mutedStyle.Render("Enter: save and test  b/Esc: back"))
 
 	case stepTestConnection:
 		p := m.selectedProvider()
-		if m.testing {
-			sb.WriteString(m.spinner.View() + " Testing connection to " + p.displayName + "...\n")
+		if m.providerOperationUnresolved {
+			sb.WriteString(errorStyle.Render("Provider save is still resolving") + "\n\n")
+			sb.WriteString(fitReviewValue("Operation", m.providerOperationID, contentWidth) + "\n\n")
+			sb.WriteString(wrapMuted.Render("Check it with: ratchet provider operation "+m.providerOperationID) + "\n\n")
+			sb.WriteString(mutedStyle.Render("r: check again  Exit remains paused until the save reaches a terminal state"))
+		} else if m.adding {
+			sb.WriteString(m.spinner.View() + " Saving " + p.DisplayName + " configuration...\n\n")
+			if m.cancelAfterAdd {
+				sb.WriteString(mutedStyle.Render("Cancel requested; setup will finish after save"))
+			} else {
+				sb.WriteString(mutedStyle.Render("Esc: cancel after save"))
+			}
+		} else if m.testing {
+			sb.WriteString(m.spinner.View() + " Testing connection to " + p.DisplayName + "...\n\n")
+			sb.WriteString(mutedStyle.Render("Esc: cancel"))
 		} else if m.testResult != nil && m.testResult.Success {
-			sb.WriteString(successStyle.Render("Connection successful!") + "\n\n")
-			sb.WriteString(successStyle.Render("✓") + " Provider: " + p.name + "\n")
-			sb.WriteString(successStyle.Render("✓") + " Default model: " + m.selectedModelID() + "\n")
-			sb.WriteString(successStyle.Render("✓") + fmt.Sprintf(" Response time: %dms", m.testResult.LatencyMs) + "\n")
-			sb.WriteString("\n" + mutedStyle.Render("Press Enter to start chatting"))
+			sb.WriteString(successStyle.Render("Connection successful") + "\n\n")
+			sb.WriteString("Provider: " + p.Type + "\n")
+			if model := m.selectedModelID(); model != "" {
+				sb.WriteString(fitReviewValue("Default model", model, contentWidth) + "\n")
+			}
+			fmt.Fprintf(&sb, "Response time: %dms\n", m.testResult.LatencyMs)
+			sb.WriteString("\n" + mutedStyle.Render("Enter: start chatting"))
 		} else {
 			sb.WriteString(errorStyle.Render("Connection failed") + "\n\n")
-			sb.WriteString(errorStyle.Render("✗") + " " + m.testError + "\n")
-			sb.WriteString("\n" + mutedStyle.Render("r: retry  b: back  Esc: back"))
+			sb.WriteString(wrapMuted.Render(m.testError) + "\n\n")
+			sb.WriteString(mutedStyle.Render("r: retry  b/Esc: back"))
 		}
-	}
-
-	cardWidth := 56
-	if w > 0 && cardWidth > w-6 {
-		cardWidth = w - 6
 	}
 
 	card := t.OnboardingCard.Width(cardWidth).Render(strings.TrimRight(sb.String(), "\n"))
 	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, card)
 }
 
+func writeChoiceList(sb *strings.Builder, choices []string, cursor int, selectedStyle, mutedStyle lipgloss.Style) {
+	for i, label := range choices {
+		prefix, style := "  ", mutedStyle
+		if i == cursor {
+			prefix, style = "▶ ", selectedStyle
+		}
+		sb.WriteString(style.Render(fmt.Sprintf("%s%d. %s", prefix, i+1, label)) + "\n")
+	}
+}
+
+func categoryLabel(category providerauth.Category) string {
+	switch category {
+	case providerauth.CategoryAPI:
+		return "API providers"
+	case providerauth.CategoryCompatible:
+		return "Compatible endpoints"
+	case providerauth.CategorySubscription:
+		return "Subscriptions"
+	case providerauth.CategoryCloud:
+		return "Cloud platforms"
+	case providerauth.CategoryLocal:
+		return "Local runtimes"
+	case providerauth.CategoryCLI:
+		return "External CLI agents"
+	default:
+		return string(category)
+	}
+}
+
+func settingLabel(entry providerauth.SetupEntry, key string) string {
+	for _, field := range entry.Settings {
+		if field.Key == key {
+			return field.Label
+		}
+	}
+	return key
+}
+
+func fitReviewValue(label, value string, width int) string {
+	return fitText(label+": "+value, width)
+}
+
+func fitText(text string, width int) string {
+	if width <= 3 || lipgloss.Width(text) <= width {
+		return text
+	}
+	tail := "..."
+	limit := width - lipgloss.Width(tail)
+	var b strings.Builder
+	currentWidth := 0
+	for _, r := range text {
+		runeWidth := lipgloss.Width(string(r))
+		if currentWidth+runeWidth > limit {
+			break
+		}
+		b.WriteRune(r)
+		currentWidth += runeWidth
+	}
+	return b.String() + tail
+}
+
+func redactProviderError(err error, credential string) string {
+	if err == nil {
+		return ""
+	}
+	return redactProviderText(err.Error(), credential)
+}
+
+func redactProviderText(text, credential string) string {
+	redactor := secrets.NewRedactor()
+	redactor.AddValue("provider credential", credential)
+	return redactor.Redact(text)
+}
+
 func (m OnboardingModel) stepCount() int {
-	p := m.selectedProvider()
-	count := 3 // provider + model + test
-	if p.auth != authNone {
-		count++
-	}
-	if p.name == "ollama" {
-		count++ // ollama choice step
-	}
-	if p.needsBaseURL {
-		count++
-	}
-	return count
+	return 5
 }
 
 func (m OnboardingModel) currentStepIndex() int {
-	p := m.selectedProvider()
 	switch m.step {
 	case stepSelectProvider:
 		return 0
-	case stepAnthropicAuthChoice:
+	case stepAnthropicAuthChoice, stepBrowserAuth, stepEnterAPIKey, stepOllamaChoice, stepOllamaSetup, stepEnterSettings, stepEnterBaseURL, stepCLISetup:
 		return 1
-	case stepBrowserAuth, stepEnterAPIKey:
-		return 1
-	case stepOllamaChoice:
-		return 1
-	case stepEnterBaseURL:
-		idx := 1
-		if p.auth != authNone {
-			idx++
-		}
-		if p.name == "ollama" {
-			idx++ // ollama choice step
-		}
-		return idx
 	case stepFetchModels, stepPullModel, stepSelectModel:
-		idx := 1
-		if p.auth != authNone {
-			idx++
-		}
-		if p.name == "ollama" {
-			idx++ // ollama choice step
-		}
-		if p.needsBaseURL {
-			idx++
-		}
-		return idx
+		return 2
+	case stepReview:
+		return 3
 	case stepTestConnection:
-		return m.stepCount() - 1
+		return 4
+	default:
+		return 0
 	}
-	return 0
 }

@@ -682,6 +682,53 @@ message TaskReq {
   string task_id = 1;
 }
 
+enum ProviderOperationState {
+  PROVIDER_OPERATION_STATE_UNSPECIFIED = 0;
+  PROVIDER_OPERATION_STATE_PENDING = 1;
+  PROVIDER_OPERATION_STATE_APPLIED = 2;
+  PROVIDER_OPERATION_STATE_COMMITTED = 3;
+  PROVIDER_OPERATION_STATE_FAILED = 4;
+}
+
+enum ProviderOperationFailure {
+  PROVIDER_OPERATION_FAILURE_UNSPECIFIED = 0;
+  PROVIDER_OPERATION_FAILURE_INVALID_REQUEST = 1;
+  PROVIDER_OPERATION_FAILURE_OPERATION_CONFLICT = 2;
+  PROVIDER_OPERATION_FAILURE_ALIAS_BUSY = 3;
+  PROVIDER_OPERATION_FAILURE_SECRET_STORE = 4;
+  PROVIDER_OPERATION_FAILURE_DATABASE = 5;
+  PROVIDER_OPERATION_FAILURE_FINALIZATION = 6;
+  PROVIDER_OPERATION_FAILURE_RESTART_RECOVERY = 7;
+  PROVIDER_OPERATION_FAILURE_INTERNAL = 8;
+}
+
+message CommitProviderSaveReq {
+  string operation_id = 1;
+  AddProviderReq provider = 2;
+}
+
+message GetProviderOperationReq {
+  string operation_id = 1;
+}
+
+message ProviderSaveResult {
+  string alias = 1;
+  string type = 2;
+  string model = 3;
+  bool is_default = 4;
+}
+
+message ProviderOperation {
+  string operation_id = 1;
+  string alias = 2;
+  ProviderOperationState state = 3;
+  ProviderOperationFailure failure = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp updated_at = 6;
+  google.protobuf.Timestamp expires_at = 7;
+  ProviderSaveResult result = 8;
+}
+
 // === Service ===
 
 service RatchetDaemon {
@@ -714,6 +761,8 @@ service RatchetDaemon {
 
   // Providers
   rpc AddProvider(AddProviderReq) returns (Provider);
+  rpc CommitProviderSave(CommitProviderSaveReq) returns (ProviderOperation);
+  rpc GetProviderOperation(GetProviderOperationReq) returns (ProviderOperation);
   rpc ListProviders(Empty) returns (ProviderList);
   rpc TestProvider(TestProviderReq) returns (TestProviderResult);
   rpc RemoveProvider(RemoveProviderReq) returns (Empty);

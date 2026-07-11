@@ -277,6 +277,14 @@ func (c *Client) AddProvider(ctx context.Context, req *pb.AddProviderReq) (*pb.P
 	return c.daemon.AddProvider(ctx, req)
 }
 
+func (c *Client) CommitProviderSave(ctx context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+	return c.daemon.CommitProviderSave(ctx, req)
+}
+
+func (c *Client) GetProviderOperation(ctx context.Context, operationID string) (*pb.ProviderOperation, error) {
+	return c.daemon.GetProviderOperation(ctx, &pb.GetProviderOperationReq{OperationId: operationID})
+}
+
 func (c *Client) ListProviders(ctx context.Context) (*pb.ProviderList, error) {
 	return c.daemon.ListProviders(ctx, &pb.Empty{})
 }
