@@ -2,6 +2,7 @@ package acpclient
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -117,6 +118,76 @@ func TestProfileHashChangesWithLaunchInputs(t *testing.T) {
 	}
 }
 
+func TestProfileTrustInvalidatedByLaunchDescriptorDrift(t *testing.T) {
+	base := Profile{
+		Name: "fixture",
+		Spec: AgentSpec{
+			Name:    "fixture",
+			Command: "/tmp/acp-agent",
+			Args:    []string{"--stdio"},
+			EnvKeys: []string{"ACP_TOKEN"},
+		},
+		Cwd:     "/tmp/project",
+		Trusted: true,
+	}
+	base.Hash = base.DescriptorHash()
+	if !base.TrustValid() {
+		t.Fatal("unchanged profile trust is invalid")
+	}
+
+	tests := map[string]func(*Profile){
+		"command": func(profile *Profile) { profile.Spec.Command = "/tmp/other-agent" },
+		"args":    func(profile *Profile) { profile.Spec.Args = []string{"--stdio", "--verbose"} },
+		"env key": func(profile *Profile) { profile.Spec.EnvKeys = []string{"OTHER_TOKEN"} },
+		"cwd":     func(profile *Profile) { profile.Cwd = "/tmp/other-project" },
+	}
+	for name, drift := range tests {
+		t.Run(name, func(t *testing.T) {
+			profile := base
+			profile.Spec.Args = append([]string(nil), base.Spec.Args...)
+			profile.Spec.EnvKeys = append([]string(nil), base.Spec.EnvKeys...)
+			drift(&profile)
+			if profile.TrustValid() {
+				t.Fatal("TrustValid = true after launch descriptor drift")
+			}
+		})
+	}
+
+	untrusted := base
+	untrusted.Trusted = false
+	if untrusted.TrustValid() {
+		t.Fatal("TrustValid = true for untrusted profile")
+	}
+}
+
+func TestProfileStorePreservesStaleTrustedHash(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "profiles.json")
+	const staleHash = "0123456789abcdef"
+	if err := os.WriteFile(path, []byte(`{
+  "profiles": [{
+    "name": "fixture",
+    "spec": {"name": "fixture", "command": "/tmp/acp-agent"},
+    "hash": "0123456789abcdef",
+    "trusted": true,
+    "createdAt": "2026-07-10T12:00:00Z",
+    "updatedAt": "2026-07-10T12:00:00Z"
+  }]
+}`), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	profile, err := NewProfileStore(path).Get("fixture")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if profile.Hash != staleHash {
+		t.Fatalf("Hash = %q, want preserved stale hash %q", profile.Hash, staleHash)
+	}
+	if profile.TrustValid() {
+		t.Fatal("TrustValid = true for stale stored hash")
+	}
+}
+
 func TestRegistryWithProfilesRequiresTrustAndRejectsBuiltinShadowing(t *testing.T) {
 	untrusted := Profile{
 		Name: "fixture",
@@ -133,6 +204,7 @@ func TestRegistryWithProfilesRequiresTrustAndRejectsBuiltinShadowing(t *testing.
 
 	trusted := untrusted
 	trusted.Trusted = true
+	trusted.Hash = trusted.DescriptorHash()
 	reg, err = DefaultRegistry().WithProfiles([]Profile{trusted})
 	if err != nil {
 		t.Fatalf("WithProfiles trusted: %v", err)
@@ -148,6 +220,7 @@ func TestRegistryWithProfilesRequiresTrustAndRejectsBuiltinShadowing(t *testing.
 	shadow := trusted
 	shadow.Name = "codex"
 	shadow.Spec.Name = "codex"
+	shadow.Hash = shadow.DescriptorHash()
 	_, err = DefaultRegistry().WithProfiles([]Profile{shadow})
 	if !errors.Is(err, ErrProfileShadowsBuiltin) {
 		t.Fatalf("WithProfiles shadow error = %v, want ErrProfileShadowsBuiltin", err)

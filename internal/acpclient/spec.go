@@ -150,7 +150,10 @@ func (r Registry) WithProfiles(profiles []Profile) (Registry, error) {
 		next.specs[name] = cloneSpec(spec)
 	}
 	for _, profile := range profiles {
-		if !profile.Trusted {
+		if profile.Hash == "" {
+			profile.Hash = profile.DescriptorHash()
+		}
+		if !profile.TrustValid() {
 			continue
 		}
 		name := strings.TrimSpace(profile.Name)

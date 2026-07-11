@@ -2,6 +2,7 @@ package acpclient
 
 import (
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -188,6 +189,13 @@ func (p Profile) DescriptorHash() string {
 	b, _ := json.Marshal(payload)
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
+}
+
+func (p Profile) TrustValid() bool {
+	if !p.Trusted {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(p.Hash), []byte(p.DescriptorHash())) == 1
 }
 
 func (s *ProfileStore) load() (profileFile, error) {

@@ -95,3 +95,34 @@ func TestCommandFingerprintNormalizesCommandAndEmptyArgs(t *testing.T) {
 		t.Fatalf("fingerprints differ for logically identical specs: %q != %q", a.Fingerprint(), b.Fingerprint())
 	}
 }
+
+func TestRegistryWithProfilesExcludesStaleTrustedHash(t *testing.T) {
+	profile := Profile{
+		Name:    "fixture",
+		Spec:    AgentSpec{Name: "fixture", Command: "/tmp/acp-agent"},
+		Hash:    "stale-trust-hash",
+		Trusted: true,
+	}
+	reg, err := DefaultRegistry().WithProfiles([]Profile{profile})
+	if err != nil {
+		t.Fatalf("WithProfiles: %v", err)
+	}
+	if _, err := reg.Resolve(RunOptions{Agent: profile.Name}); !errors.Is(err, ErrUnknownAgent) {
+		t.Fatalf("Resolve stale trusted profile error = %v, want ErrUnknownAgent", err)
+	}
+}
+
+func TestRegistryWithProfilesNormalizesEmptyTrustedHash(t *testing.T) {
+	profile := Profile{
+		Name:    "fixture",
+		Spec:    AgentSpec{Name: "fixture", Command: "/tmp/acp-agent"},
+		Trusted: true,
+	}
+	reg, err := DefaultRegistry().WithProfiles([]Profile{profile})
+	if err != nil {
+		t.Fatalf("WithProfiles: %v", err)
+	}
+	if _, err := reg.Resolve(RunOptions{Agent: profile.Name}); err != nil {
+		t.Fatalf("Resolve profile with legacy empty hash: %v", err)
+	}
+}
