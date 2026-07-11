@@ -232,7 +232,7 @@ func normalizeProfiles(profiles []Profile) {
 		}
 		profiles[i].Spec.Args = slices.Clone(profiles[i].Spec.Args)
 		profiles[i].Spec.EnvKeys = slices.Clone(profiles[i].Spec.EnvKeys)
-		if profiles[i].Hash == "" {
+		if profiles[i].Hash == "" && !profiles[i].Trusted {
 			profiles[i].Hash = profiles[i].DescriptorHash()
 		}
 	}

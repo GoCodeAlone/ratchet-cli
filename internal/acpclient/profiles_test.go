@@ -188,6 +188,40 @@ func TestProfileStorePreservesStaleTrustedHash(t *testing.T) {
 	}
 }
 
+func TestProfileStorePreservesEmptyTrustedHash(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "profiles.json")
+	if err := os.WriteFile(path, []byte(`{
+  "profiles": [{
+    "name": "fixture",
+    "spec": {"name": "fixture", "command": "/tmp/acp-agent"},
+    "hash": "",
+    "trusted": true,
+    "createdAt": "2026-07-10T12:00:00Z",
+    "updatedAt": "2026-07-10T12:00:00Z"
+  }]
+}`), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	profile, err := NewProfileStore(path).Get("fixture")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if profile.Hash != "" {
+		t.Fatalf("Hash = %q, want empty trusted hash preserved", profile.Hash)
+	}
+	if profile.TrustValid() {
+		t.Fatal("TrustValid = true for empty trusted hash")
+	}
+	reg, err := DefaultRegistry().WithProfiles([]Profile{profile})
+	if err != nil {
+		t.Fatalf("WithProfiles: %v", err)
+	}
+	if _, err := reg.Resolve(RunOptions{Agent: profile.Name}); !errors.Is(err, ErrUnknownAgent) {
+		t.Fatalf("Resolve empty-hash trusted profile error = %v, want ErrUnknownAgent", err)
+	}
+}
+
 func TestRegistryWithProfilesRequiresTrustAndRejectsBuiltinShadowing(t *testing.T) {
 	untrusted := Profile{
 		Name: "fixture",

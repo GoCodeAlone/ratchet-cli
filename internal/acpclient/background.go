@@ -21,16 +21,18 @@ const (
 	BackgroundStateError    = "error"
 	BackgroundStateDisabled = "disabled"
 
-	BackgroundOutcomeStarted          = "started"
-	BackgroundOutcomeResumed          = "resumed"
-	BackgroundOutcomeStopped          = "stopped"
-	BackgroundOutcomeProfileUntrusted = "profile_untrusted"
-	BackgroundOutcomeProfileDrift     = "profile_drift"
-	BackgroundOutcomeProfileMissing   = "profile_missing"
-	BackgroundOutcomeSessionMissing   = "session_missing"
-	BackgroundOutcomePolicyInvalid    = "policy_invalid"
-	BackgroundOutcomeWorkerError      = "worker_error"
-	BackgroundOutcomeWorkerPanic      = "worker_panic"
+	BackgroundOutcomeStarted           = "started"
+	BackgroundOutcomeResumed           = "resumed"
+	BackgroundOutcomeStopped           = "stopped"
+	BackgroundOutcomeProfileUntrusted  = "profile_untrusted"
+	BackgroundOutcomeProfileDrift      = "profile_drift"
+	BackgroundOutcomeProfileMissing    = "profile_missing"
+	BackgroundOutcomeSessionMissing    = "session_missing"
+	BackgroundOutcomePolicyInvalid     = "policy_invalid"
+	BackgroundOutcomeWorkerError       = "worker_error"
+	BackgroundOutcomeWorkerPanic       = "worker_panic"
+	BackgroundOutcomeStateWriteFailed  = "state_write_failed"
+	BackgroundOutcomeAuditAppendFailed = "audit_append_failed"
 )
 
 var (
@@ -233,7 +235,14 @@ type BackgroundManagerOptions struct {
 type backgroundWorker struct {
 	profile        string
 	descriptorHash string
+	policy         BackgroundPolicy
 	cancel         context.CancelFunc
+}
+
+type backgroundTerminalGuard struct {
+	status        BackgroundStatus
+	stateRecorded bool
+	auditRecorded bool
 }
 
 type BackgroundManager struct {
@@ -245,12 +254,13 @@ type BackgroundManager struct {
 	watch    WatchOptions
 	now      func() time.Time
 
-	ctx    context.Context
-	cancel context.CancelFunc
-	mu     sync.Mutex
-	closed bool
-	active map[string]backgroundWorker
-	wg     sync.WaitGroup
+	ctx      context.Context
+	cancel   context.CancelFunc
+	mu       sync.Mutex
+	closed   bool
+	active   map[string]backgroundWorker
+	terminal map[string]backgroundTerminalGuard
+	wg       sync.WaitGroup
 }
 
 func NewBackgroundManager(sessions *Store, store *BackgroundStore, audit *BackgroundAudit, opts BackgroundManagerOptions) *BackgroundManager {
@@ -278,6 +288,7 @@ func NewBackgroundManager(sessions *Store, store *BackgroundStore, audit *Backgr
 		ctx:      ctx,
 		cancel:   cancel,
 		active:   make(map[string]backgroundWorker),
+		terminal: make(map[string]backgroundTerminalGuard),
 	}
 }
 
@@ -357,11 +368,14 @@ func (m *BackgroundManager) Start(sessionID, profile string, acknowledged bool) 
 	policy.State = BackgroundStateRunning
 	policy.Outcome = BackgroundOutcomeStarted
 	policy.StartedAt = now
-	if err := m.persistAndAudit(policy, BackgroundAuditStart); err != nil {
-		return backgroundStatus(policy), err
+	persisted, err := m.persistBeforeLaunch(policy, BackgroundAuditStart)
+	if err != nil {
+		m.terminal[sessionID] = backgroundTerminalGuard{status: backgroundStatus(persisted)}
+		return backgroundStatus(persisted), err
 	}
-	m.launch(policy, resolved)
-	return backgroundStatus(policy), nil
+	delete(m.terminal, sessionID)
+	m.launch(persisted, resolved)
+	return backgroundStatus(persisted), nil
 }
 
 func (m *BackgroundManager) Stop(sessionID string) (BackgroundStatus, error) {
@@ -379,20 +393,28 @@ func (m *BackgroundManager) Stop(sessionID string) (BackgroundStatus, error) {
 	policy.State = BackgroundStateDisabled
 	policy.Outcome = BackgroundOutcomeStopped
 	policy.UpdatedAt = m.currentTime()
-	if err := m.persistAndAudit(policy, BackgroundAuditStop); err != nil {
+	if err := m.store.Upsert(policy); err != nil {
 		return backgroundStatus(policy), err
 	}
+	auditErr := m.appendAudit(policy, BackgroundAuditStop)
+	delete(m.terminal, sessionID)
 	if worker, ok := m.active[sessionID]; ok {
 		worker.cancel()
 	}
-	return backgroundStatus(policy), nil
+	return backgroundStatus(policy), auditErr
 }
 
 func (m *BackgroundManager) Get(sessionID string) (BackgroundStatus, error) {
 	if err := m.validate(); err != nil {
 		return BackgroundStatus{}, err
 	}
-	policy, err := m.store.Get(strings.TrimSpace(sessionID))
+	sessionID = strings.TrimSpace(sessionID)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if guard, ok := m.terminal[sessionID]; ok {
+		return guard.status, nil
+	}
+	policy, err := m.store.Get(sessionID)
 	return backgroundStatus(policy), err
 }
 
@@ -400,14 +422,28 @@ func (m *BackgroundManager) List() ([]BackgroundStatus, error) {
 	if err := m.validate(); err != nil {
 		return nil, err
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	policies, err := m.store.List()
 	if err != nil {
 		return nil, err
 	}
-	statuses := make([]BackgroundStatus, len(policies))
-	for i, policy := range policies {
-		statuses[i] = backgroundStatus(policy)
+	statuses := make([]BackgroundStatus, 0, len(policies)+len(m.terminal))
+	seen := make(map[string]struct{}, len(policies))
+	for _, policy := range policies {
+		seen[policy.SessionID] = struct{}{}
+		if guard, ok := m.terminal[policy.SessionID]; ok {
+			statuses = append(statuses, guard.status)
+			continue
+		}
+		statuses = append(statuses, backgroundStatus(policy))
 	}
+	for sessionID, guard := range m.terminal {
+		if _, ok := seen[sessionID]; !ok {
+			statuses = append(statuses, guard.status)
+		}
+	}
+	slices.SortFunc(statuses, func(a, b BackgroundStatus) int { return strings.Compare(a.SessionID, b.SessionID) })
 	return statuses, nil
 }
 
@@ -426,6 +462,9 @@ func (m *BackgroundManager) Resume() error {
 	}
 	for _, policy := range policies {
 		if !policy.Enabled {
+			continue
+		}
+		if _, guarded := m.terminal[policy.SessionID]; guarded {
 			continue
 		}
 		if _, ok := m.active[policy.SessionID]; ok {
@@ -479,10 +518,13 @@ func (m *BackgroundManager) Resume() error {
 		policy.Outcome = BackgroundOutcomeResumed
 		policy.StartedAt = now
 		policy.UpdatedAt = now
-		if err := m.persistAndAudit(policy, BackgroundAuditResume); err != nil {
+		persisted, err := m.persistBeforeLaunch(policy, BackgroundAuditResume)
+		if err != nil {
+			m.terminal[policy.SessionID] = backgroundTerminalGuard{status: backgroundStatus(persisted)}
 			return err
 		}
-		m.launch(policy, resolved)
+		delete(m.terminal, policy.SessionID)
+		m.launch(persisted, resolved)
 	}
 	return nil
 }
@@ -527,6 +569,7 @@ func (m *BackgroundManager) launch(policy BackgroundPolicy, resolved ResolvedBac
 	m.active[policy.SessionID] = backgroundWorker{
 		profile:        policy.Profile,
 		descriptorHash: policy.DescriptorHash,
+		policy:         policy,
 		cancel:         cancel,
 	}
 	m.wg.Go(func() {
@@ -549,19 +592,26 @@ func (m *BackgroundManager) watchWorker(ctx context.Context, resolved ResolvedBa
 func (m *BackgroundManager) workerDone(sessionID string, ctx context.Context, outcome string, workerErr error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	worker, ok := m.active[sessionID]
 	delete(m.active, sessionID)
 	if workerErr == nil || errors.Is(workerErr, context.Canceled) || ctx.Err() != nil {
 		return
 	}
-	policy, err := m.store.Get(sessionID)
-	if err != nil || !policy.Enabled || policy.State == BackgroundStateDisabled {
+	if !ok {
 		return
 	}
+	policy := worker.policy
 	policy.Enabled = false
 	policy.State = BackgroundStateError
 	policy.Outcome = outcome
 	policy.UpdatedAt = m.currentTime()
-	_ = m.persistAndAudit(policy, BackgroundAuditError)
+	stateErr := m.store.Upsert(policy)
+	auditErr := m.appendAudit(policy, BackgroundAuditError)
+	m.terminal[sessionID] = backgroundTerminalGuard{
+		status:        backgroundStatus(policy),
+		stateRecorded: stateErr == nil,
+		auditRecorded: auditErr == nil,
+	}
 }
 
 func (m *BackgroundManager) block(policy BackgroundPolicy, outcome string) error {
@@ -575,6 +625,36 @@ func (m *BackgroundManager) persistAndAudit(policy BackgroundPolicy, action stri
 	if err := m.store.Upsert(policy); err != nil {
 		return err
 	}
+	return m.audit.Append(BackgroundAuditRecord{
+		At:             policy.UpdatedAt,
+		Action:         action,
+		SessionID:      policy.SessionID,
+		Profile:        policy.Profile,
+		DescriptorHash: policy.DescriptorHash,
+		Outcome:        policy.Outcome,
+	})
+}
+
+func (m *BackgroundManager) persistBeforeLaunch(policy BackgroundPolicy, action string) (BackgroundPolicy, error) {
+	if err := m.store.Upsert(policy); err != nil {
+		return m.recordingFailure(policy, BackgroundOutcomeStateWriteFailed), err
+	}
+	if err := m.appendAudit(policy, action); err != nil {
+		failed := m.recordingFailure(policy, BackgroundOutcomeAuditAppendFailed)
+		return failed, errors.Join(err, m.store.Upsert(failed))
+	}
+	return policy, nil
+}
+
+func (m *BackgroundManager) recordingFailure(policy BackgroundPolicy, outcome string) BackgroundPolicy {
+	policy.Enabled = false
+	policy.State = BackgroundStateError
+	policy.Outcome = outcome
+	policy.UpdatedAt = m.currentTime()
+	return policy
+}
+
+func (m *BackgroundManager) appendAudit(policy BackgroundPolicy, action string) error {
 	return m.audit.Append(BackgroundAuditRecord{
 		At:             policy.UpdatedAt,
 		Action:         action,

@@ -112,7 +112,7 @@ func TestRegistryWithProfilesExcludesStaleTrustedHash(t *testing.T) {
 	}
 }
 
-func TestRegistryWithProfilesNormalizesEmptyTrustedHash(t *testing.T) {
+func TestRegistryWithProfilesExcludesEmptyTrustedHash(t *testing.T) {
 	profile := Profile{
 		Name:    "fixture",
 		Spec:    AgentSpec{Name: "fixture", Command: "/tmp/acp-agent"},
@@ -122,7 +122,7 @@ func TestRegistryWithProfilesNormalizesEmptyTrustedHash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WithProfiles: %v", err)
 	}
-	if _, err := reg.Resolve(RunOptions{Agent: profile.Name}); err != nil {
-		t.Fatalf("Resolve profile with legacy empty hash: %v", err)
+	if _, err := reg.Resolve(RunOptions{Agent: profile.Name}); !errors.Is(err, ErrUnknownAgent) {
+		t.Fatalf("Resolve empty-hash trusted profile error = %v, want ErrUnknownAgent", err)
 	}
 }

@@ -475,11 +475,13 @@ func TestRunFlowRendersACPNodeAndStoresComputeOutput(t *testing.T) {
 func TestRunFlowResolvesTrustedProfileAgent(t *testing.T) {
 	root := t.TempDir()
 	runner := &fakeFlowPromptRunner{sessionID: "acp-profile"}
-	reg, err := DefaultRegistry().WithProfiles([]Profile{{
+	profile := Profile{
 		Name:    "fixture-profile",
 		Spec:    AgentSpec{Name: "fixture-profile", Command: "/tmp/fixture-acp", Args: []string{"--stdio"}},
 		Trusted: true,
-	}})
+	}
+	profile.Hash = profile.DescriptorHash()
+	reg, err := DefaultRegistry().WithProfiles([]Profile{profile})
 	if err != nil {
 		t.Fatalf("WithProfiles: %v", err)
 	}
