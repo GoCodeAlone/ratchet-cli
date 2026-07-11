@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -22,6 +23,9 @@ import (
 	"github.com/GoCodeAlone/ratchet-cli/internal/tui/theme"
 	wfprovider "github.com/GoCodeAlone/workflow-plugin-agent/provider"
 	"github.com/GoCodeAlone/workflow/secrets"
+	"github.com/google/uuid"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // OnboardingDoneMsg signals provider setup is complete.
@@ -34,13 +38,20 @@ type OnboardingCancelledMsg struct {
 	Provider *pb.Provider
 }
 
+// OnboardingQuitMsg signals that any durable save is resolved and the app may quit.
+type OnboardingQuitMsg struct {
+	Provider *pb.Provider
+}
+
 // NavigateToOnboardingMsg signals the app to switch to the onboarding page.
 type NavigateToOnboardingMsg struct{}
 
-type providerAddedMsg struct {
-	provider *pb.Provider
-	err      error
-	flowID   uint64
+type ProviderSaveResultMsg struct {
+	Provider    *pb.Provider
+	OperationID string
+	Unresolved  bool
+	Err         error
+	FlowID      uint64
 }
 
 type providerTestedMsg struct {
@@ -117,6 +128,11 @@ const (
 
 const providerOperationTimeout = 30 * time.Second
 
+const (
+	providerReconciliationTimeout = 10 * time.Second
+	providerPollInterval          = 100 * time.Millisecond
+)
+
 // anthropicAuthChoice identifies which Anthropic sign-in option was selected.
 type anthropicAuthChoice int
 
@@ -127,19 +143,22 @@ const (
 )
 
 type onboardingDeps struct {
-	listModels        func(context.Context, string, string, string, map[string]string) ([]providerauth.ModelInfo, error)
-	addProvider       func(context.Context, *pb.AddProviderReq) (*pb.Provider, error)
-	testProvider      func(context.Context, string) (*pb.TestProviderResult, error)
-	startGitHubDevice func(context.Context) (*providerauth.DeviceCodeResult, error)
-	pollGitHubDevice  func(context.Context, string, int) (string, error)
-	startOpenAIDevice func(context.Context) (*providerauth.DeviceCodeResult, error)
-	pollOpenAIDevice  func(context.Context, string, string, int) (string, error)
-	startAnthropic    func(context.Context) (string, error)
-	startAnthropicMax func(context.Context) (string, error)
-	lookPath          func(string) (string, error)
-	checkCLI          func(context.Context, string, string) error
-	workingDir        func() (string, error)
-	setupOllama       func(context.Context, string) (string, error)
+	listModels               func(context.Context, string, string, string, map[string]string) ([]providerauth.ModelInfo, error)
+	commitProviderSave       func(context.Context, *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error)
+	getProviderOperation     func(context.Context, string) (*pb.ProviderOperation, error)
+	providerReconcileTimeout time.Duration
+	providerPollInterval     time.Duration
+	testProvider             func(context.Context, string) (*pb.TestProviderResult, error)
+	startGitHubDevice        func(context.Context) (*providerauth.DeviceCodeResult, error)
+	pollGitHubDevice         func(context.Context, string, int) (string, error)
+	startOpenAIDevice        func(context.Context) (*providerauth.DeviceCodeResult, error)
+	pollOpenAIDevice         func(context.Context, string, string, int) (string, error)
+	startAnthropic           func(context.Context) (string, error)
+	startAnthropicMax        func(context.Context) (string, error)
+	lookPath                 func(string) (string, error)
+	checkCLI                 func(context.Context, string, string) error
+	workingDir               func() (string, error)
+	setupOllama              func(context.Context, string) (string, error)
 }
 
 // OnboardingModel is the multi-step provider setup wizard.
@@ -219,16 +238,21 @@ type OnboardingModel struct {
 	cliCheckCancel context.CancelFunc
 
 	// Connection test
-	spinner           spinner.Model
-	testing           bool
-	adding            bool
-	cancelAfterAdd    bool
-	providerOpContext context.Context
-	providerOpCancel  context.CancelFunc
-	testResult        *pb.TestProviderResult
-	testError         string
-	added             bool // provider has been added to daemon
-	savedProvider     *pb.Provider
+	spinner                     spinner.Model
+	testing                     bool
+	adding                      bool
+	cancelAfterAdd              bool
+	providerOpContext           context.Context
+	providerOpCancel            context.CancelFunc
+	providerReconcileContext    context.Context
+	providerReconcileCancel     context.CancelFunc
+	testResult                  *pb.TestProviderResult
+	testError                   string
+	added                       bool // provider has been added to daemon
+	savedProvider               *pb.Provider
+	providerOperationID         string
+	providerOperationUnresolved bool
+	quitRequested               bool
 
 	width  int
 	height int
@@ -241,8 +265,11 @@ func NewOnboarding(c *client.Client, t theme.Theme) OnboardingModel {
 func defaultOnboardingDeps(c *client.Client) onboardingDeps {
 	return onboardingDeps{
 		listModels: providerauth.ListModelsWithSettings,
-		addProvider: func(ctx context.Context, req *pb.AddProviderReq) (*pb.Provider, error) {
-			return c.AddProvider(ctx, req)
+		commitProviderSave: func(ctx context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+			return c.CommitProviderSave(ctx, req)
+		},
+		getProviderOperation: func(ctx context.Context, operationID string) (*pb.ProviderOperation, error) {
+			return c.GetProviderOperation(ctx, operationID)
 		},
 		testProvider: func(ctx context.Context, alias string) (*pb.TestProviderResult, error) {
 			return c.TestProvider(ctx, alias)
@@ -488,35 +515,56 @@ func (m OnboardingModel) Update(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 		// Pull succeeded — re-fetch models and proceed to selection.
 		return m.transitionToFetchModels()
 
-	case providerAddedMsg:
-		if msg.flowID != m.flowID {
+	case ProviderSaveResultMsg:
+		if msg.FlowID != m.flowID {
+			return m, nil
+		}
+		if m.providerOperationID != "" && msg.OperationID != m.providerOperationID {
 			return m, nil
 		}
 		m.adding = false
-		if msg.err != nil {
+		m.providerOperationID = msg.OperationID
+		m.providerOperationUnresolved = msg.Unresolved
+		if msg.Err != nil {
 			m.finishProviderOperation()
 			m.testing = false
-			m.testError = redactProviderError(msg.err, m.authToken)
+			m.testError = redactProviderError(msg.Err, m.authToken)
+			if m.quitRequested && !msg.Unresolved {
+				m.quitRequested = false
+				return m, func() tea.Msg { return OnboardingQuitMsg{} }
+			}
 			return m, nil
 		}
-		if msg.provider == nil {
+		if msg.Provider == nil {
 			m.finishProviderOperation()
 			m.testing = false
 			m.testError = "add provider returned no provider"
+			if m.quitRequested {
+				m.quitRequested = false
+				return m, func() tea.Msg { return OnboardingQuitMsg{} }
+			}
 			return m, nil
 		}
 		m.added = true
-		m.savedProvider = msg.provider
+		m.savedProvider = msg.Provider
+		m.providerOperationUnresolved = false
+		if m.quitRequested {
+			m.quitRequested = false
+			m.finishProviderOperation()
+			m.testing = false
+			provider := msg.Provider
+			return m, func() tea.Msg { return OnboardingQuitMsg{Provider: provider} }
+		}
 		if m.cancelAfterAdd {
 			m.cancelAfterAdd = false
 			m.finishProviderOperation()
 			m.testing = false
-			provider := msg.provider
+			provider := msg.Provider
 			return m, func() tea.Msg { return OnboardingDoneMsg{Provider: provider} }
 		}
 		m.finishProviderOperation()
 		ctx := m.beginProviderOperation()
-		return m, m.testProvider(ctx, msg.provider.Alias)
+		return m, m.testProvider(ctx, msg.Provider.Alias)
 
 	case providerTestedMsg:
 		if msg.flowID != m.flowID {
@@ -1560,12 +1608,8 @@ func (m OnboardingModel) updateSelectModel(msg tea.Msg) (OnboardingModel, tea.Cm
 }
 
 func (m OnboardingModel) startTest() (OnboardingModel, tea.Cmd) {
-	if m.providerOpCancel != nil {
-		m.providerOpCancel()
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), providerOperationTimeout)
-	m.providerOpContext = ctx
-	m.providerOpCancel = cancel
+	ctx := m.beginProviderOperation()
+	reconcileCtx := m.beginProviderReconciliation()
 	m.step = stepTestConnection
 	m.testing = true
 	m.adding = true
@@ -1573,23 +1617,26 @@ func (m OnboardingModel) startTest() (OnboardingModel, tea.Cmd) {
 	m.testResult = nil
 	m.testError = ""
 	m.added = false
+	m.providerOperationID = uuid.NewString()
+	m.providerOperationUnresolved = false
+	m.quitRequested = false
 
 	p := m.selectedProvider()
 	model := m.selectedModelID()
 
 	return m, tea.Batch(
 		m.spinner.Tick,
-		m.addProvider(ctx, p, model),
+		m.addProvider(ctx, reconcileCtx, m.providerOperationID, p, model),
 	)
 }
 
-func (m OnboardingModel) addProvider(ctx context.Context, p providerauth.SetupEntry, model string) tea.Cmd {
+func (m OnboardingModel) addProvider(ctx, reconcileCtx context.Context, operationID string, p providerauth.SetupEntry, model string) tea.Cmd {
 	return func() tea.Msg {
 		settingsJSON := ""
 		if len(m.settings) > 0 {
 			data, err := json.Marshal(m.settings)
 			if err != nil {
-				return providerAddedMsg{err: fmt.Errorf("encode provider settings: %w", err), flowID: m.flowID}
+				return ProviderSaveResultMsg{OperationID: operationID, Err: fmt.Errorf("encode provider settings: %w", err), FlowID: m.flowID}
 			}
 			settingsJSON = string(data)
 		}
@@ -1606,8 +1653,168 @@ func (m OnboardingModel) addProvider(ctx context.Context, p providerauth.SetupEn
 			Settings:  settingsJSON,
 			IsDefault: true,
 		}
-		provider, err := m.deps.addProvider(ctx, req)
-		return providerAddedMsg{provider: provider, err: err, flowID: m.flowID}
+		operation, err := m.deps.commitProviderSave(ctx, &pb.CommitProviderSaveReq{
+			OperationId: operationID,
+			Provider:    req,
+		})
+		if err != nil {
+			if !ambiguousOnboardingProviderSaveError(err) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+				return ProviderSaveResultMsg{OperationID: operationID, Err: err, FlowID: m.flowID}
+			}
+			operation, err = m.reconcileProviderOperation(reconcileCtx, operationID)
+		} else {
+			operation, err = m.resolveProviderOperation(reconcileCtx, operationID, operation)
+		}
+		if err != nil {
+			return ProviderSaveResultMsg{
+				OperationID: operationID,
+				Unresolved:  isProviderOperationUnresolved(err),
+				Err:         err,
+				FlowID:      m.flowID,
+			}
+		}
+		return ProviderSaveResultMsg{
+			Provider:    providerFromSaveOperation(operation),
+			OperationID: operationID,
+			FlowID:      m.flowID,
+		}
+	}
+}
+
+type providerOperationUnresolvedError struct {
+	operationID string
+	cause       error
+}
+
+func (e *providerOperationUnresolvedError) Error() string {
+	message := fmt.Sprintf("provider operation %s remains unresolved; query it with 'ratchet provider operation %s'", e.operationID, e.operationID)
+	if e.cause != nil {
+		return message + ": " + e.cause.Error()
+	}
+	return message
+}
+
+func (e *providerOperationUnresolvedError) Unwrap() error { return e.cause }
+
+func isProviderOperationUnresolved(err error) bool {
+	var unresolved *providerOperationUnresolvedError
+	return errors.As(err, &unresolved)
+}
+
+func (m OnboardingModel) resolveProviderOperation(ctx context.Context, operationID string, operation *pb.ProviderOperation) (*pb.ProviderOperation, error) {
+	if err := validateOnboardingProviderOperation(operationID, operation); err != nil {
+		return m.reconcileProviderOperation(ctx, operationID)
+	}
+	switch operation.GetState() {
+	case pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED:
+		if operation.GetResult() == nil {
+			return m.reconcileProviderOperation(ctx, operationID)
+		}
+		return operation, nil
+	case pb.ProviderOperationState_PROVIDER_OPERATION_STATE_FAILED:
+		return nil, fmt.Errorf("provider operation %s failed: %s", operationID, operation.GetFailure())
+	case pb.ProviderOperationState_PROVIDER_OPERATION_STATE_PENDING,
+		pb.ProviderOperationState_PROVIDER_OPERATION_STATE_APPLIED:
+		return m.reconcileProviderOperation(ctx, operationID)
+	default:
+		return m.reconcileProviderOperation(ctx, operationID)
+	}
+}
+
+func (m OnboardingModel) reconcileProviderOperation(parent context.Context, operationID string) (*pb.ProviderOperation, error) {
+	timeout := m.deps.providerReconcileTimeout
+	if timeout <= 0 {
+		timeout = providerReconciliationTimeout
+	}
+	pollInterval := m.deps.providerPollInterval
+	if pollInterval <= 0 {
+		pollInterval = providerPollInterval
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+	for {
+		operation, err := m.deps.getProviderOperation(ctx, operationID)
+		if err == nil {
+			if err := validateOnboardingProviderOperation(operationID, operation); err != nil {
+				return nil, &providerOperationUnresolvedError{operationID: operationID, cause: err}
+			}
+			switch operation.GetState() {
+			case pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED:
+				if operation.GetResult() == nil {
+					return nil, &providerOperationUnresolvedError{
+						operationID: operationID,
+						cause:       fmt.Errorf("committed response has no result"),
+					}
+				}
+				return operation, nil
+			case pb.ProviderOperationState_PROVIDER_OPERATION_STATE_FAILED:
+				return nil, fmt.Errorf("provider operation %s failed: %s", operationID, operation.GetFailure())
+			case pb.ProviderOperationState_PROVIDER_OPERATION_STATE_PENDING,
+				pb.ProviderOperationState_PROVIDER_OPERATION_STATE_APPLIED:
+			default:
+				return nil, &providerOperationUnresolvedError{
+					operationID: operationID,
+					cause:       fmt.Errorf("unknown operation state %s", operation.GetState()),
+				}
+			}
+		} else if !temporaryOnboardingProviderOperationError(err) {
+			return nil, &providerOperationUnresolvedError{operationID: operationID, cause: err}
+		}
+
+		timer := time.NewTimer(pollInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, &providerOperationUnresolvedError{operationID: operationID, cause: ctx.Err()}
+		case <-timer.C:
+			pollInterval = min(pollInterval*2, time.Second)
+		}
+	}
+}
+
+func validateOnboardingProviderOperation(expected string, operation *pb.ProviderOperation) error {
+	if operation == nil {
+		return fmt.Errorf("provider operation %s returned an empty response", expected)
+	}
+	parsed, err := uuid.Parse(operation.GetOperationId())
+	if err != nil || parsed.String() != operation.GetOperationId() {
+		return fmt.Errorf("provider operation ID %q is not canonical", operation.GetOperationId())
+	}
+	if operation.GetOperationId() != expected {
+		return fmt.Errorf("provider operation ID %q does not match request %q", operation.GetOperationId(), expected)
+	}
+	return nil
+}
+
+func providerFromSaveOperation(operation *pb.ProviderOperation) *pb.Provider {
+	result := operation.GetResult()
+	return &pb.Provider{
+		Alias:     result.GetAlias(),
+		Type:      result.GetType(),
+		Model:     result.GetModel(),
+		IsDefault: result.GetIsDefault(),
+	}
+}
+
+func ambiguousOnboardingProviderSaveError(err error) bool {
+	rpcStatus, ok := status.FromError(err)
+	if !ok {
+		return false
+	}
+	switch rpcStatus.Code() {
+	case codes.Canceled, codes.DeadlineExceeded, codes.Unavailable, codes.Internal, codes.Unknown, codes.Aborted:
+		return true
+	default:
+		return false
+	}
+}
+
+func temporaryOnboardingProviderOperationError(err error) bool {
+	switch status.Code(err) {
+	case codes.NotFound, codes.Canceled, codes.DeadlineExceeded, codes.Unavailable:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -1616,6 +1823,31 @@ func (m OnboardingModel) testProvider(ctx context.Context, alias string) tea.Cmd
 		result, err := m.deps.testProvider(ctx, alias)
 		return providerTestedMsg{result: result, err: err, flowID: m.flowID}
 	}
+}
+
+func (m OnboardingModel) retryProviderOperation() (OnboardingModel, tea.Cmd) {
+	ctx := m.beginProviderReconciliation()
+	operationID := m.providerOperationID
+	m.adding = true
+	m.testing = true
+	m.providerOperationUnresolved = false
+	m.testError = ""
+	return m, tea.Batch(m.spinner.Tick, func() tea.Msg {
+		operation, err := m.reconcileProviderOperation(ctx, operationID)
+		if err != nil {
+			return ProviderSaveResultMsg{
+				OperationID: operationID,
+				Unresolved:  isProviderOperationUnresolved(err),
+				Err:         err,
+				FlowID:      m.flowID,
+			}
+		}
+		return ProviderSaveResultMsg{
+			Provider:    providerFromSaveOperation(operation),
+			OperationID: operationID,
+			FlowID:      m.flowID,
+		}
+	})
 }
 
 func (m *OnboardingModel) beginProviderOperation() context.Context {
@@ -1628,6 +1860,16 @@ func (m *OnboardingModel) beginProviderOperation() context.Context {
 	return ctx
 }
 
+func (m *OnboardingModel) beginProviderReconciliation() context.Context {
+	if m.providerReconcileCancel != nil {
+		m.providerReconcileCancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	m.providerReconcileContext = ctx
+	m.providerReconcileCancel = cancel
+	return ctx
+}
+
 func (m *OnboardingModel) requestProviderOperationCancel() {
 	if m.providerOpCancel != nil {
 		m.providerOpCancel()
@@ -1636,8 +1878,28 @@ func (m *OnboardingModel) requestProviderOperationCancel() {
 
 func (m *OnboardingModel) finishProviderOperation() {
 	m.requestProviderOperationCancel()
+	if m.providerReconcileCancel != nil {
+		m.providerReconcileCancel()
+	}
 	m.providerOpContext = nil
 	m.providerOpCancel = nil
+	m.providerReconcileContext = nil
+	m.providerReconcileCancel = nil
+}
+
+// RequestQuit defers application exit until an in-flight save reaches a terminal state.
+func (m OnboardingModel) RequestQuit() (OnboardingModel, tea.Cmd, bool) {
+	if m.adding || m.providerOperationUnresolved {
+		m.quitRequested = true
+		return m, nil, false
+	}
+	if m.savedProvider != nil {
+		m.Cancel()
+		provider := m.savedProvider
+		return m, func() tea.Msg { return OnboardingQuitMsg{Provider: provider} }, false
+	}
+	m.Cancel()
+	return m, nil, true
 }
 
 // Cancel stops asynchronous setup work before the TUI exits.
@@ -1649,6 +1911,7 @@ func (m *OnboardingModel) Cancel() {
 		m.pullCancel,
 		m.cliCheckCancel,
 		m.providerOpCancel,
+		m.providerReconcileCancel,
 	} {
 		if cancel != nil {
 			cancel()
@@ -1661,6 +1924,8 @@ func (m *OnboardingModel) Cancel() {
 	m.cliCheckCancel = nil
 	m.providerOpCancel = nil
 	m.providerOpContext = nil
+	m.providerReconcileCancel = nil
+	m.providerReconcileContext = nil
 }
 
 func providerAlias(entry providerauth.SetupEntry) string {
@@ -1672,6 +1937,12 @@ func providerAlias(entry providerauth.SetupEntry) string {
 
 func (m OnboardingModel) updateTestConnection(msg tea.Msg) (OnboardingModel, tea.Cmd) {
 	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+		if m.providerOperationUnresolved {
+			if keyMsg.String() == "r" {
+				return m.retryProviderOperation()
+			}
+			return m, nil
+		}
 		if m.testing {
 			if keyMsg.String() == "esc" {
 				if m.adding {
@@ -2018,7 +2289,12 @@ func (m OnboardingModel) View(t theme.Theme, width, height int) string {
 
 	case stepTestConnection:
 		p := m.selectedProvider()
-		if m.adding {
+		if m.providerOperationUnresolved {
+			sb.WriteString(errorStyle.Render("Provider save is still resolving") + "\n\n")
+			sb.WriteString(fitReviewValue("Operation", m.providerOperationID, contentWidth) + "\n\n")
+			sb.WriteString(wrapMuted.Render("Check it with: ratchet provider operation "+m.providerOperationID) + "\n\n")
+			sb.WriteString(mutedStyle.Render("r: check again  Exit remains paused until the save reaches a terminal state"))
+		} else if m.adding {
 			sb.WriteString(m.spinner.View() + " Saving " + p.DisplayName + " configuration...\n\n")
 			if m.cancelAfterAdd {
 				sb.WriteString(mutedStyle.Render("Cancel requested; setup will finish after save"))

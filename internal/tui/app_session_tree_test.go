@@ -197,6 +197,60 @@ func TestAppOnboardingDoneUpdatesProviderStateForLaterCancellation(t *testing.T)
 	}
 }
 
+func TestAppOnboardingCommittedProviderRouting(t *testing.T) {
+	app := readyChatApp(t, "root-session-12345678")
+	app.page = pageOnboarding
+	app.providers = []*pb.Provider{{Alias: "old", Type: "openai", IsDefault: true}}
+	provider := &pb.Provider{Alias: "configured", Type: "anthropic", Model: "claude-test", IsDefault: true}
+	operationID := "f1f183c5-b277-4c27-bc3d-50cdd20f7ed1"
+
+	model, _ := app.Update(pages.ProviderSaveResultMsg{
+		OperationID: operationID,
+		Unresolved:  true,
+		Err:         assertErr("operation unresolved"),
+	})
+	app = model.(App)
+	model, cmd := app.Update(ctrlKey('c'))
+	app = model.(App)
+	if cmd != nil {
+		t.Fatalf("Ctrl+C returned quit while provider operation was unresolved: %v", cmd())
+	}
+
+	model, cmd = app.Update(pages.ProviderSaveResultMsg{Provider: provider, OperationID: operationID})
+	app = model.(App)
+	msg := runAppCmd(t, cmd)
+	if _, ok := msg.(pages.OnboardingQuitMsg); !ok {
+		t.Fatalf("resolved provider command = %T", msg)
+	}
+	model, cmd = app.Update(msg)
+	app = model.(App)
+	if cmd == nil || cmd() != (tea.QuitMsg{}) {
+		t.Fatalf("committed provider quit command = %v", cmd)
+	}
+	if len(app.providers) != 2 || app.providers[0].GetIsDefault() || app.providers[1] != provider {
+		t.Fatalf("committed provider routing = %v", app.providers)
+	}
+}
+
+func runAppCmd(t *testing.T, cmd tea.Cmd) tea.Msg {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("expected app command")
+	}
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		return msg
+	}
+	for _, child := range batch {
+		if child != nil {
+			return runAppCmd(t, child)
+		}
+	}
+	t.Fatal("app command batch produced no message")
+	return nil
+}
+
 func TestAppRecordProviderRetainsDefaultForExistingPointer(t *testing.T) {
 	configured := &pb.Provider{Alias: "configured", Type: "anthropic", IsDefault: true}
 	app := readyChatApp(t, "root-session-12345678")

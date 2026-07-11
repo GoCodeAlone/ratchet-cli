@@ -21,7 +21,377 @@ import (
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 	providerauth "github.com/GoCodeAlone/ratchet-cli/internal/provider"
 	"github.com/GoCodeAlone/ratchet-cli/internal/tui/theme"
+	"github.com/google/uuid"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
+
+func TestOnboardingDurableSubmission(t *testing.T) {
+	var request *pb.CommitProviderSaveReq
+	deps := testOnboardingDeps()
+	deps.commitProviderSave = func(_ context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+		request = req
+		return committedOnboardingOperation(req.GetOperationId(), req.GetProvider()), nil
+	}
+	deps.getProviderOperation = func(context.Context, string) (*pb.ProviderOperation, error) {
+		t.Fatal("queried a committed provider operation")
+		return nil, nil
+	}
+	model := newOnboarding(nil, theme.Dark(), deps)
+	model.providerIdx = onboardingProviderIndex(t, model, "bedrock")
+	model.authToken = "secret"
+	model.settings = map[string]string{"region": "us-west-2"}
+	model.selectedModel = "anthropic.claude-test"
+
+	model, cmd := model.startTest()
+	msg, ok := runOnboardingCmd(t, cmd).(ProviderSaveResultMsg)
+	if !ok || msg.Err != nil || msg.Provider == nil {
+		t.Fatalf("durable submission message = %#v", msg)
+	}
+	if request == nil {
+		t.Fatal("CommitProviderSave was not called")
+	}
+	if parsed, err := uuid.Parse(request.GetOperationId()); err != nil || parsed.String() != request.GetOperationId() {
+		t.Fatalf("operation ID = %q, err = %v", request.GetOperationId(), err)
+	}
+	if model.providerOperationID != request.GetOperationId() {
+		t.Fatalf("active operation ID = %q, request = %q", model.providerOperationID, request.GetOperationId())
+	}
+	provider := request.GetProvider()
+	if provider.GetAlias() != "bedrock" || provider.GetType() != "bedrock" || provider.GetModel() != "anthropic.claude-test" || !provider.GetIsDefault() {
+		t.Fatalf("provider request = %+v", provider)
+	}
+}
+
+func TestOnboardingPendingReconciliation(t *testing.T) {
+	var operationID string
+	queries := 0
+	deps := testOnboardingDeps()
+	deps.providerPollInterval = time.Millisecond
+	deps.commitProviderSave = func(_ context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+		operationID = req.GetOperationId()
+		return &pb.ProviderOperation{OperationId: operationID, State: pb.ProviderOperationState_PROVIDER_OPERATION_STATE_PENDING}, nil
+	}
+	deps.getProviderOperation = func(_ context.Context, got string) (*pb.ProviderOperation, error) {
+		if got != operationID {
+			t.Fatalf("queried operation ID = %q, want %q", got, operationID)
+		}
+		queries++
+		if queries == 1 {
+			return &pb.ProviderOperation{OperationId: operationID, State: pb.ProviderOperationState_PROVIDER_OPERATION_STATE_APPLIED}, nil
+		}
+		return committedOnboardingOperation(operationID, &pb.AddProviderReq{Alias: "bedrock", Type: "bedrock", Model: "test-model", IsDefault: true}), nil
+	}
+	model := newOnboarding(nil, theme.Dark(), deps)
+	model.providerIdx = onboardingProviderIndex(t, model, "bedrock")
+	model.selectedModel = "test-model"
+
+	_, cmd := model.startTest()
+	msg, ok := runOnboardingCmd(t, cmd).(ProviderSaveResultMsg)
+	if !ok || msg.Err != nil || msg.Provider.GetAlias() != "bedrock" || queries != 2 {
+		t.Fatalf("reconciled submission = msg:%#v queries:%d", msg, queries)
+	}
+}
+
+func TestOnboardingAmbiguousSuccessReconcilesOriginalID(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		response func(string) *pb.ProviderOperation
+	}{
+		{name: "nil response", response: func(string) *pb.ProviderOperation { return nil }},
+		{name: "mismatched ID", response: func(string) *pb.ProviderOperation {
+			return &pb.ProviderOperation{OperationId: uuid.NewString(), State: pb.ProviderOperationState_PROVIDER_OPERATION_STATE_PENDING}
+		}},
+		{name: "unknown state", response: func(operationID string) *pb.ProviderOperation {
+			return &pb.ProviderOperation{OperationId: operationID}
+		}},
+		{name: "committed without result", response: func(operationID string) *pb.ProviderOperation {
+			return &pb.ProviderOperation{OperationId: operationID, State: pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			commits := 0
+			queries := 0
+			operationID := ""
+			deps := testOnboardingDeps()
+			deps.commitProviderSave = func(_ context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+				commits++
+				operationID = req.GetOperationId()
+				return tc.response(operationID), nil
+			}
+			deps.getProviderOperation = func(_ context.Context, got string) (*pb.ProviderOperation, error) {
+				queries++
+				if got != operationID {
+					t.Fatalf("queried operation ID = %q, want %q", got, operationID)
+				}
+				return committedOnboardingOperation(operationID, &pb.AddProviderReq{Alias: "bedrock", Type: "bedrock", Model: "test-model", IsDefault: true}), nil
+			}
+			model := newOnboarding(nil, theme.Dark(), deps)
+			model.providerIdx = onboardingProviderIndex(t, model, "bedrock")
+			model.selectedModel = "test-model"
+
+			_, cmd := model.startTest()
+			msg := runOnboardingCmd(t, cmd).(ProviderSaveResultMsg)
+			if msg.Err != nil || msg.Provider.GetAlias() != "bedrock" || commits != 1 || queries != 1 {
+				t.Fatalf("ambiguous success result = msg:%#v commits:%d queries:%d", msg, commits, queries)
+			}
+		})
+	}
+}
+
+func TestOnboardingAmbiguousCommitErrorsReconcileOriginalID(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		err          error
+		wantQueries  int
+		wantProvider bool
+	}{
+		{name: "internal", err: status.Error(codes.Internal, "post-commit lookup failed"), wantQueries: 1, wantProvider: true},
+		{name: "unknown", err: status.Error(codes.Unknown, "transport outcome unknown"), wantQueries: 1, wantProvider: true},
+		{name: "aborted", err: status.Error(codes.Aborted, "commit outcome aborted"), wantQueries: 1, wantProvider: true},
+		{name: "plain local", err: errors.New("local validation failed")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			operationID := ""
+			queries := 0
+			deps := testOnboardingDeps()
+			deps.commitProviderSave = func(_ context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+				operationID = req.GetOperationId()
+				return nil, tc.err
+			}
+			deps.getProviderOperation = func(_ context.Context, got string) (*pb.ProviderOperation, error) {
+				queries++
+				if got != operationID {
+					return nil, status.Errorf(codes.InvalidArgument, "queried %s instead of %s", got, operationID)
+				}
+				return committedOnboardingOperation(operationID, &pb.AddProviderReq{Alias: "bedrock", Type: "bedrock", Model: "test-model", IsDefault: true}), nil
+			}
+			model := newOnboarding(nil, theme.Dark(), deps)
+			model.providerIdx = onboardingProviderIndex(t, model, "bedrock")
+			model.selectedModel = "test-model"
+
+			_, cmd := model.startTest()
+			msg := runOnboardingCmd(t, cmd).(ProviderSaveResultMsg)
+			if queries != tc.wantQueries || (msg.Provider != nil) != tc.wantProvider {
+				t.Fatalf("commit recovery = msg:%#v queries:%d", msg, queries)
+			}
+			if tc.wantProvider && msg.Err != nil {
+				t.Fatalf("ambiguous commit error was not reconciled: %v", msg.Err)
+			}
+			if !tc.wantProvider && !errors.Is(msg.Err, tc.err) {
+				t.Fatalf("plain local error = %v, want %v", msg.Err, tc.err)
+			}
+		})
+	}
+}
+
+func TestOnboardingFailedOperationIsTerminal(t *testing.T) {
+	for _, source := range []string{"initial", "query"} {
+		t.Run(source, func(t *testing.T) {
+			commits := 0
+			queries := 0
+			deps := testOnboardingDeps()
+			deps.commitProviderSave = func(_ context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+				commits++
+				if source == "initial" {
+					return failedOnboardingOperation(req.GetOperationId()), nil
+				}
+				return &pb.ProviderOperation{OperationId: req.GetOperationId(), State: pb.ProviderOperationState_PROVIDER_OPERATION_STATE_PENDING}, nil
+			}
+			deps.getProviderOperation = func(_ context.Context, operationID string) (*pb.ProviderOperation, error) {
+				queries++
+				return failedOnboardingOperation(operationID), nil
+			}
+			model := newOnboarding(nil, theme.Dark(), deps)
+			model.providerIdx = onboardingProviderIndex(t, model, "bedrock")
+			model.selectedModel = "test-model"
+
+			model, cmd := model.startTest()
+			model, _, quitReady := model.RequestQuit()
+			if quitReady {
+				t.Fatal("quit was ready before failed operation resolved")
+			}
+			msg := runOnboardingCmd(t, cmd).(ProviderSaveResultMsg)
+			if msg.Err == nil || msg.Unresolved || !strings.Contains(msg.Err.Error(), "SECRET_STORE") {
+				t.Fatalf("failed operation result = %#v", msg)
+			}
+			model, cmd = model.Update(msg)
+			quitMsg := runOnboardingCmd(t, cmd)
+			if _, ok := quitMsg.(OnboardingQuitMsg); !ok {
+				t.Fatalf("failed operation quit command = %T", quitMsg)
+			}
+			wantQueries := 0
+			if source == "query" {
+				wantQueries = 1
+			}
+			if commits != 1 || queries != wantQueries {
+				t.Fatalf("failed operation calls = commits:%d queries:%d", commits, queries)
+			}
+		})
+	}
+}
+
+func failedOnboardingOperation(operationID string) *pb.ProviderOperation {
+	return &pb.ProviderOperation{
+		OperationId: operationID,
+		State:       pb.ProviderOperationState_PROVIDER_OPERATION_STATE_FAILED,
+		Failure:     pb.ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_SECRET_STORE,
+	}
+}
+
+func TestOnboardingQueryProtocolFailureRemainsUnresolved(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		response func(string) *pb.ProviderOperation
+	}{
+		{name: "nil response", response: func(string) *pb.ProviderOperation { return nil }},
+		{name: "mismatched ID", response: func(string) *pb.ProviderOperation {
+			return &pb.ProviderOperation{OperationId: uuid.NewString(), State: pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED}
+		}},
+		{name: "unknown state", response: func(operationID string) *pb.ProviderOperation {
+			return &pb.ProviderOperation{OperationId: operationID}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			operationID := ""
+			deps := testOnboardingDeps()
+			deps.providerReconcileTimeout = 20 * time.Millisecond
+			deps.providerPollInterval = time.Millisecond
+			deps.commitProviderSave = func(_ context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+				operationID = req.GetOperationId()
+				return &pb.ProviderOperation{OperationId: operationID, State: pb.ProviderOperationState_PROVIDER_OPERATION_STATE_PENDING}, nil
+			}
+			deps.getProviderOperation = func(context.Context, string) (*pb.ProviderOperation, error) {
+				return tc.response(operationID), nil
+			}
+			model := newOnboarding(nil, theme.Dark(), deps)
+			model.providerIdx = onboardingProviderIndex(t, model, "bedrock")
+			model.selectedModel = "test-model"
+
+			_, cmd := model.startTest()
+			msg := runOnboardingCmd(t, cmd).(ProviderSaveResultMsg)
+			if !msg.Unresolved || msg.OperationID != operationID || msg.Err == nil {
+				t.Fatalf("protocol failure result = %#v", msg)
+			}
+		})
+	}
+}
+
+func TestOnboardingUnresolvedExitDeferral(t *testing.T) {
+	commitStarted := make(chan struct{})
+	commitCalls := 0
+	operationID := ""
+	operationVisible := false
+	queriedOperationID := ""
+	deps := testOnboardingDeps()
+	deps.providerReconcileTimeout = 20 * time.Millisecond
+	deps.providerPollInterval = time.Millisecond
+	deps.commitProviderSave = func(_ context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+		commitCalls++
+		operationID = req.GetOperationId()
+		if commitCalls == 1 {
+			close(commitStarted)
+		}
+		return &pb.ProviderOperation{OperationId: operationID, State: pb.ProviderOperationState_PROVIDER_OPERATION_STATE_PENDING}, nil
+	}
+	deps.getProviderOperation = func(_ context.Context, got string) (*pb.ProviderOperation, error) {
+		queriedOperationID = got
+		if operationVisible {
+			return committedOnboardingOperation(operationID, &pb.AddProviderReq{Alias: "bedrock", Type: "bedrock", Model: "test-model", IsDefault: true}), nil
+		}
+		return nil, status.Error(codes.NotFound, "not visible yet")
+	}
+	model := newOnboarding(nil, theme.Dark(), deps)
+	model.providerIdx = onboardingProviderIndex(t, model, "bedrock")
+	model.selectedModel = "test-model"
+
+	model, cmd := model.startTest()
+	batch := cmd().(tea.BatchMsg)
+	result := make(chan tea.Msg, 1)
+	go func() { result <- batch[len(batch)-1]() }()
+	<-commitStarted
+	var quitReady bool
+	model, _, quitReady = model.RequestQuit()
+	if quitReady {
+		t.Fatal("quit was ready while provider save remained unresolved")
+	}
+	model, next := model.Update(<-result)
+	if queriedOperationID != operationID {
+		t.Fatalf("queried operation ID = %q, want %q", queriedOperationID, operationID)
+	}
+	if next != nil || !model.providerOperationUnresolved || model.providerOperationID == "" {
+		t.Fatalf("unresolved state = next:%v unresolved:%v id:%q", next, model.providerOperationUnresolved, model.providerOperationID)
+	}
+	model, _, quitReady = model.RequestQuit()
+	if quitReady {
+		t.Fatal("quit was ready after unresolved reconciliation")
+	}
+	for _, size := range []struct{ width, height int }{{80, 24}, {120, 40}} {
+		view := model.View(theme.Dark(), size.width, size.height)
+		if !strings.Contains(view, model.providerOperationID) || !strings.Contains(view, "provider operation") {
+			t.Fatalf("%dx%d unresolved view lacks recovery ID:\n%s", size.width, size.height, view)
+		}
+		lines := strings.Split(view, "\n")
+		if len(lines) > size.height {
+			t.Errorf("%dx%d unresolved view rendered %d lines", size.width, size.height, len(lines))
+		}
+		for lineNo, line := range lines {
+			if width := lipgloss.Width(line); width > size.width {
+				t.Errorf("%dx%d unresolved line %d width = %d: %q", size.width, size.height, lineNo+1, width, line)
+			}
+		}
+	}
+
+	operationVisible = true
+	model, next = model.updateTestConnection(tea.KeyPressMsg{Code: 'r', Text: "r"})
+	if next == nil {
+		t.Fatal("unresolved operation retry returned no command")
+	}
+	model, next = model.Update(runOnboardingCmd(t, next))
+	if commitCalls != 1 {
+		t.Fatalf("provider save submissions = %d, want one", commitCalls)
+	}
+	if next == nil {
+		t.Fatal("committed retry did not release deferred quit")
+	}
+	quit, ok := runOnboardingCmd(t, next).(OnboardingQuitMsg)
+	if !ok || quit.Provider.GetAlias() != "bedrock" {
+		t.Fatalf("resolved quit message = %#v", quit)
+	}
+}
+
+func TestOnboardingIgnoresStaleProviderOperationResult(t *testing.T) {
+	activeID := uuid.NewString()
+	model := newOnboarding(nil, theme.Dark(), testOnboardingDeps())
+	model.step = stepTestConnection
+	model.adding = true
+	model.testing = true
+	model.providerOperationID = activeID
+
+	stale := ProviderSaveResultMsg{
+		Provider:    &pb.Provider{Alias: "stale", Type: "openai", IsDefault: true},
+		OperationID: uuid.NewString(),
+		FlowID:      model.flowID,
+	}
+	updated, cmd := model.Update(stale)
+	if cmd != nil || !updated.adding || !updated.testing || updated.savedProvider != nil || updated.providerOperationID != activeID {
+		t.Fatalf("stale operation applied = cmd:%v adding:%v testing:%v provider:%v id:%q", cmd, updated.adding, updated.testing, updated.savedProvider, updated.providerOperationID)
+	}
+}
+
+func committedOnboardingOperation(operationID string, provider *pb.AddProviderReq) *pb.ProviderOperation {
+	return &pb.ProviderOperation{
+		OperationId: operationID,
+		Alias:       provider.GetAlias(),
+		State:       pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED,
+		Result: &pb.ProviderSaveResult{
+			Alias:     provider.GetAlias(),
+			Type:      provider.GetType(),
+			Model:     provider.GetModel(),
+			IsDefault: provider.GetIsDefault(),
+		},
+	}
+}
 
 func TestOnboardingUsesCompleteProviderCatalogWithoutLocalTable(t *testing.T) {
 	model := newOnboarding(nil, theme.Dark(), testOnboardingDeps())
@@ -566,9 +936,9 @@ func TestOnboardingCLINativeSubmitUsesCatalogAliasCommandAndWorkingDirectory(t *
 		return "/test/bin/agent", nil
 	}
 	deps.workingDir = func() (string, error) { return "/test/workspace", nil }
-	deps.addProvider = func(_ context.Context, req *pb.AddProviderReq) (*pb.Provider, error) {
-		request = req
-		return &pb.Provider{Alias: req.Alias, Type: req.Type}, nil
+	deps.commitProviderSave = func(_ context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+		request = req.GetProvider()
+		return committedOnboardingOperation(req.GetOperationId(), req.GetProvider()), nil
 	}
 	model := newOnboarding(nil, theme.Dark(), deps)
 	model.cursor = onboardingProviderIndex(t, model, "cursor_cli")
@@ -588,9 +958,9 @@ func TestOnboardingReviewSuppressesSecretAndSubmitsSettingsOnce(t *testing.T) {
 	const secret = "SECRET-REVIEW-SENTINEL"
 	var requests []*pb.AddProviderReq
 	deps := testOnboardingDeps()
-	deps.addProvider = func(_ context.Context, req *pb.AddProviderReq) (*pb.Provider, error) {
-		requests = append(requests, req)
-		return &pb.Provider{Alias: req.Alias, Type: req.Type, Model: req.Model}, nil
+	deps.commitProviderSave = func(_ context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+		requests = append(requests, req.GetProvider())
+		return committedOnboardingOperation(req.GetOperationId(), req.GetProvider()), nil
 	}
 	model := newOnboarding(nil, theme.Dark(), deps)
 	model.providerIdx = onboardingProviderIndex(t, model, "bedrock")
@@ -608,7 +978,7 @@ func TestOnboardingReviewSuppressesSecretAndSubmitsSettingsOnce(t *testing.T) {
 		t.Fatalf("submit state = step:%v cmd:%v", model.step, cmd)
 	}
 	msg := runOnboardingCmd(t, cmd)
-	if _, ok := msg.(providerAddedMsg); !ok {
+	if _, ok := msg.(ProviderSaveResultMsg); !ok {
 		t.Fatalf("submit message = %T", msg)
 	}
 	if len(requests) != 1 {
@@ -631,7 +1001,7 @@ func TestOnboardingProviderBoundaryErrorsRedactCredential(t *testing.T) {
 	}{
 		{"add error", func() onboardingDeps {
 			deps := testOnboardingDeps()
-			deps.addProvider = func(context.Context, *pb.AddProviderReq) (*pb.Provider, error) {
+			deps.commitProviderSave = func(context.Context, *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
 				return nil, errors.New("add echoed " + secret)
 			}
 			return deps
@@ -894,10 +1264,10 @@ func TestOnboardingAddSuccessRacingEscKeepsCommittedProviderAndSkipsTest(t *test
 	release := make(chan struct{})
 	testCalls := 0
 	deps := testOnboardingDeps()
-	deps.addProvider = func(_ context.Context, req *pb.AddProviderReq) (*pb.Provider, error) {
+	deps.commitProviderSave = func(_ context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
 		close(started)
 		<-release
-		return &pb.Provider{Alias: req.Alias, Type: req.Type}, nil
+		return committedOnboardingOperation(req.GetOperationId(), req.GetProvider()), nil
 	}
 	deps.testProvider = func(context.Context, string) (*pb.TestProviderResult, error) {
 		testCalls++
@@ -929,7 +1299,7 @@ func TestOnboardingAddSuccessRacingEscKeepsCommittedProviderAndSkipsTest(t *test
 
 func TestOnboardingProviderAddHasDeadline(t *testing.T) {
 	deps := testOnboardingDeps()
-	deps.addProvider = func(ctx context.Context, _ *pb.AddProviderReq) (*pb.Provider, error) {
+	deps.commitProviderSave = func(ctx context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
 		deadline, ok := ctx.Deadline()
 		if !ok {
 			return nil, errors.New("provider add context has no deadline")
@@ -937,15 +1307,15 @@ func TestOnboardingProviderAddHasDeadline(t *testing.T) {
 		if remaining := time.Until(deadline); remaining <= 0 || remaining > 31*time.Second {
 			return nil, fmt.Errorf("provider add deadline = %s", remaining)
 		}
-		return &pb.Provider{Alias: "bedrock", Type: "bedrock"}, nil
+		return committedOnboardingOperation(req.GetOperationId(), req.GetProvider()), nil
 	}
 	model := newOnboarding(nil, theme.Dark(), deps)
 	model.providerIdx = onboardingProviderIndex(t, model, "bedrock")
 	model.selectedModel = "test-model"
 	_, cmd := model.startTest()
-	msg := runOnboardingCmd(t, cmd).(providerAddedMsg)
-	if msg.err != nil {
-		t.Fatalf("provider add: %v", msg.err)
+	msg := runOnboardingCmd(t, cmd).(ProviderSaveResultMsg)
+	if msg.Err != nil {
+		t.Fatalf("provider add: %v", msg.Err)
 	}
 }
 
@@ -980,7 +1350,7 @@ func TestOnboardingRejectsNilSuccessfulProviderResponses(t *testing.T) {
 	model.adding = true
 	model.providerOpContext = t.Context()
 
-	model, cmd := model.Update(providerAddedMsg{flowID: model.flowID})
+	model, cmd := model.Update(ProviderSaveResultMsg{FlowID: model.flowID})
 	if cmd != nil || model.testing || model.adding || !strings.Contains(model.testError, "no provider") {
 		t.Fatalf("nil add response = cmd:%v testing:%v adding:%v error:%q", cmd, model.testing, model.adding, model.testError)
 	}
@@ -1006,6 +1376,7 @@ func TestOnboardingCancelStopsAllActiveWork(t *testing.T) {
 	model.pullCancel = newCancel()
 	model.cliCheckCancel = newCancel()
 	model.providerOpCancel = newCancel()
+	model.providerReconcileCancel = newCancel()
 
 	model.Cancel()
 
@@ -1043,8 +1414,11 @@ func testOnboardingDeps() onboardingDeps {
 		listModels: func(context.Context, string, string, string, map[string]string) ([]providerauth.ModelInfo, error) {
 			return []providerauth.ModelInfo{{ID: "test-model", Name: "Test model"}}, nil
 		},
-		addProvider: func(_ context.Context, req *pb.AddProviderReq) (*pb.Provider, error) {
-			return &pb.Provider{Alias: req.Alias, Type: req.Type, Model: req.Model}, nil
+		commitProviderSave: func(_ context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+			return committedOnboardingOperation(req.GetOperationId(), req.GetProvider()), nil
+		},
+		getProviderOperation: func(context.Context, string) (*pb.ProviderOperation, error) {
+			return nil, status.Error(codes.NotFound, "operation not found")
 		},
 		testProvider: func(context.Context, string) (*pb.TestProviderResult, error) {
 			return &pb.TestProviderResult{Success: true}, nil
