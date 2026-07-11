@@ -611,6 +611,90 @@ func TestBackgroundManagerTerminalRecordingFailureFailsClosedAcrossRestart(t *te
 	assertBackgroundAuditActions(t, NewBackgroundAudit(audit.Path()), BackgroundAuditError)
 }
 
+func TestBackgroundManagerTerminalAuditFailsClosedWhenStateAndTransitionCoFail(t *testing.T) {
+	dir := t.TempDir()
+	store := NewBackgroundStore(filepath.Join(dir, "background.json"))
+	audit := NewBackgroundAudit(filepath.Join(dir, "background-audit.jsonl"))
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	manager := NewBackgroundManager(backgroundSessionStore(t), store, audit, BackgroundManagerOptions{
+		Context: t.Context(),
+		Now:     backgroundTestClock,
+		Resolver: func(name string) (ResolvedBackgroundProfile, error) {
+			return trustedBackgroundProfile(name, "descriptor-hash"), nil
+		},
+		Watcher: func(context.Context, *Store, AgentSpec, RunOptions, string, WatchOptions, func(WatchCycle)) (WatchResult, error) {
+			close(entered)
+			<-release
+			return WatchResult{}, errors.New("secret co-failure")
+		},
+	})
+	if _, err := manager.Start("session-1", "fixture", true); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	<-entered
+	stalePolicy, err := os.ReadFile(store.Path())
+	if err != nil {
+		t.Fatalf("ReadFile stale policy: %v", err)
+	}
+	if err := os.Remove(store.Path()); err != nil {
+		t.Fatalf("Remove policy: %v", err)
+	}
+	for _, path := range []string{store.Path(), store.transitionPath()} {
+		if err := os.Mkdir(path, 0o700); err != nil {
+			t.Fatalf("Mkdir blocker %s: %v", path, err)
+		}
+	}
+	close(release)
+	eventuallyBackground(t, func() bool {
+		status, getErr := manager.Get("session-1")
+		return getErr == nil && status.State == BackgroundStateError && status.PersistenceDegraded
+	})
+	assertBackgroundAuditActions(t, audit, BackgroundAuditStart, BackgroundAuditError)
+	rawAudit, err := os.ReadFile(audit.Path())
+	if err != nil {
+		t.Fatalf("ReadFile audit: %v", err)
+	}
+	for _, forbidden := range []string{"secret co-failure", "prompt", "response", "argv", "command", "envValue", "credential"} {
+		if strings.Contains(string(rawAudit), forbidden) {
+			t.Fatalf("audit contains forbidden %q metadata: %s", forbidden, rawAudit)
+		}
+	}
+	manager.Shutdown()
+	for _, path := range []string{store.Path(), store.transitionPath()} {
+		if err := os.Remove(path); err != nil {
+			t.Fatalf("Remove blocker %s: %v", path, err)
+		}
+	}
+	if err := os.WriteFile(store.Path(), stalePolicy, 0o600); err != nil {
+		t.Fatalf("restore stale policy: %v", err)
+	}
+
+	var watchers atomic.Int32
+	restarted := NewBackgroundManager(backgroundSessionStore(t), NewBackgroundStore(store.Path()), NewBackgroundAudit(audit.Path()), BackgroundManagerOptions{
+		Context: t.Context(),
+		Now:     backgroundTestClock,
+		Resolver: func(name string) (ResolvedBackgroundProfile, error) {
+			return trustedBackgroundProfile(name, "descriptor-hash"), nil
+		},
+		Watcher: countingBackgroundWatcher(&watchers, errors.New("unexpected restart launch")),
+	})
+	t.Cleanup(restarted.Shutdown)
+	if err := restarted.Resume(); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if got := watchers.Load(); got != 0 {
+		t.Fatalf("restart watchers = %d, want 0", got)
+	}
+	status, err := restarted.Get("session-1")
+	if err != nil {
+		t.Fatalf("Get reconciled: %v", err)
+	}
+	if status.Enabled || status.State != BackgroundStateError || status.Outcome != BackgroundOutcomeWorkerError {
+		t.Fatalf("reconciled status = %#v", status)
+	}
+}
+
 func TestBackgroundManagerStopPersistsAndAuditsBeforeCancellation(t *testing.T) {
 	policyPath := filepath.Join(t.TempDir(), "background.json")
 	auditPath := filepath.Join(filepath.Dir(policyPath), "background-audit.jsonl")
@@ -842,6 +926,32 @@ func TestBackgroundManagerExplicitStopIgnoresCancellationDerivedError(t *testing
 	}
 	if status.Enabled || status.State != BackgroundStateDisabled || status.Outcome != BackgroundOutcomeStopped {
 		t.Fatalf("Stop status = %#v", status)
+	}
+}
+
+func TestBackgroundManagerExplicitStopPreservesJoinedIndependentError(t *testing.T) {
+	manager, _, audit := newBackgroundTestManager(t, func(name string) (ResolvedBackgroundProfile, error) {
+		return trustedBackgroundProfile(name, "descriptor-hash"), nil
+	}, func(ctx context.Context, _ *Store, _ AgentSpec, _ RunOptions, _ string, _ WatchOptions, _ func(WatchCycle)) (WatchResult, error) {
+		<-ctx.Done()
+		return WatchResult{}, errors.Join(ctx.Err(), errors.New("secret joined failure"))
+	})
+	if _, err := manager.Start("session-1", "fixture", true); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	status, err := manager.Stop("session-1")
+	if err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if status.Enabled || status.State != BackgroundStateError || status.Outcome != BackgroundOutcomeWorkerError {
+		t.Fatalf("Stop status = %#v, want disabled worker_error", status)
+	}
+	raw, err := os.ReadFile(audit.Path())
+	if err != nil {
+		t.Fatalf("ReadFile audit: %v", err)
+	}
+	if strings.Contains(string(raw), "secret joined failure") {
+		t.Fatalf("audit leaked joined worker error: %s", raw)
 	}
 }
 

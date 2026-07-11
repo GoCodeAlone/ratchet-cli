@@ -10,9 +10,11 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+const backgroundMoveFileFlags = windows.MOVEFILE_REPLACE_EXISTING | windows.MOVEFILE_WRITE_THROUGH
+
 func backgroundWriteFileAtomic(path string, data []byte) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := backgroundEnsurePrivateDir(dir); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*.tmp")
@@ -36,14 +38,14 @@ func backgroundWriteFileAtomic(path string, data []byte) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := windows.Rename(tmpPath, path); err != nil {
+	if err := backgroundReplaceFile(tmpPath, path); err != nil {
 		return err
 	}
 	return backgroundSetPrivateACL(path)
 }
 
 func backgroundOpenPrivateAppend(path string) (*os.File, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := backgroundEnsurePrivateDir(filepath.Dir(path)); err != nil {
 		return nil, err
 	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
@@ -55,6 +57,25 @@ func backgroundOpenPrivateAppend(path string) (*os.File, error) {
 		return nil, err
 	}
 	return f, nil
+}
+
+func backgroundEnsurePrivateDir(path string) error {
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		return err
+	}
+	return backgroundSetPrivateACL(path)
+}
+
+func backgroundReplaceFile(oldPath, newPath string) error {
+	oldPtr, err := windows.UTF16PtrFromString(oldPath)
+	if err != nil {
+		return err
+	}
+	newPtr, err := windows.UTF16PtrFromString(newPath)
+	if err != nil {
+		return err
+	}
+	return windows.MoveFileEx(oldPtr, newPtr, backgroundMoveFileFlags)
 }
 
 func backgroundRemoveFile(path string) error {

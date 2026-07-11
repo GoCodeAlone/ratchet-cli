@@ -44,6 +44,12 @@ func TestBackgroundManagerBlockedAuditDoesNotPreventShutdownCancellation(t *test
 		_ = unblocker.Close()
 		t.Fatal("Shutdown could not cancel active worker while another session audit was blocked")
 	}
+	returnedBeforePersistence := false
+	select {
+	case <-shutdownDone:
+		returnedBeforePersistence = true
+	case <-time.After(100 * time.Millisecond):
+	}
 	unblocker := openBackgroundFIFO(t, fifo)
 	defer unblocker.Close() //nolint:errcheck
 	select {
@@ -53,6 +59,9 @@ func TestBackgroundManagerBlockedAuditDoesNotPreventShutdownCancellation(t *test
 	}
 	if err := <-startDone; err != nil && !errors.Is(err, ErrBackgroundManagerClosed) {
 		t.Fatalf("blocked Start error = %v", err)
+	}
+	if returnedBeforePersistence {
+		t.Fatal("Shutdown returned before admitted Start persistence completed")
 	}
 }
 
@@ -105,15 +114,14 @@ func TestBackgroundManagerResumeShutdownBeforeLaunchDisablesPolicy(t *testing.T)
 	if err := store.Upsert(policy); err != nil {
 		t.Fatalf("Upsert policy: %v", err)
 	}
-	fifo := filepath.Join(dir, "audit.fifo")
-	if err := unix.Mkfifo(fifo, 0o600); err != nil {
-		t.Fatalf("Mkfifo: %v", err)
-	}
-	audit.path = fifo
+	auditLock := backgroundPathLock(audit.Path())
+	resolverReached := make(chan struct{})
 	manager := NewBackgroundManager(backgroundSessionStore(t), store, audit, BackgroundManagerOptions{
 		Context: t.Context(),
 		Now:     backgroundTestClock,
 		Resolver: func(name string) (ResolvedBackgroundProfile, error) {
+			auditLock.Lock()
+			close(resolverReached)
 			return trustedBackgroundProfile(name, "descriptor-hash"), nil
 		},
 		Watcher: func(context.Context, *Store, AgentSpec, RunOptions, string, WatchOptions, func(WatchCycle)) (WatchResult, error) {
@@ -125,15 +133,29 @@ func TestBackgroundManagerResumeShutdownBeforeLaunchDisablesPolicy(t *testing.T)
 	go func() {
 		resumeDone <- manager.Resume()
 	}()
+	<-resolverReached
 	eventuallyBackground(t, func() bool {
 		persisted, err := store.Get(policy.SessionID)
 		return err == nil && persisted.State == BackgroundStateRunning && persisted.Outcome == BackgroundOutcomeResumed
 	})
-	manager.Shutdown()
-	unblocker := openBackgroundFIFO(t, fifo)
-	defer unblocker.Close() //nolint:errcheck
+	shutdownDone := make(chan struct{})
+	go func() {
+		manager.Shutdown()
+		close(shutdownDone)
+	}()
+	returnedEarly := false
+	select {
+	case <-shutdownDone:
+		returnedEarly = true
+	case <-time.After(100 * time.Millisecond):
+	}
+	auditLock.Unlock()
 	if err := <-resumeDone; !errors.Is(err, ErrBackgroundManagerClosed) {
 		t.Fatalf("Resume error = %v, want ErrBackgroundManagerClosed", err)
+	}
+	<-shutdownDone
+	if returnedEarly {
+		t.Fatal("Shutdown returned before resumed policy persistence completed")
 	}
 	persisted, err := store.Get(policy.SessionID)
 	if err != nil {
@@ -141,6 +163,75 @@ func TestBackgroundManagerResumeShutdownBeforeLaunchDisablesPolicy(t *testing.T)
 	}
 	if persisted.Enabled || persisted.State != BackgroundStateDisabled || persisted.Outcome != BackgroundOutcomeStopped {
 		t.Fatalf("policy after shutdown race = %#v, want disabled/stopped", persisted)
+	}
+}
+
+func TestBackgroundManagerStopOwnsTerminalPersistenceUntilWorkerJoin(t *testing.T) {
+	dir := t.TempDir()
+	store := NewBackgroundStore(filepath.Join(dir, "background.json"))
+	audit := NewBackgroundAudit(filepath.Join(dir, "background-audit.jsonl"))
+	releaseWorker := make(chan struct{})
+	manager := NewBackgroundManager(backgroundSessionStore(t), store, audit, BackgroundManagerOptions{
+		Context: t.Context(),
+		Now:     backgroundTestClock,
+		Resolver: func(name string) (ResolvedBackgroundProfile, error) {
+			return trustedBackgroundProfile(name, "descriptor-hash"), nil
+		},
+		Watcher: func(context.Context, *Store, AgentSpec, RunOptions, string, WatchOptions, func(WatchCycle)) (WatchResult, error) {
+			<-releaseWorker
+			return WatchResult{}, errors.New("secret independent stop race")
+		},
+	})
+	if _, err := manager.Start("session-1", "fixture", true); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := os.Remove(audit.Path()); err != nil {
+		t.Fatalf("Remove audit: %v", err)
+	}
+	if err := unix.Mkfifo(audit.Path(), 0o600); err != nil {
+		t.Fatalf("Mkfifo: %v", err)
+	}
+	stopDone := make(chan struct {
+		status BackgroundStatus
+		err    error
+	}, 1)
+	go func() {
+		status, err := manager.Stop("session-1")
+		stopDone <- struct {
+			status BackgroundStatus
+			err    error
+		}{status: status, err: err}
+	}()
+	eventuallyBackground(t, func() bool {
+		policy, err := store.Get("session-1")
+		return err == nil && policy.State == BackgroundStateDisabled && policy.Outcome == BackgroundOutcomeStopped
+	})
+	close(releaseWorker)
+	deadline := time.Now().Add(250 * time.Millisecond)
+	var concurrentPolicy BackgroundPolicy
+	for time.Now().Before(deadline) {
+		policy, err := store.Get("session-1")
+		if err != nil {
+			t.Fatalf("Get while Stop owns transition: %v", err)
+		}
+		if policy.State == BackgroundStateError {
+			concurrentPolicy = policy
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	unblocker := openBackgroundFIFO(t, audit.Path())
+	defer unblocker.Close() //nolint:errcheck
+	result := <-stopDone
+	if result.err != nil {
+		t.Fatalf("Stop: %v", result.err)
+	}
+	if result.status.Enabled || result.status.State != BackgroundStateError || result.status.Outcome != BackgroundOutcomeWorkerError {
+		t.Fatalf("Stop status = %#v, want disabled worker_error", result.status)
+	}
+	manager.Shutdown()
+	if concurrentPolicy.State == BackgroundStateError {
+		t.Fatalf("worker persisted concurrently with Stop: %#v", concurrentPolicy)
 	}
 }
 

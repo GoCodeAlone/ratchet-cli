@@ -586,3 +586,16 @@ making Task 5 failure evidence actionable.
 Evidence: a blocked alias crosses the real `AddProvider` boundary as `Aborted`;
 table coverage fixes all failure mappings, and malformed settings retain the
 JSON parser reason without echoing the settings body.
+
+### Backport 2026-07-11: Background drain durability boundaries
+
+Cause: primary policy and co-located side-journal writes can fail together;
+shutdown can race admitted persistence; Windows child creation can precede
+privacy enforcement and replacement durability. Change: treat the independently
+fsynced terminal audit as an authoritative recovery WAL, close lifecycle
+admission and await admitted persistence before shutdown returns, protect the
+Windows directory before child creation, and replace with
+`MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH`. Scope: manifest unchanged;
+this corrects Task 6. Evidence: co-failure restart, stop ownership, joined-error,
+blocked-persistence shutdown, native Windows DACL/replacement, and releaseguard
+tests.

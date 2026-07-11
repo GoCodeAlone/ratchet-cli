@@ -11,8 +11,9 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func TestBackgroundWriteFileAtomicReplacesPrivateWindowsFile(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "background.json")
+func TestBackgroundWindowsAtomicReplacementUsesPrivateACL(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "private")
+	path := filepath.Join(dir, "background.json")
 	for _, data := range [][]byte{[]byte("first\r\n"), []byte("second\r\n")} {
 		if err := backgroundWriteFileAtomic(path, data); err != nil {
 			t.Fatalf("backgroundWriteFileAtomic: %v", err)
@@ -25,6 +26,34 @@ func TestBackgroundWriteFileAtomicReplacesPrivateWindowsFile(t *testing.T) {
 			t.Fatalf("content = %q, want %q", got, data)
 		}
 	}
+	if backgroundMoveFileFlags&windows.MOVEFILE_REPLACE_EXISTING == 0 {
+		t.Fatalf("replacement flags = %#x, missing MOVEFILE_REPLACE_EXISTING", backgroundMoveFileFlags)
+	}
+	if backgroundMoveFileFlags&windows.MOVEFILE_WRITE_THROUGH == 0 {
+		t.Fatalf("replacement flags = %#x, missing MOVEFILE_WRITE_THROUGH", backgroundMoveFileFlags)
+	}
+	assertBackgroundWindowsPrivateDACL(t, dir)
+	assertBackgroundWindowsPrivateDACL(t, path)
+}
+
+func TestBackgroundWindowsAuditAppendUsesPrivateDirectoryACL(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "private")
+	path := filepath.Join(dir, "background-audit.jsonl")
+	if err := NewBackgroundAudit(path).Append(BackgroundAuditRecord{
+		Action:         BackgroundAuditError,
+		SessionID:      "session-1",
+		Profile:        "fixture",
+		DescriptorHash: "descriptor-hash",
+		Outcome:        BackgroundOutcomeWorkerError,
+	}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	assertBackgroundWindowsPrivateDACL(t, dir)
+	assertBackgroundWindowsPrivateDACL(t, path)
+}
+
+func assertBackgroundWindowsPrivateDACL(t *testing.T, path string) {
+	t.Helper()
 	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
 		t.Fatalf("GetNamedSecurityInfo: %v", err)
