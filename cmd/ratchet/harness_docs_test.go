@@ -152,7 +152,7 @@ func TestHarnessDocsDescribeUnifiedProviderSetup(t *testing.T) {
 		}
 	}
 	for _, providerType := range []string{
-		"anthropic", "openai", "googleai", "openrouter", "cohere", "copilot_models",
+		"anthropic", "openai", "gemini", "openrouter", "cohere", "copilot_models",
 		"openai_compatible", "anthropic_compatible", "custom", "openai_chatgpt", "copilot",
 		"openai_azure", "anthropic_foundry", "anthropic_vertex", "bedrock", "ollama",
 		"llama_cpp", "claude_code", "copilot_cli", "codex_cli", "gemini_cli", "cursor_cli",

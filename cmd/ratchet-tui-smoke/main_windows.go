@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"fmt"
 	"net/http"
@@ -78,8 +79,23 @@ func configureSmokeTrust() error {
 	if !roots.AppendCertsFromPEM(certPEM) {
 		return fmt.Errorf("load smoke CA: no certificates found")
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.TLSClientConfig.RootCAs = roots
+	transport, err := cloneSmokeTransport(http.DefaultTransport, roots)
+	if err != nil {
+		return err
+	}
 	http.DefaultTransport = transport
 	return nil
+}
+
+func cloneSmokeTransport(base http.RoundTripper, roots *x509.CertPool) (*http.Transport, error) {
+	transport, ok := base.(*http.Transport)
+	if !ok {
+		return nil, fmt.Errorf("unsupported default transport %T", base)
+	}
+	clone := transport.Clone()
+	if clone.TLSClientConfig == nil {
+		clone.TLSClientConfig = &tls.Config{}
+	}
+	clone.TLSClientConfig.RootCAs = roots
+	return clone, nil
 }

@@ -79,7 +79,7 @@ contract.
 
 | Category | Canonical provider types |
 |---|---|
-| API providers | `anthropic`, `openai`, `googleai`, `openrouter`, `cohere`, `copilot_models` |
+| API providers | `anthropic`, `openai`, `gemini`, `openrouter`, `cohere`, `copilot_models` |
 | Compatible endpoints | `openai_compatible`, `anthropic_compatible`, `custom` |
 | Subscriptions | `openai_chatgpt`, `copilot` |
 | Cloud platforms | `openai_azure`, `anthropic_foundry`, `anthropic_vertex`, `bedrock` |
