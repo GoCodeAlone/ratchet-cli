@@ -511,3 +511,58 @@ session-primary projection, ID/lease/reload transitions, audit schema, Unix
 `openat`, and AIX fail-before-write remain clean.
 
 **Verdict reasoning:** FAIL; D66-D71 are concrete Important contract gaps.
+
+## Cycle 12: Executable Authority Contract
+
+**Status:** FAIL
+
+**Findings (Critical):** none.
+
+**Findings (Important):**
+
+- `D72` Task 6 omitted store/archive/client/drain/platform files and the writer
+  inventory/process proofs required by its rewrite. Recommendation: add an
+  authority-first execution backport inside Task 6; manifest stays unchanged.
+- `D73` Execution-context cancellation could cancel the ACP cancel send, and
+  authority failures were conflated with user cancellation. Recommendation:
+  define callback outcomes and use an independent bounded send context.
+- `D74` Visible-metadata-derived audit IDs can collide for distinct same-time
+  events. Recommendation: persist a random event ID before first append.
+- `D75` Native Windows attack tests were not named in the plan despite the
+  existing `^TestBackgroundWindows` CI selector. Recommendation: name the tests
+  and require that CI job, not only a cross-build.
+- `D76` A copied-profile resolver cannot retain a process lease through real
+  `exec.Cmd.Start`. Recommendation: define a lease-owning callback boundary and
+  a second-process fixture race.
+- `D77` Released downgrade was advisory rather than mechanically blocked.
+  Recommendation: isolate old readers or explicitly accept unsupported manual
+  downgrade as operator risk.
+
+**D66-D71 mapping:** D66 partial via D72; D67 partial via D73; D68 open via D74;
+D69 partial via D75; D70 open via D76; D71 partial via D77.
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | D75 conflicts with the named Windows runtime-proof rule. |
+| Assumptions under attack | Finding | D73/D77 relied on cancellation/downgrade behavior without enforcement. |
+| Repo-precedent conflicts | Finding | D76 lacked process-lock ownership for file-backed mutation. |
+| Artifact-class precedent | Finding | Existing Windows selection needs explicitly named test artifacts. |
+| YAGNI violations | Clean | Rewrite remains demonstrated state/security hardening. |
+| Missing failure modes | Finding | Send-context loss, ID collision, and old-binary access were open. |
+| Security/privacy architecture | Finding | Native Windows privileged-path attacks lacked proof. |
+| Infrastructure impact | Clean | No cloud resource changes. |
+| Multi-component validation | Finding | Process/profile/store/Windows boundaries were incomplete. |
+| Declared integration proof | Finding | ACP recovery lacked required process/native cases. |
+| Contributed UI rendering proof | Clean | Task 6 contributes no UI. |
+| Rollback story | Finding | Released rollback was advisory. |
+| Simpler alternative not considered | Finding | Persisted event IDs simplify audit identity. |
+| User-intent drift | Clean | Locked daemon-drain scope is preserved. |
+| Existence/runtime-validity | Finding | Runtime surfaces required by the contract were omitted. |
+
+**Alternative:** persist one transition event ID and cancellation/audit payload;
+reuse the ID on retry and let the profile-store callback own launch trust.
+
+**Verdict reasoning:** FAIL; D72-D77 require contract backports or an explicit
+accepted risk before implementation.

@@ -696,8 +696,19 @@ persisted launch values; treat transition listings as hints and reload current
 state after the session lease; make session status cancellation authority and
 write the sidecar only as a compatibility projection; repair only an incomplete
 final JSONL record under lock; and reject final symlink/reparse append targets.
-See `decisions/0008-close-acp-state-authority.md`. Scope: manifest
+See `decisions/0009-pin-acp-event-authority.md`. Scope: manifest
 unchanged; this is the required review-cycle-five rewrite of Task 6.
+
+### Backport 2026-07-13: Executable event and launch authority
+
+Cause: review cycle twelve found that metadata-derived audit IDs could collide,
+execution cancellation could self-cancel the ACP cancel send, copied profiles
+could not retain trust through child start, and the plan omitted native/process
+proof surfaces. Change: persist random transition event IDs; separate bounded
+cancel-send and execution contexts; add a profile-lock-owning launch callback;
+name all store/archive/client/platform files and Windows/process gates in Task 6;
+and record released downgrade as an explicit unsupported operator risk. Scope:
+manifest unchanged; Task 6 implementation details only.
 
 Rewrite contract:
 
@@ -712,13 +723,15 @@ Rewrite contract:
   Post-latch enqueue/start/claim reject; recovery cancels; writeback preserves
   the latch; terminalization is `cancel_requested -> canceled`. No independent
   status assignment or check-then-claim path remains.
-- `RunOptions.CancelRequested` becomes error-bearing. Authority read or ACP
-  cancellation observation captures `ErrCancelRequested` as the first cause and
-  immediately cancels prompt and child-process contexts. The ACP cancel send
-  itself runs under the same bounded grace deadline. Send failure or deadline
-  expiry cannot replace the first cause; either forces kill/reap. All authority,
-  ACP-send, and process watcher goroutines join before return, and the captured
-  cause deterministically wins over a racing prompt result.
+- `RunOptions.CancelRequested` becomes error-bearing. `(true, nil)` records
+  `ErrCancelRequested` as the first cause; `(false, err)` records that authority
+  failure and fails closed without reporting a user cancellation. A true request
+  sends ACP cancel once on a separate bounded context derived with
+  `context.WithoutCancel`, while prompt and child-process contexts are canceled
+  independently. Send failure or deadline expiry cannot replace the first cause;
+  either forces kill/reap. Authority failure skips ACP cancel and kills/reaps.
+  All authority, ACP-send, and process watcher goroutines join before return,
+  and the captured cause deterministically wins over a racing prompt result.
 - Cancel commit order is sessions first, compatibility sidecar second. A
   sidecar failure returns degraded/unconfirmed state without undoing the primary
   commit. Reconciliation is one `sessions lock -> current reload -> sidecar
@@ -726,8 +739,10 @@ Rewrite contract:
   best-effort. Released backward binary downgrade is unsupported; operators use
   the current binary to stop/disable policies and publish an upgrade-forward
   patch that retains authority-aware readers/writers. Pre-release branch
-  reversion remains supported; an older binary never opens released background
-  state.
+  reversion remains supported. This is an explicit, unenforced operator-risk
+  boundary: accidental old-binary access may ignore authority state and is not a
+  supported or recoverable downgrade path. No compatibility barrier or migration
+  is introduced.
 - Transition recovery is `list IDs -> session lease -> lock-held reload`.
   Missing means no-op; only the reloaded value may replay; no write follows
   lease release.
@@ -752,11 +767,11 @@ Rewrite contract:
   that identity, opens the final object with `FILE_FLAG_OPEN_REPARSE_POINT`, then
   checks attributes, link count, owner SID, and protected DACL on the opened
   handle.
-- Before first append, the caller creates one immutable audit record and a
-  deterministic `recordId = SHA-256(canonical(at, action, sessionId, profile,
-  descriptorHash, outcome))`; retry retains the original `at` and `recordId`.
-  Recoverable lifecycle records derive `at` from persisted transition/session
-  state. Append repairs then scans all committed record IDs under lock; a match
+- Before first append, every audit-requiring transition persists a
+  cryptographically random `eventId`; the immutable audit record uses
+  `recordId = eventId`, and all retries/recovery reuse it. Distinct logical
+  events receive distinct IDs even when their timestamps and visible metadata
+  match. Append repairs then scans all committed record IDs under lock; a match
   is a no-op even when another session appended later. Errors after writing the
   complete newline are
   `ErrStoreCommitUnconfirmed`; retry reconciles before append. Tests inject
@@ -764,10 +779,12 @@ Rewrite contract:
 - Descriptor hash payload keeps the existing field order and nil/empty encoding,
   preserves args order, sorts env keys, and hashes command/cwd exactly. Legacy
   normalized mismatches fail closed and require explicit retrust. Profile
-  add/trust/remove/list are process-locked; initial resolution holds the lease
-  through durable start/audit commit. Each child start reacquires the profile
-  lease, rechecks trust/pinned hash, calls the real start synchronously, and
-  releases only after child-start success/failure acknowledgement.
+  add/trust/remove/list are process-locked. `ProfileStore.WithTrustedProfile`
+  owns the process lease, revalidates name/trust/pinned hash, and invokes its
+  callback while locked. Initial manager resolution uses that callback through
+  durable start/audit commit. Each profile-backed child launch uses it again,
+  builds the command, calls the real `exec.Cmd.Start` synchronously in the
+  callback, and releases only after child-start success/failure acknowledgement.
 - Tests cover every cancel commit stage and latch interleaving, an agent ignoring
   cancel, SIGKILL-created audit tails read before append, a two-process transition
   replacement race, Unix pre/post-validation link attacks, native Windows repair

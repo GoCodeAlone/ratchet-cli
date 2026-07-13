@@ -869,6 +869,67 @@ git commit -m "feat(acp): manage trusted background drains"
 Expected: PASS; a watcher counter remains exactly one after an error and zero
 after drifted restart.
 
+**Authority-first execution backport (review cycles 5-12; same Task 6)**
+
+Additional files in Task 6:
+
+- Modify: `internal/acpclient/store.go`, `store_test.go`,
+  `store_concurrency_test.go`, `archive.go`, `archive_test.go`, `eventlog.go`,
+  and `eventlog_test.go`
+- Modify: `internal/acpclient/client.go`, `client_test.go`, `drain.go`,
+  `drain_test.go`, `watch.go`, `watch_test.go`, and `process_test.go`
+- Modify: `internal/acpclient/profiles.go`, `profiles_test.go`, `spec.go`, and
+  `spec_test.go`
+- Modify: `internal/acpclient/background.go`, `background_test.go`,
+  `background_audit.go`, `background_audit_test.go`,
+  `background_concurrency_unix_test.go`, and `background_process_lock_test.go`
+- Modify/create as required: `internal/acpclient/background_persist*.go`,
+  `background_persist*_test.go`, `store_lock*.go`, and `store_lock*_test.go`
+
+Add RED tests before the rewrite:
+
+- a `go/parser` writer inventory permits session mutation only through the one
+  guarded transition helper or the create-only collision-rejecting helper;
+- `Upsert`, lifecycle/event writeback, enqueue/recovery/claim/completion/failure,
+  cancellation, `InsertSession`, and archive import prove sticky cancellation or
+  create-only behavior under cross-process races;
+- `(true, nil)` cancellation yields `ErrCancelRequested`, `(false, err)` keeps
+  the authority error, ACP cancel uses an independent bounded context, and an
+  ignoring child is killed/reaped with every watcher/send goroutine joined;
+- transition-persisted random event IDs deduplicate an unconfirmed audit append
+  even after another session appends, while distinct same-metadata events remain
+  distinct; SIGKILL tails and every write/sync/close/parent-sync stage recover;
+- `ProfileStore.WithTrustedProfile` blocks a second mutator process until a
+  fixture child's real `exec.Cmd.Start` returns, then releases on both success
+  and failure;
+- native tests named `TestBackgroundWindowsAuditRejectsReparsePoint`,
+  `TestBackgroundWindowsAuditRejectsHardLink`,
+  `TestBackgroundWindowsAuditRejectsParentReplacement`, and
+  `TestBackgroundWindowsAuditRejectsWeakDACL` exercise the existing
+  `^TestBackgroundWindows` CI selector; AIX injection fails before mutation.
+
+Implement the authority-first contract in
+`docs/plans/2026-07-10-ratchet-cli-provider-drain-managed-hooks-design.md`:
+guard all writers, make the sidecar a best-effort projection, pin transition
+reloads after the session lease, secure/repair audit appends, use durable event
+IDs, own profile trust through real child start, and make cancellation causal.
+
+Verification:
+
+```bash
+gofmt -w internal/acpclient/*.go
+go test ./internal/acpclient -run 'SessionWriterInventory|Cancel|Cancellation|Audit|Profile.*Trust|Profile.*Launch|Background|WatchQueue|DrainQueue|ImportSession' -count=1
+go test -race ./internal/acpclient -run 'Cancel|Audit|Profile.*Launch|Background|WatchQueue|DrainQueue' -count=1
+go test ./internal/acpclient -run 'Cancel|Audit|Profile.*Launch|Background' -count=20
+GOOS=windows GOARCH=amd64 go test -c ./internal/acpclient -o dist/acpclient.test.exe
+GOOS=aix GOARCH=ppc64 go test -c ./internal/acpclient -o dist/acpclient.test.aix
+rg -n "go test ./internal/acpclient -run '\^TestBackgroundWindows'" .github/workflows/ci.yml
+```
+
+Expected: local focused/race/stress tests and cross-builds exit 0; PR CI's
+Windows job executes every named native attack test. Released downgrade remains
+an explicit unsupported operator-risk boundary, not a compatibility feature.
+
 ### Task 7: Wire Background Drains Through Proto, Daemon, and Client
 
 **Files:**
@@ -1013,10 +1074,13 @@ GOOS=windows GOARCH=amd64 go test -c ./internal/acpclient -o dist/acpclient.test
 GOOS=windows GOARCH=amd64 go test -c ./internal/client -o dist/client.test.exe
 GOOS=windows GOARCH=amd64 go test -c ./cmd/ratchet -o dist/ratchet.test.exe
 GOOS=windows GOARCH=amd64 go build ./cmd/ratchet
+rg -n "go test ./internal/acpclient -run '\^TestBackgroundWindows'" .github/workflows/ci.yml
 ```
 
 Expected: all exit 0; fixture integration completes two prompts, drift starts
-zero agents, and Windows binaries compile.
+zero agents, and Windows binaries compile. During PR monitoring, the native
+Windows job must be green and must execute the named audit reparse, hard-link,
+parent-replacement, and DACL tests; cross-compilation is not a substitute.
 
 **Step 6: Commit and complete PR 3**
 

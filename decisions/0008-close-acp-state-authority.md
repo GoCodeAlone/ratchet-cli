@@ -1,6 +1,6 @@
 # 0008. Close ACP State Authority
 
-**Status:** Accepted
+**Status:** Superseded by 0009
 **Date:** 2026-07-13
 **Decision-makers:** project maintainers
 **Related:** `decisions/0007-make-acp-side-state-authoritative.md`, `docs/plans/2026-07-10-ratchet-cli-provider-drain-managed-hooks-design.md`
