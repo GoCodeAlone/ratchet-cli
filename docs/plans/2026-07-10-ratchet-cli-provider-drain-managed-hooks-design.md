@@ -710,6 +710,16 @@ name all store/archive/client/platform files and Windows/process gates in Task 6
 and record released downgrade as an explicit unsupported operator risk. Scope:
 manifest unchanged; Task 6 implementation details only.
 
+### Backport 2026-07-13: Release-shaped authority proofs
+
+Cause: review cycle thirteen found that standalone profile-lock and same-process
+audit tests could pass while the production manager launch path or cross-daemon
+retry remained unsafe. Change: carry a lease-owned launch closure from the
+profile store through `BackgroundManager` and `WatchQueue`, prove the closure
+holds through real `exec.Cmd.Start` with a second mutator process, prove audit
+retry/interleaving with cooperating subprocesses, and releaseguard all four
+native Windows attack tests. Scope: manifest unchanged; Task 6 proof wiring.
+
 Rewrite contract:
 
 - `CheckCancellation(id) (bool, error)` is authoritative and cancellation is
@@ -782,15 +792,20 @@ Rewrite contract:
   add/trust/remove/list are process-locked. `ProfileStore.WithTrustedProfile`
   owns the process lease, revalidates name/trust/pinned hash, and invokes its
   callback while locked. Initial manager resolution uses that callback through
-  durable start/audit commit. Each profile-backed child launch uses it again,
-  builds the command, calls the real `exec.Cmd.Start` synchronously in the
-  callback, and releases only after child-start success/failure acknowledgement.
+  durable start/audit commit. For execution, `BackgroundManager` carries a
+  lease-owning start closure through `WatchQueue`'s production `StartRunner`;
+  copied profile data cannot escape and launch outside that closure. The closure
+  builds the command, calls the real `exec.Cmd.Start` synchronously, and releases
+  only after child-start success/failure acknowledgement.
 - Tests cover every cancel commit stage and latch interleaving, an agent ignoring
   cancel, SIGKILL-created audit tails read before append, a two-process transition
   replacement race, Unix pre/post-validation link attacks, native Windows repair
   reparse/hard-link/DACL attacks, executable legacy-reader projection behavior,
-  separate-process cancel-versus-claim/writeback, and a second mutator process
-  racing profile mutation against a fixture child's real `exec.Cmd.Start`
-  acknowledgement. A host-injected unsupported-lock no-write
+  separate-process cancel-versus-claim/writeback; cooperating audit processes
+  where one retries an unconfirmed record after another appends; and a
+  release-shaped `BackgroundManager -> WatchQueue -> StartRunner` test where a
+  second mutator process blocks across a fixture child's real `exec.Cmd.Start`
+  acknowledgement. A releaseguard asserts all named Windows attack tests remain
+  under the CI selector. A host-injected unsupported-lock no-write
   proof covers AIX behavior; AIX remains cross-build-only and returns
   `ErrStoreProcessLockUnsupported` before mutation.

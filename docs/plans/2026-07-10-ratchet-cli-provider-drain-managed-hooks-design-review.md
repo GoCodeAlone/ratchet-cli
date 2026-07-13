@@ -566,3 +566,53 @@ reuse the ID on retry and let the profile-store callback own launch trust.
 
 **Verdict reasoning:** FAIL; D72-D77 require contract backports or an explicit
 accepted risk before implementation.
+
+## Cycle 13: Release-Shaped Authority Proofs
+
+**Status:** FAIL
+
+**Findings (Critical):** none.
+
+**Findings (Important):**
+
+- `D78` Standalone `WithTrustedProfile` proof could pass while the production
+  manager/`WatchQueue` path launched from copied profile data. Recommendation:
+  carry the lease-owned closure through production `StartRunner` and prove the
+  real fixture start blocks a second mutator process.
+- `D79` Same-process audit retry/interleaving could not prove owner lock,
+  restart, or all-record scan behavior across daemons. Recommendation: use
+  cooperating subprocesses around the unconfirmed retry.
+
+**Findings (Minor):**
+
+- `D80` The broad Windows selector could pass after one named attack test was
+  deleted. Recommendation: releaseguard all four declarations and the selector.
+
+**D72-D77 mapping:** D72/D73/D77 closed; D74/D76 contracts closed with D79/D78
+proof gaps; D75 contract closed with Minor D80. D66-D71 remain closed.
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Clean | Go/local-state/Windows/audit guidance preserved. |
+| Assumptions under attack | Finding | Standalone callback proof did not guarantee production wiring. |
+| Repo-precedent conflicts | Finding | Audit proof omitted established subprocess contention. |
+| Artifact-class precedent | Finding | Broad Windows selection lacked non-vacuous presence proof. |
+| YAGNI violations | Clean | Rewrite remains demonstrated hardening. |
+| Missing failure modes | Finding | Cross-process retry/interleaving was not required. |
+| Security/privacy architecture | Clean | Metadata-only, fail-closed boundaries remain. |
+| Infrastructure impact | Clean | No infrastructure changes. |
+| Multi-component validation | Finding | Manager/profile and multi-daemon proofs were incomplete. |
+| Declared integration proof | Finding | Production lease-owned launch race was missing. |
+| Contributed UI rendering proof | Clean | No UI contribution. |
+| Rollback story | Clean | Upgrade-forward recovery and accepted risk are explicit. |
+| Simpler alternative not considered | Clean | Lease-owned closure is minimal. |
+| User-intent drift | Clean | Manifest and Windows support preserved. |
+| Existence/runtime-validity | Finding | Selector did not require all named tests to exist. |
+
+**Alternative:** carry the trusted launch closure, not copied profile data,
+through `WatchOptions.StartRunner`.
+
+**Verdict reasoning:** FAIL; D78-D79 are Important proof-wiring gaps. D80 is
+Minor but cheap to close in the same Task 6 releaseguard.

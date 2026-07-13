@@ -885,6 +885,7 @@ Additional files in Task 6:
   `background_concurrency_unix_test.go`, and `background_process_lock_test.go`
 - Modify/create as required: `internal/acpclient/background_persist*.go`,
   `background_persist*_test.go`, `store_lock*.go`, and `store_lock*_test.go`
+- Create: `internal/releaseguard/acp_background_windows_test.go`
 
 Add RED tests before the rewrite:
 
@@ -897,16 +898,19 @@ Add RED tests before the rewrite:
   the authority error, ACP cancel uses an independent bounded context, and an
   ignoring child is killed/reaped with every watcher/send goroutine joined;
 - transition-persisted random event IDs deduplicate an unconfirmed audit append
-  even after another session appends, while distinct same-metadata events remain
-  distinct; SIGKILL tails and every write/sync/close/parent-sync stage recover;
-- `ProfileStore.WithTrustedProfile` blocks a second mutator process until a
-  fixture child's real `exec.Cmd.Start` returns, then releases on both success
-  and failure;
+  while a cooperating subprocess appends another session's record between the
+  first process's attempts; distinct same-metadata events remain distinct, and
+  SIGKILL tails plus every write/sync/close/parent-sync stage recover;
+- the production `BackgroundManager -> WatchQueue -> StartRunner` path carries
+  a `ProfileStore.WithTrustedProfile` launch closure; a deterministic pre-start
+  barrier lets a second mutator process block while the closure calls a fixture
+  child's real `exec.Cmd.Start`, then proves release on success and failure;
 - native tests named `TestBackgroundWindowsAuditRejectsReparsePoint`,
   `TestBackgroundWindowsAuditRejectsHardLink`,
   `TestBackgroundWindowsAuditRejectsParentReplacement`, and
   `TestBackgroundWindowsAuditRejectsWeakDACL` exercise the existing
-  `^TestBackgroundWindows` CI selector; AIX injection fails before mutation.
+  `^TestBackgroundWindows` CI selector; releaseguard fails if any declaration or
+  the selector disappears; AIX injection fails before mutation.
 
 Implement the authority-first contract in
 `docs/plans/2026-07-10-ratchet-cli-provider-drain-managed-hooks-design.md`:
@@ -921,6 +925,7 @@ gofmt -w internal/acpclient/*.go
 go test ./internal/acpclient -run 'SessionWriterInventory|Cancel|Cancellation|Audit|Profile.*Trust|Profile.*Launch|Background|WatchQueue|DrainQueue|ImportSession' -count=1
 go test -race ./internal/acpclient -run 'Cancel|Audit|Profile.*Launch|Background|WatchQueue|DrainQueue' -count=1
 go test ./internal/acpclient -run 'Cancel|Audit|Profile.*Launch|Background' -count=20
+go test ./internal/releaseguard -run BackgroundWindows -count=1
 GOOS=windows GOARCH=amd64 go test -c ./internal/acpclient -o dist/acpclient.test.exe
 GOOS=aix GOARCH=ppc64 go test -c ./internal/acpclient -o dist/acpclient.test.aix
 rg -n "go test ./internal/acpclient -run '\^TestBackgroundWindows'" .github/workflows/ci.yml
@@ -1074,6 +1079,7 @@ GOOS=windows GOARCH=amd64 go test -c ./internal/acpclient -o dist/acpclient.test
 GOOS=windows GOARCH=amd64 go test -c ./internal/client -o dist/client.test.exe
 GOOS=windows GOARCH=amd64 go test -c ./cmd/ratchet -o dist/ratchet.test.exe
 GOOS=windows GOARCH=amd64 go build ./cmd/ratchet
+go test ./internal/releaseguard -run BackgroundWindows -count=1
 rg -n "go test ./internal/acpclient -run '\^TestBackgroundWindows'" .github/workflows/ci.yml
 ```
 
