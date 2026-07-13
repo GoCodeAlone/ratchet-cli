@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -17,11 +18,15 @@ import (
 
 const defaultTimeout = 30 * time.Second
 
+var ErrCancellationTransportUnsupported = errors.New("acp client cancellation requires closable in-process transports")
+
 type Client struct {
 	conn           *acpsdk.ClientSideConnection
 	callbacks      *Callbacks
 	timeout        time.Duration
+	setupErr       error
 	cmd            *exec.Cmd
+	killProcess    func() error
 	stderr         *lockedBuffer
 	wait           chan error
 	onSession      func(string) error
@@ -51,12 +56,20 @@ type SessionRunner struct {
 func NewInProcessClient(peerInput io.Writer, peerOutput io.Reader, opts RunOptions) *Client {
 	callbacks := NewCallbacks(opts)
 	client := &Client{
-		conn:      acpsdk.NewClientSideConnection(callbacks, peerInput, peerOutput),
 		callbacks: callbacks,
 		timeout:   timeoutOrDefault(opts.Timeout),
 		onSession: opts.SessionStarted,
 		cancelReq: opts.CancelRequested,
 	}
+	if opts.CancelRequested != nil {
+		_, inputClosable := peerInput.(io.Closer)
+		_, outputClosable := peerOutput.(io.Closer)
+		if !inputClosable || !outputClosable {
+			client.setupErr = ErrCancellationTransportUnsupported
+			return client
+		}
+	}
+	client.conn = acpsdk.NewClientSideConnection(callbacks, peerInput, peerOutput)
 	client.addTransport(peerInput)
 	client.addTransport(peerOutput)
 	return client
@@ -113,6 +126,9 @@ func (c *Client) RunPrompt(ctx context.Context, prompt string) (Result, error) {
 }
 
 func (c *Client) StartSession(ctx context.Context, existingSessionID string) (*SessionRunner, error) {
+	if c.setupErr != nil {
+		return nil, c.setupErr
+	}
 	callCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
@@ -289,13 +305,19 @@ func (c *Client) Close() error {
 			return
 		default:
 		}
-		_ = c.cmd.Process.Kill()
+		kill := c.cmd.Process.Kill
+		if c.killProcess != nil {
+			kill = c.killProcess
+		}
+		if err := kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			c.closeErr = fmt.Errorf("kill acp agent: %w", err)
+		}
 		timer := time.NewTimer(5 * time.Second)
 		defer timer.Stop()
 		select {
 		case <-c.wait:
 		case <-timer.C:
-			c.closeErr = context.DeadlineExceeded
+			c.closeErr = errors.Join(c.closeErr, context.DeadlineExceeded)
 		}
 	})
 	return c.closeErr
@@ -369,19 +391,10 @@ func (c *Client) sendCancelAndTerminate(ctx context.Context, sessionID acpsdk.Se
 		grace.Stop()
 		return errors.Join(sendErr, c.terminateCancellation())
 	case <-sendCtx.Done():
+		sendCancel()
 		teardownErr := c.terminateCancellation()
-		joinTimer := time.NewTimer(timeout)
-		defer joinTimer.Stop()
-		select {
-		case sendErr := <-sendDone:
-			return errors.Join(context.Cause(sendCtx), sendErr, teardownErr)
-		case <-joinTimer.C:
-			return errors.Join(
-				context.Cause(sendCtx),
-				teardownErr,
-				fmt.Errorf("join ACP cancel send: %w", context.DeadlineExceeded),
-			)
-		}
+		sendErr := <-sendDone
+		return errors.Join(context.Cause(sendCtx), sendErr, teardownErr)
 	}
 }
 

@@ -423,22 +423,84 @@ func TestClientCancellationBlockedSendReturnsAndReapsProcess(t *testing.T) {
 	}
 }
 
-func TestClientCancellationSendJoinIsBounded(t *testing.T) {
-	writer := &stubbornCancelWriter{
+func TestClientClosePreservesNonBenignKillError(t *testing.T) {
+	killErr := errors.New("kill process denied")
+	wait := make(chan error, 1)
+	client := &Client{
+		cmd:  &exec.Cmd{Process: new(os.Process)},
+		wait: wait,
+		killProcess: func() error {
+			wait <- errors.New("signal: killed")
+			return killErr
+		},
+	}
+
+	err := client.Close()
+	if !errors.Is(err, killErr) {
+		t.Fatalf("Close error = %v, want kill error", err)
+	}
+	if again := client.Close(); !errors.Is(again, killErr) {
+		t.Fatalf("second Close error = %v, want retained kill error", again)
+	}
+}
+
+func TestClientCloseIgnoresProcessDoneKillError(t *testing.T) {
+	wait := make(chan error, 1)
+	client := &Client{
+		cmd:  &exec.Cmd{Process: new(os.Process)},
+		wait: wait,
+		killProcess: func() error {
+			wait <- errors.New("signal: killed")
+			return os.ErrProcessDone
+		},
+	}
+
+	if err := client.Close(); err != nil {
+		t.Fatalf("Close error = %v, want nil for os.ErrProcessDone", err)
+	}
+}
+
+func TestClientCancellationRejectsNonClosableInProcessTransportBeforeProtocol(t *testing.T) {
+	peerInput := &bytes.Buffer{}
+	peerOutput := &countingReader{reader: strings.NewReader("")}
+	client := NewInProcessClient(peerInput, peerOutput, RunOptions{
+		CancelRequested: func(string) (bool, error) {
+			return false, nil
+		},
+	})
+
+	_, err := client.StartSession(t.Context(), "")
+	if !errors.Is(err, ErrCancellationTransportUnsupported) {
+		t.Fatalf("StartSession error = %v, want ErrCancellationTransportUnsupported", err)
+	}
+	if peerInput.Len() != 0 {
+		t.Fatalf("ACP protocol wrote %d bytes before rejecting transport", peerInput.Len())
+	}
+	if got := peerOutput.reads.Load(); got != 0 {
+		t.Fatalf("ACP protocol read count = %d before rejecting transport, want 0", got)
+	}
+}
+
+func TestClientWithoutCancellationAllowsNonClosableInProcessTransport(t *testing.T) {
+	client := NewInProcessClient(io.Discard, strings.NewReader(""), RunOptions{})
+
+	_, err := client.StartSession(t.Context(), "")
+	if err == nil {
+		t.Fatal("StartSession unexpectedly succeeded with an empty peer response")
+	}
+	if strings.Contains(err.Error(), "requires closable in-process transports") {
+		t.Fatalf("StartSession error = %v, want ordinary protocol failure", err)
+	}
+}
+
+func TestClientCancellationClosesAndJoinsBlockedSend(t *testing.T) {
+	writer := &cooperativeCancelWriter{
 		started:  make(chan struct{}),
-		release:  make(chan struct{}),
+		closed:   make(chan struct{}),
 		finished: make(chan struct{}),
 	}
 	peerOutputR, peerOutputW := io.Pipe()
 	t.Cleanup(func() { _ = peerOutputW.Close() })
-	defer func() {
-		close(writer.release)
-		select {
-		case <-writer.finished:
-		case <-time.After(time.Second):
-			t.Fatal("stubborn cancel writer did not finish after release")
-		}
-	}()
 	client := NewInProcessClient(writer, peerOutputR, RunOptions{
 		Timeout: 50 * time.Millisecond,
 		CancelRequested: func(string) (bool, error) {
@@ -458,6 +520,11 @@ func TestClientCancellationSendJoinIsBounded(t *testing.T) {
 	}
 	select {
 	case stopWatcher := <-watcherReady:
+		select {
+		case <-writer.finished:
+		default:
+			t.Fatal("cancel watcher returned before the send goroutine finished")
+		}
 		err := stopWatcher()
 		if !errors.Is(err, ErrCancelRequested) {
 			t.Fatalf("cancel watcher error = %v, want ErrCancelRequested", err)
@@ -469,7 +536,7 @@ func TestClientCancellationSendJoinIsBounded(t *testing.T) {
 			t.Fatalf("execution cause = %v, want ErrCancelRequested", got)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("cancel watcher did not bound the blocked send join")
+		t.Fatal("cancel watcher did not close and join the blocked send")
 	}
 }
 
@@ -844,21 +911,34 @@ func (f closeFunc) Close() error {
 	return f()
 }
 
-type stubbornCancelWriter struct {
-	started  chan struct{}
-	release  chan struct{}
-	finished chan struct{}
-	once     sync.Once
+type countingReader struct {
+	reader io.Reader
+	reads  atomic.Int64
 }
 
-func (w *stubbornCancelWriter) Write([]byte) (int, error) {
-	w.once.Do(func() { close(w.started) })
-	<-w.release
-	close(w.finished)
+func (r *countingReader) Read(p []byte) (int, error) {
+	r.reads.Add(1)
+	return r.reader.Read(p)
+}
+
+type cooperativeCancelWriter struct {
+	started  chan struct{}
+	closed   chan struct{}
+	finished chan struct{}
+	start    sync.Once
+	close    sync.Once
+	finish   sync.Once
+}
+
+func (w *cooperativeCancelWriter) Write([]byte) (int, error) {
+	w.start.Do(func() { close(w.started) })
+	<-w.closed
+	w.finish.Do(func() { close(w.finished) })
 	return 0, io.ErrClosedPipe
 }
 
-func (*stubbornCancelWriter) Close() error {
+func (w *cooperativeCancelWriter) Close() error {
+	w.close.Do(func() { close(w.closed) })
 	return nil
 }
 
