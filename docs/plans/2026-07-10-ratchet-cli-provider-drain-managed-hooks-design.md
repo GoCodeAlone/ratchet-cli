@@ -683,3 +683,44 @@ persists state after releasing its lease. Scope: manifest unchanged; these are
 Task 6 lifecycle and filesystem invariants from review cycle four.
 An active worker is idempotent only when no local stop or transition is already
 reserved for that session.
+
+### Backport 2026-07-13: Authority-first side-state rewrite
+
+Cause: final review proved that normalized trust hashes, pre-lease transition
+snapshots, best-effort cancel rollback, torn JSONL tails, and link-following
+append opens left five Important correctness/security gaps. Change: hash exact
+persisted launch values; treat transition listings as hints and reload current
+state after the session lease; make session status cancellation authority and
+write the sidecar only as a compatibility projection; repair only an incomplete
+final JSONL record under lock; and reject final symlink/reparse append targets.
+See `decisions/0007-make-acp-side-state-authoritative.md`. Scope: manifest
+unchanged; this is the required review-cycle-five rewrite of Task 6.
+
+Rewrite contract:
+
+- `CheckCancellation(id) (bool, error)` is authoritative. Requested/canceled
+  state stops work; missing session and storage/parse errors are explicit, and
+  unattended workers fail closed on authority errors.
+- Cancel commit order is sessions first, compatibility sidecar second. A
+  sidecar failure returns degraded/unconfirmed state without undoing the primary
+  commit. Reconciliation creates missing projections and removes orphans before
+  downgrade; mixed-version cancellation cannot be claimed atomic.
+- Transition recovery is `list IDs -> session lease -> lock-held reload`.
+  Missing means no-op; only the reloaded value may replay; no write follows
+  lease release.
+- Audit newline is the sole commit marker. Both `Read` and `Append` lock, discard
+  a non-newline suffix, and sync repair before use. Newline-terminated malformed
+  or missing-required-field records fail; known actions are enforced and unknown
+  JSON fields are ignored for forward compatibility. Raw event-log framing is
+  unchanged and does not use audit repair.
+- Secure append resolves/opens one parent identity and derives both lock and
+  final-file operations from that handle. Final links/reparse points,
+  non-regular files, wrong owners/DACLs, and multiple links are rejected.
+- Descriptor hash payload keeps the existing field order and nil/empty encoding,
+  preserves args order, sorts env keys, and hashes command/cwd exactly. Legacy
+  normalized mismatches fail closed and require explicit retrust.
+- Tests inject every cancel commit stage, read-before-append torn-tail restart,
+  transition replacement after ID listing, Unix final-link/hard-link attacks,
+  native Windows reparse behavior, and mixed-version projection reconciliation.
+  AIX remains cross-build-only; process-locked mutation returns
+  `ErrStoreProcessLockUnsupported` before any write.

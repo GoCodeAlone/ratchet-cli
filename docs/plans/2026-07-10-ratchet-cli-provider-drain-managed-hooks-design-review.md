@@ -345,3 +345,51 @@ shared panic-safe worker guard.
 
 **Verdict reasoning:** PASS; all Critical/Important findings D1-D36 are resolved.
 D37-D39 are straightforward conservative implementation refinements.
+
+## Cycle 8: Task 6 Authority-First Rewrite
+
+**Status:** FAIL
+
+**Findings (Critical):** none.
+
+**Findings (Important):**
+
+- `D40` Cancellation authority read errors were undefined and boolean callers
+  could continue unattended work. Require an error-bearing, fail-closed check.
+- `D41` A compatibility sidecar cannot atomically notify an older worker after
+  primary commit. Define degradation, reconciliation, and quiesced downgrade.
+- `D42` Append-only tail repair cannot unblock startup `Read`. Use one lock-held
+  audit repair primitive from both read and append.
+- `D43` Newline commit, required fields/actions, malformed committed records,
+  and unknown-field compatibility were unspecified.
+- `D44` Path-only canonicalization leaves parent retarget and hard-link races.
+  Pin lock/data operations to one parent identity and validate the opened file.
+- `D46` Shared append repair could alter raw ACP event-log semantics. Share only
+  secure open; keep framing/repair audit-specific.
+- `D47` The rewrite lacked explicit crash, process-race, restart, downgrade, and
+  native Windows proofs.
+
+**Findings (Minor):**
+
+- `D45` Specify `list IDs -> lease -> reload`, missing behavior, and no writes
+  after release.
+- `D48` Specify hash field order, nil/empty, env ordering, and legacy retrust.
+- `D49` State that AIX process-locked mutation is unsupported/fail-closed even
+  though cross-compilation remains required.
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Guidance/intent | Finding | Cancellation and owner-only claims were incomplete. |
+| Assumptions/failure/rollback | Finding | Authority errors, old-worker notification, and startup repair were undefined. |
+| Security/concurrency | Finding | Parent identity, hard links, and transition lock order needed contracts. |
+| Compatibility/portability | Finding | JSON/hash evolution, downgrade, Windows, and AIX needed explicit behavior. |
+| Repo precedent/scope | Finding | Audit repair must not change raw event logs. |
+| Validation | Finding | Real restart/process/native-platform proofs were missing. |
+| YAGNI/infrastructure | Clean | No SQLite, migration, or external infrastructure is justified. |
+
+**Alternatives:** audit-specific recovery over shared secure open; honest
+best-effort legacy projection with reconciliation instead of atomicity claims.
+
+**Verdict reasoning:** FAIL; D40-D44, D46, and D47 remain Important.
