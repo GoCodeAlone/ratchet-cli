@@ -699,21 +699,23 @@ unchanged; this is the required review-cycle-five rewrite of Task 6.
 Rewrite contract:
 
 - `CheckCancellation(id) (bool, error)` is authoritative and cancellation is
-  monotonic. `ClaimNextQueuedPrompt` checks the latch and marks one prompt
-  running in the same sessions transaction. Completion/failure records prompt
-  outcome but preserves `cancel_requested`/`canceled`; pending prompts then move
-  to canceled. No check-then-claim path remains.
+  monotonic. One guarded store transition handles enqueue, lifecycle start and
+  writeback, stale recovery, claim, completion/failure, and cancellation.
+  Post-latch enqueue/start/claim reject; recovery cancels; writeback preserves
+  the latch; terminalization is `cancel_requested -> canceled`. No independent
+  status assignment or check-then-claim path remains.
 - `RunOptions.CancelRequested` becomes error-bearing. Authority read or ACP
-  cancel-send failure cancels both prompt and child-process contexts and returns
-  a classified terminal error, including when an agent ignores cooperative
-  cancellation.
+  cancel-send failure captures the first cause and immediately cancels prompt
+  and child-process contexts. A request sends ACP cancel once, waits a bounded
+  grace period, then kills/reaps an ignoring child. The watcher joins before
+  return; a captured cause deterministically wins over a racing prompt result.
 - Cancel commit order is sessions first, compatibility sidecar second. A
   sidecar failure returns degraded/unconfirmed state without undoing the primary
   commit. Reconciliation is one `sessions lock -> current reload -> sidecar
-  mutation` transaction. `state prepare-downgrade` requires zero owner/background
-  leases, excludes new current-version owners, reconciles projections, and emits
-  readiness; operators must quiesce older binaries first. Mixed-version
-  cancellation is not atomic.
+  mutation` transaction. Mixed-version notification remains explicitly
+  best-effort. Released backward binary downgrade is unsupported; operators use
+  the current binary to stop/disable policies and publish an upgrade-forward
+  patch. Pre-release branch reversion remains supported.
 - Transition recovery is `list IDs -> session lease -> lock-held reload`.
   Missing means no-op; only the reloaded value may replay; no write follows
   lease release.
@@ -722,21 +724,36 @@ Rewrite contract:
   handle-relative transaction, discard
   a non-newline suffix, and sync repair before use. Newline-terminated malformed
   records fail. `at`, `sessionId`, `profile`, `descriptorHash`, and `outcome` are
-  required; action must be start/resume/block/error/stop with its current outcome
-  set. Unknown JSON fields are ignored. Raw event-log framing is unchanged and
+  required. Allowed pairs are start:started; resume:resumed;
+  block:profile_untrusted/profile_drift/profile_missing/session_missing/policy_invalid;
+  error:worker_error/worker_panic/state_write_failed/audit_append_failed; and
+  stop:stopped/completed. Unknown JSON fields are ignored; new actions/outcomes
+  require a format-version design. Raw event-log framing is unchanged and
   shares only the secure final-target open primitive.
 - Secure audit mutation derives lock and data operations from one held parent
   identity. Final links/reparse points, non-regular files, wrong owners/DACLs,
   and multiple links are rechecked before mutation. The parent is owner-only, so
-  same-owner relinking is outside the adversarial boundary.
+  same-owner relinking is outside the adversarial boundary. Unix uses `openat`
+  from the held directory descriptor. Windows holds the parent handle, records
+  volume/file ID, acquires the path lock, revalidates that ID, opens the final
+  object with `FILE_FLAG_OPEN_REPARSE_POINT`, then checks attributes, link count,
+  owner SID, and protected DACL on the opened handle.
+- Audit append first repairs/reads the last committed record. An exact duplicate
+  is a no-op. Errors after writing the complete newline are
+  `ErrStoreCommitUnconfirmed`; retry reconciles before append. Tests inject
+  write, sync, close, parent-sync, and repair failures.
 - Descriptor hash payload keeps the existing field order and nil/empty encoding,
   preserves args order, sorts env keys, and hashes command/cwd exactly. Legacy
   normalized mismatches fail closed and require explicit retrust. Profile
-  add/trust/remove/list are process-locked; stored-profile resolution holds that
-  lease through durable start/audit commit and launch.
+  add/trust/remove/list are process-locked; initial resolution holds the lease
+  through durable start/audit commit. Each child start reacquires the profile
+  lease, rechecks trust/pinned hash, calls the real start synchronously, and
+  releases only after child-start success/failure acknowledgement.
 - Tests cover every cancel commit stage and latch interleaving, an agent ignoring
   cancel, SIGKILL-created audit tails read before append, a two-process transition
   replacement race, Unix pre/post-validation link attacks, native Windows repair
-  and reparse attacks, an executable legacy-reader downgrade sequence, and a
-  host-injected unsupported-lock no-write proof. AIX remains cross-build-only and
-  returns `ErrStoreProcessLockUnsupported` before mutation.
+  reparse/hard-link/DACL attacks, executable legacy-reader projection behavior,
+  separate-process cancel-versus-claim/writeback, and profile mutation versus
+  real child-start acknowledgement. A host-injected unsupported-lock no-write
+  proof covers AIX behavior; AIX remains cross-build-only and returns
+  `ErrStoreProcessLockUnsupported` before mutation.

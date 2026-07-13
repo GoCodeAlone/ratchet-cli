@@ -437,3 +437,48 @@ remained open through D51-D56; D49 behavior resolved but lacked proof.
 handle-relative audit transaction layer.
 
 **Verdict reasoning:** FAIL; D50 is Critical and D51-D55 remain Important.
+
+## Cycle 10: Monotonic Cancellation and Recovery Rewrite
+
+**Status:** FAIL
+
+**Findings (Critical):**
+
+- `D57` Enqueue, stale recovery, and lifecycle replacement remained independent
+  status writers that could clear the cancellation latch.
+
+**Findings (Important):**
+
+- `D58` Error/cancel watcher precedence, grace, forced kill, join, and reaping
+  were not causal or deterministic.
+- `D59` Downgrade readiness lacked durable admission/lifetime semantics; explicit
+  unsupported downgrade is safer.
+- `D60` Audit errors after newline write lacked commit classification and
+  idempotent retry reconciliation.
+- `D61` A worker goroutine was not child-start acknowledgement for releasing a
+  profile trust lease.
+- `D62` Windows pinned-parent/file-ID and opened-object validation mechanics were
+  unnamed.
+- `D63` Cancellation and profile races lacked separate-process real-fixture
+  proofs.
+- `D64` The proposed downgrade command was absent from the locked Task 8 command
+  contract and rollback.
+
+**Findings (Minor):**
+
+- `D65` Enumerate the exact audit action/outcome matrix and evolution rule.
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Guidance/state/failure | Finding | D57-D61 left state and commit ambiguity. |
+| Security/platform | Finding | D62 required named Windows mechanics. |
+| Validation/integration | Finding | D63 required real process interleavings. |
+| Rollback/scope | Finding | D59/D64 made downgrade non-executable. |
+| YAGNI/intent/infra | Clean | No migration or remote control plane was added. |
+
+**Alternatives:** one guarded session transition function; upgrade-forward-only
+released recovery.
+
+**Verdict reasoning:** FAIL; D57 is Critical and D58-D64 remain Important.
