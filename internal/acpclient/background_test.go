@@ -2099,14 +2099,14 @@ func TestBackgroundProfileResolverPinsBuiltinFingerprintAndProfileDescriptor(t *
 	if err != nil {
 		t.Fatalf("resolve builtin: %v", err)
 	}
-	if resolvedBuiltin.DescriptorHash != builtin.Fingerprint() || !resolvedBuiltin.TrustValid {
+	if resolvedBuiltin.DescriptorHash != builtin.Fingerprint() || !resolvedBuiltin.TrustValid || resolvedBuiltin.WithTrustedProfile != nil {
 		t.Fatalf("resolved builtin = %#v", resolvedBuiltin)
 	}
 	resolvedProfile, err := resolve(profile.Name)
 	if err != nil {
 		t.Fatalf("resolve profile: %v", err)
 	}
-	if resolvedProfile.DescriptorHash != stored.DescriptorHash() || !resolvedProfile.TrustValid || resolvedProfile.Options.Cwd != profile.Cwd {
+	if resolvedProfile.DescriptorHash != stored.DescriptorHash() || !resolvedProfile.TrustValid || resolvedProfile.Options.Cwd != profile.Cwd || resolvedProfile.WithTrustedProfile == nil {
 		t.Fatalf("resolved profile = %#v", resolvedProfile)
 	}
 }

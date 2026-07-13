@@ -320,10 +320,11 @@ func (s *BackgroundStore) loadTransitions(path string) (backgroundTransitionFile
 }
 
 type ResolvedBackgroundProfile struct {
-	Spec           AgentSpec
-	Options        RunOptions
-	DescriptorHash string
-	TrustValid     bool
+	Spec               AgentSpec
+	Options            RunOptions
+	DescriptorHash     string
+	TrustValid         bool
+	WithTrustedProfile func(string, func(Profile) error) error
 }
 
 type BackgroundProfileResolver func(string) (ResolvedBackgroundProfile, error)
@@ -356,6 +357,9 @@ func NewBackgroundProfileResolver(registry Registry, profiles *ProfileStore) Bac
 			Options:        RunOptions{Agent: name, Cwd: profile.Cwd},
 			DescriptorHash: profile.DescriptorHash(),
 			TrustValid:     profile.TrustValid(),
+			WithTrustedProfile: func(pinnedHash string, callback func(Profile) error) error {
+				return profiles.WithTrustedProfile(name, pinnedHash, callback)
+			},
 		}, nil
 	}
 }
@@ -545,15 +549,20 @@ func (m *BackgroundManager) Start(sessionID, profile string, acknowledged bool) 
 		m.rememberTerminal(result)
 		return backgroundStatus(result.policy), errors.Join(ErrBackgroundProfileUntrusted, result.err)
 	}
-	if err := resolved.Spec.Validate(); err != nil {
-		return BackgroundStatus{}, fmt.Errorf("%w: %s", ErrBackgroundProfileIneligible, profile)
-	}
 	policy.Enabled = true
 	policy.State = BackgroundStateRunning
 	policy.Outcome = BackgroundOutcomeStarted
 	policy.StartedAt = now
-	persisted, err := m.persistBeforeLaunch(policy, BackgroundAuditStart)
+	persisted, resolved, err := m.persistBeforeResolvedLaunch(policy, BackgroundAuditStart, resolved)
 	if err != nil {
+		if outcome, ok := backgroundProfileLeaseFailure(err); ok {
+			policy.Enabled = false
+			policy.State = BackgroundStateBlocked
+			policy.Outcome = outcome
+			result := m.persistTerminal(policy, BackgroundAuditBlock)
+			m.rememberTerminal(result)
+			return backgroundStatus(result.policy), errors.Join(ErrBackgroundProfileUntrusted, err, result.err)
+		}
 		return backgroundStatus(persisted), err
 	}
 	m.mu.Lock()
@@ -784,22 +793,22 @@ func (m *BackgroundManager) Resume() error {
 			}
 			continue
 		}
-		if err := resolved.Spec.Validate(); err != nil {
-			if err := m.block(policy, BackgroundOutcomeProfileUntrusted); err != nil {
-				return errors.Join(err, m.releaseTransition(policy.SessionID))
-			}
-			if err := m.releaseTransition(policy.SessionID); err != nil {
-				return err
-			}
-			continue
-		}
 		now := m.currentTime()
 		policy.State = BackgroundStateRunning
 		policy.Outcome = BackgroundOutcomeResumed
 		policy.StartedAt = now
 		policy.UpdatedAt = now
-		persisted, err := m.persistBeforeLaunch(policy, BackgroundAuditResume)
+		persisted, resolved, err := m.persistBeforeResolvedLaunch(policy, BackgroundAuditResume, resolved)
 		if err != nil {
+			if outcome, ok := backgroundProfileLeaseFailure(err); ok {
+				if blockErr := m.block(policy, outcome); blockErr != nil {
+					return errors.Join(err, blockErr, m.releaseTransition(policy.SessionID))
+				}
+				if releaseErr := m.releaseTransition(policy.SessionID); releaseErr != nil {
+					return releaseErr
+				}
+				continue
+			}
 			return errors.Join(err, m.releaseTransition(policy.SessionID))
 		}
 		m.mu.Lock()
@@ -887,8 +896,34 @@ func (m *BackgroundManager) watchWorker(ctx context.Context, resolved ResolvedBa
 			err = errors.New("acp background watcher panic")
 		}
 	}()
-	_, err = m.watcher(ctx, m.sessions, resolved.Spec, resolved.Options, sessionID, m.watch, nil)
+	watch := m.watch
+	if resolved.WithTrustedProfile != nil {
+		start := watch.StartRunner
+		if start == nil {
+			start = defaultDrainStartRunner
+		}
+		watch.StartRunner = resolved.trustedStartRunner(start)
+	}
+	_, err = m.watcher(ctx, m.sessions, resolved.Spec, resolved.Options, sessionID, watch, nil)
 	return BackgroundOutcomeWorkerError, err
+}
+
+func (resolved ResolvedBackgroundProfile) trustedStartRunner(start func(context.Context, AgentSpec, RunOptions, string) (DrainPromptRunner, func() error, error)) func(context.Context, AgentSpec, RunOptions, string) (DrainPromptRunner, func() error, error) {
+	return func(ctx context.Context, _ AgentSpec, opts RunOptions, existingID string) (runner DrainPromptRunner, closeRunner func() error, err error) {
+		err = resolved.WithTrustedProfile(resolved.DescriptorHash, func(profile Profile) error {
+			spec := cloneSpec(profile.Spec)
+			if validateErr := spec.Validate(); validateErr != nil {
+				return fmt.Errorf("%w: %s", ErrBackgroundProfileIneligible, profile.Name)
+			}
+			opts.Agent = profile.Name
+			opts.Command = ""
+			opts.Args = nil
+			opts.Cwd = profile.Cwd
+			runner, closeRunner, err = start(ctx, spec, opts, existingID)
+			return err
+		})
+		return runner, closeRunner, err
+	}
 }
 
 func (m *BackgroundManager) workerDone(sessionID string, worker *backgroundWorker, ctx context.Context, outcome string, workerErr error) {
@@ -1007,6 +1042,48 @@ func (m *BackgroundManager) persistBeforeLaunch(policy BackgroundPolicy, action 
 		return result.policy, errors.Join(err, result.err)
 	}
 	return policy, nil
+}
+
+func (m *BackgroundManager) persistBeforeResolvedLaunch(policy BackgroundPolicy, action string, resolved ResolvedBackgroundProfile) (BackgroundPolicy, ResolvedBackgroundProfile, error) {
+	if resolved.WithTrustedProfile == nil {
+		if err := resolved.Spec.Validate(); err != nil {
+			return BackgroundPolicy{}, resolved, fmt.Errorf("%w: %s", ErrBackgroundProfileIneligible, policy.Profile)
+		}
+		persisted, err := m.persistBeforeLaunch(policy, action)
+		return persisted, resolved, err
+	}
+
+	current := resolved
+	var persisted BackgroundPolicy
+	err := resolved.WithTrustedProfile(policy.DescriptorHash, func(profile Profile) error {
+		current.Spec = cloneSpec(profile.Spec)
+		current.Options.Agent = profile.Name
+		current.Options.Command = ""
+		current.Options.Args = nil
+		current.Options.Cwd = profile.Cwd
+		current.DescriptorHash = profile.DescriptorHash()
+		current.TrustValid = true
+		if err := current.Spec.Validate(); err != nil {
+			return fmt.Errorf("%w: %s", ErrBackgroundProfileIneligible, profile.Name)
+		}
+		var err error
+		persisted, err = m.persistBeforeLaunch(policy, action)
+		return err
+	})
+	return persisted, current, err
+}
+
+func backgroundProfileLeaseFailure(err error) (string, bool) {
+	switch {
+	case errors.Is(err, ErrProfileNotFound):
+		return BackgroundOutcomeProfileMissing, true
+	case errors.Is(err, errProfileTrustInvalid):
+		return BackgroundOutcomeProfileUntrusted, true
+	case errors.Is(err, errProfileHashMismatch):
+		return BackgroundOutcomeProfileDrift, true
+	default:
+		return "", false
+	}
 }
 
 func (m *BackgroundManager) recordingFailure(policy BackgroundPolicy, outcome string) BackgroundPolicy {

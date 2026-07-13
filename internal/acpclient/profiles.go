@@ -17,6 +17,8 @@ import (
 var (
 	ErrProfileNotFound       = errors.New("acp client profile not found")
 	ErrProfileShadowsBuiltin = errors.New("acp client profile shadows built-in agent")
+	errProfileTrustInvalid   = errors.New("acp client profile trust is invalid")
+	errProfileHashMismatch   = errors.New("acp client profile descriptor hash mismatch")
 )
 
 type Profile struct {
@@ -61,11 +63,18 @@ func (s *ProfileStore) Path() string {
 }
 
 func (s *ProfileStore) List() ([]Profile, error) {
-	data, err := s.load()
+	var profiles []Profile
+	err := s.withLock(func() error {
+		data, err := s.load()
+		if err != nil {
+			return err
+		}
+		profiles = slices.Clone(data.Profiles)
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	profiles := slices.Clone(data.Profiles)
 	normalizeProfiles(profiles)
 	slices.SortFunc(profiles, func(a, b Profile) int {
 		return strings.Compare(a.Name, b.Name)
@@ -74,16 +83,24 @@ func (s *ProfileStore) List() ([]Profile, error) {
 }
 
 func (s *ProfileStore) Get(name string) (Profile, error) {
-	profiles, err := s.List()
+	var found Profile
+	err := s.withLock(func() error {
+		data, err := s.load()
+		if err != nil {
+			return err
+		}
+		for _, profile := range data.Profiles {
+			if profile.Name == name {
+				found = profile
+				return nil
+			}
+		}
+		return fmt.Errorf("%w: %s", ErrProfileNotFound, name)
+	})
 	if err != nil {
 		return Profile{}, err
 	}
-	for _, profile := range profiles {
-		if profile.Name == name {
-			return profile, nil
-		}
-	}
-	return Profile{}, fmt.Errorf("%w: %s", ErrProfileNotFound, name)
+	return found, nil
 }
 
 func (s *ProfileStore) Add(profile Profile) error {
@@ -103,25 +120,27 @@ func (s *ProfileStore) Add(profile Profile) error {
 	}
 	profile.UpdatedAt = now
 	profile.Hash = profile.DescriptorHash()
-	data, err := s.load()
-	if err != nil {
-		return err
-	}
-	replaced := false
-	for i := range data.Profiles {
-		if data.Profiles[i].Name == profile.Name {
-			if !data.Profiles[i].CreatedAt.IsZero() {
-				profile.CreatedAt = data.Profiles[i].CreatedAt
-			}
-			data.Profiles[i] = profile
-			replaced = true
-			break
+	return s.withLock(func() error {
+		data, err := s.load()
+		if err != nil {
+			return err
 		}
-	}
-	if !replaced {
-		data.Profiles = append(data.Profiles, profile)
-	}
-	return s.save(data)
+		replaced := false
+		for i := range data.Profiles {
+			if data.Profiles[i].Name == profile.Name {
+				if !data.Profiles[i].CreatedAt.IsZero() {
+					profile.CreatedAt = data.Profiles[i].CreatedAt
+				}
+				data.Profiles[i] = profile
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			data.Profiles = append(data.Profiles, profile)
+		}
+		return s.save(data)
+	})
 }
 
 func (s *ProfileStore) Trust(name string) error {
@@ -129,19 +148,21 @@ func (s *ProfileStore) Trust(name string) error {
 	if name == "" {
 		return errors.New("acp client profile name is required")
 	}
-	data, err := s.load()
-	if err != nil {
-		return err
-	}
-	for i := range data.Profiles {
-		if data.Profiles[i].Name == name {
-			data.Profiles[i].Hash = data.Profiles[i].DescriptorHash()
-			data.Profiles[i].Trusted = true
-			data.Profiles[i].UpdatedAt = time.Now().UTC()
-			return s.save(data)
+	return s.withLock(func() error {
+		data, err := s.load()
+		if err != nil {
+			return err
 		}
-	}
-	return fmt.Errorf("%w: %s", ErrProfileNotFound, name)
+		for i := range data.Profiles {
+			if data.Profiles[i].Name == name {
+				data.Profiles[i].Hash = data.Profiles[i].DescriptorHash()
+				data.Profiles[i].Trusted = true
+				data.Profiles[i].UpdatedAt = time.Now().UTC()
+				return s.save(data)
+			}
+		}
+		return fmt.Errorf("%w: %s", ErrProfileNotFound, name)
+	})
 }
 
 func (s *ProfileStore) Remove(name string) error {
@@ -149,24 +170,56 @@ func (s *ProfileStore) Remove(name string) error {
 	if name == "" {
 		return errors.New("acp client profile name is required")
 	}
-	data, err := s.load()
-	if err != nil {
-		return err
-	}
-	next := data.Profiles[:0]
-	removed := false
-	for _, profile := range data.Profiles {
-		if profile.Name == name {
-			removed = true
-			continue
+	return s.withLock(func() error {
+		data, err := s.load()
+		if err != nil {
+			return err
 		}
-		next = append(next, profile)
+		next := data.Profiles[:0]
+		removed := false
+		for _, profile := range data.Profiles {
+			if profile.Name == name {
+				removed = true
+				continue
+			}
+			next = append(next, profile)
+		}
+		if !removed {
+			return fmt.Errorf("%w: %s", ErrProfileNotFound, name)
+		}
+		data.Profiles = next
+		return s.save(data)
+	})
+}
+
+func (s *ProfileStore) WithTrustedProfile(name, pinnedHash string, callback func(Profile) error) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return errors.New("acp client profile name is required")
 	}
-	if !removed {
+	if callback == nil {
+		return errors.New("acp client trusted profile callback is required")
+	}
+	return s.withLock(func() error {
+		data, err := s.load()
+		if err != nil {
+			return err
+		}
+		for _, profile := range data.Profiles {
+			if profile.Name != name {
+				continue
+			}
+			if !profile.TrustValid() {
+				return fmt.Errorf("%w: %s", errProfileTrustInvalid, name)
+			}
+			descriptorHash := profile.DescriptorHash()
+			if subtle.ConstantTimeCompare([]byte(descriptorHash), []byte(pinnedHash)) != 1 {
+				return fmt.Errorf("%w: %s", errProfileHashMismatch, name)
+			}
+			return callback(profile)
+		}
 		return fmt.Errorf("%w: %s", ErrProfileNotFound, name)
-	}
-	data.Profiles = next
-	return s.save(data)
+	})
 }
 
 func (p Profile) DescriptorHash() string {
@@ -181,10 +234,10 @@ func (p Profile) DescriptorHash() string {
 		Cwd     string   `json:"cwd,omitempty"`
 	}{
 		Name:    strings.TrimSpace(p.Name),
-		Command: strings.TrimSpace(p.Spec.Command),
+		Command: p.Spec.Command,
 		Args:    args,
 		EnvKeys: envKeys,
-		Cwd:     strings.TrimSpace(p.Cwd),
+		Cwd:     p.Cwd,
 	}
 	b, _ := json.Marshal(payload)
 	sum := sha256.Sum256(b)
@@ -196,6 +249,13 @@ func (p Profile) TrustValid() bool {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(p.Hash), []byte(p.DescriptorHash())) == 1
+}
+
+func (s *ProfileStore) withLock(operation func() error) error {
+	if s == nil || strings.TrimSpace(s.path) == "" {
+		return errors.New("acp client profile path is required")
+	}
+	return withStoreProcessLock(s.path+".lock", operation)
 }
 
 func (s *ProfileStore) load() (profileFile, error) {
