@@ -388,18 +388,13 @@ func executeACPClientExecWithStore(ctx context.Context, opts acpClientExecOption
 			LastStopReason:     string(result.StopReason),
 			Summary:            summarizeACPClientText(result.Text),
 		}
-		if err := store.MarkSessionCompleted(rec, acpclient.TurnSummary{
+		if err := store.MarkSessionCompletedWithEvents(rec, acpclient.TurnSummary{
 			Prompt:     summarizeACPClientText(prompt),
 			Response:   summarizeACPClientText(result.Text),
 			StopReason: string(result.StopReason),
 			CreatedAt:  now,
-		}); err != nil {
+		}, result.Events); err != nil {
 			return err
-		}
-		if len(result.Events) > 0 {
-			if err := store.AppendEventLog(rec.ID, result.Events); err != nil {
-				return err
-			}
 		}
 	}
 	if opts.JSON {
@@ -1849,8 +1844,11 @@ func executeACPClientStatus(store *acpclient.Store, id string, jsonOut bool, w i
 }
 
 func executeACPClientCancel(store *acpclient.Store, id string, jsonOut bool, w io.Writer) error {
-	_, ownerErr := store.Owner(id)
+	owner, ownerErr := store.Owner(id)
 	if ownerErr == nil {
+		if !owner.Cancelable() {
+			return fmt.Errorf("%w: %s", acpclient.ErrOwnerNotCancelable, id)
+		}
 		if err := store.RequestCancel(id, time.Now().UTC()); err != nil {
 			return err
 		}

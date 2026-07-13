@@ -77,7 +77,7 @@ func drainQueueOwned(ctx context.Context, store *Store, spec AgentSpec, opts Run
 	var closeRunner func() error
 	defer func() {
 		if closeRunner != nil {
-			_ = closeRunner()
+			err = errors.Join(err, closeRunner())
 		}
 	}()
 
@@ -147,13 +147,8 @@ func drainQueueOwned(ctx context.Context, store *Store, spec AgentSpec, opts Run
 		if result.ACPSessionID == "" {
 			result.ACPSessionID = string(promptResult.SessionID)
 		}
-		if err := store.MarkQueueCompleted(sessionID, next.ID, promptResult.Text, string(promptResult.StopReason), drainOpts.now()); err != nil {
+		if err := store.MarkQueueCompletedWithEvents(sessionID, next.ID, promptResult.Text, string(promptResult.StopReason), promptResult.Events, drainOpts.now()); err != nil {
 			return result, err
-		}
-		if len(promptResult.Events) > 0 {
-			if err := store.AppendEventLog(sessionID, promptResult.Events); err != nil {
-				return result, err
-			}
 		}
 		result.Completed++
 	}

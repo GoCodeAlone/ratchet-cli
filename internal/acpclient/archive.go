@@ -85,7 +85,7 @@ func ExportSession(store *Store, id, outputPath string, opts ExportOptions) (err
 		return errors.New("archive output path is required")
 	}
 	lease, err := store.AcquireOwnerLease(OwnerLock{
-		SessionID: id, PID: os.Getpid(), CommandFingerprint: "archive-export", StartedAt: time.Now().UTC(),
+		SessionID: id, PID: os.Getpid(), CommandFingerprint: "archive-export", Kind: OwnerKindSnapshot, StartedAt: time.Now().UTC(),
 	})
 	if err != nil {
 		if errors.Is(err, ErrOwnerLeaseBusy) {

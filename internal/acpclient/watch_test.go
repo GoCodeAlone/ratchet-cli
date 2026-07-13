@@ -256,6 +256,42 @@ func TestWatchQueueHoldsOwnerLeaseAcrossIdleSleep(t *testing.T) {
 	}
 }
 
+func TestWatchQueueStopsWhenRunnerCloseFails(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 13, 21, 5, 0, 0, time.UTC)
+	if err := store.Upsert(SessionRecord{
+		ID: "watch-close-failure", Status: SessionStatusQueued, CreatedAt: now, UpdatedAt: now,
+		PromptQueue: []QueuedPrompt{
+			{ID: "q-1", Prompt: "first", Status: QueuePromptStatusPending, CreatedAt: now},
+			{ID: "q-2", Prompt: "second", Status: QueuePromptStatusPending, CreatedAt: now.Add(time.Second)},
+		},
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	closeErr := errors.New("runner close failed")
+	starts := 0
+	result, err := WatchQueue(t.Context(), store, AgentSpec{Name: "fixture", Command: "fixture"}, RunOptions{}, "watch-close-failure", WatchOptions{
+		Interval: time.Millisecond, MaxPerCycle: 1, MaxCycles: 2, Now: fixedClock(now.Add(time.Minute)), Sleep: instantWatchSleep,
+		StartRunner: func(context.Context, AgentSpec, RunOptions, string) (DrainPromptRunner, func() error, error) {
+			starts++
+			return &fakeDrainRunner{sessionID: "acp-close-failure"}, func() error { return closeErr }, nil
+		},
+	}, nil)
+	if !errors.Is(err, closeErr) {
+		t.Fatalf("WatchQueue error = %v, want close failure", err)
+	}
+	if starts != 1 || result.Completed != 1 {
+		t.Fatalf("starts/result = %d/%#v, want one completed cycle", starts, result)
+	}
+	rec, err := store.Get("watch-close-failure")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if rec.PromptQueue[0].Status != QueuePromptStatusCompleted || rec.PromptQueue[1].Status != QueuePromptStatusPending {
+		t.Fatalf("queue after close failure = %#v", rec.PromptQueue)
+	}
+}
+
 func instantWatchSleep(context.Context, time.Duration) error {
 	return nil
 }

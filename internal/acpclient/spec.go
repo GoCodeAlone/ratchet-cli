@@ -68,6 +68,9 @@ const (
 	QueuePromptStatusCompleted = "completed"
 	QueuePromptStatusCanceled  = "canceled"
 	QueuePromptStatusFailed    = "failed"
+
+	OwnerKindExecution = "execution"
+	OwnerKindSnapshot  = "snapshot"
 )
 
 type TurnSummary struct {
@@ -102,7 +105,12 @@ type OwnerLock struct {
 	SessionID          string    `json:"sessionId"`
 	PID                int       `json:"pid"`
 	CommandFingerprint string    `json:"commandFingerprint"`
+	Kind               string    `json:"kind,omitempty"`
 	StartedAt          time.Time `json:"startedAt"`
+}
+
+func (o OwnerLock) Cancelable() bool {
+	return o.Kind == "" || o.Kind == OwnerKindExecution
 }
 
 type CancelRequest struct {

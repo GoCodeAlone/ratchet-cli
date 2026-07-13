@@ -17,6 +17,7 @@ var (
 	ErrSessionNotFound             = errors.New("acp client session not found")
 	ErrQueuePromptNotFound         = errors.New("acp client queue prompt not found")
 	ErrInvalidOwnerLock            = errors.New("acp client owner lock is invalid")
+	ErrOwnerNotCancelable          = errors.New("acp client owner does not represent active execution")
 	ErrOwnerLeaseBusy              = errors.New("acp client owner lease is held")
 	ErrStoreProcessLockUnsupported = errors.New("acp client cross-process store locks are unsupported")
 )
@@ -153,48 +154,61 @@ func (s *Store) MarkSessionStarted(rec SessionRecord) error {
 }
 
 func (s *Store) MarkSessionCompleted(rec SessionRecord, turn TurnSummary) error {
-	return s.updateSessionLifecycle(rec, &turn)
+	return s.MarkSessionCompletedWithEvents(rec, turn, nil)
 }
 
 func (s *Store) updateSessionLifecycle(rec SessionRecord, turn *TurnSummary) error {
 	if strings.TrimSpace(rec.ID) == "" {
 		return errors.New("acp client session id is required")
 	}
-	return s.mutateTransaction(func(data *storeFile) (bool, error) {
-		now := time.Now().UTC()
-		existing, err := findSessionRecord(data, rec.ID)
-		if errors.Is(err, ErrSessionNotFound) {
-			if rec.CreatedAt.IsZero() {
-				rec.CreatedAt = now
-			}
-			if rec.UpdatedAt.IsZero() {
-				rec.UpdatedAt = rec.CreatedAt
-			}
-			if turn != nil {
-				rec.Turns = append(rec.Turns, *turn)
-			}
-			data.Sessions = append(data.Sessions, rec)
-			return true, nil
+	return s.mutateSessionWithEvents(rec.ID, nil, func(data *storeFile) (bool, error) {
+		return updateSessionLifecycleRecord(data, rec, turn)
+	})
+}
+
+func (s *Store) MarkSessionCompletedWithEvents(rec SessionRecord, turn TurnSummary, events []EventLogLine) error {
+	if strings.TrimSpace(rec.ID) == "" {
+		return errors.New("acp client session id is required")
+	}
+	return s.mutateSessionWithEvents(rec.ID, events, func(data *storeFile) (bool, error) {
+		return updateSessionLifecycleRecord(data, rec, &turn)
+	})
+}
+
+func updateSessionLifecycleRecord(data *storeFile, rec SessionRecord, turn *TurnSummary) (bool, error) {
+	now := time.Now().UTC()
+	existing, err := findSessionRecord(data, rec.ID)
+	if errors.Is(err, ErrSessionNotFound) {
+		if rec.CreatedAt.IsZero() {
+			rec.CreatedAt = now
 		}
-		if err != nil {
-			return false, err
-		}
-		if rec.ACPSessionID == "" {
-			rec.ACPSessionID = existing.ACPSessionID
-		}
-		rec.CreatedAt = existing.CreatedAt
 		if rec.UpdatedAt.IsZero() {
-			rec.UpdatedAt = now
+			rec.UpdatedAt = rec.CreatedAt
 		}
-		rec.Turns = slices.Clone(existing.Turns)
 		if turn != nil {
 			rec.Turns = append(rec.Turns, *turn)
 		}
-		rec.PendingPrompt = existing.PendingPrompt
-		rec.PromptQueue = slices.Clone(existing.PromptQueue)
-		*existing = rec
+		data.Sessions = append(data.Sessions, rec)
 		return true, nil
-	})
+	}
+	if err != nil {
+		return false, err
+	}
+	if rec.ACPSessionID == "" {
+		rec.ACPSessionID = existing.ACPSessionID
+	}
+	rec.CreatedAt = existing.CreatedAt
+	if rec.UpdatedAt.IsZero() {
+		rec.UpdatedAt = now
+	}
+	rec.Turns = slices.Clone(existing.Turns)
+	if turn != nil {
+		rec.Turns = append(rec.Turns, *turn)
+	}
+	rec.PendingPrompt = existing.PendingPrompt
+	rec.PromptQueue = slices.Clone(existing.PromptQueue)
+	*existing = rec
+	return true, nil
 }
 
 func (s *Store) AppendQueuedPrompt(rec SessionRecord, prompt QueuedPrompt) (SessionRecord, error) {
@@ -259,7 +273,11 @@ func (s *Store) MarkQueueRunning(id, queueID string, when time.Time) error {
 }
 
 func (s *Store) MarkQueueCompleted(id, queueID, response, stopReason string, when time.Time) error {
-	return s.updateQueuedPrompt(id, queueID, when, func(rec *SessionRecord, prompt *QueuedPrompt, at time.Time) {
+	return s.MarkQueueCompletedWithEvents(id, queueID, response, stopReason, nil, when)
+}
+
+func (s *Store) MarkQueueCompletedWithEvents(id, queueID, response, stopReason string, events []EventLogLine, when time.Time) error {
+	return s.updateQueuedPromptWithEvents(id, queueID, when, events, func(rec *SessionRecord, prompt *QueuedPrompt, at time.Time) {
 		prompt.Status = QueuePromptStatusCompleted
 		prompt.CompletedAt = &at
 		prompt.Response = response
@@ -393,6 +411,10 @@ func (s *Store) AcquireOwnerLease(owner OwnerLock) (*OwnerLease, error) {
 	if strings.TrimSpace(owner.SessionID) == "" {
 		return nil, errors.New("owner session id is required")
 	}
+	owner.Kind = strings.TrimSpace(owner.Kind)
+	if owner.Kind != "" && owner.Kind != OwnerKindExecution && owner.Kind != OwnerKindSnapshot {
+		return nil, fmt.Errorf("%w: unsupported owner kind %q", ErrInvalidOwnerLock, owner.Kind)
+	}
 	if owner.StartedAt.IsZero() {
 		owner.StartedAt = time.Now().UTC()
 	}
@@ -424,12 +446,10 @@ func (l *OwnerLease) Release() error {
 		return nil
 	}
 	return withStoreProcessLock(l.store.ownerClaimPath(l.owner.SessionID), func() error {
-		if err := backgroundRemoveFile(l.store.ownerPath(l.owner.SessionID)); err != nil {
-			return err
-		}
-		err := l.release()
+		removeErr := backgroundRemoveFile(l.store.ownerPath(l.owner.SessionID))
+		releaseErr := l.release()
 		l.released = true
-		return err
+		return errors.Join(removeErr, releaseErr)
 	})
 }
 
@@ -459,6 +479,9 @@ func (s *Store) Owner(id string) (OwnerLock, error) {
 		}
 		if owner.PID == 0 || owner.StartedAt.IsZero() {
 			return fmt.Errorf("%w: %s", ErrInvalidOwnerLock, id)
+		}
+		if owner.Kind != "" && owner.Kind != OwnerKindExecution && owner.Kind != OwnerKindSnapshot {
+			return fmt.Errorf("%w: unsupported owner kind %q", ErrInvalidOwnerLock, owner.Kind)
 		}
 		return nil
 	})
@@ -655,6 +678,10 @@ func normalizePromptQueue(rec *SessionRecord) {
 }
 
 func (s *Store) updateQueuedPrompt(id, queueID string, when time.Time, update func(*SessionRecord, *QueuedPrompt, time.Time)) error {
+	return s.updateQueuedPromptWithEvents(id, queueID, when, nil, update)
+}
+
+func (s *Store) updateQueuedPromptWithEvents(id, queueID string, when time.Time, events []EventLogLine, update func(*SessionRecord, *QueuedPrompt, time.Time)) error {
 	if strings.TrimSpace(queueID) == "" {
 		return errors.New("queue prompt id is required")
 	}
@@ -662,7 +689,7 @@ func (s *Store) updateQueuedPrompt(id, queueID string, when time.Time, update fu
 		when = time.Now().UTC()
 	}
 	when = when.UTC()
-	return s.mutateTransaction(func(data *storeFile) (bool, error) {
+	return s.mutateSessionWithEvents(id, events, func(data *storeFile) (bool, error) {
 		rec, err := findSessionRecord(data, id)
 		if err != nil {
 			return false, err

@@ -931,6 +931,47 @@ func TestExecuteACPClientExecPersistsSessionRecord(t *testing.T) {
 	}
 }
 
+func TestExecuteACPClientExecEventFailureDoesNotCommitCompletion(t *testing.T) {
+	dir := t.TempDir()
+	store := acpclient.NewStore(filepath.Join(dir, "sessions.json"))
+	eventsPath := filepath.Join(dir, "events")
+	if err := os.WriteFile(eventsPath, []byte("blocks event directory\n"), 0o600); err != nil {
+		t.Fatalf("write event directory blocker: %v", err)
+	}
+	runner := &fakeACPClientExecRunner{result: acpclient.Result{
+		SessionID: "s-event-retry", StopReason: acpsdk.StopReasonEndTurn, Text: "response",
+		Events: []acpclient.EventLogLine{{
+			Direction: acpclient.EventDirectionOutbound,
+			Message:   json.RawMessage(`{"jsonrpc":"2.0","id":1,"result":{}}`),
+		}},
+	}}
+	run := func() error {
+		return executeACPClientExecWithStore(t.Context(), acpClientExecOptions{
+			Agent: "custom", Command: "/bin/fixture-agent", Prompt: "retry", Cwd: ".",
+		}, runner, store, io.Discard)
+	}
+	if err := run(); err == nil {
+		t.Fatal("executeACPClientExecWithStore with blocked event directory succeeded")
+	}
+	if _, err := store.Get("s-event-retry"); !errors.Is(err, acpclient.ErrSessionNotFound) {
+		t.Fatalf("completion committed without events: %v", err)
+	}
+	if err := os.Remove(eventsPath); err != nil {
+		t.Fatalf("remove event directory blocker: %v", err)
+	}
+	if err := run(); err != nil {
+		t.Fatalf("executeACPClientExecWithStore retry: %v", err)
+	}
+	rec, err := store.Get("s-event-retry")
+	if err != nil || rec.Status != acpclient.SessionStatusCompleted || len(rec.Turns) != 1 {
+		t.Fatalf("record after retry = %#v, %v", rec, err)
+	}
+	events, err := store.ReadEventLog("s-event-retry")
+	if err != nil || len(events) != 1 {
+		t.Fatalf("events after retry = %#v, %v", events, err)
+	}
+}
+
 func TestExecuteACPClientExecLifecyclePreservesConcurrentQueueAndTurns(t *testing.T) {
 	store := acpclient.NewStore(filepath.Join(t.TempDir(), "sessions.json"))
 	now := time.Date(2026, 7, 13, 18, 0, 0, 0, time.UTC)
@@ -2042,6 +2083,28 @@ func TestACPClientStatusAndCancelActiveOwner(t *testing.T) {
 	}
 	if req.SessionID != "s-active" {
 		t.Fatalf("CancelRequest = %#v", req)
+	}
+}
+
+func TestACPClientCancelRejectsSnapshotOwnerWithoutDurableRequest(t *testing.T) {
+	store := acpclient.NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 13, 21, 15, 0, 0, time.UTC)
+	if err := store.Upsert(acpclient.SessionRecord{ID: "s-snapshot", Status: acpclient.SessionStatusCompleted, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	lease, err := store.AcquireOwnerLease(acpclient.OwnerLock{
+		SessionID: "s-snapshot", PID: os.Getpid(), Kind: acpclient.OwnerKindSnapshot, StartedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("AcquireOwnerLease: %v", err)
+	}
+	defer func() { _ = lease.Release() }()
+	var out bytes.Buffer
+	if err := executeACPClientCancel(store, "s-snapshot", false, &out); !errors.Is(err, acpclient.ErrOwnerNotCancelable) {
+		t.Fatalf("executeACPClientCancel error = %v, want ErrOwnerNotCancelable", err)
+	}
+	if _, err := store.CancelRequest("s-snapshot"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("snapshot cancel request = %v, want os.ErrNotExist", err)
 	}
 }
 

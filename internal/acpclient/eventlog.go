@@ -295,6 +295,75 @@ func (s *Store) withEventLogLock(id string, operation func(string) error) (err e
 	return operation(path)
 }
 
+func (s *Store) mutateSessionWithEvents(id string, events []EventLogLine, mutate func(*storeFile) (bool, error)) error {
+	if len(events) == 0 {
+		return s.mutateTransaction(mutate)
+	}
+	if s.beforeMutation != nil {
+		s.beforeMutation()
+	}
+	return s.withFileLock(func() error {
+		data, err := s.loadUnlocked()
+		if err != nil {
+			return err
+		}
+		if s.transactionLoaded != nil {
+			s.transactionLoaded()
+		}
+		changed, err := mutate(&data)
+		if err != nil || !changed {
+			return err
+		}
+		return s.withEventLogLock(id, func(path string) error {
+			original, existed, nextSeq, err := eventLogSnapshot(path)
+			if err != nil {
+				return err
+			}
+			appended, err := encodeEventLog(events, nextSeq)
+			if err != nil {
+				return err
+			}
+			updated := append(slices.Clone(original), appended...)
+			if len(original) > 0 && original[len(original)-1] != '\n' {
+				updated = append(append(slices.Clone(original), '\n'), appended...)
+			}
+			if err := backgroundWriteFileAtomic(path, updated); err != nil {
+				return err
+			}
+			if err := s.saveUnlocked(data); err != nil {
+				return errors.Join(err, restoreEventLogSnapshot(path, original, existed))
+			}
+			return nil
+		})
+	})
+}
+
+func eventLogSnapshot(path string) ([]byte, bool, int, error) {
+	original, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, 1, nil
+	}
+	if err != nil {
+		return nil, false, 0, err
+	}
+	events, err := readEventLog(bytes.NewReader(original), path)
+	if err != nil {
+		return nil, false, 0, err
+	}
+	nextSeq := 1
+	if len(events) > 0 {
+		nextSeq = events[len(events)-1].Seq + 1
+	}
+	return original, true, nextSeq, nil
+}
+
+func restoreEventLogSnapshot(path string, original []byte, existed bool) error {
+	if !existed {
+		return backgroundRemoveFile(path)
+	}
+	return backgroundWriteFileAtomic(path, original)
+}
+
 func encodeEventLog(events []EventLogLine, nextSeq int) ([]byte, error) {
 	var data bytes.Buffer
 	for _, event := range events {

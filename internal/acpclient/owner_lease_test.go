@@ -55,6 +55,38 @@ func TestOwnerLeaseRejectsConcurrentClaimAndReleasesProjection(t *testing.T) {
 	}
 }
 
+func TestOwnerLeaseReleaseUnlocksWhenProjectionCleanupFails(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 13, 21, 0, 0, 0, time.UTC)
+	lease, err := store.AcquireOwnerLease(OwnerLock{SessionID: "cleanup-failure", PID: 101, StartedAt: now})
+	if err != nil {
+		t.Fatalf("AcquireOwnerLease: %v", err)
+	}
+	projectionPath := store.ownerPath("cleanup-failure")
+	if err := os.Remove(projectionPath); err != nil {
+		t.Fatalf("remove owner projection: %v", err)
+	}
+	if err := os.Mkdir(projectionPath, 0o700); err != nil {
+		t.Fatalf("replace projection with directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectionPath, "blocker"), []byte("block\n"), 0o600); err != nil {
+		t.Fatalf("write projection blocker: %v", err)
+	}
+	if err := lease.Release(); err == nil {
+		t.Fatal("Release with projection cleanup failure succeeded")
+	}
+	if err := os.RemoveAll(projectionPath); err != nil {
+		t.Fatalf("remove projection blocker: %v", err)
+	}
+	replacement, err := store.AcquireOwnerLease(OwnerLock{SessionID: "cleanup-failure", PID: 202, StartedAt: now.Add(time.Second)})
+	if err != nil {
+		t.Fatalf("AcquireOwnerLease after cleanup failure: %v", err)
+	}
+	if err := replacement.Release(); err != nil {
+		t.Fatalf("Release replacement: %v", err)
+	}
+}
+
 func TestOwnerIgnoresAndCleansStaleProjection(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
 	now := time.Date(2026, 7, 13, 18, 35, 0, 0, time.UTC)

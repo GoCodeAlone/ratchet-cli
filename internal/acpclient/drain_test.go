@@ -157,6 +157,58 @@ func TestDrainQueuePersistsPromptEvents(t *testing.T) {
 	}
 }
 
+func TestDrainQueueEventFailureLeavesCompletionRetryable(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(filepath.Join(dir, "sessions.json"))
+	now := time.Date(2026, 7, 13, 21, 10, 0, 0, time.UTC)
+	if err := store.Upsert(SessionRecord{
+		ID: "drain-event-retry", Status: SessionStatusQueued, CreatedAt: now, UpdatedAt: now,
+		PromptQueue: []QueuedPrompt{{ID: "q-1", Prompt: "retry", Status: QueuePromptStatusPending, CreatedAt: now}},
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	eventsPath := filepath.Join(dir, "events")
+	if err := os.WriteFile(eventsPath, []byte("blocks event directory\n"), 0o600); err != nil {
+		t.Fatalf("write event directory blocker: %v", err)
+	}
+	runner := &fakeDrainRunner{sessionID: "acp-event-retry", events: []EventLogLine{{
+		At: now, Direction: EventDirectionOutbound,
+		Message: json.RawMessage(`{"jsonrpc":"2.0","id":1,"result":{}}`),
+	}}}
+	drain := func() (DrainResult, error) {
+		return DrainQueue(t.Context(), store, AgentSpec{Name: "fixture", Command: "fixture"}, RunOptions{}, "drain-event-retry", DrainOptions{
+			Now: fixedClock(now.Add(time.Minute)),
+			StartRunner: func(context.Context, AgentSpec, RunOptions, string) (DrainPromptRunner, func() error, error) {
+				return runner, func() error { return nil }, nil
+			},
+		})
+	}
+	if _, err := drain(); err == nil {
+		t.Fatal("DrainQueue with blocked event directory succeeded")
+	}
+	rec, err := store.Get("drain-event-retry")
+	if err != nil {
+		t.Fatalf("Get after failure: %v", err)
+	}
+	if rec.PromptQueue[0].Status != QueuePromptStatusRunning || len(rec.Turns) != 0 {
+		t.Fatalf("completion committed without events: %#v", rec)
+	}
+	if err := os.Remove(eventsPath); err != nil {
+		t.Fatalf("remove event directory blocker: %v", err)
+	}
+	result, err := drain()
+	if err != nil || result.Completed != 1 {
+		t.Fatalf("DrainQueue retry = %#v, %v", result, err)
+	}
+	events, err := store.ReadEventLog("drain-event-retry")
+	if err != nil || len(events) != 1 {
+		t.Fatalf("events after retry = %#v, %v", events, err)
+	}
+	if len(runner.prompts) != 2 {
+		t.Fatalf("runner prompts = %#v, want retry after persistence failure", runner.prompts)
+	}
+}
+
 func TestDrainQueueStopsOnFirstFailureAndClearsOwner(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
 	now := time.Date(2026, 7, 1, 22, 10, 0, 0, time.UTC)

@@ -645,3 +645,14 @@ the sessions and event-log transaction locks with retryable failure semantics;
 hold an export lease through snapshot creation; and make the unsupported build
 tag the exact complement of implemented OS locks. Scope: manifest unchanged;
 this closes Task 6's adversarial concurrency review.
+
+### Backport 2026-07-13: Completion and lease failure ownership
+
+Cause: projection cleanup could strand an OS lease, runner close errors were
+discarded, session/queue completion preceded event-history persistence, and an
+export snapshot looked like cancelable execution. Change: release always
+attempts projection cleanup and unlock; drain close failures terminate the
+watch; completion plus event append commits under the sessions-to-event lock
+order with rollback on session-save failure; and owner metadata distinguishes
+backward-compatible execution from non-cancelable snapshots. Scope: manifest
+unchanged; this closes Task 6's second adversarial review cycle.
