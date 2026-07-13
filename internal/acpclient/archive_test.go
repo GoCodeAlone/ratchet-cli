@@ -526,6 +526,51 @@ func TestImportSessionValidatesVersionAndCollisions(t *testing.T) {
 	}
 }
 
+func TestImportSessionCancellationIsTerminalAndCreateOnly(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 13, 13, 40, 0, 0, time.UTC)
+	archive := Archive{
+		FormatVersion: archiveFormatVersion,
+		ExportedAt:    now.Format(time.RFC3339Nano),
+		ExportedBy:    "ratchet-cli",
+		Session: ArchiveSession{
+			RecordID:    "canceled-import",
+			CWDRelative: ".",
+			CreatedAt:   now.Format(time.RFC3339Nano),
+			UpdatedAt:   now.Format(time.RFC3339Nano),
+			State: SessionRecord{
+				ID:        "canceled-import",
+				Status:    SessionStatusCancelRequested,
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
+		},
+	}
+	archivePath := writeArchiveFixture(t, archive)
+
+	imported, err := ImportSession(store, archivePath, ImportOptions{HomeDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("ImportSession: %v", err)
+	}
+	if imported.Status != SessionStatusCanceled {
+		t.Fatalf("Status = %q, want %q", imported.Status, SessionStatusCanceled)
+	}
+
+	archive.Session.State.Status = SessionStatusCompleted
+	archive.Session.State.Summary = "replacement"
+	_, err = ImportSession(store, writeArchiveFixture(t, archive), ImportOptions{HomeDir: t.TempDir()})
+	if !errors.Is(err, ErrSessionArchiveCollision) {
+		t.Fatalf("collision error = %v, want ErrSessionArchiveCollision", err)
+	}
+	rec, err := store.Get("canceled-import")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if rec.Status != SessionStatusCanceled || rec.Summary != "" {
+		t.Fatalf("record after collision = %#v", rec)
+	}
+}
+
 func TestImportSessionRejectsParentTraversalCWDRelative(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
 	now := time.Date(2026, 7, 2, 8, 50, 0, 0, time.UTC)

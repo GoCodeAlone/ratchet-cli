@@ -18,14 +18,19 @@ import (
 const defaultTimeout = 30 * time.Second
 
 type Client struct {
-	conn      *acpsdk.ClientSideConnection
-	callbacks *Callbacks
-	timeout   time.Duration
-	cmd       *exec.Cmd
-	stderr    *lockedBuffer
-	wait      chan error
-	onSession func(string) error
-	cancelReq func(string) bool
+	conn           *acpsdk.ClientSideConnection
+	callbacks      *Callbacks
+	timeout        time.Duration
+	cmd            *exec.Cmd
+	stderr         *lockedBuffer
+	wait           chan error
+	onSession      func(string) error
+	cancelReq      func(string) (bool, error)
+	transports     []io.Closer
+	closeOnce      sync.Once
+	closeErr       error
+	transportOnce  sync.Once
+	transportError error
 }
 
 type Result struct {
@@ -45,13 +50,16 @@ type SessionRunner struct {
 
 func NewInProcessClient(peerInput io.Writer, peerOutput io.Reader, opts RunOptions) *Client {
 	callbacks := NewCallbacks(opts)
-	return &Client{
+	client := &Client{
 		conn:      acpsdk.NewClientSideConnection(callbacks, peerInput, peerOutput),
 		callbacks: callbacks,
 		timeout:   timeoutOrDefault(opts.Timeout),
 		onSession: opts.SessionStarted,
 		cancelReq: opts.CancelRequested,
 	}
+	client.addTransport(peerInput)
+	client.addTransport(peerOutput)
+	return client
 }
 
 func Start(ctx context.Context, spec AgentSpec, opts RunOptions) (*Client, error) {
@@ -85,6 +93,10 @@ func Start(ctx context.Context, spec AgentSpec, opts RunOptions) (*Client, error
 		wait:      make(chan error, 1),
 		onSession: opts.SessionStarted,
 		cancelReq: opts.CancelRequested,
+		transports: []io.Closer{
+			stdin,
+			stdout,
+		},
 	}
 	go func() {
 		client.wait <- cmd.Wait()
@@ -168,18 +180,24 @@ func (r *SessionRunner) Prompt(ctx context.Context, prompt string) (Result, erro
 	c := r.client
 	callCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
+	_, cancelExecution := context.WithCancelCause(callCtx)
+	defer cancelExecution(nil)
 	c.callbacks.Reset()
 	requestID := fmt.Sprintf("ratchet-prompt-%d", started.UnixNano())
 	if err := c.callbacks.RecordEvent(EventDirectionOutbound, promptRequestEventMessage(requestID, r.sessionID, prompt)); err != nil {
 		return Result{}, err
 	}
-	stopCancelWatcher := c.startCancelWatcher(callCtx, r.sessionID)
-	defer stopCancelWatcher()
+	stopCancelWatcher := c.startCancelWatcher(callCtx, r.sessionID, cancelExecution)
 	updateCount := c.callbacks.UpdateCount()
+	// The SDK auto-sends an unbounded cancel when its prompt context is canceled.
+	// Keep that context live so the causal watcher owns the single bounded send.
 	resp, err := c.conn.Prompt(callCtx, acpsdk.PromptRequest{
 		SessionId: r.sessionID,
 		Prompt:    []acpsdk.ContentBlock{acpsdk.TextBlock(prompt)},
 	})
+	if cancelErr := stopCancelWatcher(); cancelErr != nil {
+		return Result{}, cancelErr
+	}
 	if err != nil {
 		_ = c.callbacks.RecordEvent(EventDirectionInbound, promptErrorEventMessage(requestID, err))
 		return Result{}, fmt.Errorf("send acp prompt: %w", err)
@@ -262,21 +280,25 @@ func (c *Client) Close() error {
 	if c == nil || c.cmd == nil || c.cmd.Process == nil {
 		return nil
 	}
-	if c.wait == nil {
-		return nil
-	}
-	select {
-	case err := <-c.wait:
-		return err
-	default:
-	}
-	_ = c.cmd.Process.Kill()
-	select {
-	case <-c.wait:
-		return nil
-	case <-time.After(5 * time.Second):
-		return context.DeadlineExceeded
-	}
+	c.closeOnce.Do(func() {
+		if c.wait == nil {
+			return
+		}
+		select {
+		case c.closeErr = <-c.wait:
+			return
+		default:
+		}
+		_ = c.cmd.Process.Kill()
+		timer := time.NewTimer(5 * time.Second)
+		defer timer.Stop()
+		select {
+		case <-c.wait:
+		case <-timer.C:
+			c.closeErr = context.DeadlineExceeded
+		}
+	})
+	return c.closeErr
 }
 
 func (c *Client) stderrString() string {
@@ -286,35 +308,94 @@ func (c *Client) stderrString() string {
 	return c.stderr.String()
 }
 
-func (c *Client) startCancelWatcher(ctx context.Context, sessionID acpsdk.SessionId) func() {
+func (c *Client) startCancelWatcher(ctx context.Context, sessionID acpsdk.SessionId, cancelExecution context.CancelCauseFunc) func() error {
 	if c == nil || c.cancelReq == nil {
-		return func() {}
-	}
-	if c.cancelReq(string(sessionID)) {
-		_ = c.conn.Cancel(ctx, acpsdk.CancelNotification{SessionId: sessionID})
-		return func() {}
+		return func() error { return nil }
 	}
 	done := make(chan struct{})
+	finished := make(chan error, 1)
+	check := func() error {
+		requested, err := c.cancelReq(string(sessionID))
+		if err != nil {
+			cancelExecution(err)
+			_ = c.terminateCancellation()
+			return err
+		}
+		if !requested {
+			return nil
+		}
+		cancelExecution(ErrCancelRequested)
+		c.sendCancelAndTerminate(ctx, sessionID)
+		return ErrCancelRequested
+	}
+	if err := check(); err != nil {
+		return func() error { return err }
+	}
 	go func() {
 		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-done:
+				finished <- nil
 				return
 			case <-ctx.Done():
+				finished <- nil
 				return
 			case <-ticker.C:
-				if c.cancelReq(string(sessionID)) {
-					_ = c.conn.Cancel(ctx, acpsdk.CancelNotification{SessionId: sessionID})
+				if err := check(); err != nil {
+					finished <- err
 					return
 				}
 			}
 		}
 	}()
-	return func() {
+	return func() error {
 		close(done)
+		return <-finished
 	}
+}
+
+func (c *Client) sendCancelAndTerminate(ctx context.Context, sessionID acpsdk.SessionId) {
+	sendCtx, sendCancel := context.WithTimeout(context.WithoutCancel(ctx), min(c.timeout, 5*time.Second))
+	sendDone := make(chan error, 1)
+	go func() {
+		sendDone <- c.conn.Cancel(sendCtx, acpsdk.CancelNotification{SessionId: sessionID})
+	}()
+	select {
+	case <-sendDone:
+		sendCancel()
+		grace := time.NewTimer(min(c.timeout, 100*time.Millisecond))
+		<-grace.C
+		grace.Stop()
+	case <-sendCtx.Done():
+		sendCancel()
+		_ = c.terminateCancellation()
+		<-sendDone
+		return
+	}
+	_ = c.terminateCancellation()
+}
+
+func (c *Client) terminateCancellation() error {
+	if c == nil {
+		return nil
+	}
+	processErr := c.Close()
+	c.transportOnce.Do(func() {
+		for _, transport := range c.transports {
+			c.transportError = errors.Join(c.transportError, transport.Close())
+		}
+	})
+	return errors.Join(processErr, c.transportError)
+}
+
+func (c *Client) addTransport(value any) {
+	transport, ok := value.(io.Closer)
+	if !ok {
+		return
+	}
+	c.transports = append(c.transports, transport)
 }
 
 func timeoutOrDefault(timeout time.Duration) time.Duration {

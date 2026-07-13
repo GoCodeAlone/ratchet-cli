@@ -295,10 +295,7 @@ func (s *Store) withEventLogLock(id string, operation func(string) error) (err e
 	return operation(path)
 }
 
-func (s *Store) mutateSessionWithEvents(id string, events []EventLogLine, mutate func(*storeFile) (bool, error)) error {
-	if len(events) == 0 {
-		return s.mutateTransaction(mutate)
-	}
+func (s *Store) transitionSession(id string, events []EventLogLine, mutate func(*storeFile) (bool, error), afterCommit func() error) error {
 	if s.beforeMutation != nil {
 		s.beforeMutation()
 	}
@@ -313,6 +310,22 @@ func (s *Store) mutateSessionWithEvents(id string, events []EventLogLine, mutate
 		changed, err := mutate(&data)
 		if err != nil || !changed {
 			return err
+		}
+		if len(events) == 0 {
+			var confirmationErr error
+			if err := s.saveUnlocked(data); err != nil {
+				if !backgroundWriteCommitted(err) {
+					return err
+				}
+				confirmationErr = backgroundPostCommitCause(err)
+			}
+			if afterCommit != nil {
+				confirmationErr = errors.Join(confirmationErr, transitionConfirmationCause(afterCommit()))
+			}
+			if confirmationErr != nil {
+				return storeCommitUnconfirmed(confirmationErr)
+			}
+			return nil
 		}
 		return s.withEventLogLock(id, func(path string) error {
 			original, existed, nextSeq, err := eventLogSnapshot(path)
@@ -336,10 +349,14 @@ func (s *Store) mutateSessionWithEvents(id string, events []EventLogLine, mutate
 			}
 			if err := s.saveUnlocked(data); err != nil {
 				if backgroundWriteCommitted(err) {
-					return storeCommitUnconfirmed(eventConfirmationErr, backgroundPostCommitCause(err))
+					eventConfirmationErr = errors.Join(eventConfirmationErr, backgroundPostCommitCause(err))
+				} else {
+					restoreErr := restoreEventLogSnapshot(path, original, existed)
+					return errors.Join(eventConfirmationErr, err, backgroundPostCommitCause(restoreErr))
 				}
-				restoreErr := restoreEventLogSnapshot(path, original, existed)
-				return errors.Join(eventConfirmationErr, err, backgroundPostCommitCause(restoreErr))
+			}
+			if afterCommit != nil {
+				eventConfirmationErr = errors.Join(eventConfirmationErr, transitionConfirmationCause(afterCommit()))
 			}
 			if eventConfirmationErr != nil {
 				return storeCommitUnconfirmed(eventConfirmationErr)
@@ -347,6 +364,16 @@ func (s *Store) mutateSessionWithEvents(id string, events []EventLogLine, mutate
 			return nil
 		})
 	})
+}
+
+func transitionConfirmationCause(err error) error {
+	if err == nil {
+		return nil
+	}
+	if backgroundWriteCommitted(err) {
+		return backgroundPostCommitCause(err)
+	}
+	return err
 }
 
 func (s *Store) replaceEventLog(path string, data []byte) error {

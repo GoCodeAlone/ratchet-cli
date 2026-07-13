@@ -361,9 +361,8 @@ func executeACPClientExecWithStore(ctx context.Context, opts acpClientExecOption
 			activeOwnerLease = lease
 			return nil
 		}
-		runOpts.CancelRequested = func(sessionID string) bool {
-			_, err := store.CancelRequest(sessionID)
-			return err == nil
+		runOpts.CancelRequested = func(sessionID string) (bool, error) {
+			return store.CheckCancellation(sessionID)
 		}
 		defer func() {
 			if activeOwnerLease != nil {

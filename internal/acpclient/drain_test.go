@@ -355,7 +355,11 @@ func TestDrainQueuePassesCancelRequestsToRunner(t *testing.T) {
 			if err := store.RequestCancel("drain-active-cancel", now.Add(90*time.Second)); err != nil {
 				t.Fatalf("RequestCancel: %v", err)
 			}
-			if opts.CancelRequested == nil || !opts.CancelRequested("acp-created") {
+			if opts.CancelRequested == nil {
+				t.Fatal("CancelRequested is nil")
+			}
+			canceled, err := opts.CancelRequested("acp-created")
+			if err != nil || !canceled {
 				t.Fatal("CancelRequested did not observe store cancel request")
 			}
 			return runner, func() error { return nil }, nil
@@ -363,6 +367,37 @@ func TestDrainQueuePassesCancelRequestsToRunner(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("DrainQueue: %v", err)
+	}
+}
+
+func TestDrainQueueClaimsPromptBeforeStartingRunner(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 13, 14, 0, 0, 0, time.UTC)
+	if _, err := store.AppendQueuedPrompt(SessionRecord{ID: "claim-before-start"}, QueuedPrompt{
+		ID: "q-1", Prompt: "claim first", CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("AppendQueuedPrompt: %v", err)
+	}
+	runner := &fakeDrainRunner{sessionID: "acp-claimed"}
+
+	result, err := DrainQueue(t.Context(), store, AgentSpec{Name: "fixture", Command: "fixture"}, RunOptions{}, "claim-before-start", DrainOptions{
+		Now: fixedClock(now.Add(time.Second)),
+		StartRunner: func(context.Context, AgentSpec, RunOptions, string) (DrainPromptRunner, func() error, error) {
+			rec, err := store.Get("claim-before-start")
+			if err != nil {
+				t.Fatalf("Get during StartRunner: %v", err)
+			}
+			if rec.Status != SessionStatusRunning || rec.PromptQueue[0].Status != QueuePromptStatusRunning {
+				t.Fatalf("record during StartRunner = %#v, want committed running claim", rec)
+			}
+			return runner, func() error { return nil }, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("DrainQueue: %v", err)
+	}
+	if result.Completed != 1 {
+		t.Fatalf("result = %#v, want one completion", result)
 	}
 }
 

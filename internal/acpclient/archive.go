@@ -190,7 +190,9 @@ func ImportSession(store *Store, archivePath string, opts ImportOptions) (Sessio
 	if opts.CommandFingerprint != "" {
 		rec.CommandFingerprint = opts.CommandFingerprint
 	}
-	if rec.Status == SessionStatusRunning || rec.Status == SessionStatusCancelRequested || rec.Status == "" {
+	if rec.Status == SessionStatusCancelRequested {
+		rec.Status = SessionStatusCanceled
+	} else if rec.Status == SessionStatusRunning || rec.Status == "" {
 		rec.Status = SessionStatusCompleted
 	}
 	if rec.CreatedAt.IsZero() {
@@ -218,13 +220,13 @@ func ImportSession(store *Store, archivePath string, opts ImportOptions) (Sessio
 			})
 		}
 	}
-	if err := store.insertSessionWithEventLog(rec, events); err != nil {
+	if err := store.createSessionWithEvents(rec, events); err != nil {
 		return SessionRecord{}, err
 	}
 	return store.Get(rec.ID)
 }
 
-func (s *Store) insertSessionWithEventLog(rec SessionRecord, events []EventLogLine) error {
+func (s *Store) createSessionWithEvents(rec SessionRecord, events []EventLogLine) error {
 	if strings.TrimSpace(rec.ID) == "" {
 		return errors.New("acp client session id is required")
 	}

@@ -68,11 +68,15 @@ func acquireDrainOwnerLease(store *Store, spec AgentSpec, sessionID string, star
 
 func drainQueueOwned(ctx context.Context, store *Store, spec AgentSpec, opts RunOptions, sessionID string, drainOpts DrainOptions) (result DrainResult, err error) {
 	now := drainOpts.now()
-	if _, err := store.recoverRunningQueueItems(sessionID, now); err != nil {
+	recovered, canceled, err := store.recoverRunningQueueItems(sessionID, now)
+	if err != nil {
 		return DrainResult{}, err
 	}
 
 	result = DrainResult{SessionID: sessionID}
+	if canceled {
+		result.Canceled = recovered
+	}
 	var runner DrainPromptRunner
 	var closeRunner func() error
 	defer func() {
@@ -83,7 +87,11 @@ func drainQueueOwned(ctx context.Context, store *Store, spec AgentSpec, opts Run
 
 	max := drainOpts.Max
 	for max <= 0 || result.Processed < max {
-		if drainCancelRequested(store, sessionID, opts.CancelRequested, result.ACPSessionID) {
+		cancelRequested, err := drainCancelRequested(store, sessionID, opts.CancelRequested, result.ACPSessionID)
+		if err != nil {
+			return result, err
+		}
+		if cancelRequested {
 			canceled, err := store.CancelPendingQueue(sessionID, drainOpts.now())
 			if err != nil {
 				return result, err
@@ -98,32 +106,11 @@ func drainQueueOwned(ctx context.Context, store *Store, spec AgentSpec, opts Run
 		if !ok {
 			break
 		}
-		if runner == nil {
-			rec, err := store.Get(sessionID)
-			if err != nil {
-				return result, err
-			}
-			startOpts := opts
-			priorCancel := startOpts.CancelRequested
-			startOpts.CancelRequested = func(acpSessionID string) bool {
-				return drainCancelRequested(store, sessionID, priorCancel, acpSessionID)
-			}
-			start := drainOpts.StartRunner
-			if start == nil {
-				start = defaultDrainStartRunner
-			}
-			runner, closeRunner, err = start(ctx, spec, startOpts, rec.ACPSessionID)
-			if err != nil {
-				return result, err
-			}
-			result.ACPSessionID = string(runner.SessionID())
-			if rec.ACPSessionID == "" && result.ACPSessionID != "" {
-				if err := store.setACPSessionID(sessionID, result.ACPSessionID); err != nil {
-					return result, err
-				}
-			}
+		cancelRequested, err = drainCancelRequested(store, sessionID, opts.CancelRequested, result.ACPSessionID)
+		if err != nil {
+			return result, err
 		}
-		if drainCancelRequested(store, sessionID, opts.CancelRequested, result.ACPSessionID) {
+		if cancelRequested {
 			canceled, err := store.CancelPendingQueue(sessionID, drainOpts.now())
 			if err != nil {
 				return result, err
@@ -133,6 +120,32 @@ func drainQueueOwned(ctx context.Context, store *Store, spec AgentSpec, opts Run
 		}
 		if err := store.MarkQueueRunning(sessionID, next.ID, drainOpts.now()); err != nil {
 			return result, err
+		}
+		if runner == nil {
+			rec, err := store.Get(sessionID)
+			if err != nil {
+				return result, err
+			}
+			startOpts := opts
+			priorCancel := startOpts.CancelRequested
+			startOpts.CancelRequested = func(acpSessionID string) (bool, error) {
+				return drainCancelRequested(store, sessionID, priorCancel, acpSessionID)
+			}
+			start := drainOpts.StartRunner
+			if start == nil {
+				start = defaultDrainStartRunner
+			}
+			runner, closeRunner, err = start(ctx, spec, startOpts, rec.ACPSessionID)
+			if err != nil {
+				_, _, recoverErr := store.recoverRunningQueueItems(sessionID, drainOpts.now())
+				return result, errors.Join(err, recoverErr)
+			}
+			result.ACPSessionID = string(runner.SessionID())
+			if rec.ACPSessionID == "" && result.ACPSessionID != "" {
+				if err := store.setACPSessionID(sessionID, result.ACPSessionID); err != nil {
+					return result, err
+				}
+			}
 		}
 		promptResult, err := runner.Prompt(ctx, next.Prompt)
 		result.Processed++
@@ -176,15 +189,17 @@ func (opts DrainOptions) now() time.Time {
 	return time.Now().UTC()
 }
 
-func drainCancelRequested(store *Store, sessionID string, callback func(string) bool, acpSessionID string) bool {
-	if callback != nil && callback(acpSessionID) {
-		return true
+func drainCancelRequested(store *Store, sessionID string, callback func(string) (bool, error), acpSessionID string) (bool, error) {
+	if callback != nil {
+		requested, err := callback(acpSessionID)
+		if err != nil || requested {
+			return requested, err
+		}
 	}
 	if store == nil {
-		return false
+		return false, nil
 	}
-	_, err := store.CancelRequest(sessionID)
-	return err == nil
+	return store.CheckCancellation(sessionID)
 }
 
 func countPendingQueue(store *Store, sessionID string) int {

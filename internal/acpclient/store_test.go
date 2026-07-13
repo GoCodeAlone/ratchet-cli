@@ -265,6 +265,278 @@ func TestRequestCancelPostCommitErrorKeepsSidecarAndSessionAligned(t *testing.T)
 	}
 }
 
+func TestStoreCheckCancellationUsesSessionAuthority(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC)
+	if err := store.Upsert(SessionRecord{
+		ID:        "session-authority",
+		Status:    SessionStatusCancelRequested,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	canceled, err := store.CheckCancellation("session-authority")
+	if err != nil {
+		t.Fatalf("CheckCancellation: %v", err)
+	}
+	if !canceled {
+		t.Fatal("CheckCancellation = false, want session cancellation latch")
+	}
+}
+
+func TestStoreUpsertPreservesCancellationLatch(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 13, 12, 10, 0, 0, time.UTC)
+	if err := store.Upsert(SessionRecord{
+		ID:        "session-latch",
+		Status:    SessionStatusCancelRequested,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("Upsert cancellation latch: %v", err)
+	}
+	if err := store.Upsert(SessionRecord{
+		ID:        "session-latch",
+		Status:    SessionStatusRunning,
+		CreatedAt: now,
+		UpdatedAt: now.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("Upsert writeback: %v", err)
+	}
+
+	rec, err := store.Get("session-latch")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if rec.Status != SessionStatusCancelRequested {
+		t.Fatalf("status = %q, want sticky %q", rec.Status, SessionStatusCancelRequested)
+	}
+}
+
+func TestRequestCancelCommitsSessionBeforeSidecarProjection(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 13, 12, 20, 0, 0, time.UTC)
+	if err := store.Upsert(SessionRecord{ID: "cancel-projection", Status: SessionStatusRunning, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	store.cancelWriter = func(string, CancelRequest) error {
+		return errors.New("legacy projection unavailable")
+	}
+
+	err := store.RequestCancel("cancel-projection", now.Add(time.Minute))
+	if !errors.Is(err, ErrStoreCommitUnconfirmed) {
+		t.Fatalf("RequestCancel error = %v, want ErrStoreCommitUnconfirmed", err)
+	}
+	rec, getErr := store.Get("cancel-projection")
+	if getErr != nil {
+		t.Fatalf("Get: %v", getErr)
+	}
+	if rec.Status != SessionStatusCancelRequested {
+		t.Fatalf("status = %q, want committed cancellation latch", rec.Status)
+	}
+}
+
+func TestSessionStoreClaimRejectsCancellationCommittedFirst(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sessions.json")
+	cancelStore := NewStore(path)
+	claimStore := NewStore(path)
+	now := time.Date(2026, 7, 13, 12, 40, 0, 0, time.UTC)
+	if _, err := cancelStore.AppendQueuedPrompt(SessionRecord{ID: "claim-race"}, QueuedPrompt{
+		ID: "q-1", Prompt: "do not start", CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("AppendQueuedPrompt: %v", err)
+	}
+
+	cancelLoaded := make(chan struct{})
+	allowCancel := make(chan struct{})
+	cancelStore.transactionLoaded = func() {
+		close(cancelLoaded)
+		<-allowCancel
+	}
+	cancelDone := make(chan error, 1)
+	go func() {
+		cancelDone <- cancelStore.RequestCancel("claim-race", now.Add(time.Second))
+	}()
+	<-cancelLoaded
+
+	claimDone := make(chan error, 1)
+	go func() {
+		claimDone <- claimStore.MarkQueueRunning("claim-race", "q-1", now.Add(2*time.Second))
+	}()
+	select {
+	case err := <-claimDone:
+		t.Fatalf("claim completed before cancellation commit: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(allowCancel)
+	if err := <-cancelDone; err != nil {
+		t.Fatalf("RequestCancel: %v", err)
+	}
+	if err := <-claimDone; !errors.Is(err, ErrCancelRequested) {
+		t.Fatalf("MarkQueueRunning error = %v, want ErrCancelRequested", err)
+	}
+	rec, err := claimStore.Get("claim-race")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if rec.Status != SessionStatusCancelRequested || rec.PromptQueue[0].Status != QueuePromptStatusPending {
+		t.Fatalf("record after race = %#v, want latched session and pending prompt", rec)
+	}
+}
+
+func TestSessionStoreRecoveryCancelsLatchedWork(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 13, 12, 50, 0, 0, time.UTC)
+	started := now.Add(time.Second)
+	if err := store.Upsert(SessionRecord{
+		ID: "recover-canceled", Status: SessionStatusCancelRequested, CreatedAt: now, UpdatedAt: started,
+		PromptQueue: []QueuedPrompt{
+			{ID: "running", Status: QueuePromptStatusRunning, CreatedAt: now, StartedAt: &started},
+			{ID: "pending", Status: QueuePromptStatusPending, CreatedAt: now},
+		},
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	count, err := store.RecoverStaleQueue("recover-canceled", now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("RecoverStaleQueue: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("recovered count = %d, want 2 canceled items", count)
+	}
+	rec, err := store.Get("recover-canceled")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if rec.Status != SessionStatusCanceled {
+		t.Fatalf("status = %q, want canceled", rec.Status)
+	}
+	for _, prompt := range rec.PromptQueue {
+		if prompt.Status != QueuePromptStatusCanceled || prompt.CanceledAt == nil {
+			t.Fatalf("recovered prompt = %#v, want canceled", prompt)
+		}
+	}
+}
+
+func TestSessionStoreTerminalTransitionsHonorCancellationLatch(t *testing.T) {
+	tests := []struct {
+		name       string
+		terminal   func(*Store, time.Time) error
+		wantStatus string
+	}{
+		{
+			name: "completion",
+			terminal: func(store *Store, at time.Time) error {
+				return store.MarkQueueCompleted("terminal-cancel", "q-1", "late response", "end_turn", at)
+			},
+			wantStatus: QueuePromptStatusCanceled,
+		},
+		{
+			name: "failure",
+			terminal: func(store *Store, at time.Time) error {
+				return store.MarkQueueFailed("terminal-cancel", "q-1", "late failure", at)
+			},
+			wantStatus: QueuePromptStatusCanceled,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+			now := time.Date(2026, 7, 13, 13, 0, 0, 0, time.UTC)
+			if err := store.Upsert(SessionRecord{
+				ID: "terminal-cancel", Status: SessionStatusCancelRequested, CreatedAt: now, UpdatedAt: now,
+				PromptQueue: []QueuedPrompt{{ID: "q-1", Status: QueuePromptStatusRunning, CreatedAt: now}},
+			}); err != nil {
+				t.Fatalf("Upsert: %v", err)
+			}
+			if err := tt.terminal(store, now.Add(time.Second)); err != nil {
+				t.Fatalf("terminal transition: %v", err)
+			}
+			rec, err := store.Get("terminal-cancel")
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			if rec.Status != SessionStatusCanceled || rec.PromptQueue[0].Status != tt.wantStatus || rec.PromptQueue[0].CanceledAt == nil {
+				t.Fatalf("terminal record = %#v, want canceled", rec)
+			}
+		})
+	}
+}
+
+func TestSessionStoreLifecycleStartRejectsCancellationLatch(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 13, 13, 10, 0, 0, time.UTC)
+	if err := store.Upsert(SessionRecord{ID: "lifecycle-cancel", Status: SessionStatusCancelRequested, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	err := store.MarkSessionStarted(SessionRecord{ID: "lifecycle-cancel", Status: SessionStatusRunning, UpdatedAt: now.Add(time.Second)})
+	if !errors.Is(err, ErrCancelRequested) {
+		t.Fatalf("MarkSessionStarted error = %v, want ErrCancelRequested", err)
+	}
+}
+
+func TestSessionStoreReconcilesCancellationProjections(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 13, 13, 20, 0, 0, time.UTC)
+	if err := store.Upsert(SessionRecord{ID: "reconcile-cancel", Status: SessionStatusCancelRequested, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("Upsert canceled: %v", err)
+	}
+	if err := store.Upsert(SessionRecord{ID: "reconcile-running", Status: SessionStatusRunning, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("Upsert running: %v", err)
+	}
+	if err := backgroundWriteJSONAtomic(store.cancelPath("reconcile-running"), CancelRequest{SessionID: "reconcile-running", RequestedAt: now}); err != nil {
+		t.Fatalf("write orphan projection: %v", err)
+	}
+
+	if err := store.ReconcileCancellationRequests(); err != nil {
+		t.Fatalf("ReconcileCancellationRequests: %v", err)
+	}
+	request, err := store.CancelRequest("reconcile-cancel")
+	if err != nil {
+		t.Fatalf("CancelRequest canceled: %v", err)
+	}
+	if request.SessionID != "reconcile-cancel" || !request.RequestedAt.Equal(now) {
+		t.Fatalf("CancelRequest = %#v", request)
+	}
+	if _, err := store.CancelRequest("reconcile-running"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("running projection error = %v, want os.ErrNotExist", err)
+	}
+}
+
+func TestSessionStoreInsertSessionRejectsCollision(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 13, 13, 30, 0, 0, time.UTC)
+	if err := store.InsertSession(SessionRecord{ID: "insert-only", Status: SessionStatusCompleted, Summary: "original", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("InsertSession first: %v", err)
+	}
+	err := store.InsertSession(SessionRecord{ID: "insert-only", Status: SessionStatusRunning, Summary: "replacement", CreatedAt: now, UpdatedAt: now.Add(time.Second)})
+	if !errors.Is(err, ErrSessionArchiveCollision) {
+		t.Fatalf("InsertSession collision error = %v, want ErrSessionArchiveCollision", err)
+	}
+	rec, err := store.Get("insert-only")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if rec.Summary != "original" || rec.Status != SessionStatusCompleted {
+		t.Fatalf("record after collision = %#v", rec)
+	}
+}
+
+func TestStoreRejectsEnqueueAfterCancellationLatch(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 13, 12, 30, 0, 0, time.UTC)
+	if err := store.Upsert(SessionRecord{ID: "enqueue-latch", Status: SessionStatusCancelRequested, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	_, err := store.AppendQueuedPrompt(SessionRecord{ID: "enqueue-latch"}, QueuedPrompt{ID: "q-1", Prompt: "blocked", CreatedAt: now})
+	if !errors.Is(err, ErrCancelRequested) {
+		t.Fatalf("AppendQueuedPrompt error = %v, want ErrCancelRequested", err)
+	}
+}
+
 func TestSessionStoreOwnerLeaseDoesNotOverwriteExistingOwner(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
 	now := time.Date(2026, 7, 1, 20, 0, 0, 0, time.UTC)

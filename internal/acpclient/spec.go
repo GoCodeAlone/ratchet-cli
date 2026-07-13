@@ -14,9 +14,10 @@ import (
 )
 
 var (
-	ErrMissingCommand = errors.New("acp client command is required")
-	ErrShellCommand   = errors.New("acp client command must be an executable path/name, with args passed separately")
-	ErrUnknownAgent   = errors.New("unknown acp client agent")
+	ErrMissingCommand  = errors.New("acp client command is required")
+	ErrShellCommand    = errors.New("acp client command must be an executable path/name, with args passed separately")
+	ErrUnknownAgent    = errors.New("unknown acp client agent")
+	ErrCancelRequested = errors.New("acp client cancellation requested")
 )
 
 type AgentSpec struct {
@@ -34,7 +35,7 @@ type RunOptions struct {
 	AllowWrites     bool
 	Timeout         time.Duration
 	SessionStarted  func(sessionID string) error
-	CancelRequested func(sessionID string) bool
+	CancelRequested func(sessionID string) (bool, error)
 }
 
 type SessionRecord struct {
