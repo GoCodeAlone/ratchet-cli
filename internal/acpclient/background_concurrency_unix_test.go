@@ -113,11 +113,11 @@ func TestBackgroundManagerResumeShutdownBeforeLaunchDisablesPolicy(t *testing.T)
 		Context: t.Context(),
 		Now:     backgroundTestClock,
 		Resolver: func(name string) (ResolvedBackgroundProfile, error) {
-			var err error
-			releaseAuditLock, err = acquireStoreFileLock(audit.Path() + ".lock")
+			tx, err := backgroundOpenAuditTransaction(audit.Path(), false)
 			if err != nil {
 				return ResolvedBackgroundProfile{}, err
 			}
+			releaseAuditLock = tx.Close
 			close(resolverReached)
 			return trustedBackgroundProfile(name, "descriptor-hash"), nil
 		},

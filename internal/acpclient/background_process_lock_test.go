@@ -33,9 +33,6 @@ func TestBackgroundStateTransactionsHonorProcessLocks(t *testing.T) {
 		{name: "transition", mode: "transition", state: "background.json", lockPath: func(path string) string {
 			return NewBackgroundStore(path).transitionPath() + ".lock"
 		}},
-		{name: "audit", mode: "audit", state: "background-audit.jsonl", lockPath: func(path string) string {
-			return NewBackgroundAudit(path).Path() + ".lock"
-		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -92,6 +89,58 @@ func TestBackgroundStateTransactionsHonorProcessLocks(t *testing.T) {
 	}
 }
 
+func runBackgroundAuditProcessLockBlocks(t *testing.T, hold func(*BackgroundAudit) (func() error, error)) {
+	t.Helper()
+	dir := t.TempDir()
+	requestedPath := filepath.Join(dir, "background-audit.jsonl")
+	audit := NewBackgroundAudit(requestedPath)
+	if err := audit.Append(backgroundAuditTestRecord("process-lock-seed", BackgroundAuditStart, BackgroundOutcomeStarted)); err != nil {
+		t.Fatalf("seed Append: %v", err)
+	}
+	release, err := hold(audit)
+	if err != nil {
+		t.Fatalf("hold audit lock: %v", err)
+	}
+	released := false
+	defer func() {
+		if !released {
+			_ = release()
+		}
+	}()
+
+	readyPath := filepath.Join(dir, "ready")
+	donePath := filepath.Join(dir, "done")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestBackgroundProcessLockHelper$")
+	cmd.Env = append(os.Environ(),
+		backgroundLockHelperEnv+"=1",
+		backgroundLockModeEnv+"=audit",
+		backgroundLockStatePathEnv+"="+requestedPath,
+		backgroundLockReadyPathEnv+"="+readyPath,
+		backgroundLockDonePathEnv+"="+donePath,
+	)
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start audit helper: %v", err)
+	}
+	waitForStoreLockHelperReady(t, readyPath)
+	time.Sleep(250 * time.Millisecond)
+	if _, err := os.Stat(donePath); err == nil {
+		_ = cmd.Wait()
+		t.Fatalf("audit append ignored held namespace lock\n%s", output.String())
+	} else if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stat done marker: %v", err)
+	}
+	if err := release(); err != nil {
+		t.Fatalf("release audit lock: %v", err)
+	}
+	released = true
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("audit helper: %v\n%s", err, output.String())
+	}
+}
+
 func TestBackgroundAuditTransitionReplayAcrossFreshProcesses(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "background.json")
@@ -120,10 +169,12 @@ func TestBackgroundAuditTransitionReplayAcrossFreshProcesses(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("durable A transition = %#v, %t, %v", transition, found, err)
 	}
-	release, err := acquireStoreFileLock(NewBackgroundAudit(auditPath).Path() + ".lock")
+	heldAudit := NewBackgroundAudit(auditPath)
+	tx, err := backgroundOpenAuditTransaction(heldAudit.Path(), false)
 	if err != nil {
 		t.Fatalf("hold audit lock: %v", err)
 	}
+	release := tx.Close
 	readyPath := filepath.Join(dir, "audit-b-ready")
 	donePath := filepath.Join(dir, "audit-b-done")
 	cmd := exec.Command(os.Args[0], "-test.run=^TestBackgroundProcessLockHelper$")

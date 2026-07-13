@@ -207,11 +207,12 @@ func TestBackgroundWindowsPolicyTransitionAuditLocksArePrivate(t *testing.T) {
 	} {
 		assertBackgroundWindowsPrivateDACL(t, path)
 	}
-	for _, logicalPath := range []string{store.Path() + ".lock", store.transitionPath() + ".lock", audit.Path() + ".lock"} {
+	for _, logicalPath := range []string{store.Path() + ".lock", store.transitionPath() + ".lock"} {
 		physicalLockPath := requireStoreLockPhysicalPath(t, logicalPath)
 		assertBackgroundWindowsPrivateDACL(t, filepath.Dir(physicalLockPath))
 		assertBackgroundWindowsPrivateDACL(t, physicalLockPath)
 	}
+	assertBackgroundWindowsPrivateDACL(t, filepath.Join(filepath.Dir(audit.Path()), backgroundAuditLockName))
 }
 
 func holdSessionStoreTestLock(path string) (func() error, error) {

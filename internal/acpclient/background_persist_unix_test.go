@@ -65,6 +65,24 @@ func TestBackgroundAuditUnixRequiresOwnerOnlyParent(t *testing.T) {
 	}
 }
 
+func TestBackgroundAuditUnixRejectsNamespaceSymlink(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(t.TempDir(), "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatalf("Mkdir target: %v", err)
+	}
+	audit := NewBackgroundAudit(filepath.Join(root, "audit.jsonl"))
+	if err := os.Symlink(target, filepath.Dir(audit.Path())); err != nil {
+		t.Fatalf("Symlink namespace: %v", err)
+	}
+	if err := audit.Append(backgroundAuditTestRecord("namespace-link", BackgroundAuditStart, BackgroundOutcomeStarted)); !errors.Is(err, ErrStoreLockPathUnsafe) {
+		t.Fatalf("Append error = %v, want ErrStoreLockPathUnsafe", err)
+	}
+	if _, err := os.Stat(filepath.Join(target, filepath.Base(audit.Path()))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("symlink namespace target mutated: %v", err)
+	}
+}
+
 func TestBackgroundAuditUnixRejectsFinalSymlink(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "target")
@@ -172,5 +190,82 @@ func TestBackgroundAuditUnixRejectsPostOpenReplacementBeforeMutation(t *testing.
 	}
 	if len(records) != 1 || records[0].RecordID != first.RecordID {
 		t.Fatalf("original records = %#v, want unmodified first record", records)
+	}
+}
+
+func TestBackgroundAuditUnixNamespaceLockBlocksOtherProcess(t *testing.T) {
+	runBackgroundAuditProcessLockBlocks(t, func(audit *BackgroundAudit) (func() error, error) {
+		parent, err := backgroundOpenUnixPrivateDir(filepath.Dir(audit.Path()))
+		if err != nil {
+			return nil, err
+		}
+		lock, err := backgroundAcquireUnixAuditLock(parent, filepath.Dir(audit.Path()))
+		if err != nil {
+			_ = parent.Close()
+			return nil, err
+		}
+		return func() error {
+			return errors.Join(backgroundReleaseUnixAuditLock(lock), parent.Close())
+		}, nil
+	})
+}
+
+func TestBackgroundAuditUnixRejectsUnsafeNamespaceLock(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		attack func(t *testing.T, lockPath, target string)
+	}{
+		{
+			name: "symlink",
+			attack: func(t *testing.T, lockPath, target string) {
+				t.Helper()
+				if err := os.Symlink(target, lockPath); err != nil {
+					t.Fatalf("Symlink lock: %v", err)
+				}
+			},
+		},
+		{
+			name: "hard-link",
+			attack: func(t *testing.T, lockPath, target string) {
+				t.Helper()
+				if err := os.Link(target, lockPath); err != nil {
+					t.Fatalf("Link lock: %v", err)
+				}
+			},
+		},
+		{
+			name: "weak-mode",
+			attack: func(t *testing.T, lockPath, _ string) {
+				t.Helper()
+				if err := os.WriteFile(lockPath, []byte("lock"), 0o600); err != nil {
+					t.Fatalf("WriteFile lock: %v", err)
+				}
+				if err := os.Chmod(lockPath, 0o644); err != nil {
+					t.Fatalf("Chmod lock: %v", err)
+				}
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			audit := NewBackgroundAudit(filepath.Join(t.TempDir(), "background-audit.jsonl"))
+			if err := audit.Append(backgroundAuditTestRecord("lock-seed", BackgroundAuditStart, BackgroundOutcomeStarted)); err != nil {
+				t.Fatalf("seed Append: %v", err)
+			}
+			lockPath := filepath.Join(filepath.Dir(audit.Path()), backgroundAuditLockName)
+			if err := os.Remove(lockPath); err != nil {
+				t.Fatalf("Remove lock: %v", err)
+			}
+			target := filepath.Join(t.TempDir(), "target")
+			if err := os.WriteFile(target, []byte("unchanged\n"), 0o600); err != nil {
+				t.Fatalf("WriteFile target: %v", err)
+			}
+			test.attack(t, lockPath, target)
+			if err := audit.Append(backgroundAuditTestRecord("lock-attack", BackgroundAuditStop, BackgroundOutcomeStopped)); !errors.Is(err, ErrStoreLockPathUnsafe) {
+				t.Fatalf("Append error = %v, want ErrStoreLockPathUnsafe", err)
+			}
+			if raw, err := os.ReadFile(target); err != nil || string(raw) != "unchanged\n" {
+				t.Fatalf("lock target = %q, %v", raw, err)
+			}
+		})
 	}
 }

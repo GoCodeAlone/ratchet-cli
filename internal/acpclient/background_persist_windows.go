@@ -28,8 +28,9 @@ type backgroundWindowsAuditTransaction struct {
 	parentPath     string
 	parent         *os.File
 	parentIdentity backgroundWindowsFileIDInfo
+	lock           *os.File
+	lockOverlapped *windows.Overlapped
 	file           *os.File
-	release        func() error
 }
 
 func backgroundWriteFileAtomic(path string, data []byte) error {
@@ -84,38 +85,45 @@ func backgroundOpenPrivateAppend(path string) (*os.File, error) {
 
 func backgroundOpenAuditTransaction(path string, create bool) (backgroundAuditTransaction, error) {
 	parentPath := filepath.Dir(path)
-	parent, parentIdentity, parentErr := backgroundOpenWindowsAuditParent(parentPath)
-	if parentErr != nil && !errors.Is(parentErr, os.ErrNotExist) {
-		return nil, parentErr
-	}
-	release, err := acquireStoreFileLock(path + ".lock")
-	if err != nil {
-		if parent != nil {
-			_ = parent.Close()
-		}
+	if err := backgroundEnsurePrivateDir(parentPath); err != nil {
 		return nil, err
 	}
-	if parent == nil {
-		parent, parentIdentity, err = backgroundOpenWindowsAuditParent(parentPath)
-	} else {
+	parent, parentIdentity, err := backgroundOpenWindowsAuditParent(parentPath)
+	if err != nil {
+		return nil, err
+	}
+	lockPath := filepath.Join(parentPath, backgroundAuditLockName)
+	lock, _, err := backgroundOpenWindowsAuditFile(lockPath, true)
+	if err != nil {
+		return nil, errors.Join(err, parent.Close())
+	}
+	lockOverlapped := new(windows.Overlapped)
+	if err := windows.LockFileEx(windows.Handle(lock.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, lockOverlapped); err != nil {
+		return nil, errors.Join(err, lock.Close(), parent.Close())
+	}
+	lockIdentity, err := backgroundWindowsHandleIdentity(windows.Handle(lock.Fd()))
+	if err == nil {
+		err = backgroundValidateWindowsFileIdentity(lockPath, lockIdentity)
+	}
+	if err == nil {
 		err = backgroundValidateWindowsParentIdentity(parentPath, parentIdentity)
 	}
 	if err != nil {
-		return nil, errors.Join(err, release(), closeBackgroundFile(parent))
+		return nil, errors.Join(err, backgroundReleaseWindowsAuditLock(lock, lockOverlapped), parent.Close())
 	}
 	f, _, err := backgroundOpenWindowsAuditFile(path, create)
 	if errors.Is(err, os.ErrNotExist) && !create {
 		return &backgroundWindowsAuditTransaction{
 			path: path, parentPath: parentPath, parent: parent,
-			parentIdentity: parentIdentity, release: release,
+			parentIdentity: parentIdentity, lock: lock, lockOverlapped: lockOverlapped,
 		}, nil
 	}
 	if err != nil {
-		return nil, errors.Join(err, release(), parent.Close())
+		return nil, errors.Join(err, backgroundReleaseWindowsAuditLock(lock, lockOverlapped), parent.Close())
 	}
 	return &backgroundWindowsAuditTransaction{
 		path: path, parentPath: parentPath, parent: parent,
-		parentIdentity: parentIdentity, file: f, release: release,
+		parentIdentity: parentIdentity, lock: lock, lockOverlapped: lockOverlapped, file: f,
 	}, nil
 }
 
@@ -309,11 +317,30 @@ func backgroundValidateWindowsParentIdentity(path string, want backgroundWindows
 	return nil
 }
 
-func closeBackgroundFile(f *os.File) error {
-	if f == nil {
+func backgroundValidateWindowsFileIdentity(path string, want backgroundWindowsFileIDInfo) error {
+	current, _, err := backgroundOpenWindowsAuditFile(path, false)
+	if err != nil {
+		return err
+	}
+	defer current.Close() //nolint:errcheck
+	got, err := backgroundWindowsHandleIdentity(windows.Handle(current.Fd()))
+	if err != nil {
+		return err
+	}
+	if got != want {
+		return storeLockUnsafePathError(path, errors.New("target identity changed"))
+	}
+	return nil
+}
+
+func backgroundReleaseWindowsAuditLock(lock *os.File, overlapped *windows.Overlapped) error {
+	if lock == nil {
 		return nil
 	}
-	return f.Close()
+	return errors.Join(
+		windows.UnlockFileEx(windows.Handle(lock.Fd()), 0, 1, 0, overlapped),
+		lock.Close(),
+	)
 }
 
 func (t *backgroundWindowsAuditTransaction) File() *os.File { return t.file }
@@ -332,25 +359,13 @@ func (t *backgroundWindowsAuditTransaction) ValidateForMutation() error {
 	if err != nil {
 		return err
 	}
-	current, _, err := backgroundOpenWindowsAuditFile(t.path, false)
-	if err != nil {
-		return err
-	}
-	defer current.Close() //nolint:errcheck
-	got, err := backgroundWindowsHandleIdentity(windows.Handle(current.Fd()))
-	if err != nil {
-		return err
-	}
-	if got != want {
-		return storeLockUnsafePathError(t.path, errors.New("audit target identity changed"))
-	}
-	return nil
+	return backgroundValidateWindowsFileIdentity(t.path, want)
 }
 
 func (t *backgroundWindowsAuditTransaction) SyncParent() error { return nil }
 
 func (t *backgroundWindowsAuditTransaction) Close() error {
-	return errors.Join(t.release(), t.parent.Close())
+	return errors.Join(backgroundReleaseWindowsAuditLock(t.lock, t.lockOverlapped), t.parent.Close())
 }
 
 func backgroundEnsurePrivateDir(path string) error {

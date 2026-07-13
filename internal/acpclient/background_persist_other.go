@@ -9,11 +9,7 @@ import (
 )
 
 func backgroundOpenAuditTransaction(path string, _ bool) (backgroundAuditTransaction, error) {
-	release, err := acquireStoreFileLock(path + ".lock")
-	if err != nil {
-		return nil, err
-	}
-	return nil, errors.Join(errors.New("unsupported audit transaction unexpectedly acquired a process lock"), release())
+	return nil, ErrStoreProcessLockUnsupported
 }
 
 func backgroundWriteFileAtomic(path string, data []byte) error {

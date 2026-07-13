@@ -73,6 +73,140 @@ func TestBackgroundWindowsAuditAppendUsesPrivateDirectoryACL(t *testing.T) {
 	assertBackgroundWindowsPrivateDACL(t, path)
 }
 
+func TestBackgroundWindowsAuditFreshNamespaceAndLockArePrivate(t *testing.T) {
+	audit := NewBackgroundAudit(filepath.Join(t.TempDir(), "fresh", "background-audit.jsonl"))
+	if err := audit.Append(backgroundWindowsAuditRecord("fresh-namespace")); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	namespace := filepath.Dir(audit.Path())
+	lockPath := filepath.Join(namespace, backgroundAuditLockName)
+	assertBackgroundWindowsPrivateDACL(t, namespace)
+	assertBackgroundWindowsPrivateDACL(t, lockPath)
+	if _, err := os.Stat(filepath.Join(namespace, storeLockDirectoryName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("generic lock namespace used for audit: %v", err)
+	}
+}
+
+func TestBackgroundWindowsAuditRejectsUnsafeNamespace(t *testing.T) {
+	t.Run("reparse-point", func(t *testing.T) {
+		root := t.TempDir()
+		target := filepath.Join(t.TempDir(), "target")
+		if err := backgroundEnsureOwnedPrivateDir(target); err != nil {
+			t.Fatalf("create target: %v", err)
+		}
+		audit := NewBackgroundAudit(filepath.Join(root, "background-audit.jsonl"))
+		if err := os.Symlink(target, filepath.Dir(audit.Path())); err != nil {
+			t.Fatalf("Symlink namespace: %v", err)
+		}
+		if err := audit.Append(backgroundWindowsAuditRecord("namespace-reparse")); !errors.Is(err, ErrStoreLockPathUnsafe) {
+			t.Fatalf("Append error = %v, want ErrStoreLockPathUnsafe", err)
+		}
+		if _, err := os.Stat(filepath.Join(target, filepath.Base(audit.Path()))); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("reparse namespace target mutated: %v", err)
+		}
+	})
+
+	t.Run("weak-dacl", func(t *testing.T) {
+		audit := NewBackgroundAudit(filepath.Join(t.TempDir(), "background-audit.jsonl"))
+		namespace := filepath.Dir(audit.Path())
+		if err := backgroundEnsureOwnedPrivateDir(namespace); err != nil {
+			t.Fatalf("create namespace: %v", err)
+		}
+		backgroundSetWindowsWeakDACL(t, namespace)
+		if err := audit.Append(backgroundWindowsAuditRecord("namespace-weak-dacl")); !errors.Is(err, ErrStoreLockPathUnsafe) {
+			t.Fatalf("Append error = %v, want ErrStoreLockPathUnsafe", err)
+		}
+		if _, err := os.Stat(audit.Path()); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("audit data created in weak namespace: %v", err)
+		}
+	})
+}
+
+func TestBackgroundWindowsAuditNamespaceLockBlocksOtherProcess(t *testing.T) {
+	runBackgroundAuditProcessLockBlocks(t, func(audit *BackgroundAudit) (func() error, error) {
+		parent, _, err := backgroundOpenWindowsAuditParent(filepath.Dir(audit.Path()))
+		if err != nil {
+			return nil, err
+		}
+		lock, _, err := backgroundOpenWindowsAuditFile(filepath.Join(filepath.Dir(audit.Path()), backgroundAuditLockName), false)
+		if err != nil {
+			_ = parent.Close()
+			return nil, err
+		}
+		var overlapped windows.Overlapped
+		if err := windows.LockFileEx(windows.Handle(lock.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, &overlapped); err != nil {
+			_ = lock.Close()
+			_ = parent.Close()
+			return nil, err
+		}
+		return func() error {
+			return errors.Join(
+				windows.UnlockFileEx(windows.Handle(lock.Fd()), 0, 1, 0, &overlapped),
+				lock.Close(),
+				parent.Close(),
+			)
+		}, nil
+	})
+}
+
+func TestBackgroundWindowsAuditRejectsUnsafeNamespaceLock(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		attack func(t *testing.T, lockPath, target string)
+	}{
+		{
+			name: "reparse-point",
+			attack: func(t *testing.T, lockPath, target string) {
+				t.Helper()
+				if err := os.Symlink(target, lockPath); err != nil {
+					t.Fatalf("Symlink lock: %v", err)
+				}
+			},
+		},
+		{
+			name: "hard-link",
+			attack: func(t *testing.T, lockPath, target string) {
+				t.Helper()
+				if err := os.Link(target, lockPath); err != nil {
+					t.Fatalf("Link lock: %v", err)
+				}
+			},
+		},
+		{
+			name: "weak-dacl",
+			attack: func(t *testing.T, lockPath, _ string) {
+				t.Helper()
+				if err := os.WriteFile(lockPath, []byte("lock"), 0o600); err != nil {
+					t.Fatalf("WriteFile lock: %v", err)
+				}
+				backgroundSetWindowsWeakDACL(t, lockPath)
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			audit := NewBackgroundAudit(filepath.Join(t.TempDir(), "background-audit.jsonl"))
+			if err := audit.Append(backgroundWindowsAuditRecord("lock-seed")); err != nil {
+				t.Fatalf("seed Append: %v", err)
+			}
+			lockPath := filepath.Join(filepath.Dir(audit.Path()), backgroundAuditLockName)
+			if err := os.Remove(lockPath); err != nil {
+				t.Fatalf("Remove lock: %v", err)
+			}
+			target := filepath.Join(t.TempDir(), "target")
+			if err := os.WriteFile(target, []byte("unchanged\r\n"), 0o600); err != nil {
+				t.Fatalf("WriteFile target: %v", err)
+			}
+			test.attack(t, lockPath, target)
+			if err := audit.Append(backgroundWindowsAuditRecord("lock-attack")); !errors.Is(err, ErrStoreLockPathUnsafe) {
+				t.Fatalf("Append error = %v, want ErrStoreLockPathUnsafe", err)
+			}
+			if raw, err := os.ReadFile(target); err != nil || string(raw) != "unchanged\r\n" {
+				t.Fatalf("lock target = %q, %v", raw, err)
+			}
+		})
+	}
+}
+
 func TestBackgroundWindowsAuditRejectsReparsePoint(t *testing.T) {
 	audit := NewBackgroundAudit(filepath.Join(t.TempDir(), "background-audit.jsonl"))
 	if err := backgroundEnsureOwnedPrivateDir(filepath.Dir(audit.Path())); err != nil {

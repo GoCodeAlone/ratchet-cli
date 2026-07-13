@@ -52,7 +52,7 @@ func TestBackgroundAuditAppendsOwnerOnlyMetadataRecords(t *testing.T) {
 	if got := info.Mode().Perm(); got != 0o600 {
 		t.Fatalf("audit mode = %o, want 600", got)
 	}
-	lockInfo, err := os.Stat(requireStoreLockPhysicalPath(t, path+".lock"))
+	lockInfo, err := os.Stat(filepath.Join(filepath.Dir(path), backgroundAuditLockName))
 	if err != nil {
 		t.Fatalf("Stat audit lock: %v", err)
 	}
@@ -89,6 +89,45 @@ func TestBackgroundAuditAppendsOwnerOnlyMetadataRecords(t *testing.T) {
 	}
 	if err := scanner.Err(); err != nil {
 		t.Fatalf("Scan audit: %v", err)
+	}
+}
+
+func TestBackgroundAuditFreshRootAppendRead(t *testing.T) {
+	root := t.TempDir()
+	audit := NewBackgroundAudit(filepath.Join(root, "background-audit.jsonl"))
+	if _, err := os.Stat(filepath.Dir(audit.Path())); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("audit namespace before append = %v, want not exist", err)
+	}
+	record := backgroundAuditTestRecord("fresh-root", BackgroundAuditStart, BackgroundOutcomeStarted)
+	if err := audit.Append(record); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	records, err := audit.Read()
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(records) != 1 || records[0].RecordID != record.RecordID {
+		t.Fatalf("records = %#v, want fresh-root record", records)
+	}
+}
+
+func TestBackgroundAuditLockUsesPinnedNamespace(t *testing.T) {
+	root := t.TempDir()
+	audit := NewBackgroundAudit(filepath.Join(root, "background-audit.jsonl"))
+	if err := audit.Append(backgroundAuditTestRecord("lock-placement", BackgroundAuditStart, BackgroundOutcomeStarted)); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	namespace := filepath.Dir(audit.Path())
+	lockPath := filepath.Join(namespace, backgroundAuditLockName)
+	info, err := os.Lstat(lockPath)
+	if err != nil {
+		t.Fatalf("Lstat audit lock: %v", err)
+	}
+	if !info.Mode().IsRegular() {
+		t.Fatalf("audit lock mode = %v, want regular", info.Mode())
+	}
+	if _, err := os.Stat(filepath.Join(namespace, storeLockDirectoryName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("generic lock namespace used for audit: %v", err)
 	}
 }
 

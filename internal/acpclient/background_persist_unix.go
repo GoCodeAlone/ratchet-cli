@@ -7,15 +7,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"golang.org/x/sys/unix"
 )
 
 type backgroundUnixAuditTransaction struct {
-	path    string
-	parent  *os.File
-	file    *os.File
-	release func() error
+	path   string
+	parent *os.File
+	lock   *os.File
+	file   *os.File
 }
 
 func backgroundWriteFileAtomic(path string, data []byte) error {
@@ -74,32 +75,70 @@ func backgroundOpenPrivateAppend(path string) (*os.File, error) {
 }
 
 func backgroundOpenAuditTransaction(path string, create bool) (backgroundAuditTransaction, error) {
-	parentPath := filepath.Dir(path)
-	parent, parentErr := backgroundOpenUnixPrivateDir(parentPath)
-	if parentErr != nil && !errors.Is(parentErr, os.ErrNotExist) {
-		return nil, parentErr
+	if !backgroundUnixAuditLockSupported() {
+		return nil, ErrStoreProcessLockUnsupported
 	}
-	release, err := acquireStoreFileLock(path + ".lock")
+	parentPath := filepath.Dir(path)
+	parent, err := backgroundOpenOrCreateUnixPrivateDir(parentPath)
 	if err != nil {
-		if parent != nil {
-			_ = parent.Close()
-		}
 		return nil, err
 	}
-	if parent == nil {
-		parent, err = backgroundOpenUnixPrivateDir(parentPath)
-		if err != nil {
-			return nil, errors.Join(err, release())
-		}
+	lock, err := backgroundAcquireUnixAuditLock(parent, parentPath)
+	if err != nil {
+		return nil, errors.Join(err, parent.Close())
 	}
 	f, err := backgroundOpenUnixRegularAt(parent, path, unix.O_RDWR, create)
 	if errors.Is(err, os.ErrNotExist) && !create {
-		return &backgroundUnixAuditTransaction{path: path, parent: parent, release: release}, nil
+		return &backgroundUnixAuditTransaction{path: path, parent: parent, lock: lock}, nil
 	}
 	if err != nil {
-		return nil, errors.Join(err, release(), parent.Close())
+		return nil, errors.Join(err, backgroundReleaseUnixAuditLock(lock), parent.Close())
 	}
-	return &backgroundUnixAuditTransaction{path: path, parent: parent, file: f, release: release}, nil
+	return &backgroundUnixAuditTransaction{path: path, parent: parent, lock: lock, file: f}, nil
+}
+
+func backgroundUnixAuditLockSupported() bool {
+	switch runtime.GOOS {
+	case "darwin", "dragonfly", "freebsd", "linux", "netbsd", "openbsd", "solaris":
+		return true
+	default:
+		return false
+	}
+}
+
+func backgroundOpenOrCreateUnixPrivateDir(path string) (*os.File, error) {
+	containerPath := filepath.Dir(path)
+	if err := os.MkdirAll(containerPath, 0o700); err != nil {
+		return nil, err
+	}
+	containerFD, err := unix.Open(containerPath, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, storeLockUnsafePathError(containerPath, err)
+	}
+	container := os.NewFile(uintptr(containerFD), containerPath)
+	if container == nil {
+		_ = unix.Close(containerFD)
+		return nil, errors.New("create audit namespace container handle")
+	}
+	defer container.Close() //nolint:errcheck
+	name := filepath.Base(path)
+	if err := unix.Mkdirat(containerFD, name, 0o700); err != nil && !errors.Is(err, unix.EEXIST) {
+		return nil, err
+	}
+	fd, err := unix.Openat(containerFD, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, storeLockUnsafePathError(path, err)
+	}
+	dir := os.NewFile(uintptr(fd), path)
+	if dir == nil {
+		_ = unix.Close(fd)
+		return nil, errors.New("create audit namespace handle")
+	}
+	if err := backgroundValidateUnixPrivateDir(dir, path); err != nil {
+		_ = dir.Close()
+		return nil, err
+	}
+	return dir, nil
 }
 
 func backgroundOpenUnixPrivateDir(path string) (*os.File, error) {
@@ -115,16 +154,22 @@ func backgroundOpenUnixPrivateDir(path string) (*os.File, error) {
 		_ = unix.Close(fd)
 		return nil, errors.New("create private directory handle")
 	}
-	var stat unix.Stat_t
-	if err := unix.Fstat(fd, &stat); err != nil {
+	if err := backgroundValidateUnixPrivateDir(dir, path); err != nil {
 		_ = dir.Close()
 		return nil, err
 	}
-	if stat.Mode&unix.S_IFMT != unix.S_IFDIR || stat.Uid != uint32(os.Geteuid()) || stat.Mode&0o777 != 0o700 {
-		_ = dir.Close()
-		return nil, storeLockUnsafePathError(path, fmt.Errorf("audit parent must be an owner-only directory (mode=%#o uid=%d)", stat.Mode&0o777, stat.Uid))
-	}
 	return dir, nil
+}
+
+func backgroundValidateUnixPrivateDir(dir *os.File, path string) error {
+	var stat unix.Stat_t
+	if err := unix.Fstat(int(dir.Fd()), &stat); err != nil {
+		return err
+	}
+	if stat.Mode&unix.S_IFMT != unix.S_IFDIR || stat.Uid != uint32(os.Geteuid()) || stat.Mode&0o777 != 0o700 {
+		return storeLockUnsafePathError(path, fmt.Errorf("audit parent must be an owner-only directory (mode=%#o uid=%d)", stat.Mode&0o777, stat.Uid))
+	}
+	return nil
 }
 
 func backgroundOpenUnixRegularAt(parent *os.File, path string, flags int, create bool) (*os.File, error) {
@@ -165,37 +210,41 @@ func backgroundValidateUnixRegular(f *os.File, path string) error {
 	return nil
 }
 
+func backgroundValidateUnixRegularAtIdentity(parent *os.File, path string, current *os.File) error {
+	if err := backgroundValidateUnixRegular(current, path); err != nil {
+		return err
+	}
+	check, err := backgroundOpenUnixRegularAt(parent, path, unix.O_RDONLY, false)
+	if err != nil {
+		return err
+	}
+	defer check.Close() //nolint:errcheck
+	var currentStat, reopenedStat unix.Stat_t
+	if err := unix.Fstat(int(current.Fd()), &currentStat); err != nil {
+		return err
+	}
+	if err := unix.Fstat(int(check.Fd()), &reopenedStat); err != nil {
+		return err
+	}
+	if currentStat.Dev != reopenedStat.Dev || currentStat.Ino != reopenedStat.Ino {
+		return storeLockUnsafePathError(path, errors.New("target identity changed"))
+	}
+	return nil
+}
+
 func (t *backgroundUnixAuditTransaction) File() *os.File { return t.file }
 
 func (t *backgroundUnixAuditTransaction) ValidateForMutation() error {
 	if t.file == nil {
 		return storeLockUnsafePathError(t.path, os.ErrNotExist)
 	}
-	if err := backgroundValidateUnixRegular(t.file, t.path); err != nil {
-		return err
-	}
-	check, err := backgroundOpenUnixRegularAt(t.parent, t.path, unix.O_RDONLY, false)
-	if err != nil {
-		return err
-	}
-	defer check.Close() //nolint:errcheck
-	var current, reopened unix.Stat_t
-	if err := unix.Fstat(int(t.file.Fd()), &current); err != nil {
-		return err
-	}
-	if err := unix.Fstat(int(check.Fd()), &reopened); err != nil {
-		return err
-	}
-	if current.Dev != reopened.Dev || current.Ino != reopened.Ino {
-		return storeLockUnsafePathError(t.path, errors.New("audit target identity changed"))
-	}
-	return nil
+	return backgroundValidateUnixRegularAtIdentity(t.parent, t.path, t.file)
 }
 
 func (t *backgroundUnixAuditTransaction) SyncParent() error { return t.parent.Sync() }
 
 func (t *backgroundUnixAuditTransaction) Close() error {
-	return errors.Join(t.release(), t.parent.Close())
+	return errors.Join(backgroundReleaseUnixAuditLock(t.lock), t.parent.Close())
 }
 
 func backgroundRemoveFile(path string) error {

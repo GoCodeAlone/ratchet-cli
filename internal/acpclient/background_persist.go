@@ -8,6 +8,8 @@ import (
 	"sync"
 )
 
+const backgroundAuditLockName = ".audit.lock"
+
 type backgroundAuditTransaction interface {
 	File() *os.File
 	ValidateForMutation() error
