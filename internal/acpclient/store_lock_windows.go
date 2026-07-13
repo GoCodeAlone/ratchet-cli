@@ -26,14 +26,18 @@ func tryStoreFileLock(path string) (func() error, bool, error) {
 }
 
 func lockStoreFile(path string, nonblocking bool) (func() error, bool, error) {
-	if err := backgroundEnsurePrivateDir(filepath.Dir(path)); err != nil {
-		return nil, false, err
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	physicalPath, err := storeLockPhysicalPath(path)
 	if err != nil {
 		return nil, false, err
 	}
-	if err := backgroundSetPrivateACL(path); err != nil {
+	if err := backgroundEnsureOwnedPrivateDir(filepath.Dir(physicalPath)); err != nil {
+		return nil, false, err
+	}
+	f, err := os.OpenFile(physicalPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := backgroundSetPrivateACL(physicalPath); err != nil {
 		_ = f.Close()
 		return nil, false, err
 	}

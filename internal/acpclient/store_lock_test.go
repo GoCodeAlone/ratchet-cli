@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -77,6 +78,61 @@ func TestSessionStoreLockSubprocessHelper(t *testing.T) {
 	}
 }
 
+func TestStoreLockPhysicalPathIsStableWhenParentIsCreated(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "events")
+	logicalPath := filepath.Join(dir, "session.ndjson.lock")
+	before, err := storeLockPhysicalPath(logicalPath)
+	if err != nil {
+		t.Fatalf("storeLockPhysicalPath before parent creation: %v", err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("MkdirAll parent: %v", err)
+	}
+	after, err := storeLockPhysicalPath(logicalPath)
+	if err != nil {
+		t.Fatalf("storeLockPhysicalPath after parent creation: %v", err)
+	}
+	if after != before {
+		t.Fatalf("physical lock path changed after parent creation:\nbefore: %s\nafter:  %s", before, after)
+	}
+}
+
+func TestStoreLockPhysicalPathFoldsCaseOnConservativePlatforms(t *testing.T) {
+	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
+		t.Skip("case folding is conservative only on Darwin and Windows")
+	}
+	dir := t.TempDir()
+	upper, err := storeLockPhysicalPath(filepath.Join(dir, "Session.JSON.Lock"))
+	if err != nil {
+		t.Fatalf("storeLockPhysicalPath upper: %v", err)
+	}
+	lower, err := storeLockPhysicalPath(filepath.Join(dir, "session.json.lock"))
+	if err != nil {
+		t.Fatalf("storeLockPhysicalPath lower: %v", err)
+	}
+	if upper != lower {
+		t.Fatalf("case variants map to different physical locks:\nupper: %s\nlower: %s", upper, lower)
+	}
+}
+
+func TestStoreLockCaseFoldingPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		goos string
+		want bool
+	}{
+		{goos: "darwin", want: true},
+		{goos: "windows", want: true},
+		{goos: "linux", want: false},
+		{goos: "freebsd", want: false},
+	} {
+		t.Run(tc.goos, func(t *testing.T) {
+			if got := storeLockFoldsCase(tc.goos); got != tc.want {
+				t.Fatalf("storeLockFoldsCase(%q) = %t, want %t", tc.goos, got, tc.want)
+			}
+		})
+	}
+}
+
 func waitForStoreLockHelperReady(t *testing.T, path string) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
@@ -89,4 +145,13 @@ func waitForStoreLockHelperReady(t *testing.T, path string) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+}
+
+func requireStoreLockPhysicalPath(t *testing.T, logicalPath string) string {
+	t.Helper()
+	physicalPath, err := storeLockPhysicalPath(logicalPath)
+	if err != nil {
+		t.Fatalf("storeLockPhysicalPath: %v", err)
+	}
+	return physicalPath
 }

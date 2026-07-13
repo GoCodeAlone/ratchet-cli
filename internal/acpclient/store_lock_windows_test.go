@@ -17,6 +17,78 @@ func TestBackgroundWindowsStoreCrossProcessLockBlocks(t *testing.T) {
 	runSessionStoreCrossProcessLockBlocks(t, holdSessionStoreTestLock)
 }
 
+func TestBackgroundWindowsStoreLockDoesNotRewriteExistingParentDACL(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "custom")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatalf("Mkdir parent: %v", err)
+	}
+	before := backgroundWindowsSecurityDescriptor(t, dir)
+	logicalPath := filepath.Join(dir, "sessions.json.lock")
+	release, err := acquireStoreFileLock(logicalPath)
+	if err != nil {
+		t.Fatalf("acquireStoreFileLock: %v", err)
+	}
+	defer func() { _ = release() }()
+	if after := backgroundWindowsSecurityDescriptor(t, dir); after != before {
+		t.Fatalf("parent DACL changed:\nbefore: %s\nafter:  %s", before, after)
+	}
+	lockDir := filepath.Join(dir, ".ratchet-locks")
+	assertBackgroundWindowsPrivateDACL(t, lockDir)
+	entries, err := os.ReadDir(lockDir)
+	if err != nil {
+		t.Fatalf("ReadDir dedicated lock directory: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("dedicated lock entries = %d, want 1", len(entries))
+	}
+	assertBackgroundWindowsPrivateDACL(t, filepath.Join(lockDir, entries[0].Name()))
+}
+
+func TestBackgroundWindowsStoreLockRejectsUnsafeDedicatedLockPath(t *testing.T) {
+	t.Run("reparse-point", func(t *testing.T) {
+		dir := t.TempDir()
+		target := filepath.Join(t.TempDir(), "target")
+		if err := os.Mkdir(target, 0o755); err != nil {
+			t.Fatalf("Mkdir target: %v", err)
+		}
+		before := backgroundWindowsSecurityDescriptor(t, target)
+		lockPath := filepath.Join(dir, storeLockDirectoryName)
+		if err := os.Symlink(target, lockPath); err != nil {
+			t.Skipf("directory symlink unavailable: %v", err)
+		}
+		pathPtr, err := windows.UTF16PtrFromString(lockPath)
+		if err != nil {
+			t.Fatalf("UTF16PtrFromString: %v", err)
+		}
+		attributes, err := windows.GetFileAttributes(pathPtr)
+		if err != nil {
+			t.Fatalf("GetFileAttributes: %v", err)
+		}
+		if attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+			t.Fatal("test symlink is not a reparse point")
+		}
+		if release, err := acquireStoreFileLock(filepath.Join(dir, "sessions.json.lock")); !errors.Is(err, ErrStoreLockPathUnsafe) {
+			_ = release()
+			t.Fatalf("acquireStoreFileLock error = %v, want ErrStoreLockPathUnsafe", err)
+		}
+		if after := backgroundWindowsSecurityDescriptor(t, target); after != before {
+			t.Fatalf("reparse target DACL changed:\nbefore: %s\nafter:  %s", before, after)
+		}
+	})
+
+	t.Run("non-directory", func(t *testing.T) {
+		dir := t.TempDir()
+		lockPath := filepath.Join(dir, storeLockDirectoryName)
+		if err := os.WriteFile(lockPath, []byte("not a directory\r\n"), 0o600); err != nil {
+			t.Fatalf("WriteFile dedicated lock path: %v", err)
+		}
+		if release, err := acquireStoreFileLock(filepath.Join(dir, "sessions.json.lock")); !errors.Is(err, ErrStoreLockPathUnsafe) {
+			_ = release()
+			t.Fatalf("acquireStoreFileLock error = %v, want ErrStoreLockPathUnsafe", err)
+		}
+	})
+}
+
 func TestBackgroundWindowsStoreLockAndReplacementArePrivate(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "private")
 	path := filepath.Join(dir, "sessions.json")
@@ -42,7 +114,9 @@ func TestBackgroundWindowsStoreLockAndReplacementArePrivate(t *testing.T) {
 	}
 	assertBackgroundWindowsPrivateDACL(t, dir)
 	assertBackgroundWindowsPrivateDACL(t, path)
-	assertBackgroundWindowsPrivateDACL(t, path+".lock")
+	physicalLockPath := requireStoreLockPhysicalPath(t, path+".lock")
+	assertBackgroundWindowsPrivateDACL(t, filepath.Dir(physicalLockPath))
+	assertBackgroundWindowsPrivateDACL(t, physicalLockPath)
 }
 
 func TestBackgroundWindowsEventLogLockAndReplacementArePrivate(t *testing.T) {
@@ -57,7 +131,9 @@ func TestBackgroundWindowsEventLogLockAndReplacementArePrivate(t *testing.T) {
 	path := store.eventLogPath("private")
 	assertBackgroundWindowsPrivateDACL(t, filepath.Dir(path))
 	assertBackgroundWindowsPrivateDACL(t, path)
-	assertBackgroundWindowsPrivateDACL(t, path+".lock")
+	physicalLockPath := requireStoreLockPhysicalPath(t, path+".lock")
+	assertBackgroundWindowsPrivateDACL(t, filepath.Dir(physicalLockPath))
+	assertBackgroundWindowsPrivateDACL(t, physicalLockPath)
 }
 
 func TestBackgroundWindowsOwnerLeaseIsExclusiveAndPrivate(t *testing.T) {
@@ -77,8 +153,11 @@ func TestBackgroundWindowsOwnerLeaseIsExclusiveAndPrivate(t *testing.T) {
 	}
 	assertBackgroundWindowsPrivateDACL(t, filepath.Dir(store.ownerPath("private")))
 	assertBackgroundWindowsPrivateDACL(t, store.ownerPath("private"))
-	assertBackgroundWindowsPrivateDACL(t, store.ownerLeasePath("private"))
-	assertBackgroundWindowsPrivateDACL(t, store.ownerClaimPath("private"))
+	for _, logicalPath := range []string{store.ownerLeasePath("private"), store.ownerClaimPath("private")} {
+		physicalLockPath := requireStoreLockPhysicalPath(t, logicalPath)
+		assertBackgroundWindowsPrivateDACL(t, filepath.Dir(physicalLockPath))
+		assertBackgroundWindowsPrivateDACL(t, physicalLockPath)
+	}
 }
 
 func TestBackgroundWindowsWorkerLeaseIsPrivate(t *testing.T) {
@@ -91,8 +170,10 @@ func TestBackgroundWindowsWorkerLeaseIsPrivate(t *testing.T) {
 		t.Fatalf("tryStoreFileLock = %t, %v", acquired, err)
 	}
 	defer func() { _ = release() }()
+	physicalLockPath := requireStoreLockPhysicalPath(t, path)
 	assertBackgroundWindowsPrivateDACL(t, filepath.Dir(path))
-	assertBackgroundWindowsPrivateDACL(t, path)
+	assertBackgroundWindowsPrivateDACL(t, filepath.Dir(physicalLockPath))
+	assertBackgroundWindowsPrivateDACL(t, physicalLockPath)
 }
 
 func TestBackgroundWindowsPolicyTransitionAuditLocksArePrivate(t *testing.T) {
@@ -119,23 +200,32 @@ func TestBackgroundWindowsPolicyTransitionAuditLocksArePrivate(t *testing.T) {
 	}
 	for _, path := range []string{
 		dir,
-		store.Path(), store.Path() + ".lock",
-		store.transitionPath(), store.transitionPath() + ".lock",
-		audit.Path(), audit.Path() + ".lock",
+		store.Path(),
+		store.transitionPath(),
+		audit.Path(),
 	} {
 		assertBackgroundWindowsPrivateDACL(t, path)
+	}
+	for _, logicalPath := range []string{store.Path() + ".lock", store.transitionPath() + ".lock", audit.Path() + ".lock"} {
+		physicalLockPath := requireStoreLockPhysicalPath(t, logicalPath)
+		assertBackgroundWindowsPrivateDACL(t, filepath.Dir(physicalLockPath))
+		assertBackgroundWindowsPrivateDACL(t, physicalLockPath)
 	}
 }
 
 func holdSessionStoreTestLock(path string) (func() error, error) {
-	if err := backgroundEnsurePrivateDir(filepath.Dir(path)); err != nil {
-		return nil, err
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	physicalPath, err := storeLockPhysicalPath(path)
 	if err != nil {
 		return nil, err
 	}
-	if err := backgroundSetPrivateACL(path); err != nil {
+	if err := backgroundEnsureOwnedPrivateDir(filepath.Dir(physicalPath)); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(physicalPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := backgroundSetPrivateACL(physicalPath); err != nil {
 		_ = f.Close()
 		return nil, err
 	}

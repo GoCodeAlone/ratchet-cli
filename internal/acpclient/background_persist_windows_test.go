@@ -36,6 +36,22 @@ func TestBackgroundWindowsAtomicReplacementUsesPrivateACL(t *testing.T) {
 	assertBackgroundWindowsPrivateDACL(t, path)
 }
 
+func TestBackgroundWindowsAtomicReplacementDoesNotRewriteExistingParentDACL(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "custom")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatalf("Mkdir parent: %v", err)
+	}
+	before := backgroundWindowsSecurityDescriptor(t, dir)
+	path := filepath.Join(dir, "background.json")
+	if err := backgroundWriteFileAtomic(path, []byte("private\r\n")); err != nil {
+		t.Fatalf("backgroundWriteFileAtomic: %v", err)
+	}
+	if after := backgroundWindowsSecurityDescriptor(t, dir); after != before {
+		t.Fatalf("parent DACL changed:\nbefore: %s\nafter:  %s", before, after)
+	}
+	assertBackgroundWindowsPrivateDACL(t, path)
+}
+
 func TestBackgroundWindowsAuditAppendUsesPrivateDirectoryACL(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "private")
 	path := filepath.Join(dir, "background-audit.jsonl")
@@ -133,4 +149,21 @@ func assertBackgroundWindowsPrivateDACL(t *testing.T, path string) {
 	if !aceSID.Equals(user.User.Sid) {
 		t.Fatalf("private ACE SID = %s, want current user %s", aceSID, user.User.Sid)
 	}
+}
+
+func backgroundWindowsSecurityDescriptor(t *testing.T, path string) string {
+	t.Helper()
+	descriptor, err := windows.GetNamedSecurityInfo(
+		path,
+		windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.GROUP_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION,
+	)
+	if err != nil {
+		t.Fatalf("GetNamedSecurityInfo: %v", err)
+	}
+	if sddl := descriptor.String(); sddl != "" {
+		return sddl
+	}
+	t.Fatal("security descriptor has empty SDDL")
+	return ""
 }

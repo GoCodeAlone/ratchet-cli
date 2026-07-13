@@ -4,6 +4,7 @@ package acpclient
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -66,10 +67,67 @@ func backgroundOpenPrivateAppend(path string) (*os.File, error) {
 }
 
 func backgroundEnsurePrivateDir(path string) error {
-	if err := os.MkdirAll(path, 0o700); err != nil {
+	info, err := os.Stat(path)
+	if err == nil {
+		if !info.IsDir() {
+			return fmt.Errorf("private directory path %s is not a directory", path)
+		}
+		return nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	parent := filepath.Dir(path)
+	if parent != path {
+		if err := backgroundEnsurePrivateDir(parent); err != nil {
+			return err
+		}
+	}
+	if err := os.Mkdir(path, 0o700); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			info, statErr := os.Stat(path)
+			if statErr == nil && info.IsDir() {
+				return nil
+			}
+		}
 		return err
 	}
 	return backgroundSetPrivateACL(path)
+}
+
+func backgroundEnsureOwnedPrivateDir(path string) error {
+	if err := backgroundValidateOwnedPrivateDir(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := backgroundEnsurePrivateDir(path); err != nil {
+		return err
+	}
+	if err := backgroundValidateOwnedPrivateDir(path); err != nil {
+		return err
+	}
+	return backgroundSetPrivateACL(path)
+}
+
+func backgroundValidateOwnedPrivateDir(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return storeLockUnsafePathError(path, errors.New("dedicated lock path is not a physical directory"))
+	}
+	pathPtr, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return err
+	}
+	attributes, err := windows.GetFileAttributes(pathPtr)
+	if err != nil {
+		return err
+	}
+	if attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		return storeLockUnsafePathError(path, errors.New("dedicated lock path is a reparse point"))
+	}
+	return nil
 }
 
 func backgroundReplaceFile(oldPath, newPath string) error {

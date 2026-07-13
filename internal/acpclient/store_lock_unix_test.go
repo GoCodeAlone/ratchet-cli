@@ -16,6 +16,92 @@ func TestSessionStoreCrossProcessLockBlocks(t *testing.T) {
 	runSessionStoreCrossProcessLockBlocks(t, holdSessionStoreTestLock)
 }
 
+func TestStoreLockDoesNotChangeExistingParentPermissions(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatalf("Chmod parent: %v", err)
+	}
+	logicalPath := filepath.Join(dir, "sessions.json.lock")
+	release, err := acquireStoreFileLock(logicalPath)
+	if err != nil {
+		t.Fatalf("acquireStoreFileLock: %v", err)
+	}
+	defer func() { _ = release() }()
+
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("Stat parent: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o755 {
+		t.Fatalf("parent mode = %o, want unchanged 755", got)
+	}
+	lockDir := filepath.Join(dir, ".ratchet-locks")
+	info, err = os.Stat(lockDir)
+	if err != nil {
+		t.Fatalf("Stat dedicated lock directory: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o700 {
+		t.Fatalf("dedicated lock directory mode = %o, want 700", got)
+	}
+	entries, err := os.ReadDir(lockDir)
+	if err != nil {
+		t.Fatalf("ReadDir dedicated lock directory: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("dedicated lock entries = %d, want 1", len(entries))
+	}
+	info, err = entries[0].Info()
+	if err != nil {
+		t.Fatalf("lock entry info: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("physical lock mode = %o, want 600", got)
+	}
+}
+
+func TestStoreLockRejectsUnsafeDedicatedLockPath(t *testing.T) {
+	t.Run("symlink", func(t *testing.T) {
+		dir := t.TempDir()
+		target := t.TempDir()
+		if err := os.Chmod(target, 0o755); err != nil {
+			t.Fatalf("Chmod target: %v", err)
+		}
+		if err := os.Symlink(target, filepath.Join(dir, storeLockDirectoryName)); err != nil {
+			t.Fatalf("Symlink dedicated lock directory: %v", err)
+		}
+		if release, err := acquireStoreFileLock(filepath.Join(dir, "sessions.json.lock")); !errors.Is(err, ErrStoreLockPathUnsafe) {
+			_ = release()
+			t.Fatalf("acquireStoreFileLock error = %v, want ErrStoreLockPathUnsafe", err)
+		}
+		info, err := os.Stat(target)
+		if err != nil {
+			t.Fatalf("Stat target: %v", err)
+		}
+		if got := info.Mode().Perm(); got != 0o755 {
+			t.Fatalf("symlink target mode = %o, want unchanged 755", got)
+		}
+	})
+
+	t.Run("non-directory", func(t *testing.T) {
+		dir := t.TempDir()
+		lockPath := filepath.Join(dir, storeLockDirectoryName)
+		if err := os.WriteFile(lockPath, []byte("not a directory\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile dedicated lock path: %v", err)
+		}
+		if release, err := acquireStoreFileLock(filepath.Join(dir, "sessions.json.lock")); !errors.Is(err, ErrStoreLockPathUnsafe) {
+			_ = release()
+			t.Fatalf("acquireStoreFileLock error = %v, want ErrStoreLockPathUnsafe", err)
+		}
+		info, err := os.Lstat(lockPath)
+		if err != nil {
+			t.Fatalf("Lstat dedicated lock path: %v", err)
+		}
+		if !info.Mode().IsRegular() {
+			t.Fatalf("dedicated lock path mode = %v, want regular file", info.Mode())
+		}
+	})
+}
+
 func TestSessionStoreReplacementAndLockAreOwnerOnly(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "sessions.json")
@@ -39,13 +125,18 @@ func TestSessionStoreReplacementAndLockAreOwnerOnly(t *testing.T) {
 			t.Fatalf("revision %d sessions = %#v, want two complete records", i, data.Sessions)
 		}
 	}
-	for _, privatePath := range []string{path, path + ".lock"} {
+	physicalLockPath := requireStoreLockPhysicalPath(t, path+".lock")
+	for _, privatePath := range []string{path, filepath.Dir(physicalLockPath), physicalLockPath} {
 		info, err := os.Stat(privatePath)
 		if err != nil {
 			t.Fatalf("Stat %s: %v", privatePath, err)
 		}
-		if got := info.Mode().Perm(); got != 0o600 {
-			t.Fatalf("mode %s = %o, want 600", privatePath, got)
+		want := os.FileMode(0o600)
+		if info.IsDir() {
+			want = 0o700
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Fatalf("mode %s = %o, want %o", privatePath, got, want)
 		}
 	}
 	temps, err := filepath.Glob(filepath.Join(dir, ".sessions.json.*.tmp"))
@@ -67,7 +158,8 @@ func TestEventLogReplacementAndLockAreOwnerOnly(t *testing.T) {
 		t.Fatalf("WriteEventLog: %v", err)
 	}
 	path := store.eventLogPath("private")
-	for _, privatePath := range []string{filepath.Dir(path), path, path + ".lock"} {
+	physicalLockPath := requireStoreLockPhysicalPath(t, path+".lock")
+	for _, privatePath := range []string{filepath.Dir(path), path, filepath.Dir(physicalLockPath), physicalLockPath} {
 		info, err := os.Stat(privatePath)
 		if err != nil {
 			t.Fatalf("Stat %s: %v", privatePath, err)
@@ -92,7 +184,8 @@ func TestBackgroundWorkerLeaseIsOwnerOnly(t *testing.T) {
 		t.Fatalf("tryStoreFileLock = %t, %v", acquired, err)
 	}
 	defer func() { _ = release() }()
-	for _, privatePath := range []string{filepath.Dir(path), path} {
+	physicalLockPath := requireStoreLockPhysicalPath(t, path)
+	for _, privatePath := range []string{filepath.Dir(path), filepath.Dir(physicalLockPath), physicalLockPath} {
 		info, err := os.Stat(privatePath)
 		if err != nil {
 			t.Fatalf("Stat %s: %v", privatePath, err)
@@ -108,10 +201,14 @@ func TestBackgroundWorkerLeaseIsOwnerOnly(t *testing.T) {
 }
 
 func holdSessionStoreTestLock(path string) (func() error, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	physicalPath, err := storeLockPhysicalPath(path)
+	if err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err := os.MkdirAll(filepath.Dir(physicalPath), 0o700); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(physicalPath, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
 	}
