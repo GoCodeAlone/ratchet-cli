@@ -82,6 +82,31 @@ func TestEventLogReplacementAndLockAreOwnerOnly(t *testing.T) {
 	}
 }
 
+func TestBackgroundWorkerLeaseIsOwnerOnly(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	manager := NewBackgroundManager(store, NewBackgroundStore(filepath.Join(filepath.Dir(store.Path()), "background.json")), NewBackgroundAudit(filepath.Join(filepath.Dir(store.Path()), "background-audit.jsonl")), BackgroundManagerOptions{})
+	t.Cleanup(manager.Shutdown)
+	path := manager.workerLeasePath("private")
+	release, acquired, err := tryStoreFileLock(path)
+	if err != nil || !acquired {
+		t.Fatalf("tryStoreFileLock = %t, %v", acquired, err)
+	}
+	defer func() { _ = release() }()
+	for _, privatePath := range []string{filepath.Dir(path), path} {
+		info, err := os.Stat(privatePath)
+		if err != nil {
+			t.Fatalf("Stat %s: %v", privatePath, err)
+		}
+		want := os.FileMode(0o600)
+		if info.IsDir() {
+			want = 0o700
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Fatalf("mode %s = %o, want %o", privatePath, got, want)
+		}
+	}
+}
+
 func holdSessionStoreTestLock(path string) (func() error, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err

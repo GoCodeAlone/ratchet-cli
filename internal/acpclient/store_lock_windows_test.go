@@ -81,6 +81,20 @@ func TestBackgroundWindowsOwnerLeaseIsExclusiveAndPrivate(t *testing.T) {
 	assertBackgroundWindowsPrivateDACL(t, store.ownerClaimPath("private"))
 }
 
+func TestBackgroundWindowsWorkerLeaseIsPrivate(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "private", "sessions.json"))
+	manager := NewBackgroundManager(store, NewBackgroundStore(filepath.Join(filepath.Dir(store.Path()), "background.json")), NewBackgroundAudit(filepath.Join(filepath.Dir(store.Path()), "background-audit.jsonl")), BackgroundManagerOptions{})
+	t.Cleanup(manager.Shutdown)
+	path := manager.workerLeasePath("private")
+	release, acquired, err := tryStoreFileLock(path)
+	if err != nil || !acquired {
+		t.Fatalf("tryStoreFileLock = %t, %v", acquired, err)
+	}
+	defer func() { _ = release() }()
+	assertBackgroundWindowsPrivateDACL(t, filepath.Dir(path))
+	assertBackgroundWindowsPrivateDACL(t, path)
+}
+
 func TestBackgroundWindowsPolicyTransitionAuditLocksArePrivate(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "private")
 	store := NewBackgroundStore(filepath.Join(dir, "background.json"))

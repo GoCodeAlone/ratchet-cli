@@ -244,15 +244,33 @@ func (s *Store) insertSessionWithEventLog(rec SessionRecord, events []EventLogLi
 			return err
 		}
 		return s.withEventLogLock(rec.ID, func(path string) error {
-			if len(eventData) == 0 {
-				if err := backgroundRemoveFile(path); err != nil {
-					return err
-				}
-			} else if err := backgroundWriteFileAtomic(path, eventData); err != nil {
+			original, existed, _, err := eventLogSnapshot(path)
+			if err != nil {
 				return err
 			}
+			var eventConfirmationErr error
+			if len(eventData) == 0 {
+				if err := s.removeEventLog(path); err != nil {
+					if !backgroundWriteCommitted(err) {
+						return err
+					}
+					eventConfirmationErr = backgroundPostCommitCause(err)
+				}
+			} else if err := s.replaceEventLog(path, eventData); err != nil {
+				if !backgroundWriteCommitted(err) {
+					return err
+				}
+				eventConfirmationErr = backgroundPostCommitCause(err)
+			}
 			if err := s.saveUnlocked(data); err != nil {
-				return errors.Join(err, backgroundRemoveFile(path))
+				if backgroundWriteCommitted(err) {
+					return storeCommitUnconfirmed(eventConfirmationErr, backgroundPostCommitCause(err))
+				}
+				restoreErr := restoreEventLogSnapshot(path, original, existed)
+				return errors.Join(eventConfirmationErr, err, backgroundPostCommitCause(restoreErr))
+			}
+			if eventConfirmationErr != nil {
+				return storeCommitUnconfirmed(eventConfirmationErr)
 			}
 			return nil
 		})

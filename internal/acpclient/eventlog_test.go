@@ -24,6 +24,84 @@ const (
 	eventLogReleasePathEnv = "RATCHET_EVENT_LOG_RELEASE_PATH"
 )
 
+func TestSessionEventMutationKeepsProjectionsAlignedAfterPostCommitError(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		inject func(*Store)
+	}{
+		{
+			name: "session replacement",
+			inject: func(store *Store) {
+				store.sessionWriter = func(data storeFile) error {
+					if err := backgroundWriteJSONAtomic(store.path, data); err != nil {
+						return err
+					}
+					return newBackgroundPostCommitError(errors.New("session durability confirmation failed"))
+				}
+			},
+		},
+		{
+			name: "event replacement",
+			inject: func(store *Store) {
+				store.eventLogWriter = func(path string, data []byte) error {
+					if err := backgroundWriteFileAtomic(path, data); err != nil {
+						return err
+					}
+					return newBackgroundPostCommitError(errors.New("event durability confirmation failed"))
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			store := NewStore(filepath.Join(dir, "sessions.json"))
+			now := time.Date(2026, 7, 13, 22, 15, 0, 0, time.UTC)
+			if err := store.Upsert(SessionRecord{
+				ID: "paired-commit", Status: SessionStatusRunning, CreatedAt: now, UpdatedAt: now,
+				PromptQueue: []QueuedPrompt{{
+					ID: "q-1", Prompt: "complete atomically", Status: QueuePromptStatusRunning, CreatedAt: now,
+				}},
+			}); err != nil {
+				t.Fatalf("Upsert: %v", err)
+			}
+			if err := store.WriteEventLog("paired-commit", []EventLogLine{{
+				At: now, Direction: EventDirectionInbound,
+				Message: json.RawMessage(`{"jsonrpc":"2.0","id":1,"result":{"phase":"started"}}`),
+			}}); err != nil {
+				t.Fatalf("WriteEventLog: %v", err)
+			}
+			tc.inject(store)
+			err := store.MarkQueueCompletedWithEvents(
+				"paired-commit", "q-1", "done", "end_turn",
+				[]EventLogLine{{
+					At: now.Add(time.Second), Direction: EventDirectionInbound,
+					Message: json.RawMessage(`{"jsonrpc":"2.0","id":2,"result":{"phase":"completed"}}`),
+				}},
+				now.Add(time.Second),
+			)
+			if !errors.Is(err, ErrStoreCommitUnconfirmed) {
+				t.Fatalf("MarkQueueCompletedWithEvents error = %v, want ErrStoreCommitUnconfirmed", err)
+			}
+
+			reopened := NewStore(store.Path())
+			rec, err := reopened.Get("paired-commit")
+			if err != nil {
+				t.Fatalf("Get committed session: %v", err)
+			}
+			if rec.Status != SessionStatusCompleted || rec.PromptQueue[0].Status != QueuePromptStatusCompleted || len(rec.Turns) != 1 {
+				t.Fatalf("session projection = %#v, want completed turn", rec)
+			}
+			events, err := reopened.ReadEventLog("paired-commit")
+			if err != nil {
+				t.Fatalf("ReadEventLog: %v", err)
+			}
+			if len(events) != 2 || events[0].Seq != 1 || events[1].Seq != 2 {
+				t.Fatalf("event projection = %#v, want contiguous two-event history", events)
+			}
+		})
+	}
+}
+
 func TestEventLogConcurrentHandlesProduceContiguousSequence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sessions.json")
 	const writers = 24

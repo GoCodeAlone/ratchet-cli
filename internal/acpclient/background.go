@@ -345,6 +345,7 @@ type backgroundWorker struct {
 	done           chan struct{}
 	outcome        string
 	err            error
+	releaseLease   func() error
 }
 
 type backgroundStopOwner struct {
@@ -366,18 +367,19 @@ type BackgroundManager struct {
 	watch    WatchOptions
 	now      func() time.Time
 
-	ctx         context.Context
-	cancel      context.CancelCauseFunc
-	stopParent  func() bool
-	mu          sync.Mutex
-	resumeMu    sync.Mutex
-	closed      bool
-	active      map[string]*backgroundWorker
-	transitions map[string]struct{}
-	stopping    map[string]*backgroundStopOwner
-	terminal    map[string]backgroundTerminalGuard
-	lifecycle   sync.WaitGroup
-	wg          sync.WaitGroup
+	ctx             context.Context
+	cancel          context.CancelCauseFunc
+	stopParent      func() bool
+	mu              sync.Mutex
+	resumeMu        sync.Mutex
+	closed          bool
+	active          map[string]*backgroundWorker
+	transitions     map[string]struct{}
+	transitionLease map[string]func() error
+	stopping        map[string]*backgroundStopOwner
+	terminal        map[string]backgroundTerminalGuard
+	lifecycle       sync.WaitGroup
+	wg              sync.WaitGroup
 }
 
 var (
@@ -407,20 +409,21 @@ func NewBackgroundManager(sessions *Store, store *BackgroundStore, audit *Backgr
 		now = func() time.Time { return time.Now().UTC() }
 	}
 	return &BackgroundManager{
-		sessions:    sessions,
-		store:       store,
-		audit:       audit,
-		resolver:    opts.Resolver,
-		watcher:     watcher,
-		watch:       opts.WatchOptions,
-		now:         now,
-		ctx:         ctx,
-		cancel:      cancel,
-		stopParent:  stopParent,
-		active:      make(map[string]*backgroundWorker),
-		transitions: make(map[string]struct{}),
-		stopping:    make(map[string]*backgroundStopOwner),
-		terminal:    make(map[string]backgroundTerminalGuard),
+		sessions:        sessions,
+		store:           store,
+		audit:           audit,
+		resolver:        opts.Resolver,
+		watcher:         watcher,
+		watch:           opts.WatchOptions,
+		now:             now,
+		ctx:             ctx,
+		cancel:          cancel,
+		stopParent:      stopParent,
+		active:          make(map[string]*backgroundWorker),
+		transitions:     make(map[string]struct{}),
+		transitionLease: make(map[string]func() error),
+		stopping:        make(map[string]*backgroundStopOwner),
+		terminal:        make(map[string]backgroundTerminalGuard),
 	}
 }
 
@@ -440,7 +443,7 @@ func NewDefaultBackgroundManager(ctx context.Context, sessions *Store, profiles 
 	), nil
 }
 
-func (m *BackgroundManager) Start(sessionID, profile string, acknowledged bool) (BackgroundStatus, error) {
+func (m *BackgroundManager) Start(sessionID, profile string, acknowledged bool) (status BackgroundStatus, err error) {
 	if !acknowledged {
 		return BackgroundStatus{}, ErrBackgroundAcknowledgementRequired
 	}
@@ -465,7 +468,7 @@ func (m *BackgroundManager) Start(sessionID, profile string, acknowledged bool) 
 	transitionReserved := true
 	defer func() {
 		if transitionReserved {
-			m.releaseTransition(sessionID)
+			err = errors.Join(err, m.releaseTransition(sessionID))
 		}
 	}()
 	if _, err := m.sessions.Get(sessionID); err != nil {
@@ -525,7 +528,6 @@ func (m *BackgroundManager) Start(sessionID, profile string, acknowledged bool) 
 		m.rememberTerminal(result)
 		return backgroundStatus(result.policy), errors.Join(ErrBackgroundManagerClosed, result.err)
 	}
-	delete(m.transitions, sessionID)
 	transitionReserved = false
 	delete(m.terminal, sessionID)
 	m.launchLocked(persisted, resolved)
@@ -533,7 +535,7 @@ func (m *BackgroundManager) Start(sessionID, profile string, acknowledged bool) 
 	return backgroundStatus(persisted), nil
 }
 
-func (m *BackgroundManager) Stop(sessionID string) (BackgroundStatus, error) {
+func (m *BackgroundManager) Stop(sessionID string) (status BackgroundStatus, err error) {
 	if err := m.validate(); err != nil {
 		return BackgroundStatus{}, err
 	}
@@ -546,7 +548,9 @@ func (m *BackgroundManager) Stop(sessionID string) (BackgroundStatus, error) {
 	if err != nil {
 		return BackgroundStatus{}, err
 	}
-	defer m.releaseStopTransition(sessionID, stopOwner)
+	defer func() {
+		err = errors.Join(err, m.releaseStopTransition(sessionID, stopOwner))
+	}()
 	policy, err := m.store.Get(sessionID)
 	if err != nil {
 		return BackgroundStatus{}, err
@@ -582,7 +586,7 @@ func (m *BackgroundManager) Stop(sessionID string) (BackgroundStatus, error) {
 			}
 		}
 	}
-	status, err := m.Get(sessionID)
+	status, err = m.Get(sessionID)
 	if err != nil {
 		return backgroundStatus(result.policy), err
 	}
@@ -671,78 +675,87 @@ func (m *BackgroundManager) Resume() error {
 			return err
 		}
 		if m.hasActiveWorker(policy.SessionID) {
-			m.releaseTransition(policy.SessionID)
+			if err := m.releaseTransition(policy.SessionID); err != nil {
+				return err
+			}
 			continue
 		}
 		current, err := m.store.Get(policy.SessionID)
 		if errors.Is(err, ErrBackgroundPolicyNotFound) {
-			m.releaseTransition(policy.SessionID)
+			if err := m.releaseTransition(policy.SessionID); err != nil {
+				return err
+			}
 			continue
 		}
 		if err != nil {
-			m.releaseTransition(policy.SessionID)
-			return err
+			return errors.Join(err, m.releaseTransition(policy.SessionID))
 		}
 		policy = current
 		if !policy.Enabled {
-			m.releaseTransition(policy.SessionID)
+			if err := m.releaseTransition(policy.SessionID); err != nil {
+				return err
+			}
 			continue
 		}
 		if policy.State != BackgroundStateRunning || policy.PolicyVersion != BackgroundPolicyVersion || policy.AcknowledgedAt.IsZero() {
 			if err := m.block(policy, BackgroundOutcomePolicyInvalid); err != nil {
-				m.releaseTransition(policy.SessionID)
+				return errors.Join(err, m.releaseTransition(policy.SessionID))
+			}
+			if err := m.releaseTransition(policy.SessionID); err != nil {
 				return err
 			}
-			m.releaseTransition(policy.SessionID)
 			continue
 		}
 		if _, err := m.sessions.Get(policy.SessionID); err != nil {
 			if errors.Is(err, ErrSessionNotFound) {
 				if err := m.block(policy, BackgroundOutcomeSessionMissing); err != nil {
-					m.releaseTransition(policy.SessionID)
+					return errors.Join(err, m.releaseTransition(policy.SessionID))
+				}
+				if err := m.releaseTransition(policy.SessionID); err != nil {
 					return err
 				}
-				m.releaseTransition(policy.SessionID)
 				continue
 			}
-			m.releaseTransition(policy.SessionID)
-			return err
+			return errors.Join(err, m.releaseTransition(policy.SessionID))
 		}
 		resolved, err := m.resolver(policy.Profile)
 		if err != nil {
 			if errors.Is(err, ErrProfileNotFound) || errors.Is(err, ErrUnknownAgent) {
 				if err := m.block(policy, BackgroundOutcomeProfileMissing); err != nil {
-					m.releaseTransition(policy.SessionID)
+					return errors.Join(err, m.releaseTransition(policy.SessionID))
+				}
+				if err := m.releaseTransition(policy.SessionID); err != nil {
 					return err
 				}
-				m.releaseTransition(policy.SessionID)
 				continue
 			}
-			m.releaseTransition(policy.SessionID)
-			return err
+			return errors.Join(err, m.releaseTransition(policy.SessionID))
 		}
 		if !resolved.TrustValid {
 			if err := m.block(policy, BackgroundOutcomeProfileUntrusted); err != nil {
-				m.releaseTransition(policy.SessionID)
+				return errors.Join(err, m.releaseTransition(policy.SessionID))
+			}
+			if err := m.releaseTransition(policy.SessionID); err != nil {
 				return err
 			}
-			m.releaseTransition(policy.SessionID)
 			continue
 		}
 		if resolved.DescriptorHash != policy.DescriptorHash {
 			if err := m.block(policy, BackgroundOutcomeProfileDrift); err != nil {
-				m.releaseTransition(policy.SessionID)
+				return errors.Join(err, m.releaseTransition(policy.SessionID))
+			}
+			if err := m.releaseTransition(policy.SessionID); err != nil {
 				return err
 			}
-			m.releaseTransition(policy.SessionID)
 			continue
 		}
 		if err := resolved.Spec.Validate(); err != nil {
 			if err := m.block(policy, BackgroundOutcomeProfileUntrusted); err != nil {
-				m.releaseTransition(policy.SessionID)
+				return errors.Join(err, m.releaseTransition(policy.SessionID))
+			}
+			if err := m.releaseTransition(policy.SessionID); err != nil {
 				return err
 			}
-			m.releaseTransition(policy.SessionID)
 			continue
 		}
 		now := m.currentTime()
@@ -752,8 +765,7 @@ func (m *BackgroundManager) Resume() error {
 		policy.UpdatedAt = now
 		persisted, err := m.persistBeforeLaunch(policy, BackgroundAuditResume)
 		if err != nil {
-			m.releaseTransition(policy.SessionID)
-			return err
+			return errors.Join(err, m.releaseTransition(policy.SessionID))
 		}
 		m.mu.Lock()
 		if m.closed || m.ctx.Err() != nil {
@@ -764,11 +776,9 @@ func (m *BackgroundManager) Resume() error {
 			persisted.UpdatedAt = m.currentTime()
 			result := m.persistTerminal(persisted, BackgroundAuditStop)
 			m.rememberTerminal(result)
-			m.releaseTransition(policy.SessionID)
-			return errors.Join(ErrBackgroundManagerClosed, result.err)
+			return errors.Join(ErrBackgroundManagerClosed, result.err, m.releaseTransition(policy.SessionID))
 		}
 		delete(m.terminal, policy.SessionID)
-		delete(m.transitions, policy.SessionID)
 		m.launchLocked(persisted, resolved)
 		m.mu.Unlock()
 	}
@@ -824,7 +834,10 @@ func (m *BackgroundManager) launchLocked(policy BackgroundPolicy, resolved Resol
 		ctx:            ctx,
 		cancel:         cancel,
 		done:           make(chan struct{}),
+		releaseLease:   m.transitionLease[policy.SessionID],
 	}
+	delete(m.transitionLease, policy.SessionID)
+	delete(m.transitions, policy.SessionID)
 	m.active[policy.SessionID] = worker
 	m.wg.Go(func() {
 		outcome, err := m.watchWorker(ctx, resolved, policy.SessionID)
@@ -877,8 +890,26 @@ func (m *BackgroundManager) workerDone(sessionID string, worker *backgroundWorke
 		}
 		result = m.persistTerminal(policy, action)
 	}
+	if worker.releaseLease != nil {
+		if releaseErr := worker.releaseLease(); releaseErr != nil {
+			workerErr = errors.Join(workerErr, releaseErr)
+			outcome = BackgroundOutcomeWorkerError
+			ignoreCancellation = false
+			if workerOwnsPersistence {
+				policy := worker.policy
+				policy.Enabled = false
+				policy.State = BackgroundStateError
+				policy.Outcome = outcome
+				policy.UpdatedAt = m.currentTime()
+				result = m.persistTerminal(policy, BackgroundAuditError)
+			}
+		}
+		worker.releaseLease = nil
+	}
 
 	m.mu.Lock()
+	worker.outcome = outcome
+	worker.err = workerErr
 	if current, ok := m.active[sessionID]; ok && current == worker {
 		delete(m.active, sessionID)
 	}
@@ -1005,10 +1036,7 @@ func (m *BackgroundManager) reconcileTransitions() error {
 		}
 		result := m.persistTerminal(transition.Policy, transition.Action)
 		m.rememberTerminal(result)
-		m.releaseTransition(transition.Policy.SessionID)
-		if result.err != nil {
-			reconcileErr = errors.Join(reconcileErr, result.err)
-		}
+		reconcileErr = errors.Join(reconcileErr, result.err, m.releaseTransition(transition.Policy.SessionID))
 	}
 	return reconcileErr
 }
@@ -1089,6 +1117,16 @@ func (m *BackgroundManager) reserveTransition(sessionID string) error {
 	if _, busy := m.transitions[sessionID]; busy {
 		return fmt.Errorf("%w: %s", ErrBackgroundTransitionBusy, sessionID)
 	}
+	if _, active := m.active[sessionID]; !active {
+		release, acquired, err := tryStoreFileLock(m.workerLeasePath(sessionID))
+		if err != nil {
+			return err
+		}
+		if !acquired {
+			return fmt.Errorf("%w: %s", ErrBackgroundTransitionBusy, sessionID)
+		}
+		m.transitionLease[sessionID] = release
+	}
 	m.transitions[sessionID] = struct{}{}
 	return nil
 }
@@ -1112,25 +1150,53 @@ func (m *BackgroundManager) reserveStopTransition(sessionID string) (*background
 	if _, busy := m.transitions[sessionID]; busy {
 		return nil, nil, fmt.Errorf("%w: %s", ErrBackgroundTransitionBusy, sessionID)
 	}
+	worker := m.active[sessionID]
+	if worker == nil {
+		release, acquired, err := tryStoreFileLock(m.workerLeasePath(sessionID))
+		if err != nil {
+			return nil, nil, err
+		}
+		if !acquired {
+			return nil, nil, fmt.Errorf("%w: %s", ErrBackgroundTransitionBusy, sessionID)
+		}
+		m.transitionLease[sessionID] = release
+	}
 	owner := &backgroundStopOwner{handoff: make(chan bool, 1)}
 	m.transitions[sessionID] = struct{}{}
 	m.stopping[sessionID] = owner
-	return m.active[sessionID], owner, nil
+	return worker, owner, nil
 }
 
-func (m *BackgroundManager) releaseStopTransition(sessionID string, owner *backgroundStopOwner) {
+func (m *BackgroundManager) releaseStopTransition(sessionID string, owner *backgroundStopOwner) error {
 	m.mu.Lock()
+	var release func() error
 	if m.stopping[sessionID] == owner {
 		delete(m.stopping, sessionID)
 		delete(m.transitions, sessionID)
+		release = m.transitionLease[sessionID]
+		delete(m.transitionLease, sessionID)
 	}
 	m.mu.Unlock()
+	if release != nil {
+		return release()
+	}
+	return nil
 }
 
-func (m *BackgroundManager) releaseTransition(sessionID string) {
+func (m *BackgroundManager) releaseTransition(sessionID string) error {
 	m.mu.Lock()
 	delete(m.transitions, sessionID)
+	release := m.transitionLease[sessionID]
+	delete(m.transitionLease, sessionID)
 	m.mu.Unlock()
+	if release != nil {
+		return release()
+	}
+	return nil
+}
+
+func (m *BackgroundManager) workerLeasePath(sessionID string) string {
+	return filepath.Join(filepath.Dir(m.sessions.Path()), "background-workers", storeKey(sessionID)+".lock")
 }
 
 func (m *BackgroundManager) hasActiveWorker(sessionID string) bool {

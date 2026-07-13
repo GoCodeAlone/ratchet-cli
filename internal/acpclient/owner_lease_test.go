@@ -55,6 +55,85 @@ func TestOwnerLeaseRejectsConcurrentClaimAndReleasesProjection(t *testing.T) {
 	}
 }
 
+func TestRequestCancelActiveExecutionHoldsOwnerClaimThroughCommit(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 13, 22, 0, 0, 0, time.UTC)
+	if err := store.Upsert(SessionRecord{
+		ID:        "cancel-race",
+		Status:    SessionStatusRunning,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	lease, err := store.AcquireOwnerLease(OwnerLock{
+		SessionID: "cancel-race", PID: 101, Kind: OwnerKindExecution, StartedAt: now,
+	})
+	if errors.Is(err, ErrStoreProcessLockUnsupported) {
+		t.Skip("cross-process owner leases are unsupported on this platform")
+	}
+	if err != nil {
+		t.Fatalf("AcquireOwnerLease: %v", err)
+	}
+
+	mutationEntered := make(chan struct{})
+	continueMutation := make(chan struct{})
+	store.beforeMutation = func() {
+		close(mutationEntered)
+		<-continueMutation
+	}
+	cancelDone := make(chan error, 1)
+	go func() {
+		cancelDone <- store.RequestCancelActiveExecution("cancel-race", now.Add(time.Second))
+	}()
+	<-mutationEntered
+
+	replacementDone := make(chan struct {
+		lease *OwnerLease
+		err   error
+	}, 1)
+	go func() {
+		if err := lease.Release(); err != nil {
+			replacementDone <- struct {
+				lease *OwnerLease
+				err   error
+			}{err: err}
+			return
+		}
+		replacement, err := store.AcquireOwnerLease(OwnerLock{
+			SessionID: "cancel-race", PID: 202, Kind: OwnerKindSnapshot, StartedAt: now.Add(2 * time.Second),
+		})
+		replacementDone <- struct {
+			lease *OwnerLease
+			err   error
+		}{lease: replacement, err: err}
+	}()
+	select {
+	case replacement := <-replacementDone:
+		if replacement.lease != nil {
+			_ = replacement.lease.Release()
+		}
+		t.Fatalf("owner changed before cancellation committed: %v", replacement.err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(continueMutation)
+	if err := <-cancelDone; err != nil {
+		t.Fatalf("RequestCancelActiveExecution: %v", err)
+	}
+	replacement := <-replacementDone
+	if replacement.err != nil {
+		t.Fatalf("replace owner after cancellation: %v", replacement.err)
+	}
+	defer func() { _ = replacement.lease.Release() }()
+	request, err := store.CancelRequest("cancel-race")
+	if err != nil {
+		t.Fatalf("CancelRequest: %v", err)
+	}
+	if request.RequestedAt != now.Add(time.Second) {
+		t.Fatalf("RequestedAt = %s, want %s", request.RequestedAt, now.Add(time.Second))
+	}
+}
+
 func TestOwnerLeaseReleaseUnlocksWhenProjectionCleanupFails(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
 	now := time.Date(2026, 7, 13, 21, 0, 0, 0, time.UTC)

@@ -20,6 +20,7 @@ var (
 	ErrOwnerNotCancelable          = errors.New("acp client owner does not represent active execution")
 	ErrOwnerLeaseBusy              = errors.New("acp client owner lease is held")
 	ErrStoreProcessLockUnsupported = errors.New("acp client cross-process store locks are unsupported")
+	ErrStoreCommitUnconfirmed      = errors.New("acp client store commit completed but durability confirmation failed")
 )
 
 type OwnerLease struct {
@@ -35,6 +36,9 @@ type Store struct {
 	beforeMutation      func()
 	transactionLoaded   func()
 	eventLogWritePaused func()
+	sessionWriter       func(storeFile) error
+	eventLogWriter      func(string, []byte) error
+	eventLogRemover     func(string) error
 }
 
 type storeFile struct {
@@ -456,39 +460,67 @@ func (l *OwnerLease) Release() error {
 func (s *Store) Owner(id string) (OwnerLock, error) {
 	var owner OwnerLock
 	err := withStoreProcessLock(s.ownerClaimPath(id), func() error {
-		release, acquired, err := tryStoreFileLock(s.ownerLeasePath(id))
-		if err != nil {
-			return err
-		}
-		if acquired {
-			removeErr := backgroundRemoveFile(s.ownerPath(id))
-			releaseErr := release()
-			if removeErr != nil || releaseErr != nil {
-				return errors.Join(removeErr, releaseErr)
-			}
-			return fmt.Errorf("%w: %s", os.ErrNotExist, id)
-		}
-		if err := readJSONFile(s.ownerPath(id), &owner); err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return fmt.Errorf("%w: live lease metadata unavailable for %s", ErrInvalidOwnerLock, id)
-			}
-			return err
-		}
-		if owner.SessionID == "" {
-			owner.SessionID = id
-		}
-		if owner.PID == 0 || owner.StartedAt.IsZero() {
-			return fmt.Errorf("%w: %s", ErrInvalidOwnerLock, id)
-		}
-		if owner.Kind != "" && owner.Kind != OwnerKindExecution && owner.Kind != OwnerKindSnapshot {
-			return fmt.Errorf("%w: unsupported owner kind %q", ErrInvalidOwnerLock, owner.Kind)
-		}
-		return nil
+		var err error
+		owner, err = s.liveOwnerLocked(id)
+		return err
 	})
 	return owner, err
 }
 
+func (s *Store) liveOwnerLocked(id string) (OwnerLock, error) {
+	release, acquired, err := tryStoreFileLock(s.ownerLeasePath(id))
+	if err != nil {
+		return OwnerLock{}, err
+	}
+	if acquired {
+		removeErr := backgroundRemoveFile(s.ownerPath(id))
+		releaseErr := release()
+		if removeErr != nil || releaseErr != nil {
+			return OwnerLock{}, errors.Join(removeErr, releaseErr)
+		}
+		return OwnerLock{}, fmt.Errorf("%w: %s", os.ErrNotExist, id)
+	}
+	var owner OwnerLock
+	if err := readJSONFile(s.ownerPath(id), &owner); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return OwnerLock{}, fmt.Errorf("%w: live lease metadata unavailable for %s", ErrInvalidOwnerLock, id)
+		}
+		return OwnerLock{}, err
+	}
+	if owner.SessionID == "" {
+		owner.SessionID = id
+	}
+	if owner.PID == 0 || owner.StartedAt.IsZero() {
+		return OwnerLock{}, fmt.Errorf("%w: %s", ErrInvalidOwnerLock, id)
+	}
+	if owner.Kind != "" && owner.Kind != OwnerKindExecution && owner.Kind != OwnerKindSnapshot {
+		return OwnerLock{}, fmt.Errorf("%w: unsupported owner kind %q", ErrInvalidOwnerLock, owner.Kind)
+	}
+	return owner, nil
+}
+
+func (s *Store) RequestCancelActiveExecution(id string, when time.Time) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return errors.New("cancel session id is required")
+	}
+	return withStoreProcessLock(s.ownerClaimPath(id), func() error {
+		owner, err := s.liveOwnerLocked(id)
+		if err != nil {
+			return err
+		}
+		if !owner.Cancelable() {
+			return fmt.Errorf("%w: %s", ErrOwnerNotCancelable, id)
+		}
+		return s.requestCancel(id, when)
+	})
+}
+
 func (s *Store) RequestCancel(id string, when time.Time) error {
+	return s.requestCancel(id, when)
+}
+
+func (s *Store) requestCancel(id string, when time.Time) error {
 	if strings.TrimSpace(id) == "" {
 		return errors.New("cancel session id is required")
 	}
@@ -550,7 +582,13 @@ func (s *Store) mutateTransaction(mutate func(*storeFile) (bool, error)) error {
 		if err != nil || !changed {
 			return err
 		}
-		return s.saveUnlocked(data)
+		if err := s.saveUnlocked(data); err != nil {
+			if backgroundWriteCommitted(err) {
+				return storeCommitUnconfirmed(backgroundPostCommitCause(err))
+			}
+			return err
+		}
+		return nil
 	})
 }
 
@@ -601,6 +639,9 @@ func (s *Store) saveUnlocked(data storeFile) error {
 	slices.SortFunc(data.Sessions, func(a, b SessionRecord) int {
 		return b.UpdatedAt.Compare(a.UpdatedAt)
 	})
+	if s.sessionWriter != nil {
+		return s.sessionWriter(data)
+	}
 	return backgroundWriteJSONAtomic(s.path, data)
 }
 

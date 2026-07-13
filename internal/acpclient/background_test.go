@@ -183,6 +183,66 @@ func TestBackgroundManagerStartIsIdempotentOnlyForSameActivePolicy(t *testing.T)
 	manager.Shutdown()
 }
 
+func TestBackgroundManagerSerializesWorkersAcrossManagers(t *testing.T) {
+	dir := t.TempDir()
+	sessions := NewStore(filepath.Join(dir, "sessions.json"))
+	now := backgroundTestNow()
+	if err := sessions.Upsert(SessionRecord{
+		ID:        "shared-session",
+		Agent:     "fixture",
+		Status:    SessionStatusQueued,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("Upsert session: %v", err)
+	}
+	store := NewBackgroundStore(filepath.Join(dir, "background.json"))
+	audit := NewBackgroundAudit(filepath.Join(dir, "background-audit.jsonl"))
+	firstStarted := make(chan struct{})
+	secondStarted := make(chan struct{})
+	newManager := func(started chan struct{}) *BackgroundManager {
+		return NewBackgroundManager(sessions, store, audit, BackgroundManagerOptions{
+			Context: t.Context(),
+			Now:     backgroundTestClock,
+			Resolver: func(name string) (ResolvedBackgroundProfile, error) {
+				return trustedBackgroundProfile(name, "descriptor-hash"), nil
+			},
+			Watcher: func(ctx context.Context, _ *Store, _ AgentSpec, _ RunOptions, _ string, _ WatchOptions, _ func(WatchCycle)) (WatchResult, error) {
+				close(started)
+				<-ctx.Done()
+				return WatchResult{}, ctx.Err()
+			},
+		})
+	}
+	first := newManager(firstStarted)
+	second := newManager(secondStarted)
+	t.Cleanup(second.Shutdown)
+	t.Cleanup(first.Shutdown)
+
+	if _, err := first.Start("shared-session", "fixture", true); err != nil {
+		if errors.Is(err, ErrStoreProcessLockUnsupported) {
+			t.Skip("cross-process background leases are unsupported on this platform")
+		}
+		t.Fatalf("first Start: %v", err)
+	}
+	<-firstStarted
+	if _, err := second.Start("shared-session", "fixture", true); !errors.Is(err, ErrBackgroundTransitionBusy) {
+		t.Fatalf("second Start error = %v, want ErrBackgroundTransitionBusy", err)
+	}
+	select {
+	case <-secondStarted:
+		t.Fatal("second manager launched a duplicate watcher")
+	default:
+	}
+	policy, err := store.Get("shared-session")
+	if err != nil {
+		t.Fatalf("Get policy: %v", err)
+	}
+	if !policy.Enabled || policy.State != BackgroundStateRunning {
+		t.Fatalf("shared policy = %#v, want enabled/running", policy)
+	}
+}
+
 func TestBackgroundManagerStartRequiresAcknowledgement(t *testing.T) {
 	manager, _, _ := newBackgroundTestManager(t, func(name string) (ResolvedBackgroundProfile, error) {
 		return trustedBackgroundProfile(name, "hash"), nil

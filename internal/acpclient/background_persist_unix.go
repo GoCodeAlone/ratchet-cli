@@ -37,7 +37,10 @@ func backgroundWriteFileAtomic(path string, data []byte) error {
 	if err := os.Rename(tmpPath, path); err != nil {
 		return err
 	}
-	return backgroundSyncDir(dir)
+	if err := backgroundSyncDir(dir); err != nil {
+		return newBackgroundPostCommitError(err)
+	}
+	return nil
 }
 
 func backgroundOpenPrivateAppend(path string) (*os.File, error) {
@@ -63,7 +66,10 @@ func backgroundRemoveFile(path string) error {
 	if err != nil {
 		return err
 	}
-	return backgroundSyncDir(filepath.Dir(path))
+	if err := backgroundSyncDir(filepath.Dir(path)); err != nil {
+		return newBackgroundPostCommitError(err)
+	}
+	return nil
 }
 
 func backgroundSyncDir(path string) error {

@@ -44,7 +44,10 @@ func backgroundWriteFileAtomic(path string, data []byte) error {
 	if err := backgroundReplaceFile(tmpPath, path); err != nil {
 		return err
 	}
-	return backgroundSetPrivateACL(path)
+	if err := backgroundSetPrivateACL(path); err != nil {
+		return newBackgroundPostCommitError(err)
+	}
+	return nil
 }
 
 func backgroundOpenPrivateAppend(path string) (*os.File, error) {

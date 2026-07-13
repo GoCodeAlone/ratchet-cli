@@ -327,15 +327,40 @@ func (s *Store) mutateSessionWithEvents(id string, events []EventLogLine, mutate
 			if len(original) > 0 && original[len(original)-1] != '\n' {
 				updated = append(append(slices.Clone(original), '\n'), appended...)
 			}
-			if err := backgroundWriteFileAtomic(path, updated); err != nil {
-				return err
+			var eventConfirmationErr error
+			if err := s.replaceEventLog(path, updated); err != nil {
+				if !backgroundWriteCommitted(err) {
+					return err
+				}
+				eventConfirmationErr = backgroundPostCommitCause(err)
 			}
 			if err := s.saveUnlocked(data); err != nil {
-				return errors.Join(err, restoreEventLogSnapshot(path, original, existed))
+				if backgroundWriteCommitted(err) {
+					return storeCommitUnconfirmed(eventConfirmationErr, backgroundPostCommitCause(err))
+				}
+				restoreErr := restoreEventLogSnapshot(path, original, existed)
+				return errors.Join(eventConfirmationErr, err, backgroundPostCommitCause(restoreErr))
+			}
+			if eventConfirmationErr != nil {
+				return storeCommitUnconfirmed(eventConfirmationErr)
 			}
 			return nil
 		})
 	})
+}
+
+func (s *Store) replaceEventLog(path string, data []byte) error {
+	if s.eventLogWriter != nil {
+		return s.eventLogWriter(path, data)
+	}
+	return backgroundWriteFileAtomic(path, data)
+}
+
+func (s *Store) removeEventLog(path string) error {
+	if s.eventLogRemover != nil {
+		return s.eventLogRemover(path)
+	}
+	return backgroundRemoveFile(path)
 }
 
 func eventLogSnapshot(path string) ([]byte, bool, int, error) {

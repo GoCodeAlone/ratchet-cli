@@ -427,6 +427,43 @@ func TestImportSessionEventLogFailureLeavesNoCollisionAndCanRetry(t *testing.T) 
 	}
 }
 
+func TestImportSessionPostCommitErrorKeepsRawHistory(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(filepath.Join(dir, "sessions.json"))
+	now := time.Date(2026, 7, 13, 22, 30, 0, 0, time.UTC)
+	archivePath := writeRawArchiveFixture(t, map[string]any{
+		"format_version": 1,
+		"exported_at":    now.Format(time.RFC3339Nano),
+		"exported_by":    "acpx",
+		"session": map[string]any{
+			"record_id": "postcommit-import", "cwd_relative": ".", "created_at": now.Format(time.RFC3339Nano), "updated_at": now.Format(time.RFC3339Nano),
+			"state": map[string]any{"id": "postcommit-import", "status": "completed", "createdAt": now.Format(time.RFC3339Nano), "updatedAt": now.Format(time.RFC3339Nano)},
+		},
+		"history": []json.RawMessage{json.RawMessage(`{"jsonrpc":"2.0","id":1,"result":{"imported":true}}`)},
+	})
+	store.sessionWriter = func(data storeFile) error {
+		if err := backgroundWriteJSONAtomic(store.path, data); err != nil {
+			return err
+		}
+		return newBackgroundPostCommitError(errors.New("session durability confirmation failed"))
+	}
+	if _, err := ImportSession(store, archivePath, ImportOptions{}); !errors.Is(err, ErrStoreCommitUnconfirmed) {
+		t.Fatalf("ImportSession error = %v, want ErrStoreCommitUnconfirmed", err)
+	}
+
+	reopened := NewStore(store.Path())
+	if _, err := reopened.Get("postcommit-import"); err != nil {
+		t.Fatalf("Get committed import: %v", err)
+	}
+	events, err := reopened.ReadEventLog("postcommit-import")
+	if err != nil {
+		t.Fatalf("ReadEventLog: %v", err)
+	}
+	if len(events) != 1 || events[0].Seq != 1 {
+		t.Fatalf("imported event projection = %#v, want one event", events)
+	}
+}
+
 func TestImportSessionValidatesVersionAndCollisions(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
 	now := time.Date(2026, 7, 2, 8, 45, 0, 0, time.UTC)

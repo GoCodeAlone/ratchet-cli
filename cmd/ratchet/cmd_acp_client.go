@@ -1844,14 +1844,8 @@ func executeACPClientStatus(store *acpclient.Store, id string, jsonOut bool, w i
 }
 
 func executeACPClientCancel(store *acpclient.Store, id string, jsonOut bool, w io.Writer) error {
-	owner, ownerErr := store.Owner(id)
+	ownerErr := store.RequestCancelActiveExecution(id, time.Now().UTC())
 	if ownerErr == nil {
-		if !owner.Cancelable() {
-			return fmt.Errorf("%w: %s", acpclient.ErrOwnerNotCancelable, id)
-		}
-		if err := store.RequestCancel(id, time.Now().UTC()); err != nil {
-			return err
-		}
 		if jsonOut {
 			return json.NewEncoder(w).Encode(struct {
 				SessionID string `json:"session_id"`

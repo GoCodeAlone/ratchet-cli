@@ -656,3 +656,15 @@ watch; completion plus event append commits under the sessions-to-event lock
 order with rollback on session-save failure; and owner metadata distinguishes
 backward-compatible execution from non-cancelable snapshots. Scope: manifest
 unchanged; this closes Task 6's second adversarial review cycle.
+
+### Backport 2026-07-13: Cross-process lifecycle and commit-stage ownership
+
+Cause: paired session/event writes could mistake a post-replacement durability
+or ACL error for a pre-commit failure and remove the matching projection;
+background transition ownership ended at a manager process; and cancel checked
+owner kind before, rather than during, durable request creation. Change: mark
+post-commit filesystem errors and preserve logically committed session/event
+pairs; hold a per-session OS background lease from transition persistence
+through worker termination; and validate a live execution owner while holding
+its claim lock through cancellation commit. Scope: manifest unchanged; these
+are Task 6 durability and cross-process invariants from review cycle three.
