@@ -728,6 +728,16 @@ process sequence driven by durable transition/audit files, explicit audit-lock
 blocking, and exactly one committed record per ID. Scope: manifest unchanged;
 Task 6 verification detail.
 
+### Backport 2026-07-13: Cross-platform Windows releaseguard
+
+Cause: Go excludes files ending `_windows_test.go` on non-Windows hosts, so the
+planned host releaseguard command reported no tests. Change: keep native attacks
+in ACP's Windows test file, but place declaration/skip/CI-selector checks in
+cross-platform `internal/releaseguard/acp_background_guard_test.go`. Scope:
+manifest unchanged; Task 6 verification filename only. Evidence:
+`go test ./internal/releaseguard -run BackgroundWindows -count=1` executes and
+passes on the host.
+
 Rewrite contract:
 
 - `CheckCancellation(id) (bool, error)` is authoritative and cancellation is

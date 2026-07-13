@@ -885,7 +885,7 @@ Additional files in Task 6:
   `background_concurrency_unix_test.go`, and `background_process_lock_test.go`
 - Modify/create as required: `internal/acpclient/background_persist*.go`,
   `background_persist*_test.go`, `store_lock*.go`, and `store_lock*_test.go`
-- Create: `internal/releaseguard/acp_background_windows_test.go`
+- Create: `internal/releaseguard/acp_background_guard_test.go`
 
 Add RED tests before the rewrite:
 
@@ -924,7 +924,7 @@ IDs, own profile trust through real child start, and make cancellation causal.
 Verification:
 
 ```bash
-gofmt -w internal/acpclient/*.go internal/releaseguard/acp_background_windows_test.go
+gofmt -w internal/acpclient/*.go internal/releaseguard/acp_background_guard_test.go
 go test ./internal/acpclient -run 'SessionWriterInventory|Cancel|Cancellation|Audit|Profile.*Trust|Profile.*Launch|Background|WatchQueue|DrainQueue|ImportSession' -count=1
 go test -race ./internal/acpclient -run 'Cancel|Audit|Profile.*Launch|Background|WatchQueue|DrainQueue' -count=1
 go test ./internal/acpclient -run 'Cancel|Audit|Profile.*Launch|Background' -count=20
