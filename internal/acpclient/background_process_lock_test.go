@@ -741,7 +741,7 @@ func TestBackgroundProcessLockHelper(t *testing.T) {
 		t.Fatalf("probe %s process lock: %v", mode, err)
 	}
 	if contended {
-		if err := os.WriteFile(os.Getenv(backgroundLockReadyPathEnv), []byte("contended\n"), 0o600); err != nil {
+		if err := backgroundWriteFileAtomic(os.Getenv(backgroundLockReadyPathEnv), []byte("contended\n")); err != nil {
 			t.Fatalf("write contention marker: %v", err)
 		}
 	}

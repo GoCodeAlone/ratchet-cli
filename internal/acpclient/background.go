@@ -500,6 +500,9 @@ func (m *BackgroundManager) Start(sessionID, profile string, acknowledged bool) 
 		return BackgroundStatus{}, err
 	}
 	defer m.lifecycle.Done()
+	if err := m.reconcileCancellationProjection(); err != nil {
+		return BackgroundStatus{}, err
+	}
 	canceled, cancelErr := m.recoverCanceledSession(sessionID)
 	if cancelErr != nil && !canceled {
 		return BackgroundStatus{}, cancelErr
@@ -705,6 +708,9 @@ func (m *BackgroundManager) Resume() error {
 	if m.managerDone() {
 		return ErrBackgroundManagerClosed
 	}
+	if err := m.reconcileCancellationProjection(); err != nil {
+		return err
+	}
 	if err := m.reconcileTerminalAudits(); err != nil {
 		return err
 	}
@@ -897,6 +903,13 @@ func (m *BackgroundManager) recoverCanceledSession(sessionID string) (bool, erro
 	}
 	_, err = m.sessions.RecoverStaleQueue(sessionID, m.currentTime())
 	return true, err
+}
+
+func (m *BackgroundManager) reconcileCancellationProjection() error {
+	if err := m.sessions.ReconcileCancellationRequests(); err != nil {
+		return errors.Join(ErrBackgroundPersistenceDegraded, err)
+	}
+	return nil
 }
 
 func (m *BackgroundManager) launchLocked(policy BackgroundPolicy, resolved ResolvedBackgroundProfile) {

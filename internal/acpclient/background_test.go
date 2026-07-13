@@ -502,6 +502,175 @@ func TestBackgroundManagerStartRequiresAcknowledgement(t *testing.T) {
 	}
 }
 
+func TestBackgroundManagerLifecycleRepairsMissingCancellationProjection(t *testing.T) {
+	for _, action := range []string{"start", "resume"} {
+		t.Run(action, func(t *testing.T) {
+			dir := t.TempDir()
+			now := backgroundTestNow()
+			sessions := NewStore(filepath.Join(dir, "sessions.json"))
+			if err := sessions.Upsert(SessionRecord{
+				ID: "session-1", Agent: "fixture", Status: SessionStatusCancelRequested, CreatedAt: now, UpdatedAt: now,
+			}); err != nil {
+				t.Fatalf("seed session: %v", err)
+			}
+			store := NewBackgroundStore(filepath.Join(dir, "background.json"))
+			if action == "resume" {
+				if err := store.Upsert(backgroundRunnablePolicy(now)); err != nil {
+					t.Fatalf("seed policy: %v", err)
+				}
+			}
+			audit := NewBackgroundAudit(filepath.Join(dir, "background-audit.jsonl"))
+			var resolves atomic.Int32
+			var watchers atomic.Int32
+			manager := NewBackgroundManager(sessions, store, audit, BackgroundManagerOptions{
+				Context: t.Context(),
+				Now:     func() time.Time { return now },
+				Resolver: func(name string) (ResolvedBackgroundProfile, error) {
+					resolves.Add(1)
+					return trustedBackgroundProfile(name, "descriptor-hash"), nil
+				},
+				Watcher: countingBackgroundWatcher(&watchers, nil),
+			})
+			t.Cleanup(manager.Shutdown)
+
+			if action == "start" {
+				if _, err := manager.Start("session-1", "fixture", true); !errors.Is(err, ErrCancelRequested) {
+					t.Fatalf("Start error = %v, want ErrCancelRequested", err)
+				}
+			} else if err := manager.Resume(); err != nil {
+				t.Fatalf("Resume: %v", err)
+			}
+			request, err := sessions.CancelRequest("session-1")
+			if err != nil {
+				t.Fatalf("CancelRequest after %s: %v", action, err)
+			}
+			if request.SessionID != "session-1" || !request.RequestedAt.Equal(now) {
+				t.Fatalf("CancelRequest after %s = %#v, want authoritative projection", action, request)
+			}
+			if resolves.Load() != 0 || watchers.Load() != 0 {
+				t.Fatalf("resolver calls = %d, watcher calls = %d, want zero", resolves.Load(), watchers.Load())
+			}
+		})
+	}
+}
+
+func TestBackgroundManagerLifecycleRemovesStaleCancellationProjectionBeforeLaunch(t *testing.T) {
+	for _, action := range []string{"start", "resume"} {
+		t.Run(action, func(t *testing.T) {
+			dir := t.TempDir()
+			now := backgroundTestNow()
+			sessions := NewStore(filepath.Join(dir, "sessions.json"))
+			if err := sessions.Upsert(SessionRecord{
+				ID: "session-1", Agent: "fixture", Status: SessionStatusQueued, CreatedAt: now, UpdatedAt: now,
+			}); err != nil {
+				t.Fatalf("seed session: %v", err)
+			}
+			if err := backgroundWriteJSONAtomic(sessions.cancelPath("session-1"), CancelRequest{
+				SessionID: "session-1", RequestedAt: now.Add(-time.Hour),
+			}); err != nil {
+				t.Fatalf("seed stale cancellation projection: %v", err)
+			}
+			store := NewBackgroundStore(filepath.Join(dir, "background.json"))
+			if action == "resume" {
+				if err := store.Upsert(backgroundRunnablePolicy(now)); err != nil {
+					t.Fatalf("seed policy: %v", err)
+				}
+			}
+			audit := NewBackgroundAudit(filepath.Join(dir, "background-audit.jsonl"))
+			started := make(chan struct{}, 1)
+			manager := NewBackgroundManager(sessions, store, audit, BackgroundManagerOptions{
+				Context: t.Context(),
+				Now:     func() time.Time { return now },
+				Resolver: func(name string) (ResolvedBackgroundProfile, error) {
+					if _, err := sessions.CancelRequest("session-1"); !errors.Is(err, os.ErrNotExist) {
+						return ResolvedBackgroundProfile{}, errors.New("stale cancellation projection reached resolver")
+					}
+					return trustedBackgroundProfile(name, "descriptor-hash"), nil
+				},
+				Watcher: func(ctx context.Context, _ *Store, _ AgentSpec, _ RunOptions, _ string, _ WatchOptions, _ func(WatchCycle)) (WatchResult, error) {
+					started <- struct{}{}
+					<-ctx.Done()
+					return WatchResult{}, ctx.Err()
+				},
+			})
+			t.Cleanup(manager.Shutdown)
+
+			if action == "start" {
+				if _, err := manager.Start("session-1", "fixture", true); err != nil {
+					t.Fatalf("Start: %v", err)
+				}
+			} else if err := manager.Resume(); err != nil {
+				t.Fatalf("Resume: %v", err)
+			}
+			select {
+			case <-started:
+			case <-time.After(3 * time.Second):
+				t.Fatalf("%s did not launch after stale projection repair", action)
+			}
+			if _, err := sessions.CancelRequest("session-1"); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("CancelRequest after %s error = %v, want os.ErrNotExist", action, err)
+			}
+		})
+	}
+}
+
+func TestBackgroundManagerLifecycleFailsClosedWhenCancellationProjectionRepairFails(t *testing.T) {
+	for _, action := range []string{"start", "resume"} {
+		t.Run(action, func(t *testing.T) {
+			dir := t.TempDir()
+			now := backgroundTestNow()
+			sessions := NewStore(filepath.Join(dir, "sessions.json"))
+			if err := sessions.Upsert(SessionRecord{
+				ID: "session-1", Agent: "fixture", Status: SessionStatusCancelRequested, CreatedAt: now, UpdatedAt: now,
+			}); err != nil {
+				t.Fatalf("seed session: %v", err)
+			}
+			projectionErr := errors.New("injected cancellation projection failure")
+			sessions.cancelWriter = func(string, CancelRequest) error { return projectionErr }
+			store := NewBackgroundStore(filepath.Join(dir, "background.json"))
+			if action == "resume" {
+				if err := store.Upsert(backgroundRunnablePolicy(now)); err != nil {
+					t.Fatalf("seed policy: %v", err)
+				}
+			}
+			audit := NewBackgroundAudit(filepath.Join(dir, "background-audit.jsonl"))
+			var resolves atomic.Int32
+			var watchers atomic.Int32
+			manager := NewBackgroundManager(sessions, store, audit, BackgroundManagerOptions{
+				Context: t.Context(),
+				Now:     func() time.Time { return now },
+				Resolver: func(name string) (ResolvedBackgroundProfile, error) {
+					resolves.Add(1)
+					return trustedBackgroundProfile(name, "descriptor-hash"), nil
+				},
+				Watcher: countingBackgroundWatcher(&watchers, nil),
+			})
+			t.Cleanup(manager.Shutdown)
+
+			var err error
+			if action == "start" {
+				_, err = manager.Start("session-1", "fixture", true)
+			} else {
+				err = manager.Resume()
+			}
+			if !errors.Is(err, ErrBackgroundPersistenceDegraded) || !errors.Is(err, ErrStoreCommitUnconfirmed) || !errors.Is(err, projectionErr) {
+				t.Fatalf("%s error = %v, want degraded/unconfirmed projection failure", action, err)
+			}
+			if resolves.Load() != 0 || watchers.Load() != 0 {
+				t.Fatalf("resolver calls = %d, watcher calls = %d, want zero", resolves.Load(), watchers.Load())
+			}
+			assertBackgroundAuditActions(t, audit)
+			if action == "start" {
+				if policies, listErr := store.List(); listErr != nil || len(policies) != 0 {
+					t.Fatalf("policies = %#v, err = %v, want none", policies, listErr)
+				}
+			} else {
+				assertBackgroundPolicy(t, store, "session-1", BackgroundStateRunning, BackgroundOutcomeStarted, true)
+			}
+		})
+	}
+}
+
 func TestBackgroundManagerStartRejectsCanceledSessionBeforePersistence(t *testing.T) {
 	for _, status := range []string{SessionStatusCancelRequested, SessionStatusCanceled} {
 		t.Run(status, func(t *testing.T) {
@@ -974,6 +1143,12 @@ func TestBackgroundManagerWorkerErrorAuditFailureGuardsResume(t *testing.T) {
 	eventuallyBackground(t, func() bool {
 		policy, err := store.Get("session-1")
 		return err == nil && policy.State == BackgroundStateError
+	})
+	eventuallyBackground(t, func() bool {
+		manager.mu.Lock()
+		defer manager.mu.Unlock()
+		_, ok := manager.terminal["session-1"]
+		return ok
 	})
 	status, err := manager.Get("session-1")
 	if err != nil {
@@ -2086,6 +2261,109 @@ func TestBackgroundManagerExplicitStartSupersedesStaleTerminalTransition(t *test
 		t.Fatalf("stale terminal transition overrode explicit Start: %#v", status)
 	}
 	eventuallyBackground(t, func() bool { return resumed.Load() == 1 })
+}
+
+func TestBackgroundManagerNewerStartTransitionWinsOlderTerminalAudit(t *testing.T) {
+	for _, terminal := range []struct {
+		name    string
+		action  string
+		outcome string
+	}{
+		{name: "stop", action: BackgroundAuditStop, outcome: BackgroundOutcomeStopped},
+		{name: "error", action: BackgroundAuditError, outcome: BackgroundOutcomeWorkerError},
+	} {
+		t.Run(terminal.name, func(t *testing.T) {
+			dir := t.TempDir()
+			now := backgroundTestNow()
+			sessions := NewStore(filepath.Join(dir, "sessions.json"))
+			if err := sessions.Upsert(SessionRecord{
+				ID: "session-1", Agent: "fixture", Status: SessionStatusQueued, CreatedAt: now, UpdatedAt: now,
+			}); err != nil {
+				t.Fatalf("seed session: %v", err)
+			}
+			store := NewBackgroundStore(filepath.Join(dir, "background.json"))
+			policy := backgroundRunnablePolicy(now)
+			if err := store.Upsert(policy); err != nil {
+				t.Fatalf("seed newer policy: %v", err)
+			}
+			audit := NewBackgroundAudit(filepath.Join(dir, "background-audit.jsonl"))
+			old := backgroundAuditTestRecord("old-terminal-"+terminal.name, terminal.action, terminal.outcome)
+			old.At = now.Add(-time.Hour)
+			if err := audit.Append(old); err != nil {
+				t.Fatalf("append old terminal audit: %v", err)
+			}
+			transition := backgroundTransition{
+				EventID: "newer-start-" + terminal.name,
+				Action:  BackgroundAuditStart,
+				Policy:  policy,
+			}
+			if err := store.putTransition(transition); err != nil {
+				t.Fatalf("persist newer start transition: %v", err)
+			}
+
+			var watchers atomic.Int32
+			started := make(chan struct{}, 1)
+			manager := NewBackgroundManager(sessions, store, audit, BackgroundManagerOptions{
+				Context: t.Context(),
+				Now:     func() time.Time { return now },
+				Resolver: func(name string) (ResolvedBackgroundProfile, error) {
+					return trustedBackgroundProfile(name, "descriptor-hash"), nil
+				},
+				Watcher: func(ctx context.Context, _ *Store, _ AgentSpec, _ RunOptions, _ string, _ WatchOptions, _ func(WatchCycle)) (WatchResult, error) {
+					watchers.Add(1)
+					started <- struct{}{}
+					<-ctx.Done()
+					return WatchResult{}, ctx.Err()
+				},
+			})
+			t.Cleanup(manager.Shutdown)
+
+			if err := manager.Resume(); err != nil {
+				t.Fatalf("Resume: %v", err)
+			}
+			if got := watchers.Load(); got != 0 {
+				t.Fatalf("watchers after transition replay = %d, want zero", got)
+			}
+			status, err := manager.Get("session-1")
+			if err != nil {
+				t.Fatalf("Get replayed status: %v", err)
+			}
+			if status.Enabled || status.State != BackgroundStateRunning || status.Outcome != BackgroundOutcomeStarted {
+				t.Fatalf("replayed status = %#v, want disabled running/started transition", status)
+			}
+			if _, found, err := store.getTransition("session-1"); err != nil || found {
+				t.Fatalf("newer transition after replay = found %t, err %v", found, err)
+			}
+			records, err := audit.Read()
+			if err != nil {
+				t.Fatalf("Read audit: %v", err)
+			}
+			if len(records) != 2 || records[1].RecordID != transition.EventID || records[1].Action != BackgroundAuditStart || records[1].Outcome != BackgroundOutcomeStarted {
+				t.Fatalf("audit records = %#v, want old terminal then newer start/started", records)
+			}
+			startRecords := 0
+			for _, record := range records {
+				if record.RecordID == transition.EventID {
+					startRecords++
+				}
+			}
+			if startRecords != 1 {
+				t.Fatalf("newer transition audit count = %d, want 1", startRecords)
+			}
+
+			if _, err := manager.Start("session-1", "fixture", true); err != nil {
+				t.Fatalf("explicit Start: %v", err)
+			}
+			select {
+			case <-started:
+			case <-time.After(3 * time.Second):
+				t.Fatal("explicit Start did not launch watcher")
+			}
+			if got := watchers.Load(); got != 1 {
+				t.Fatalf("watchers after explicit Start = %d, want 1", got)
+			}
+		})
+	}
 }
 
 func TestBackgroundManagerLaunchFailsClosedWhenTransitionCannotClear(t *testing.T) {
