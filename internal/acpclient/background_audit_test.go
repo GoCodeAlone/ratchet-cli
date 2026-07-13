@@ -3,6 +3,7 @@ package acpclient
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -119,5 +120,51 @@ func TestBackgroundAuditCoordinatesConcurrentHandles(t *testing.T) {
 	}
 	if len(records) != count {
 		t.Fatalf("records len = %d, want %d", len(records), count)
+	}
+}
+
+func TestBackgroundAuditFirstCreationRequiresParentSync(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "background-audit.jsonl")
+	syncErr := errors.New("parent sync failed")
+	syncCalls := 0
+	audit := NewBackgroundAudit(path)
+	audit.syncParent = func(gotDir string) error {
+		syncCalls++
+		if gotDir != dir {
+			t.Fatalf("sync parent = %q, want %q", gotDir, dir)
+		}
+		return syncErr
+	}
+	record := BackgroundAuditRecord{
+		At:             time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC),
+		Action:         BackgroundAuditError,
+		SessionID:      "session-1",
+		Profile:        "fixture",
+		DescriptorHash: "descriptor-hash",
+		Outcome:        BackgroundOutcomeWorkerError,
+	}
+	if err := audit.Append(record); !errors.Is(err, syncErr) {
+		t.Fatalf("first Append error = %v, want parent sync failure", err)
+	}
+	if syncCalls != 1 {
+		t.Fatalf("parent sync calls = %d, want 1", syncCalls)
+	}
+	records, err := audit.Read()
+	if err != nil {
+		t.Fatalf("Read after sync failure: %v", err)
+	}
+	if len(records) != 1 || records[0].Action != BackgroundAuditError {
+		t.Fatalf("records after sync failure = %#v", records)
+	}
+
+	audit.syncParent = func(string) error {
+		t.Fatal("existing WAL triggered first-create parent sync")
+		return nil
+	}
+	record.Action = BackgroundAuditStop
+	record.Outcome = BackgroundOutcomeStopped
+	if err := audit.Append(record); err != nil {
+		t.Fatalf("second Append: %v", err)
 	}
 }

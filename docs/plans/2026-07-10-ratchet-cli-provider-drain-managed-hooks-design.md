@@ -599,3 +599,13 @@ Windows directory before child creation, and replace with
 this corrects Task 6. Evidence: co-failure restart, stop ownership, joined-error,
 blocked-persistence shutdown, native Windows DACL/replacement, and releaseguard
 tests.
+
+### Backport 2026-07-13: Authoritative background audit order
+
+Cause: wall-clock comparison, non-inheriting Windows ACEs, and file-only WAL
+sync weakened the recovery boundary. Change: JSONL append position is the sole
+recovery order; policy JSON is a projection and the transition journal remains
+supplemental partial-write recovery. Parent completion maps to lifecycle
+shutdown. New WAL creation requires file close plus supported parent-directory
+sync before success, and protected Windows directory ACEs inherit to raw child
+objects before creation. Scope: manifest unchanged; this hardens Task 6.

@@ -362,6 +362,7 @@ type BackgroundManager struct {
 
 	ctx         context.Context
 	cancel      context.CancelCauseFunc
+	stopParent  func() bool
 	mu          sync.Mutex
 	resumeMu    sync.Mutex
 	closed      bool
@@ -383,7 +384,14 @@ func NewBackgroundManager(sessions *Store, store *BackgroundStore, audit *Backgr
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ctx, cancel := context.WithCancelCause(ctx)
+	parent := ctx
+	ctx, cancel := context.WithCancelCause(context.WithoutCancel(parent))
+	stopParent := context.AfterFunc(parent, func() {
+		cancel(errBackgroundShutdown)
+	})
+	if parent.Err() != nil {
+		cancel(errBackgroundShutdown)
+	}
 	watcher := opts.Watcher
 	if watcher == nil {
 		watcher = WatchQueue
@@ -402,6 +410,7 @@ func NewBackgroundManager(sessions *Store, store *BackgroundStore, audit *Backgr
 		now:         now,
 		ctx:         ctx,
 		cancel:      cancel,
+		stopParent:  stopParent,
 		active:      make(map[string]*backgroundWorker),
 		transitions: make(map[string]struct{}),
 		stopping:    make(map[string]*backgroundStopOwner),
@@ -659,7 +668,21 @@ func (m *BackgroundManager) Resume() error {
 			m.releaseTransition(policy.SessionID)
 			continue
 		}
-		if policy.PolicyVersion != BackgroundPolicyVersion || policy.AcknowledgedAt.IsZero() {
+		current, err := m.store.Get(policy.SessionID)
+		if errors.Is(err, ErrBackgroundPolicyNotFound) {
+			m.releaseTransition(policy.SessionID)
+			continue
+		}
+		if err != nil {
+			m.releaseTransition(policy.SessionID)
+			return err
+		}
+		policy = current
+		if !policy.Enabled {
+			m.releaseTransition(policy.SessionID)
+			continue
+		}
+		if policy.State != BackgroundStateRunning || policy.PolicyVersion != BackgroundPolicyVersion || policy.AcknowledgedAt.IsZero() {
 			if err := m.block(policy, BackgroundOutcomePolicyInvalid); err != nil {
 				m.releaseTransition(policy.SessionID)
 				return err
@@ -753,6 +776,10 @@ func (m *BackgroundManager) Shutdown() {
 	m.mu.Lock()
 	if !m.closed {
 		m.closed = true
+		if m.stopParent != nil {
+			m.stopParent()
+			m.stopParent = nil
+		}
 		m.cancel(errBackgroundShutdown)
 		for _, worker := range m.active {
 			worker.cancel(errBackgroundShutdown)
@@ -989,7 +1016,7 @@ func (m *BackgroundManager) reconcileTerminalAudits() error {
 	}
 	for _, policy := range policies {
 		record, ok := latest[policy.SessionID]
-		if !ok || !backgroundAuditTerminal(record.Action) || record.At.Before(policy.UpdatedAt) {
+		if !ok || !backgroundAuditTerminal(record.Action) {
 			continue
 		}
 		if record.Profile != policy.Profile || record.DescriptorHash != policy.DescriptorHash {

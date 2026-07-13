@@ -695,6 +695,127 @@ func TestBackgroundManagerTerminalAuditFailsClosedWhenStateAndTransitionCoFail(t
 	}
 }
 
+func TestBackgroundManagerRecoveryUsesAuditAppendOrderAcrossClockRollback(t *testing.T) {
+	dir := t.TempDir()
+	store := NewBackgroundStore(filepath.Join(dir, "background.json"))
+	audit := NewBackgroundAudit(filepath.Join(dir, "background-audit.jsonl"))
+	policyTime := time.Date(2026, 7, 13, 14, 0, 0, 0, time.UTC)
+	policy := backgroundRunnablePolicy(policyTime)
+	if err := store.Upsert(policy); err != nil {
+		t.Fatalf("Upsert policy: %v", err)
+	}
+	for _, record := range []BackgroundAuditRecord{
+		{
+			At:             policyTime,
+			Action:         BackgroundAuditStart,
+			SessionID:      policy.SessionID,
+			Profile:        policy.Profile,
+			DescriptorHash: policy.DescriptorHash,
+			Outcome:        BackgroundOutcomeStarted,
+		},
+		{
+			At:             policyTime.Add(-time.Hour),
+			Action:         BackgroundAuditError,
+			SessionID:      policy.SessionID,
+			Profile:        policy.Profile,
+			DescriptorHash: policy.DescriptorHash,
+			Outcome:        BackgroundOutcomeWorkerError,
+		},
+	} {
+		if err := audit.Append(record); err != nil {
+			t.Fatalf("Append %s: %v", record.Action, err)
+		}
+	}
+	launched := make(chan struct{}, 1)
+	manager := NewBackgroundManager(backgroundSessionStore(t), store, audit, BackgroundManagerOptions{
+		Context: t.Context(),
+		Now:     backgroundTestClock,
+		Resolver: func(name string) (ResolvedBackgroundProfile, error) {
+			return trustedBackgroundProfile(name, "descriptor-hash"), nil
+		},
+		Watcher: func(ctx context.Context, _ *Store, _ AgentSpec, _ RunOptions, _ string, _ WatchOptions, _ func(WatchCycle)) (WatchResult, error) {
+			launched <- struct{}{}
+			<-ctx.Done()
+			return WatchResult{}, ctx.Err()
+		},
+	})
+	t.Cleanup(manager.Shutdown)
+	if err := manager.Resume(); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	select {
+	case <-launched:
+		t.Fatal("Resume launched despite latest appended terminal audit")
+	case <-time.After(100 * time.Millisecond):
+	}
+	status, err := manager.Get(policy.SessionID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if status.Enabled || status.State != BackgroundStateError || status.Outcome != BackgroundOutcomeWorkerError {
+		t.Fatalf("recovered status = %#v", status)
+	}
+}
+
+func TestBackgroundManagerLatestSuccessfulAuditRemainsResumable(t *testing.T) {
+	for _, latestAction := range []string{BackgroundAuditStart, BackgroundAuditResume} {
+		t.Run(latestAction, func(t *testing.T) {
+			dir := t.TempDir()
+			store := NewBackgroundStore(filepath.Join(dir, "background.json"))
+			audit := NewBackgroundAudit(filepath.Join(dir, "background-audit.jsonl"))
+			policyTime := time.Date(2026, 7, 13, 14, 0, 0, 0, time.UTC)
+			policy := backgroundRunnablePolicy(policyTime)
+			if err := store.Upsert(policy); err != nil {
+				t.Fatalf("Upsert policy: %v", err)
+			}
+			for _, record := range []BackgroundAuditRecord{
+				{
+					At:             policyTime,
+					Action:         BackgroundAuditError,
+					SessionID:      policy.SessionID,
+					Profile:        policy.Profile,
+					DescriptorHash: policy.DescriptorHash,
+					Outcome:        BackgroundOutcomeWorkerError,
+				},
+				{
+					At:             policyTime.Add(-time.Hour),
+					Action:         latestAction,
+					SessionID:      policy.SessionID,
+					Profile:        policy.Profile,
+					DescriptorHash: policy.DescriptorHash,
+					Outcome:        BackgroundOutcomeStarted,
+				},
+			} {
+				if err := audit.Append(record); err != nil {
+					t.Fatalf("Append %s: %v", record.Action, err)
+				}
+			}
+			launched := make(chan struct{}, 1)
+			manager := NewBackgroundManager(backgroundSessionStore(t), store, audit, BackgroundManagerOptions{
+				Context: t.Context(),
+				Now:     backgroundTestClock,
+				Resolver: func(name string) (ResolvedBackgroundProfile, error) {
+					return trustedBackgroundProfile(name, "descriptor-hash"), nil
+				},
+				Watcher: func(ctx context.Context, _ *Store, _ AgentSpec, _ RunOptions, _ string, _ WatchOptions, _ func(WatchCycle)) (WatchResult, error) {
+					launched <- struct{}{}
+					<-ctx.Done()
+					return WatchResult{}, ctx.Err()
+				},
+			})
+			t.Cleanup(manager.Shutdown)
+			if err := manager.Resume(); err != nil {
+				t.Fatalf("Resume: %v", err)
+			}
+			select {
+			case <-launched:
+			case <-time.After(time.Second):
+				t.Fatal("latest successful audit did not resume")
+			}
+		})
+	}
+}
+
 func TestBackgroundManagerStopPersistsAndAuditsBeforeCancellation(t *testing.T) {
 	policyPath := filepath.Join(t.TempDir(), "background.json")
 	auditPath := filepath.Join(filepath.Dir(policyPath), "background-audit.jsonl")
@@ -952,6 +1073,69 @@ func TestBackgroundManagerExplicitStopPreservesJoinedIndependentError(t *testing
 	}
 	if strings.Contains(string(raw), "secret joined failure") {
 		t.Fatalf("audit leaked joined worker error: %s", raw)
+	}
+}
+
+func TestBackgroundManagerParentCancellationLeavesPolicyResumable(t *testing.T) {
+	parent, cancelParent := context.WithCancel(t.Context())
+	dir := t.TempDir()
+	store := NewBackgroundStore(filepath.Join(dir, "background.json"))
+	audit := NewBackgroundAudit(filepath.Join(dir, "background-audit.jsonl"))
+	workerCanceled := make(chan struct{})
+	manager := NewBackgroundManager(backgroundSessionStore(t), store, audit, BackgroundManagerOptions{
+		Context: parent,
+		Now:     backgroundTestClock,
+		Resolver: func(name string) (ResolvedBackgroundProfile, error) {
+			return trustedBackgroundProfile(name, "descriptor-hash"), nil
+		},
+		Watcher: func(ctx context.Context, _ *Store, _ AgentSpec, _ RunOptions, _ string, _ WatchOptions, _ func(WatchCycle)) (WatchResult, error) {
+			<-ctx.Done()
+			close(workerCanceled)
+			return WatchResult{}, ctx.Err()
+		},
+	})
+	if _, err := manager.Start("session-1", "fixture", true); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	cancelParent()
+	<-workerCanceled
+	eventuallyBackground(t, func() bool {
+		manager.mu.Lock()
+		defer manager.mu.Unlock()
+		_, active := manager.active["session-1"]
+		return !active
+	})
+	status, err := manager.Get("session-1")
+	if err != nil {
+		t.Fatalf("Get after parent cancellation: %v", err)
+	}
+	if !status.Enabled || status.State != BackgroundStateRunning || status.Outcome != BackgroundOutcomeStarted {
+		t.Fatalf("status after parent cancellation = %#v, want resumable running policy", status)
+	}
+	assertBackgroundAuditActions(t, audit, BackgroundAuditStart)
+	manager.Shutdown()
+
+	resumed := make(chan struct{}, 1)
+	restarted := NewBackgroundManager(backgroundSessionStore(t), NewBackgroundStore(store.Path()), NewBackgroundAudit(audit.Path()), BackgroundManagerOptions{
+		Context: t.Context(),
+		Now:     backgroundTestClock,
+		Resolver: func(name string) (ResolvedBackgroundProfile, error) {
+			return trustedBackgroundProfile(name, "descriptor-hash"), nil
+		},
+		Watcher: func(ctx context.Context, _ *Store, _ AgentSpec, _ RunOptions, _ string, _ WatchOptions, _ func(WatchCycle)) (WatchResult, error) {
+			resumed <- struct{}{}
+			<-ctx.Done()
+			return WatchResult{}, ctx.Err()
+		},
+	})
+	t.Cleanup(restarted.Shutdown)
+	if err := restarted.Resume(); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	select {
+	case <-resumed:
+	case <-time.After(time.Second):
+		t.Fatal("parent-canceled policy did not resume")
 	}
 }
 
@@ -1328,6 +1512,86 @@ func TestBackgroundManagerBlockedPolicyRequiresExplicitStartAfterRestart(t *test
 		t.Fatalf("explicit Start: %v", err)
 	}
 	eventuallyBackground(t, func() bool { return resumed.Load() == 1 })
+}
+
+func TestBackgroundManagerResumeRechecksPolicyAfterReservation(t *testing.T) {
+	dir := t.TempDir()
+	sessions := NewStore(filepath.Join(dir, "sessions.json"))
+	now := backgroundTestNow()
+	for _, sessionID := range []string{"session-1", "session-2"} {
+		if err := sessions.Upsert(SessionRecord{ID: sessionID, Agent: "fixture", Status: SessionStatusQueued, CreatedAt: now, UpdatedAt: now}); err != nil {
+			t.Fatalf("Upsert %s: %v", sessionID, err)
+		}
+	}
+	store := NewBackgroundStore(filepath.Join(dir, "background.json"))
+	audit := NewBackgroundAudit(filepath.Join(dir, "background-audit.jsonl"))
+	blockerReached := make(chan struct{})
+	releaseBlocker := make(chan struct{})
+	releaseTerminal := make(chan struct{})
+	session2Started := make(chan struct{})
+	var session2Calls atomic.Int32
+	manager := NewBackgroundManager(sessions, store, audit, BackgroundManagerOptions{
+		Context: t.Context(),
+		Now:     backgroundTestClock,
+		Resolver: func(name string) (ResolvedBackgroundProfile, error) {
+			if name == "blocker" {
+				close(blockerReached)
+				<-releaseBlocker
+			}
+			return trustedBackgroundProfile(name, "descriptor-hash"), nil
+		},
+		Watcher: func(ctx context.Context, _ *Store, _ AgentSpec, _ RunOptions, sessionID string, _ WatchOptions, _ func(WatchCycle)) (WatchResult, error) {
+			if sessionID == "session-2" {
+				invocation := session2Calls.Add(1)
+				if invocation == 1 {
+					close(session2Started)
+					<-releaseTerminal
+					return WatchResult{}, errors.New("secret terminal between snapshot and reservation")
+				}
+			}
+			<-ctx.Done()
+			return WatchResult{}, ctx.Err()
+		},
+	})
+	t.Cleanup(manager.Shutdown)
+	if _, err := manager.Start("session-2", "fixture", true); err != nil {
+		t.Fatalf("Start session-2: %v", err)
+	}
+	<-session2Started
+	blockerPolicy := backgroundRunnablePolicy(now)
+	blockerPolicy.Profile = "blocker"
+	if err := store.Upsert(blockerPolicy); err != nil {
+		t.Fatalf("Upsert blocker policy: %v", err)
+	}
+	resumeDone := make(chan error, 1)
+	go func() {
+		resumeDone <- manager.Resume()
+	}()
+	<-blockerReached
+	close(releaseTerminal)
+	eventuallyBackground(t, func() bool {
+		policy, err := store.Get("session-2")
+		if err != nil || policy.Enabled || policy.State != BackgroundStateError {
+			return false
+		}
+		manager.mu.Lock()
+		defer manager.mu.Unlock()
+		_, active := manager.active["session-2"]
+		_, transitioning := manager.transitions["session-2"]
+		return !active && !transitioning
+	})
+	close(releaseBlocker)
+	if err := <-resumeDone; err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if got := session2Calls.Load(); got != 1 {
+		t.Fatalf("session-2 watcher calls after Resume = %d, want 1", got)
+	}
+	assertBackgroundPolicy(t, store, "session-2", BackgroundStateError, BackgroundOutcomeWorkerError, false)
+	if _, err := manager.Start("session-2", "fixture", true); err != nil {
+		t.Fatalf("explicit Start session-2: %v", err)
+	}
+	eventuallyBackground(t, func() bool { return session2Calls.Load() == 2 })
 }
 
 func TestBackgroundProfileResolverPinsBuiltinFingerprintAndProfileDescriptor(t *testing.T) {

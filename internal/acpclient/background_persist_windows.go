@@ -10,7 +10,10 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-const backgroundMoveFileFlags = windows.MOVEFILE_REPLACE_EXISTING | windows.MOVEFILE_WRITE_THROUGH
+const (
+	backgroundMoveFileFlags      = windows.MOVEFILE_REPLACE_EXISTING | windows.MOVEFILE_WRITE_THROUGH
+	backgroundPrivateInheritance = windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT
+)
 
 func backgroundWriteFileAtomic(path string, data []byte) error {
 	dir := filepath.Dir(path)
@@ -86,6 +89,10 @@ func backgroundRemoveFile(path string) error {
 	return err
 }
 
+func backgroundSyncParentDir(string) error {
+	return nil
+}
+
 func backgroundSetPrivateACL(path string) error {
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {
@@ -94,6 +101,7 @@ func backgroundSetPrivateACL(path string) error {
 	acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{{
 		AccessPermissions: windows.GENERIC_ALL,
 		AccessMode:        windows.GRANT_ACCESS,
+		Inheritance:       backgroundPrivateInheritance,
 		Trustee: windows.TRUSTEE{
 			TrusteeForm:  windows.TRUSTEE_IS_SID,
 			TrusteeType:  windows.TRUSTEE_IS_USER,

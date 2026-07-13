@@ -59,3 +59,7 @@ func backgroundRemoveFile(path string) error {
 	}
 	return err
 }
+
+func backgroundSyncParentDir(string) error {
+	return nil
+}

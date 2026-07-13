@@ -29,11 +29,12 @@ type BackgroundAuditRecord struct {
 }
 
 type BackgroundAudit struct {
-	path string
+	path       string
+	syncParent func(string) error
 }
 
 func NewBackgroundAudit(path string) *BackgroundAudit {
-	return &BackgroundAudit{path: path}
+	return &BackgroundAudit{path: path, syncParent: backgroundSyncParentDir}
 }
 
 func NewDefaultBackgroundAudit() (*BackgroundAudit, error) {
@@ -74,19 +75,30 @@ func (a *BackgroundAudit) Append(record BackgroundAuditRecord) (err error) {
 	lock := backgroundPathLock(a.path)
 	lock.Lock()
 	defer lock.Unlock()
+	_, statErr := os.Stat(a.path)
+	created := errors.Is(statErr, os.ErrNotExist)
+	if statErr != nil && !created {
+		return statErr
+	}
 	f, err := backgroundOpenPrivateAppend(a.path)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if closeErr := f.Close(); err == nil && closeErr != nil {
-			err = closeErr
-		}
-	}()
 	if _, err := f.Write(append(line, '\n')); err != nil {
+		_ = f.Close()
 		return err
 	}
-	return f.Sync()
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if created {
+		return a.syncParent(filepath.Dir(a.path))
+	}
+	return nil
 }
 
 func (a *BackgroundAudit) Read() ([]BackgroundAuditRecord, error) {

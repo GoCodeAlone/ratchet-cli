@@ -74,3 +74,7 @@ func backgroundSyncDir(path string) error {
 	defer dir.Close() //nolint:errcheck
 	return dir.Sync()
 }
+
+func backgroundSyncParentDir(path string) error {
+	return backgroundSyncDir(path)
+}
