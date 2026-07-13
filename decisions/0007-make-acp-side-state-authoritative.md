@@ -1,6 +1,6 @@
 # 0007. Make ACP Side State Authoritative
 
-**Status:** Accepted
+**Status:** Superseded by 0008
 **Date:** 2026-07-13
 **Decision-makers:** project maintainers
 **Related:** `decisions/0004-daemon-own-background-drain.md`, `docs/plans/2026-07-10-ratchet-cli-provider-drain-managed-hooks-design.md`

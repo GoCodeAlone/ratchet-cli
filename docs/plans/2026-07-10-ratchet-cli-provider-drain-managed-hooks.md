@@ -1029,8 +1029,11 @@ Follow Global Execution Rules 4-5. Runtime-launch the released binary against a
 temporary daemon and require background `status --json` to return within five
 seconds.
 
-Rollback: stop/disable all policies with the old binary before reverting PR 3;
-publish the next patch. Persisted metadata contains no content and may remain.
+Rollback: before release, stop workers and revert PR 3. After release,
+stop/disable policies with the current binary and publish an upgrade-forward
+patch that retains authority-aware state readers/writers; do not launch an
+older binary against the new state. Persisted metadata contains no content and
+may remain.
 
 ### Task 9: Securely Load and Apply Managed Hook Policy
 

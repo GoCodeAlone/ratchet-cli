@@ -482,3 +482,32 @@ handle-relative audit transaction layer.
 released recovery.
 
 **Verdict reasoning:** FAIL; D57 is Critical and D58-D64 remain Important.
+
+## Cycle 11: Authoritative Transition Closure
+
+**Status:** FAIL
+
+**Findings (Critical):** none.
+
+**Findings (Important):**
+
+- `D66` Guarded transitions omitted whole-record/import writers; require every
+  writer to use the guard or an explicit create-only collision check.
+- `D67` Cancellation observation and a blocked ACP cancel send lacked one
+  bounded first-cause contract; latch `ErrCancelRequested`, bound send, then
+  kill/reap and join every watcher/send goroutine.
+- `D68` Last-record audit deduplication fails after an interleaved append; use a
+  stable record ID or scan all committed records for complete equality.
+- `D69` Windows parent revalidation retained a replacement window; exclude
+  `FILE_SHARE_DELETE` and pin `FileIdInfo` before child open/validation.
+- `D70` Profile mutation proof could remain in-process; require a second
+  mutator process racing a fixture child's real start acknowledgement.
+- `D71` Task 8 rollback conflicted with upgrade-forward-only released state;
+  permit source reversion only before release and retain authority-aware state
+  handling in post-release patches.
+
+**Prior mapping:** D57-D65 resolved or narrowed to D66-D71. Sticky cancellation,
+session-primary projection, ID/lease/reload transitions, audit schema, Unix
+`openat`, and AIX fail-before-write remain clean.
+
+**Verdict reasoning:** FAIL; D66-D71 are concrete Important contract gaps.

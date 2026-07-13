@@ -444,10 +444,13 @@ accepted; new writers call a dedicated RPC that old daemons reject before
 mutation. Downgrade requires stopping the new daemon and observing lock release;
 then process pending cleanup where possible. Old writers
 may leave inactive `provider-v2-` versions, which a later upgraded startup
-sweeps without touching referenced or legacy-prefix secrets. Background
-rollback stops workers before removing RPC/state handling. Managed-hook rollback
-must be coordinated with administrators because removing enforcement weakens
-policy; preserve audit records.
+sweeps without touching referenced or legacy-prefix secrets. Before release,
+background source changes may be reverted after stopping workers. After release,
+stop or disable policies with the current binary and publish an upgrade-forward
+patch that retains authority-aware state readers and writers; do not launch an
+older binary against released background state. Managed-hook rollback must be
+coordinated with administrators because removing enforcement weakens policy;
+preserve audit records.
 
 ### Backport 2026-07-10: CLI setup semantics and failed-test cleanup
 
@@ -693,29 +696,38 @@ persisted launch values; treat transition listings as hints and reload current
 state after the session lease; make session status cancellation authority and
 write the sidecar only as a compatibility projection; repair only an incomplete
 final JSONL record under lock; and reject final symlink/reparse append targets.
-See `decisions/0007-make-acp-side-state-authoritative.md`. Scope: manifest
+See `decisions/0008-close-acp-state-authority.md`. Scope: manifest
 unchanged; this is the required review-cycle-five rewrite of Task 6.
 
 Rewrite contract:
 
 - `CheckCancellation(id) (bool, error)` is authoritative and cancellation is
-  monotonic. One guarded store transition handles enqueue, lifecycle start and
-  writeback, stale recovery, claim, completion/failure, and cancellation.
+  monotonic. One guarded store transition handles every session mutation:
+  `Store.Upsert`, lifecycle start/writeback, enqueue, stale recovery, claim,
+  completion/failure, cancellation, and event-backed variants. `Upsert`
+  preserves a latched cancellation. `InsertSession`, archive import insertion,
+  and any future whole-record creator are create-only and reject collisions.
+  A mechanical writer-inventory test fails when a session writer bypasses the
+  guard or the explicit create-only allowlist.
   Post-latch enqueue/start/claim reject; recovery cancels; writeback preserves
   the latch; terminalization is `cancel_requested -> canceled`. No independent
   status assignment or check-then-claim path remains.
 - `RunOptions.CancelRequested` becomes error-bearing. Authority read or ACP
-  cancel-send failure captures the first cause and immediately cancels prompt
-  and child-process contexts. A request sends ACP cancel once, waits a bounded
-  grace period, then kills/reaps an ignoring child. The watcher joins before
-  return; a captured cause deterministically wins over a racing prompt result.
+  cancellation observation captures `ErrCancelRequested` as the first cause and
+  immediately cancels prompt and child-process contexts. The ACP cancel send
+  itself runs under the same bounded grace deadline. Send failure or deadline
+  expiry cannot replace the first cause; either forces kill/reap. All authority,
+  ACP-send, and process watcher goroutines join before return, and the captured
+  cause deterministically wins over a racing prompt result.
 - Cancel commit order is sessions first, compatibility sidecar second. A
   sidecar failure returns degraded/unconfirmed state without undoing the primary
   commit. Reconciliation is one `sessions lock -> current reload -> sidecar
   mutation` transaction. Mixed-version notification remains explicitly
   best-effort. Released backward binary downgrade is unsupported; operators use
   the current binary to stop/disable policies and publish an upgrade-forward
-  patch. Pre-release branch reversion remains supported.
+  patch that retains authority-aware readers/writers. Pre-release branch
+  reversion remains supported; an older binary never opens released background
+  state.
 - Transition recovery is `list IDs -> session lease -> lock-held reload`.
   Missing means no-op; only the reloaded value may replay; no write follows
   lease release.
@@ -734,12 +746,19 @@ Rewrite contract:
   identity. Final links/reparse points, non-regular files, wrong owners/DACLs,
   and multiple links are rechecked before mutation. The parent is owner-only, so
   same-owner relinking is outside the adversarial boundary. Unix uses `openat`
-  from the held directory descriptor. Windows holds the parent handle, records
-  volume/file ID, acquires the path lock, revalidates that ID, opens the final
-  object with `FILE_FLAG_OPEN_REPARSE_POINT`, then checks attributes, link count,
-  owner SID, and protected DACL on the opened handle.
-- Audit append first repairs/reads the last committed record. An exact duplicate
-  is a no-op. Errors after writing the complete newline are
+  from the held directory descriptor. Windows opens and holds the parent without
+  `FILE_SHARE_DELETE`, records its identity with
+  `GetFileInformationByHandleEx(FileIdInfo)`, acquires the path lock, revalidates
+  that identity, opens the final object with `FILE_FLAG_OPEN_REPARSE_POINT`, then
+  checks attributes, link count, owner SID, and protected DACL on the opened
+  handle.
+- Before first append, the caller creates one immutable audit record and a
+  deterministic `recordId = SHA-256(canonical(at, action, sessionId, profile,
+  descriptorHash, outcome))`; retry retains the original `at` and `recordId`.
+  Recoverable lifecycle records derive `at` from persisted transition/session
+  state. Append repairs then scans all committed record IDs under lock; a match
+  is a no-op even when another session appended later. Errors after writing the
+  complete newline are
   `ErrStoreCommitUnconfirmed`; retry reconciles before append. Tests inject
   write, sync, close, parent-sync, and repair failures.
 - Descriptor hash payload keeps the existing field order and nil/empty encoding,
@@ -753,7 +772,8 @@ Rewrite contract:
   cancel, SIGKILL-created audit tails read before append, a two-process transition
   replacement race, Unix pre/post-validation link attacks, native Windows repair
   reparse/hard-link/DACL attacks, executable legacy-reader projection behavior,
-  separate-process cancel-versus-claim/writeback, and profile mutation versus
-  real child-start acknowledgement. A host-injected unsupported-lock no-write
+  separate-process cancel-versus-claim/writeback, and a second mutator process
+  racing profile mutation against a fixture child's real `exec.Cmd.Start`
+  acknowledgement. A host-injected unsupported-lock no-write
   proof covers AIX behavior; AIX remains cross-build-only and returns
   `ErrStoreProcessLockUnsupported` before mutation.
