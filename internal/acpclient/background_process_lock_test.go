@@ -67,8 +67,7 @@ func TestBackgroundStateTransactionsHonorProcessLocks(t *testing.T) {
 			if err := cmd.Start(); err != nil {
 				t.Fatalf("start helper: %v", err)
 			}
-			waitForStoreLockHelperReady(t, readyPath)
-			time.Sleep(250 * time.Millisecond)
+			waitForBackgroundLockContention(t, readyPath)
 			if _, err := os.Stat(donePath); err == nil {
 				_ = cmd.Wait()
 				t.Fatalf("%s transaction ignored held process lock\n%s", tc.mode, output.String())
@@ -124,8 +123,7 @@ func runBackgroundAuditProcessLockBlocks(t *testing.T, hold func(*BackgroundAudi
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start audit helper: %v", err)
 	}
-	waitForStoreLockHelperReady(t, readyPath)
-	time.Sleep(250 * time.Millisecond)
+	waitForBackgroundLockContention(t, readyPath)
 	if _, err := os.Stat(donePath); err == nil {
 		_ = cmd.Wait()
 		t.Fatalf("audit append ignored held namespace lock\n%s", output.String())
@@ -193,8 +191,7 @@ func TestBackgroundAuditTransitionReplayAcrossFreshProcesses(t *testing.T) {
 		_ = release()
 		t.Fatalf("start B helper: %v", err)
 	}
-	waitForStoreLockHelperReady(t, readyPath)
-	time.Sleep(250 * time.Millisecond)
+	waitForBackgroundLockContention(t, readyPath)
 	if _, err := os.Stat(donePath); err == nil {
 		_ = release()
 		_ = cmd.Wait()
@@ -737,10 +734,17 @@ func TestBackgroundProcessLockHelper(t *testing.T) {
 	if os.Getenv(backgroundLockHelperEnv) != "1" {
 		return
 	}
-	if err := os.WriteFile(os.Getenv(backgroundLockReadyPathEnv), []byte("ready\n"), 0o600); err != nil {
-		t.Fatalf("write ready marker: %v", err)
-	}
 	statePath := os.Getenv(backgroundLockStatePathEnv)
+	mode := os.Getenv(backgroundLockModeEnv)
+	contended, err := backgroundProcessLockContended(mode, statePath, os.Getenv(backgroundLockAuditPathEnv))
+	if err != nil {
+		t.Fatalf("probe %s process lock: %v", mode, err)
+	}
+	if contended {
+		if err := os.WriteFile(os.Getenv(backgroundLockReadyPathEnv), []byte("contended\n"), 0o600); err != nil {
+			t.Fatalf("write contention marker: %v", err)
+		}
+	}
 	now := time.Date(2026, 7, 13, 20, 0, 0, 0, time.UTC)
 	policy := BackgroundPolicy{
 		SessionID:      "process-lock",
@@ -753,8 +757,7 @@ func TestBackgroundProcessLockHelper(t *testing.T) {
 		Outcome:        BackgroundOutcomeStarted,
 		UpdatedAt:      now,
 	}
-	var err error
-	switch os.Getenv(backgroundLockModeEnv) {
+	switch mode {
 	case "policy":
 		err = NewBackgroundStore(statePath).Upsert(policy)
 	case "transition":
@@ -804,12 +807,48 @@ func TestBackgroundProcessLockHelper(t *testing.T) {
 		err = manager.reconcileTransitions()
 		manager.Shutdown()
 	default:
-		t.Fatalf("unknown helper mode %q", os.Getenv(backgroundLockModeEnv))
+		t.Fatalf("unknown helper mode %q", mode)
 	}
 	if err != nil {
-		t.Fatalf("%s transaction: %v", os.Getenv(backgroundLockModeEnv), err)
+		t.Fatalf("%s transaction: %v", mode, err)
 	}
 	if err := os.WriteFile(os.Getenv(backgroundLockDonePathEnv), []byte("done\n"), 0o600); err != nil {
 		t.Fatalf("write done marker: %v", err)
+	}
+}
+
+func backgroundProcessLockContended(mode, statePath, auditPath string) (bool, error) {
+	var logicalPath string
+	switch mode {
+	case "policy":
+		logicalPath = statePath + ".lock"
+	case "transition":
+		logicalPath = NewBackgroundStore(statePath).transitionPath() + ".lock"
+	case "audit":
+		return backgroundAuditLockContended(NewBackgroundAudit(statePath).Path())
+	case "audit-b":
+		return backgroundAuditLockContended(NewBackgroundAudit(auditPath).Path())
+	default:
+		return false, nil
+	}
+	release, acquired, err := tryStoreFileLock(logicalPath)
+	if err != nil {
+		return false, err
+	}
+	if !acquired {
+		return true, nil
+	}
+	return false, errors.Join(errors.New("expected process lock contention"), release())
+}
+
+func waitForBackgroundLockContention(t *testing.T, path string) {
+	t.Helper()
+	waitForStoreLockHelperReady(t, path)
+	marker, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read lock contention marker: %v", err)
+	}
+	if string(marker) != "contended\n" {
+		t.Fatalf("lock contention marker = %q, want %q", marker, "contended\\n")
 	}
 }

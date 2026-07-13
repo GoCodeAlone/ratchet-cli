@@ -502,6 +502,122 @@ func TestBackgroundManagerStartRequiresAcknowledgement(t *testing.T) {
 	}
 }
 
+func TestBackgroundManagerStartRejectsCanceledSessionBeforePersistence(t *testing.T) {
+	for _, status := range []string{SessionStatusCancelRequested, SessionStatusCanceled} {
+		t.Run(status, func(t *testing.T) {
+			dir := t.TempDir()
+			now := backgroundTestNow()
+			sessions := NewStore(filepath.Join(dir, "sessions.json"))
+			if err := sessions.Upsert(SessionRecord{
+				ID: "session-1", Agent: "fixture", Status: status, CreatedAt: now, UpdatedAt: now,
+				PromptQueue: []QueuedPrompt{
+					{ID: "pending", Prompt: "pending", Status: QueuePromptStatusPending, CreatedAt: now},
+					{ID: "running", Prompt: "running", Status: QueuePromptStatusRunning, CreatedAt: now, StartedAt: &now},
+				},
+			}); err != nil {
+				t.Fatalf("seed session: %v", err)
+			}
+			store := NewBackgroundStore(filepath.Join(dir, "background.json"))
+			audit := NewBackgroundAudit(filepath.Join(dir, "background-audit.jsonl"))
+			var resolves atomic.Int32
+			var watchers atomic.Int32
+			manager := NewBackgroundManager(sessions, store, audit, BackgroundManagerOptions{
+				Context: t.Context(),
+				Now:     func() time.Time { return now },
+				Resolver: func(name string) (ResolvedBackgroundProfile, error) {
+					resolves.Add(1)
+					return trustedBackgroundProfile(name, "descriptor-hash"), nil
+				},
+				Watcher: countingBackgroundWatcher(&watchers, nil),
+			})
+			t.Cleanup(manager.Shutdown)
+
+			got, err := manager.Start("session-1", "fixture", true)
+			if !errors.Is(err, ErrCancelRequested) {
+				t.Fatalf("Start error = %v, want ErrCancelRequested", err)
+			}
+			if got != (BackgroundStatus{}) {
+				t.Fatalf("Start status = %#v, want zero status", got)
+			}
+			if resolves.Load() != 0 || watchers.Load() != 0 {
+				t.Fatalf("resolver calls = %d, watcher calls = %d, want zero", resolves.Load(), watchers.Load())
+			}
+			if policies, listErr := store.List(); listErr != nil || len(policies) != 0 {
+				t.Fatalf("background policies = %#v, err = %v, want none", policies, listErr)
+			}
+			assertBackgroundAuditActions(t, audit)
+			assertCanceledBackgroundSession(t, sessions, "session-1")
+		})
+	}
+}
+
+func TestBackgroundManagerCanceledSessionRecoveryFailureFailsClosed(t *testing.T) {
+	for _, action := range []string{"start", "resume"} {
+		t.Run(action, func(t *testing.T) {
+			dir := t.TempDir()
+			now := backgroundTestNow()
+			sessions := NewStore(filepath.Join(dir, "sessions.json"))
+			if err := sessions.Upsert(SessionRecord{
+				ID: "session-1", Agent: "fixture", Status: SessionStatusCancelRequested, CreatedAt: now, UpdatedAt: now,
+				PromptQueue: []QueuedPrompt{{
+					ID: "running", Prompt: "running", Status: QueuePromptStatusRunning, CreatedAt: now, StartedAt: &now,
+				}},
+			}); err != nil {
+				t.Fatalf("seed session: %v", err)
+			}
+			release, err := acquireStoreFileLock(sessions.ownerLeasePath("session-1"))
+			if err != nil {
+				t.Fatalf("hold invalid owner lease: %v", err)
+			}
+			t.Cleanup(func() { _ = release() })
+			if err := backgroundWriteJSONAtomic(sessions.ownerPath("session-1"), OwnerLock{SessionID: "session-1"}); err != nil {
+				t.Fatalf("write invalid owner: %v", err)
+			}
+
+			store := NewBackgroundStore(filepath.Join(dir, "background.json"))
+			if action == "resume" {
+				if err := store.Upsert(backgroundRunnablePolicy(now)); err != nil {
+					t.Fatalf("seed policy: %v", err)
+				}
+			}
+			audit := NewBackgroundAudit(filepath.Join(dir, "background-audit.jsonl"))
+			var resolves atomic.Int32
+			var watchers atomic.Int32
+			manager := NewBackgroundManager(sessions, store, audit, BackgroundManagerOptions{
+				Context: t.Context(),
+				Now:     func() time.Time { return now },
+				Resolver: func(name string) (ResolvedBackgroundProfile, error) {
+					resolves.Add(1)
+					return trustedBackgroundProfile(name, "descriptor-hash"), nil
+				},
+				Watcher: countingBackgroundWatcher(&watchers, nil),
+			})
+			t.Cleanup(manager.Shutdown)
+
+			if action == "start" {
+				_, err = manager.Start("session-1", "fixture", true)
+				if !errors.Is(err, ErrCancelRequested) || !errors.Is(err, ErrInvalidOwnerLock) {
+					t.Fatalf("Start error = %v, want ErrCancelRequested and ErrInvalidOwnerLock", err)
+				}
+				if policies, listErr := store.List(); listErr != nil || len(policies) != 0 {
+					t.Fatalf("background policies = %#v, err = %v, want none", policies, listErr)
+				}
+				assertBackgroundAuditActions(t, audit)
+			} else {
+				err = manager.Resume()
+				if !errors.Is(err, ErrInvalidOwnerLock) {
+					t.Fatalf("Resume error = %v, want ErrInvalidOwnerLock", err)
+				}
+				assertBackgroundPolicy(t, store, "session-1", BackgroundStateDisabled, BackgroundOutcomeStopped, false)
+				assertBackgroundAuditActions(t, audit, BackgroundAuditStop)
+			}
+			if resolves.Load() != 0 || watchers.Load() != 0 {
+				t.Fatalf("resolver calls = %d, watcher calls = %d, want zero", resolves.Load(), watchers.Load())
+			}
+		})
+	}
+}
+
 func TestBackgroundManagerStartPersistsAndAuditsBeforeWatcherEntry(t *testing.T) {
 	dir := t.TempDir()
 	store := NewBackgroundStore(filepath.Join(dir, "background.json"))
@@ -1526,6 +1642,52 @@ func TestBackgroundManagerResumeLaunchesAcknowledgedTrustedPinnedPolicy(t *testi
 	manager.Shutdown()
 }
 
+func TestBackgroundManagerResumeDisablesCanceledSessionPolicy(t *testing.T) {
+	for _, status := range []string{SessionStatusCancelRequested, SessionStatusCanceled} {
+		t.Run(status, func(t *testing.T) {
+			dir := t.TempDir()
+			now := backgroundTestNow()
+			sessions := NewStore(filepath.Join(dir, "sessions.json"))
+			if err := sessions.Upsert(SessionRecord{
+				ID: "session-1", Agent: "fixture", Status: status, CreatedAt: now, UpdatedAt: now,
+				PromptQueue: []QueuedPrompt{
+					{ID: "pending", Prompt: "pending", Status: QueuePromptStatusPending, CreatedAt: now},
+					{ID: "running", Prompt: "running", Status: QueuePromptStatusRunning, CreatedAt: now, StartedAt: &now},
+				},
+			}); err != nil {
+				t.Fatalf("seed session: %v", err)
+			}
+			store := NewBackgroundStore(filepath.Join(dir, "background.json"))
+			if err := store.Upsert(backgroundRunnablePolicy(now)); err != nil {
+				t.Fatalf("seed policy: %v", err)
+			}
+			audit := NewBackgroundAudit(filepath.Join(dir, "background-audit.jsonl"))
+			var resolves atomic.Int32
+			var watchers atomic.Int32
+			manager := NewBackgroundManager(sessions, store, audit, BackgroundManagerOptions{
+				Context: t.Context(),
+				Now:     func() time.Time { return now },
+				Resolver: func(name string) (ResolvedBackgroundProfile, error) {
+					resolves.Add(1)
+					return trustedBackgroundProfile(name, "descriptor-hash"), nil
+				},
+				Watcher: countingBackgroundWatcher(&watchers, nil),
+			})
+			t.Cleanup(manager.Shutdown)
+
+			if err := manager.Resume(); err != nil {
+				t.Fatalf("Resume: %v", err)
+			}
+			if resolves.Load() != 0 || watchers.Load() != 0 {
+				t.Fatalf("resolver calls = %d, watcher calls = %d, want zero", resolves.Load(), watchers.Load())
+			}
+			assertBackgroundPolicy(t, store, "session-1", BackgroundStateDisabled, BackgroundOutcomeStopped, false)
+			assertBackgroundAuditActions(t, audit, BackgroundAuditStop)
+			assertCanceledBackgroundSession(t, sessions, "session-1")
+		})
+	}
+}
+
 func TestBackgroundManagerResumePersistsAndAuditsBeforeWatcherEntry(t *testing.T) {
 	dir := t.TempDir()
 	store := NewBackgroundStore(filepath.Join(dir, "background.json"))
@@ -2181,6 +2343,22 @@ func backgroundRunnablePolicy(now time.Time) BackgroundPolicy {
 		Outcome:        BackgroundOutcomeStarted,
 		StartedAt:      now,
 		UpdatedAt:      now,
+	}
+}
+
+func assertCanceledBackgroundSession(t *testing.T, store *Store, sessionID string) {
+	t.Helper()
+	record, err := store.Get(sessionID)
+	if err != nil {
+		t.Fatalf("Get session: %v", err)
+	}
+	if record.Status != SessionStatusCanceled {
+		t.Fatalf("session status = %q, want %q", record.Status, SessionStatusCanceled)
+	}
+	for _, prompt := range record.PromptQueue {
+		if prompt.Status != QueuePromptStatusCanceled || prompt.CanceledAt == nil {
+			t.Fatalf("queue prompt = %#v, want canceled with timestamp", prompt)
+		}
 	}
 }
 

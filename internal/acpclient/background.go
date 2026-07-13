@@ -500,8 +500,12 @@ func (m *BackgroundManager) Start(sessionID, profile string, acknowledged bool) 
 		return BackgroundStatus{}, err
 	}
 	defer m.lifecycle.Done()
-	if _, err := m.sessions.Get(sessionID); err != nil {
-		return BackgroundStatus{}, err
+	canceled, cancelErr := m.recoverCanceledSession(sessionID)
+	if cancelErr != nil && !canceled {
+		return BackgroundStatus{}, cancelErr
+	}
+	if canceled {
+		return BackgroundStatus{}, errors.Join(ErrCancelRequested, cancelErr)
 	}
 	resolved, err := m.resolver(profile)
 	if err != nil {
@@ -750,8 +754,9 @@ func (m *BackgroundManager) Resume() error {
 			}
 			continue
 		}
-		if _, err := m.sessions.Get(policy.SessionID); err != nil {
-			if errors.Is(err, ErrSessionNotFound) {
+		canceled, cancelErr := m.recoverCanceledSession(policy.SessionID)
+		if cancelErr != nil && !canceled {
+			if errors.Is(cancelErr, ErrSessionNotFound) {
 				if err := m.block(policy, BackgroundOutcomeSessionMissing); err != nil {
 					return errors.Join(err, m.releaseTransition(policy.SessionID))
 				}
@@ -760,7 +765,20 @@ func (m *BackgroundManager) Resume() error {
 				}
 				continue
 			}
-			return errors.Join(err, m.releaseTransition(policy.SessionID))
+			return errors.Join(cancelErr, m.releaseTransition(policy.SessionID))
+		}
+		if canceled {
+			policy.Enabled = false
+			policy.State = BackgroundStateDisabled
+			policy.Outcome = BackgroundOutcomeStopped
+			policy.UpdatedAt = m.currentTime()
+			result := m.persistTerminal(policy, BackgroundAuditStop)
+			m.rememberTerminal(result)
+			releaseErr := m.releaseTransition(policy.SessionID)
+			if cancelErr != nil || result.err != nil || releaseErr != nil {
+				return errors.Join(cancelErr, result.err, releaseErr)
+			}
+			continue
 		}
 		resolved, err := m.resolver(policy.Profile)
 		if err != nil {
@@ -867,6 +885,18 @@ func (m *BackgroundManager) validate() error {
 		return errors.New("acp background profile resolver is required")
 	}
 	return nil
+}
+
+func (m *BackgroundManager) recoverCanceledSession(sessionID string) (bool, error) {
+	session, err := m.sessions.Get(sessionID)
+	if err != nil {
+		return false, err
+	}
+	if !cancellationLatched(session.Status) {
+		return false, nil
+	}
+	_, err = m.sessions.RecoverStaleQueue(sessionID, m.currentTime())
+	return true, err
 }
 
 func (m *BackgroundManager) launchLocked(policy BackgroundPolicy, resolved ResolvedBackgroundProfile) {
