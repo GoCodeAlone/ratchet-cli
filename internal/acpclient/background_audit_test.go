@@ -56,7 +56,7 @@ func TestBackgroundAuditAppendsOwnerOnlyMetadataRecords(t *testing.T) {
 	if got := info.Mode().Perm(); got != 0o600 {
 		t.Fatalf("audit mode = %o, want 600", got)
 	}
-	lockInfo, err := os.Stat(path + ".lock")
+	lockInfo, err := os.Stat(requireStoreLockPhysicalPath(t, path+".lock"))
 	if err != nil {
 		t.Fatalf("Stat audit lock: %v", err)
 	}

@@ -668,3 +668,18 @@ pairs; hold a per-session OS background lease from transition persistence
 through worker termination; and validate a live execution owner while holding
 its claim lock through cancellation commit. Scope: manifest unchanged; these
 are Task 6 durability and cross-process invariants from review cycle three.
+
+### Backport 2026-07-13: Ownership handoff and private lock namespace
+
+Cause: worker exit could reopen a transition without an OS lease, startup audit
+reconciliation could overwrite another process's owned start, cancel sidecars
+did not share commit classification with the session projection, lock setup
+rewrote caller-owned parent permissions, and release errors could trigger a
+write after ownership transferred. Change: every transition and terminal-audit
+reconciliation owns the per-session process lease; cancel/session updates form
+one private, rollback-aware transaction; physical locks live in a dedicated
+owner-only namespace without changing caller parents; and a process never
+persists state after releasing its lease. Scope: manifest unchanged; these are
+Task 6 lifecycle and filesystem invariants from review cycle four.
+An active worker is idempotent only when no local stop or transition is already
+reserved for that session.

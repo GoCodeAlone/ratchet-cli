@@ -207,6 +207,64 @@ func TestSessionStorePendingPromptAndOwnerLifecycle(t *testing.T) {
 	}
 }
 
+func TestRequestCancelRollsBackSidecarWhenSessionSaveDoesNotCommit(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 13, 22, 45, 0, 0, time.UTC)
+	if err := store.Upsert(SessionRecord{ID: "cancel-rollback", Status: SessionStatusRunning, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	store.sessionWriter = func(storeFile) error {
+		return errors.New("session write failed before commit")
+	}
+	if err := store.RequestCancel("cancel-rollback", now.Add(time.Second)); err == nil {
+		t.Fatal("RequestCancel succeeded with failed session save")
+	}
+	if _, err := store.CancelRequest("cancel-rollback"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("CancelRequest after rollback error = %v, want os.ErrNotExist", err)
+	}
+	reopened := NewStore(store.Path())
+	rec, err := reopened.Get("cancel-rollback")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if rec.Status != SessionStatusRunning {
+		t.Fatalf("session status = %q, want running", rec.Status)
+	}
+}
+
+func TestRequestCancelPostCommitErrorKeepsSidecarAndSessionAligned(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 13, 23, 0, 0, 0, time.UTC)
+	if err := store.Upsert(SessionRecord{ID: "cancel-postcommit", Status: SessionStatusRunning, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	store.cancelWriter = func(path string, request CancelRequest) error {
+		if err := backgroundWriteJSONAtomic(path, request); err != nil {
+			return err
+		}
+		return newBackgroundPostCommitError(errors.New("cancel durability confirmation failed"))
+	}
+	err := store.RequestCancel("cancel-postcommit", now.Add(time.Second))
+	if !errors.Is(err, ErrStoreCommitUnconfirmed) {
+		t.Fatalf("RequestCancel error = %v, want ErrStoreCommitUnconfirmed", err)
+	}
+	reopened := NewStore(store.Path())
+	rec, err := reopened.Get("cancel-postcommit")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if rec.Status != SessionStatusCancelRequested {
+		t.Fatalf("session status = %q, want cancel_requested", rec.Status)
+	}
+	request, err := reopened.CancelRequest("cancel-postcommit")
+	if err != nil {
+		t.Fatalf("CancelRequest: %v", err)
+	}
+	if request.RequestedAt != now.Add(time.Second) {
+		t.Fatalf("RequestedAt = %s, want %s", request.RequestedAt, now.Add(time.Second))
+	}
+}
+
 func TestSessionStoreOwnerLeaseDoesNotOverwriteExistingOwner(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
 	now := time.Date(2026, 7, 1, 20, 0, 0, 0, time.UTC)

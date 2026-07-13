@@ -39,6 +39,7 @@ type Store struct {
 	sessionWriter       func(storeFile) error
 	eventLogWriter      func(string, []byte) error
 	eventLogRemover     func(string) error
+	cancelWriter        func(string, CancelRequest) error
 }
 
 type storeFile struct {
@@ -528,21 +529,79 @@ func (s *Store) requestCancel(id string, when time.Time) error {
 		when = time.Now().UTC()
 	}
 	req := CancelRequest{SessionID: id, RequestedAt: when.UTC()}
-	return s.mutateTransaction(func(data *storeFile) (bool, error) {
-		if err := writeJSONFileAtomic(s.cancelPath(id), req, 0o600); err != nil {
-			return false, err
+	if s.beforeMutation != nil {
+		s.beforeMutation()
+	}
+	return s.withFileLock(func() error {
+		data, err := s.loadUnlocked()
+		if err != nil {
+			return err
 		}
-		rec, err := findSessionRecord(data, id)
+		if s.transactionLoaded != nil {
+			s.transactionLoaded()
+		}
+		path := s.cancelPath(id)
+		original, existed, err := fileSnapshot(path)
+		if err != nil {
+			return err
+		}
+		var cancelConfirmationErr error
+		if err := s.writeCancel(path, req); err != nil {
+			if !backgroundWriteCommitted(err) {
+				return err
+			}
+			cancelConfirmationErr = backgroundPostCommitCause(err)
+		}
+		rec, err := findSessionRecord(&data, id)
 		if errors.Is(err, ErrSessionNotFound) {
-			return false, nil
+			if cancelConfirmationErr != nil {
+				return storeCommitUnconfirmed(cancelConfirmationErr)
+			}
+			return nil
 		}
 		if err != nil {
-			return false, err
+			restoreErr := restoreFileSnapshot(path, original, existed)
+			return errors.Join(cancelConfirmationErr, err, backgroundPostCommitCause(restoreErr))
 		}
 		rec.Status = SessionStatusCancelRequested
 		rec.UpdatedAt = req.RequestedAt
-		return true, nil
+		if err := s.saveUnlocked(data); err != nil {
+			if backgroundWriteCommitted(err) {
+				return storeCommitUnconfirmed(cancelConfirmationErr, backgroundPostCommitCause(err))
+			}
+			restoreErr := restoreFileSnapshot(path, original, existed)
+			return errors.Join(cancelConfirmationErr, err, backgroundPostCommitCause(restoreErr))
+		}
+		if cancelConfirmationErr != nil {
+			return storeCommitUnconfirmed(cancelConfirmationErr)
+		}
+		return nil
 	})
+}
+
+func (s *Store) writeCancel(path string, request CancelRequest) error {
+	if s.cancelWriter != nil {
+		return s.cancelWriter(path, request)
+	}
+	return backgroundWriteJSONAtomic(path, request)
+}
+
+func fileSnapshot(path string) ([]byte, bool, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return data, true, nil
+}
+
+func restoreFileSnapshot(path string, data []byte, existed bool) error {
+	if !existed {
+		return backgroundRemoveFile(path)
+	}
+	return backgroundWriteFileAtomic(path, data)
 }
 
 func (s *Store) CancelRequest(id string) (CancelRequest, error) {

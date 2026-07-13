@@ -29,8 +29,9 @@ type BackgroundAuditRecord struct {
 }
 
 type BackgroundAudit struct {
-	path       string
-	syncParent func(string) error
+	path         string
+	syncParent   func(string) error
+	beforeAppend func(BackgroundAuditRecord)
 }
 
 func NewBackgroundAudit(path string) *BackgroundAudit {
@@ -70,6 +71,9 @@ func (a *BackgroundAudit) Append(record BackgroundAuditRecord) (err error) {
 	line, err := json.Marshal(record)
 	if err != nil {
 		return err
+	}
+	if a.beforeAppend != nil {
+		a.beforeAppend(record)
 	}
 
 	return withStoreProcessLock(a.path+".lock", func() error {
