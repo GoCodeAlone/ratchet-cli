@@ -222,6 +222,40 @@ func TestWatchQueueReturnsDrainBusy(t *testing.T) {
 	}
 }
 
+func TestWatchQueueHoldsOwnerLeaseAcrossIdleSleep(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 13, 20, 5, 0, 0, time.UTC)
+	if err := store.Upsert(SessionRecord{ID: "watch-owned", Status: SessionStatusQueued, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	var claimErr error
+	result, err := WatchQueue(t.Context(), store, AgentSpec{Name: "fixture", Command: "fixture"}, RunOptions{}, "watch-owned", WatchOptions{
+		Interval:  time.Millisecond,
+		MaxCycles: 2,
+		Now:       fixedClock(now),
+		Sleep: func(context.Context, time.Duration) error {
+			other, err := store.AcquireOwnerLease(OwnerLock{SessionID: "watch-owned", PID: os.Getpid(), StartedAt: now.Add(time.Second)})
+			if other != nil {
+				_ = other.Release()
+			}
+			claimErr = err
+			return context.Canceled
+		},
+	}, nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("WatchQueue error = %v, want context.Canceled", err)
+	}
+	if !errors.Is(claimErr, ErrOwnerLeaseBusy) {
+		t.Fatalf("idle watcher owner claim = %v, want ErrOwnerLeaseBusy", claimErr)
+	}
+	if result.Cycles != 1 {
+		t.Fatalf("cycles = %d, want 1 before canceled sleep", result.Cycles)
+	}
+	if _, err := store.Owner("watch-owned"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Owner after WatchQueue return = %v, want os.ErrNotExist", err)
+	}
+}
+
 func instantWatchSleep(context.Context, time.Duration) error {
 	return nil
 }

@@ -115,14 +115,18 @@ func (s *BackgroundStore) List() ([]BackgroundPolicy, error) {
 	if s == nil || strings.TrimSpace(s.path) == "" {
 		return nil, errors.New("acp background policy path is required")
 	}
-	lock := backgroundPathLock(s.path)
-	lock.Lock()
-	defer lock.Unlock()
-	data, err := s.load(s.path)
+	var policies []BackgroundPolicy
+	err := withStoreProcessLock(s.path+".lock", func() error {
+		data, err := s.load(s.path)
+		if err != nil {
+			return err
+		}
+		policies = slices.Clone(data.Policies)
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	policies := slices.Clone(data.Policies)
 	slices.SortFunc(policies, func(a, b BackgroundPolicy) int {
 		return strings.Compare(a.SessionID, b.SessionID)
 	})
@@ -154,21 +158,20 @@ func (s *BackgroundStore) Upsert(policy BackgroundPolicy) error {
 	if policy.Profile == "" {
 		return errors.New("acp background profile is required")
 	}
-	lock := backgroundPathLock(s.path)
-	lock.Lock()
-	defer lock.Unlock()
-	data, err := s.load(s.path)
-	if err != nil {
-		return err
-	}
-	for i := range data.Policies {
-		if data.Policies[i].SessionID == policy.SessionID {
-			data.Policies[i] = policy
-			return s.save(data)
+	return withStoreProcessLock(s.path+".lock", func() error {
+		data, err := s.load(s.path)
+		if err != nil {
+			return err
 		}
-	}
-	data.Policies = append(data.Policies, policy)
-	return s.save(data)
+		for i := range data.Policies {
+			if data.Policies[i].SessionID == policy.SessionID {
+				data.Policies[i] = policy
+				return s.save(data)
+			}
+		}
+		data.Policies = append(data.Policies, policy)
+		return s.save(data)
+	})
 }
 
 func (s *BackgroundStore) load(path string) (backgroundFile, error) {
@@ -198,61 +201,64 @@ func (s *BackgroundStore) save(data backgroundFile) error {
 
 func (s *BackgroundStore) putTransition(transition backgroundTransition) error {
 	path := s.transitionPath()
-	lock := backgroundPathLock(path)
-	lock.Lock()
-	defer lock.Unlock()
-	data, err := s.loadTransitions(path)
-	if err != nil {
-		return err
-	}
-	for i := range data.Transitions {
-		if data.Transitions[i].Policy.SessionID == transition.Policy.SessionID {
-			data.Transitions[i] = transition
-			return backgroundWriteJSONAtomic(path, data)
+	return withStoreProcessLock(path+".lock", func() error {
+		data, err := s.loadTransitions(path)
+		if err != nil {
+			return err
 		}
-	}
-	data.Transitions = append(data.Transitions, transition)
-	slices.SortFunc(data.Transitions, func(a, b backgroundTransition) int {
-		return strings.Compare(a.Policy.SessionID, b.Policy.SessionID)
+		for i := range data.Transitions {
+			if data.Transitions[i].Policy.SessionID == transition.Policy.SessionID {
+				data.Transitions[i] = transition
+				return backgroundWriteJSONAtomic(path, data)
+			}
+		}
+		data.Transitions = append(data.Transitions, transition)
+		slices.SortFunc(data.Transitions, func(a, b backgroundTransition) int {
+			return strings.Compare(a.Policy.SessionID, b.Policy.SessionID)
+		})
+		return backgroundWriteJSONAtomic(path, data)
 	})
-	return backgroundWriteJSONAtomic(path, data)
 }
 
 func (s *BackgroundStore) listTransitions() ([]backgroundTransition, error) {
 	path := s.transitionPath()
-	lock := backgroundPathLock(path)
-	lock.Lock()
-	defer lock.Unlock()
-	data, err := s.loadTransitions(path)
+	var transitions []backgroundTransition
+	err := withStoreProcessLock(path+".lock", func() error {
+		data, err := s.loadTransitions(path)
+		if err != nil {
+			return err
+		}
+		transitions = slices.Clone(data.Transitions)
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	return slices.Clone(data.Transitions), nil
+	return transitions, nil
 }
 
 func (s *BackgroundStore) removeTransition(sessionID string) error {
 	path := s.transitionPath()
-	lock := backgroundPathLock(path)
-	lock.Lock()
-	defer lock.Unlock()
-	data, err := s.loadTransitions(path)
-	if err != nil {
-		return err
-	}
-	next := data.Transitions[:0]
-	for _, transition := range data.Transitions {
-		if transition.Policy.SessionID != sessionID {
-			next = append(next, transition)
+	return withStoreProcessLock(path+".lock", func() error {
+		data, err := s.loadTransitions(path)
+		if err != nil {
+			return err
 		}
-	}
-	if len(next) == len(data.Transitions) {
-		return nil
-	}
-	if len(next) == 0 {
-		return backgroundRemoveFile(path)
-	}
-	data.Transitions = next
-	return backgroundWriteJSONAtomic(path, data)
+		next := data.Transitions[:0]
+		for _, transition := range data.Transitions {
+			if transition.Policy.SessionID != sessionID {
+				next = append(next, transition)
+			}
+		}
+		if len(next) == len(data.Transitions) {
+			return nil
+		}
+		if len(next) == 0 {
+			return backgroundRemoveFile(path)
+		}
+		data.Transitions = next
+		return backgroundWriteJSONAtomic(path, data)
+	})
 }
 
 func (s *BackgroundStore) transitionPath() string {

@@ -127,21 +127,25 @@ func (s *Store) InsertSession(rec SessionRecord) error {
 		return errors.New("acp client session id is required")
 	}
 	return s.mutateTransaction(func(data *storeFile) (bool, error) {
-		if _, err := findSessionRecord(data, rec.ID); err == nil {
-			return false, fmt.Errorf("%w: %s", ErrSessionArchiveCollision, rec.ID)
-		} else if !errors.Is(err, ErrSessionNotFound) {
-			return false, err
-		}
-		now := time.Now().UTC()
-		if rec.CreatedAt.IsZero() {
-			rec.CreatedAt = now
-		}
-		if rec.UpdatedAt.IsZero() {
-			rec.UpdatedAt = rec.CreatedAt
-		}
-		data.Sessions = append(data.Sessions, rec)
-		return true, nil
+		return true, insertSessionRecord(data, rec)
 	})
+}
+
+func insertSessionRecord(data *storeFile, rec SessionRecord) error {
+	if _, err := findSessionRecord(data, rec.ID); err == nil {
+		return fmt.Errorf("%w: %s", ErrSessionArchiveCollision, rec.ID)
+	} else if !errors.Is(err, ErrSessionNotFound) {
+		return err
+	}
+	now := time.Now().UTC()
+	if rec.CreatedAt.IsZero() {
+		rec.CreatedAt = now
+	}
+	if rec.UpdatedAt.IsZero() {
+		rec.UpdatedAt = rec.CreatedAt
+	}
+	data.Sessions = append(data.Sessions, rec)
+	return nil
 }
 
 func (s *Store) MarkSessionStarted(rec SessionRecord) error {

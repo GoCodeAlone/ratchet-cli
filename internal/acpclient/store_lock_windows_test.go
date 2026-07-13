@@ -81,6 +81,38 @@ func TestBackgroundWindowsOwnerLeaseIsExclusiveAndPrivate(t *testing.T) {
 	assertBackgroundWindowsPrivateDACL(t, store.ownerClaimPath("private"))
 }
 
+func TestBackgroundWindowsPolicyTransitionAuditLocksArePrivate(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "private")
+	store := NewBackgroundStore(filepath.Join(dir, "background.json"))
+	now := time.Date(2026, 7, 13, 20, 30, 0, 0, time.UTC)
+	policy := BackgroundPolicy{
+		SessionID: "private", Profile: "fixture", DescriptorHash: "hash",
+		PolicyVersion: BackgroundPolicyVersion, AcknowledgedAt: now,
+		Enabled: true, State: BackgroundStateRunning, Outcome: BackgroundOutcomeStarted, UpdatedAt: now,
+	}
+	if err := store.Upsert(policy); err != nil {
+		t.Fatalf("Upsert policy: %v", err)
+	}
+	if err := store.putTransition(backgroundTransition{Policy: policy, Action: BackgroundAuditStart}); err != nil {
+		t.Fatalf("putTransition: %v", err)
+	}
+	audit := NewBackgroundAudit(filepath.Join(dir, "background-audit.jsonl"))
+	if err := audit.Append(BackgroundAuditRecord{
+		At: now, Action: BackgroundAuditStart, SessionID: policy.SessionID,
+		Profile: policy.Profile, DescriptorHash: policy.DescriptorHash, Outcome: policy.Outcome,
+	}); err != nil {
+		t.Fatalf("Append audit: %v", err)
+	}
+	for _, path := range []string{
+		dir,
+		store.Path(), store.Path() + ".lock",
+		store.transitionPath(), store.transitionPath() + ".lock",
+		audit.Path(), audit.Path() + ".lock",
+	} {
+		assertBackgroundWindowsPrivateDACL(t, path)
+	}
+}
+
 func holdSessionStoreTestLock(path string) (func() error, error) {
 	if err := backgroundEnsurePrivateDir(filepath.Dir(path)); err != nil {
 		return nil, err

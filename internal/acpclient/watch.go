@@ -45,7 +45,7 @@ type WatchResult struct {
 	Remaining    int
 }
 
-func WatchQueue(ctx context.Context, store *Store, spec AgentSpec, opts RunOptions, sessionID string, watchOpts WatchOptions, onCycle func(WatchCycle)) (WatchResult, error) {
+func WatchQueue(ctx context.Context, store *Store, spec AgentSpec, opts RunOptions, sessionID string, watchOpts WatchOptions, onCycle func(WatchCycle)) (result WatchResult, err error) {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return WatchResult{}, errors.New("acp client session id is required")
@@ -56,6 +56,11 @@ func WatchQueue(ctx context.Context, store *Store, spec AgentSpec, opts RunOptio
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	lease, err := acquireDrainOwnerLease(store, spec, sessionID, watchOpts.now())
+	if err != nil {
+		return WatchResult{}, err
+	}
+	defer func() { err = errors.Join(err, lease.Release()) }()
 
 	interval := watchOpts.Interval
 	if interval <= 0 {
@@ -70,7 +75,7 @@ func WatchQueue(ctx context.Context, store *Store, spec AgentSpec, opts RunOptio
 		sleep = defaultWatchSleep
 	}
 
-	result := WatchResult{SessionID: sessionID}
+	result = WatchResult{SessionID: sessionID}
 	for {
 		if err := ctx.Err(); err != nil {
 			result.Remaining = countPendingQueue(store, sessionID)
@@ -109,7 +114,7 @@ func WatchQueue(ctx context.Context, store *Store, spec AgentSpec, opts RunOptio
 			continue
 		}
 
-		drainResult, err := DrainQueue(ctx, store, spec, opts, sessionID, DrainOptions{
+		drainResult, err := drainQueueOwned(ctx, store, spec, opts, sessionID, DrainOptions{
 			Max:         maxPerCycle,
 			Now:         watchOpts.Now,
 			StartRunner: watchOpts.StartRunner,

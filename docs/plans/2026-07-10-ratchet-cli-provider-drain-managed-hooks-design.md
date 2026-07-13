@@ -632,3 +632,16 @@ per-log OS transaction lock. Unsupported platforms return
 `ErrStoreProcessLockUnsupported`; no in-process fallback claims cross-process
 safety. Scope: manifest unchanged; this completes Task 6's transactional state
 boundary.
+
+### Backport 2026-07-13: Cross-process supervision and archive snapshots
+
+Cause: policy/transition/audit mutexes stopped at the process boundary,
+watchers released ownership between drain cycles, archive import committed its
+record before raw history, export checked ownership before taking its snapshot,
+and unsupported Unix targets had no lock implementation or explicit fallback.
+Change: use owner-only OS side locks for complete background file operations;
+hold one owner lease for a watch lifetime; commit imported session/history under
+the sessions and event-log transaction locks with retryable failure semantics;
+hold an export lease through snapshot creation; and make the unsupported build
+tag the exact complement of implemented OS locks. Scope: manifest unchanged;
+this closes Task 6's adversarial concurrency review.

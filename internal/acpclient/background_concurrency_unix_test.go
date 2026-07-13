@@ -114,13 +114,23 @@ func TestBackgroundManagerResumeShutdownBeforeLaunchDisablesPolicy(t *testing.T)
 	if err := store.Upsert(policy); err != nil {
 		t.Fatalf("Upsert policy: %v", err)
 	}
-	auditLock := backgroundPathLock(audit.Path())
+	var releaseAuditLock func() error
+	auditLockReleased := false
+	defer func() {
+		if releaseAuditLock != nil && !auditLockReleased {
+			_ = releaseAuditLock()
+		}
+	}()
 	resolverReached := make(chan struct{})
 	manager := NewBackgroundManager(backgroundSessionStore(t), store, audit, BackgroundManagerOptions{
 		Context: t.Context(),
 		Now:     backgroundTestClock,
 		Resolver: func(name string) (ResolvedBackgroundProfile, error) {
-			auditLock.Lock()
+			var err error
+			releaseAuditLock, err = acquireStoreFileLock(audit.Path() + ".lock")
+			if err != nil {
+				return ResolvedBackgroundProfile{}, err
+			}
 			close(resolverReached)
 			return trustedBackgroundProfile(name, "descriptor-hash"), nil
 		},
@@ -149,7 +159,10 @@ func TestBackgroundManagerResumeShutdownBeforeLaunchDisablesPolicy(t *testing.T)
 		returnedEarly = true
 	case <-time.After(100 * time.Millisecond):
 	}
-	auditLock.Unlock()
+	if err := releaseAuditLock(); err != nil {
+		t.Fatalf("release audit process lock: %v", err)
+	}
+	auditLockReleased = true
 	if err := <-resumeDone; !errors.Is(err, ErrBackgroundManagerClosed) {
 		t.Fatalf("Resume error = %v, want ErrBackgroundManagerClosed", err)
 	}

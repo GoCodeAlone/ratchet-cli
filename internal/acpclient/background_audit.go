@@ -72,58 +72,59 @@ func (a *BackgroundAudit) Append(record BackgroundAuditRecord) (err error) {
 		return err
 	}
 
-	lock := backgroundPathLock(a.path)
-	lock.Lock()
-	defer lock.Unlock()
-	f, err := backgroundOpenPrivateAppend(a.path)
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(append(line, '\n')); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return a.syncParent(filepath.Dir(a.path))
+	return withStoreProcessLock(a.path+".lock", func() error {
+		f, err := backgroundOpenPrivateAppend(a.path)
+		if err != nil {
+			return err
+		}
+		if _, err := f.Write(append(line, '\n')); err != nil {
+			_ = f.Close()
+			return err
+		}
+		if err := f.Sync(); err != nil {
+			_ = f.Close()
+			return err
+		}
+		if err := f.Close(); err != nil {
+			return err
+		}
+		return a.syncParent(filepath.Dir(a.path))
+	})
 }
 
 func (a *BackgroundAudit) Read() ([]BackgroundAuditRecord, error) {
 	if a == nil || strings.TrimSpace(a.path) == "" {
 		return nil, errors.New("acp background audit path is required")
 	}
-	lock := backgroundPathLock(a.path)
-	lock.Lock()
-	defer lock.Unlock()
-	f, err := os.Open(a.path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
+	var records []BackgroundAuditRecord
+	err := withStoreProcessLock(a.path+".lock", func() error {
+		f, err := os.Open(a.path)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		defer f.Close() //nolint:errcheck
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			line := scanner.Bytes()
+			if len(strings.TrimSpace(string(line))) == 0 {
+				continue
+			}
+			var record BackgroundAuditRecord
+			if err := json.Unmarshal(line, &record); err != nil {
+				return fmt.Errorf("read background audit %s: %w", a.path, err)
+			}
+			records = append(records, record)
+		}
+		if err := scanner.Err(); err != nil {
+			return fmt.Errorf("read background audit %s: %w", a.path, err)
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-	defer f.Close() //nolint:errcheck
-
-	var records []BackgroundAuditRecord
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(strings.TrimSpace(string(line))) == 0 {
-			continue
-		}
-		var record BackgroundAuditRecord
-		if err := json.Unmarshal(line, &record); err != nil {
-			return nil, fmt.Errorf("read background audit %s: %w", a.path, err)
-		}
-		records = append(records, record)
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("read background audit %s: %w", a.path, err)
 	}
 	return records, nil
 }

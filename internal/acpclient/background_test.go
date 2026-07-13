@@ -85,6 +85,13 @@ func TestBackgroundStoreRepeatedReplacementPersistsMinimalOwnerOnlyAtomicPolicyS
 		if got := info.Mode().Perm(); got != 0o600 {
 			t.Fatalf("policy mode revision %d = %o, want 600", revision, got)
 		}
+		lockInfo, err := os.Stat(path + ".lock")
+		if err != nil {
+			t.Fatalf("Stat policy lock revision %d: %v", revision, err)
+		}
+		if got := lockInfo.Mode().Perm(); got != 0o600 {
+			t.Fatalf("policy lock mode revision %d = %o, want 600", revision, got)
+		}
 		temps, err := filepath.Glob(filepath.Join(dir, ".background.json.*.tmp"))
 		if err != nil {
 			t.Fatalf("Glob revision %d: %v", revision, err)

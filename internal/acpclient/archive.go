@@ -74,7 +74,7 @@ type ImportOptions struct {
 	CommandFingerprint string
 }
 
-func ExportSession(store *Store, id, outputPath string, opts ExportOptions) error {
+func ExportSession(store *Store, id, outputPath string, opts ExportOptions) (err error) {
 	if store == nil {
 		return errors.New("acp client store is required")
 	}
@@ -84,11 +84,16 @@ func ExportSession(store *Store, id, outputPath string, opts ExportOptions) erro
 	if outputPath == "" {
 		return errors.New("archive output path is required")
 	}
-	if _, err := store.Owner(id); err == nil {
-		return fmt.Errorf("%w: %s", ErrSessionActive, id)
-	} else if !errors.Is(err, os.ErrNotExist) {
+	lease, err := store.AcquireOwnerLease(OwnerLock{
+		SessionID: id, PID: os.Getpid(), CommandFingerprint: "archive-export", StartedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		if errors.Is(err, ErrOwnerLeaseBusy) {
+			return fmt.Errorf("%w: %s", ErrSessionActive, id)
+		}
 		return err
 	}
+	defer func() { err = errors.Join(err, lease.Release()) }()
 	rec, err := store.Get(id)
 	if err != nil {
 		return err
@@ -194,11 +199,9 @@ func ImportSession(store *Store, archivePath string, opts ImportOptions) (Sessio
 	if rec.UpdatedAt.IsZero() {
 		rec.UpdatedAt = parseArchiveTime(archive.Session.UpdatedAt)
 	}
-	if err := store.InsertSession(rec); err != nil {
-		return SessionRecord{}, err
-	}
+	var events []EventLogLine
 	if len(archive.RawHistory) > 0 {
-		events := make([]EventLogLine, 0, len(archive.RawHistory))
+		events = make([]EventLogLine, 0, len(archive.RawHistory))
 		at := parseArchiveTime(archive.ExportedAt)
 		if at.IsZero() {
 			at = rec.UpdatedAt
@@ -214,11 +217,46 @@ func ImportSession(store *Store, archivePath string, opts ImportOptions) (Sessio
 				Message:   message,
 			})
 		}
-		if err := store.WriteEventLog(rec.ID, events); err != nil {
-			return SessionRecord{}, err
-		}
+	}
+	if err := store.insertSessionWithEventLog(rec, events); err != nil {
+		return SessionRecord{}, err
 	}
 	return store.Get(rec.ID)
+}
+
+func (s *Store) insertSessionWithEventLog(rec SessionRecord, events []EventLogLine) error {
+	if strings.TrimSpace(rec.ID) == "" {
+		return errors.New("acp client session id is required")
+	}
+	eventData, err := encodeEventLog(events, 1)
+	if err != nil {
+		return err
+	}
+	if s.beforeMutation != nil {
+		s.beforeMutation()
+	}
+	return s.withFileLock(func() error {
+		data, err := s.loadUnlocked()
+		if err != nil {
+			return err
+		}
+		if err := insertSessionRecord(&data, rec); err != nil {
+			return err
+		}
+		return s.withEventLogLock(rec.ID, func(path string) error {
+			if len(eventData) == 0 {
+				if err := backgroundRemoveFile(path); err != nil {
+					return err
+				}
+			} else if err := backgroundWriteFileAtomic(path, eventData); err != nil {
+				return err
+			}
+			if err := s.saveUnlocked(data); err != nil {
+				return errors.Join(err, backgroundRemoveFile(path))
+			}
+			return nil
+		})
+	})
 }
 
 func (a *Archive) UnmarshalJSON(b []byte) error {

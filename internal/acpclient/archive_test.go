@@ -183,6 +183,41 @@ func TestExportSessionRefusesActiveOwner(t *testing.T) {
 	}
 }
 
+func TestExportSessionHoldsOwnerLeaseAcrossSnapshot(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 13, 20, 10, 0, 0, time.UTC)
+	if err := store.Upsert(SessionRecord{ID: "snapshot", Status: SessionStatusCompleted, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	if err := store.WriteEventLog("snapshot", []EventLogLine{{
+		At: now, Direction: EventDirectionInbound,
+		Message: json.RawMessage(`{"jsonrpc":"2.0","id":1,"result":{}}`),
+	}}); err != nil {
+		t.Fatalf("WriteEventLog: %v", err)
+	}
+	var claimErr error
+	err := ExportSession(store, "snapshot", filepath.Join(t.TempDir(), "archive.json"), ExportOptions{
+		HistoryMode: ArchiveHistoryModeRaw,
+		Now: func() time.Time {
+			other, err := store.AcquireOwnerLease(OwnerLock{SessionID: "snapshot", PID: os.Getpid(), StartedAt: now.Add(time.Second)})
+			if other != nil {
+				_ = other.Release()
+			}
+			claimErr = err
+			return now
+		},
+	})
+	if err != nil {
+		t.Fatalf("ExportSession: %v", err)
+	}
+	if !errors.Is(claimErr, ErrOwnerLeaseBusy) {
+		t.Fatalf("snapshot owner claim = %v, want ErrOwnerLeaseBusy", claimErr)
+	}
+	if _, err := store.Owner("snapshot"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Owner after export = %v, want os.ErrNotExist", err)
+	}
+}
+
 func TestImportSessionPreservesACPXRawHistoryAndExportsRaw(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "state", "sessions.json"))
 	now := time.Date(2026, 7, 2, 9, 0, 0, 0, time.UTC)
@@ -324,6 +359,9 @@ func TestImportSessionRejectsInvalidRawHistory(t *testing.T) {
 	if !errors.Is(err, ErrInvalidSessionArchive) {
 		t.Fatalf("ImportSession error = %v, want ErrInvalidSessionArchive", err)
 	}
+	if _, err := store.Get("bad-raw"); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("invalid raw history left session behind: %v", err)
+	}
 
 	archivePath = writeRawArchiveFixture(t, map[string]any{
 		"format_version": 1,
@@ -350,6 +388,42 @@ func TestImportSessionRejectsInvalidRawHistory(t *testing.T) {
 	_, err = ImportSession(store, archivePath, ImportOptions{})
 	if !errors.Is(err, ErrInvalidSessionArchive) {
 		t.Fatalf("ImportSession summary-shaped acpx history error = %v, want ErrInvalidSessionArchive", err)
+	}
+}
+
+func TestImportSessionEventLogFailureLeavesNoCollisionAndCanRetry(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(filepath.Join(dir, "sessions.json"))
+	now := time.Date(2026, 7, 13, 20, 15, 0, 0, time.UTC)
+	archivePath := writeRawArchiveFixture(t, map[string]any{
+		"format_version": 1,
+		"exported_at":    now.Format(time.RFC3339Nano),
+		"exported_by":    "acpx",
+		"session": map[string]any{
+			"record_id": "retry-import", "cwd_relative": ".", "created_at": now.Format(time.RFC3339Nano), "updated_at": now.Format(time.RFC3339Nano),
+			"state": map[string]any{"id": "retry-import", "status": "completed", "createdAt": now.Format(time.RFC3339Nano), "updatedAt": now.Format(time.RFC3339Nano)},
+		},
+		"history": []json.RawMessage{json.RawMessage(`{"jsonrpc":"2.0","id":1,"result":{}}`)},
+	})
+	eventsPath := filepath.Join(dir, "events")
+	if err := os.WriteFile(eventsPath, []byte("blocks event directory\n"), 0o600); err != nil {
+		t.Fatalf("write event directory blocker: %v", err)
+	}
+	if _, err := ImportSession(store, archivePath, ImportOptions{}); err == nil {
+		t.Fatal("ImportSession with blocked event directory succeeded")
+	}
+	if _, err := store.Get("retry-import"); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("failed import left session behind: %v", err)
+	}
+	if err := os.Remove(eventsPath); err != nil {
+		t.Fatalf("remove event directory blocker: %v", err)
+	}
+	if _, err := ImportSession(store, archivePath, ImportOptions{}); err != nil {
+		t.Fatalf("ImportSession retry: %v", err)
+	}
+	events, err := store.ReadEventLog("retry-import")
+	if err != nil || len(events) != 1 {
+		t.Fatalf("retry event log = %#v, %v; want one event", events, err)
 	}
 }
 
