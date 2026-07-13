@@ -720,6 +720,14 @@ holds through real `exec.Cmd.Start` with a second mutator process, prove audit
 retry/interleaving with cooperating subprocesses, and releaseguard all four
 native Windows attack tests. Scope: manifest unchanged; Task 6 proof wiring.
 
+### Backport 2026-07-13: Fresh-process audit replay
+
+Cause: live subprocess coordination could retain cached audit state and did not
+prove restart recovery after an unconfirmed commit. Change: require an A/B/A2
+process sequence driven by durable transition/audit files, explicit audit-lock
+blocking, and exactly one committed record per ID. Scope: manifest unchanged;
+Task 6 verification detail.
+
 Rewrite contract:
 
 - `CheckCancellation(id) (bool, error)` is authoritative and cancellation is
@@ -760,8 +768,9 @@ Rewrite contract:
   dedicated owner-only directory. Both `Read` and `Append` use one pinned-parent,
   handle-relative transaction, discard
   a non-newline suffix, and sync repair before use. Newline-terminated malformed
-  records fail. `at`, `sessionId`, `profile`, `descriptorHash`, and `outcome` are
-  required. Allowed pairs are start:started; resume:resumed;
+  records fail. `recordId`, `at`, `action`, `sessionId`, `profile`,
+  `descriptorHash`, and `outcome` are required. Allowed pairs are start:started;
+  resume:resumed;
   block:profile_untrusted/profile_drift/profile_missing/session_missing/policy_invalid;
   error:worker_error/worker_panic/state_write_failed/audit_append_failed; and
   stop:stopped/completed. Unknown JSON fields are ignored; new actions/outcomes
@@ -801,8 +810,10 @@ Rewrite contract:
   cancel, SIGKILL-created audit tails read before append, a two-process transition
   replacement race, Unix pre/post-validation link attacks, native Windows repair
   reparse/hard-link/DACL attacks, executable legacy-reader projection behavior,
-  separate-process cancel-versus-claim/writeback; cooperating audit processes
-  where one retries an unconfirmed record after another appends; and a
+  separate-process cancel-versus-claim/writeback; an audit restart harness where
+  process A receives `ErrStoreCommitUnconfirmed` and exits, process B acquires
+  the audit lock and appends another record, and fresh process A2 reloads the
+  durable transition and retries with exactly one record per `recordId`; and a
   release-shaped `BackgroundManager -> WatchQueue -> StartRunner` test where a
   second mutator process blocks across a fixture child's real `exec.Cmd.Start`
   acknowledgement. A releaseguard asserts all named Windows attack tests remain

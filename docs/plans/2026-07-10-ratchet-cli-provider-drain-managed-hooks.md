@@ -897,10 +897,13 @@ Add RED tests before the rewrite:
 - `(true, nil)` cancellation yields `ErrCancelRequested`, `(false, err)` keeps
   the authority error, ACP cancel uses an independent bounded context, and an
   ignoring child is killed/reaped with every watcher/send goroutine joined;
-- transition-persisted random event IDs deduplicate an unconfirmed audit append
-  while a cooperating subprocess appends another session's record between the
-  first process's attempts; distinct same-metadata events remain distinct, and
-  SIGKILL tails plus every write/sync/close/parent-sync stage recover;
+- transition-persisted random event IDs survive a restart harness: process A
+  receives `ErrStoreCommitUnconfirmed` and exits; process B acquires the audit
+  lock and appends another session's record; fresh process A2 reloads the durable
+  transition and retries; the test observes peer blocking while the lock is held
+  and exactly one committed record per `recordId`. Distinct same-metadata events
+  remain distinct; SIGKILL tails and every write/sync/close/parent-sync stage
+  recover;
 - the production `BackgroundManager -> WatchQueue -> StartRunner` path carries
   a `ProfileStore.WithTrustedProfile` launch closure; a deterministic pre-start
   barrier lets a second mutator process block while the closure calls a fixture
@@ -921,7 +924,7 @@ IDs, own profile trust through real child start, and make cancellation causal.
 Verification:
 
 ```bash
-gofmt -w internal/acpclient/*.go
+gofmt -w internal/acpclient/*.go internal/releaseguard/acp_background_windows_test.go
 go test ./internal/acpclient -run 'SessionWriterInventory|Cancel|Cancellation|Audit|Profile.*Trust|Profile.*Launch|Background|WatchQueue|DrainQueue|ImportSession' -count=1
 go test -race ./internal/acpclient -run 'Cancel|Audit|Profile.*Launch|Background|WatchQueue|DrainQueue' -count=1
 go test ./internal/acpclient -run 'Cancel|Audit|Profile.*Launch|Background' -count=20

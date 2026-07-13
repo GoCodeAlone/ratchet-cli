@@ -616,3 +616,48 @@ through `WatchOptions.StartRunner`.
 
 **Verdict reasoning:** FAIL; D78-D79 are Important proof-wiring gaps. D80 is
 Minor but cheap to close in the same Task 6 releaseguard.
+
+## Cycle 14: Restart-Shaped Audit Proof
+
+**Status:** FAIL
+
+**Findings (Critical):** none.
+
+**Findings (Important):**
+
+- `D81` Cooperating live subprocesses did not require a fresh-process retry or
+  observe lock ownership. Recommendation: A commits-unconfirmed and exits; B
+  appends under the lock; fresh A2 reloads the transition and retries; assert
+  peer blocking and one record per ID.
+
+**Findings (Minor):**
+
+- `D82` Required audit fields omitted `action` and `recordId`.
+- `D83` Task 6's `gofmt` omitted its new releaseguard source.
+
+**D78-D80 mapping:** D78/D80 closed. D79 remains open only through D81.
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Project guidance | Clean | Go, metadata-only audit, and Windows CI preserved. |
+| Assumptions | Finding | Live process coordination did not prove restart. |
+| Repo/artifact precedent | Clean | Existing subprocess/releaseguard locations fit. |
+| YAGNI | Clean | Authority controls remain justified. |
+| Failure modes | Finding | Restart after unconfirmed commit was under-specified. |
+| Security/privacy | Finding | Required schema identity/action fields were ambiguous. |
+| Infrastructure | Clean | No infrastructure change. |
+| Multi-component validation | Finding | Fresh-process recovery boundary was missing. |
+| Declared integration proof | Finding | Audit process integration needed restart proof. |
+| Contributed UI proof | Clean | No UI contribution. |
+| Rollback | Clean | Accepted upgrade-forward boundary remains explicit. |
+| Simpler alternative | Clean | A restart harness directly proves the boundary. |
+| Intent drift | Clean | Manifest unchanged. |
+| Existence/runtime validity | Clean | Production seams and selectors exist. |
+
+**Alternative:** make the audit helper itself a three-stage A/B/A2 restart
+harness driven only by durable transition/audit files.
+
+**Verdict reasoning:** FAIL until D81 is explicit; D82-D83 are Minor convergence
+corrections.
