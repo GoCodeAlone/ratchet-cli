@@ -698,29 +698,45 @@ unchanged; this is the required review-cycle-five rewrite of Task 6.
 
 Rewrite contract:
 
-- `CheckCancellation(id) (bool, error)` is authoritative. Requested/canceled
-  state stops work; missing session and storage/parse errors are explicit, and
-  unattended workers fail closed on authority errors.
+- `CheckCancellation(id) (bool, error)` is authoritative and cancellation is
+  monotonic. `ClaimNextQueuedPrompt` checks the latch and marks one prompt
+  running in the same sessions transaction. Completion/failure records prompt
+  outcome but preserves `cancel_requested`/`canceled`; pending prompts then move
+  to canceled. No check-then-claim path remains.
+- `RunOptions.CancelRequested` becomes error-bearing. Authority read or ACP
+  cancel-send failure cancels both prompt and child-process contexts and returns
+  a classified terminal error, including when an agent ignores cooperative
+  cancellation.
 - Cancel commit order is sessions first, compatibility sidecar second. A
   sidecar failure returns degraded/unconfirmed state without undoing the primary
-  commit. Reconciliation creates missing projections and removes orphans before
-  downgrade; mixed-version cancellation cannot be claimed atomic.
+  commit. Reconciliation is one `sessions lock -> current reload -> sidecar
+  mutation` transaction. `state prepare-downgrade` requires zero owner/background
+  leases, excludes new current-version owners, reconciles projections, and emits
+  readiness; operators must quiesce older binaries first. Mixed-version
+  cancellation is not atomic.
 - Transition recovery is `list IDs -> session lease -> lock-held reload`.
   Missing means no-op; only the reloaded value may replay; no write follows
   lease release.
-- Audit newline is the sole commit marker. Both `Read` and `Append` lock, discard
+- Audit newline is the sole commit marker. Audit data and locks occupy a
+  dedicated owner-only directory. Both `Read` and `Append` use one pinned-parent,
+  handle-relative transaction, discard
   a non-newline suffix, and sync repair before use. Newline-terminated malformed
-  or missing-required-field records fail; known actions are enforced and unknown
-  JSON fields are ignored for forward compatibility. Raw event-log framing is
-  unchanged and does not use audit repair.
-- Secure append resolves/opens one parent identity and derives both lock and
-  final-file operations from that handle. Final links/reparse points,
-  non-regular files, wrong owners/DACLs, and multiple links are rejected.
+  records fail. `at`, `sessionId`, `profile`, `descriptorHash`, and `outcome` are
+  required; action must be start/resume/block/error/stop with its current outcome
+  set. Unknown JSON fields are ignored. Raw event-log framing is unchanged and
+  shares only the secure final-target open primitive.
+- Secure audit mutation derives lock and data operations from one held parent
+  identity. Final links/reparse points, non-regular files, wrong owners/DACLs,
+  and multiple links are rechecked before mutation. The parent is owner-only, so
+  same-owner relinking is outside the adversarial boundary.
 - Descriptor hash payload keeps the existing field order and nil/empty encoding,
   preserves args order, sorts env keys, and hashes command/cwd exactly. Legacy
-  normalized mismatches fail closed and require explicit retrust.
-- Tests inject every cancel commit stage, read-before-append torn-tail restart,
-  transition replacement after ID listing, Unix final-link/hard-link attacks,
-  native Windows reparse behavior, and mixed-version projection reconciliation.
-  AIX remains cross-build-only; process-locked mutation returns
-  `ErrStoreProcessLockUnsupported` before any write.
+  normalized mismatches fail closed and require explicit retrust. Profile
+  add/trust/remove/list are process-locked; stored-profile resolution holds that
+  lease through durable start/audit commit and launch.
+- Tests cover every cancel commit stage and latch interleaving, an agent ignoring
+  cancel, SIGKILL-created audit tails read before append, a two-process transition
+  replacement race, Unix pre/post-validation link attacks, native Windows repair
+  and reparse attacks, an executable legacy-reader downgrade sequence, and a
+  host-injected unsupported-lock no-write proof. AIX remains cross-build-only and
+  returns `ErrStoreProcessLockUnsupported` before mutation.

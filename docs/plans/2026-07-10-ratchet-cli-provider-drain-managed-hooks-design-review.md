@@ -393,3 +393,47 @@ D37-D39 are straightforward conservative implementation refinements.
 best-effort legacy projection with reconciliation instead of atomicity claims.
 
 **Verdict reasoning:** FAIL; D40-D44, D46, and D47 remain Important.
+
+## Cycle 9: Task 6 Authority-First Rewrite
+
+**Status:** FAIL
+
+**Cycle 8 mapping:** D42, D45, D46, D48 resolved; D40, D41, D43, D44, D47
+remained open through D51-D56; D49 behavior resolved but lacked proof.
+
+**Findings (Critical):**
+
+- `D50` Cancellation was not monotonic: queue/lifecycle writeback could replace
+  `cancel_requested` after a successful authority check.
+
+**Findings (Important):**
+
+- `D51` Boolean cancellation callbacks could not propagate authority/ACP-cancel
+  errors into prompt and child-process termination.
+- `D52` Mutating audit `Read` lacked the same pinned-handle protections as
+  append; audit needed a dedicated owner-only namespace.
+- `D53` Projection reconciliation lock order and an executable quiesced
+  downgrade-readiness operation were undefined.
+- `D54` Fault injection did not prove real crash, cross-process race,
+  mixed-reader executable, native Windows, and unsupported-target boundaries.
+- `D55` Profile mutation could race trusted resolution and durable launch.
+
+**Findings (Minor):**
+
+- `D56` Enumerate required audit fields and action/outcome consistency.
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Guidance/authority/failure | Finding | D50-D51 violated fail-closed authority. |
+| Crash/restart/validation | Finding | D54 required process-shaped proof. |
+| Security/concurrency | Finding | D52/D55 required pinned audit/profile ownership. |
+| Compatibility/rollback | Finding | D53 required transactional reconciliation and readiness. |
+| Framing/schema | Finding | D56 required explicit semantic validation. |
+| Intent/scope/YAGNI/infra | Clean | Locked scope and no-migration approach remain intact. |
+
+**Alternatives:** sticky conditional queue claims; one owner-only,
+handle-relative audit transaction layer.
+
+**Verdict reasoning:** FAIL; D50 is Critical and D51-D55 remain Important.
