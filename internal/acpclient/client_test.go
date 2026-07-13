@@ -237,6 +237,34 @@ func TestClientRunPromptReturnsCancellationAuthorityError(t *testing.T) {
 	}
 }
 
+func TestClientCancellationAuthorityErrorIncludesTeardownFailure(t *testing.T) {
+	authorityErr := errors.New("cancellation authority unavailable")
+	teardownErr := errors.New("close cancellation transport")
+	client := &Client{
+		cancelReq: func(string) (bool, error) {
+			return false, authorityErr
+		},
+		transports: []io.Closer{closeFunc(func() error {
+			return teardownErr
+		})},
+	}
+	executionCtx, cancelExecution := context.WithCancelCause(t.Context())
+
+	err := client.startCancelWatcher(t.Context(), "authority-session", cancelExecution)()
+	if !errors.Is(err, authorityErr) {
+		t.Fatalf("cancel watcher error = %v, want authority error", err)
+	}
+	if !errors.Is(err, teardownErr) {
+		t.Fatalf("cancel watcher error = %v, want teardown error", err)
+	}
+	if got := context.Cause(executionCtx); !errors.Is(got, authorityErr) {
+		t.Fatalf("execution cause = %v, want authority error", got)
+	}
+	if strings.Index(err.Error(), authorityErr.Error()) > strings.Index(err.Error(), teardownErr.Error()) {
+		t.Fatalf("cancel watcher error = %q, want authority error first", err)
+	}
+}
+
 func TestClientCancellationCauseWinsRacingPromptResponse(t *testing.T) {
 	clientToAgentR, clientToAgentW := io.Pipe()
 	agentToClientR, agentToClientW := io.Pipe()
@@ -392,6 +420,56 @@ func TestClientCancellationBlockedSendReturnsAndReapsProcess(t *testing.T) {
 	assertCancellationProcessReaped(t, client)
 	if got := markerLineCount(t, cancelMarker); got != 0 {
 		t.Fatalf("delivered ACP cancel count = %d, want 0 for blocked send", got)
+	}
+}
+
+func TestClientCancellationSendJoinIsBounded(t *testing.T) {
+	writer := &stubbornCancelWriter{
+		started:  make(chan struct{}),
+		release:  make(chan struct{}),
+		finished: make(chan struct{}),
+	}
+	peerOutputR, peerOutputW := io.Pipe()
+	t.Cleanup(func() { _ = peerOutputW.Close() })
+	defer func() {
+		close(writer.release)
+		select {
+		case <-writer.finished:
+		case <-time.After(time.Second):
+			t.Fatal("stubborn cancel writer did not finish after release")
+		}
+	}()
+	client := NewInProcessClient(writer, peerOutputR, RunOptions{
+		Timeout: 50 * time.Millisecond,
+		CancelRequested: func(string) (bool, error) {
+			return true, nil
+		},
+	})
+	executionCtx, cancelExecution := context.WithCancelCause(t.Context())
+	watcherReady := make(chan func() error, 1)
+	go func() {
+		watcherReady <- client.startCancelWatcher(t.Context(), "blocked-send-session", cancelExecution)
+	}()
+
+	select {
+	case <-writer.started:
+	case <-time.After(time.Second):
+		t.Fatal("ACP cancel send did not start")
+	}
+	select {
+	case stopWatcher := <-watcherReady:
+		err := stopWatcher()
+		if !errors.Is(err, ErrCancelRequested) {
+			t.Fatalf("cancel watcher error = %v, want ErrCancelRequested", err)
+		}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("cancel watcher error = %v, want bounded join deadline", err)
+		}
+		if got := context.Cause(executionCtx); !errors.Is(got, ErrCancelRequested) {
+			t.Fatalf("execution cause = %v, want ErrCancelRequested", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancel watcher did not bound the blocked send join")
 	}
 }
 
@@ -758,6 +836,30 @@ type blockingCancelWriter struct {
 	started       chan struct{}
 	processExited <-chan struct{}
 	once          sync.Once
+}
+
+type closeFunc func() error
+
+func (f closeFunc) Close() error {
+	return f()
+}
+
+type stubbornCancelWriter struct {
+	started  chan struct{}
+	release  chan struct{}
+	finished chan struct{}
+	once     sync.Once
+}
+
+func (w *stubbornCancelWriter) Write([]byte) (int, error) {
+	w.once.Do(func() { close(w.started) })
+	<-w.release
+	close(w.finished)
+	return 0, io.ErrClosedPipe
+}
+
+func (*stubbornCancelWriter) Close() error {
+	return nil
 }
 
 func (w *blockingCancelWriter) Write(p []byte) (int, error) {

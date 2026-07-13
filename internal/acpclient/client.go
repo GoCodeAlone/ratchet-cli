@@ -318,15 +318,13 @@ func (c *Client) startCancelWatcher(ctx context.Context, sessionID acpsdk.Sessio
 		requested, err := c.cancelReq(string(sessionID))
 		if err != nil {
 			cancelExecution(err)
-			_ = c.terminateCancellation()
-			return err
+			return errors.Join(err, c.terminateCancellation())
 		}
 		if !requested {
 			return nil
 		}
 		cancelExecution(ErrCancelRequested)
-		c.sendCancelAndTerminate(ctx, sessionID)
-		return ErrCancelRequested
+		return errors.Join(ErrCancelRequested, c.sendCancelAndTerminate(ctx, sessionID))
 	}
 	if err := check(); err != nil {
 		return func() error { return err }
@@ -356,25 +354,35 @@ func (c *Client) startCancelWatcher(ctx context.Context, sessionID acpsdk.Sessio
 	}
 }
 
-func (c *Client) sendCancelAndTerminate(ctx context.Context, sessionID acpsdk.SessionId) {
-	sendCtx, sendCancel := context.WithTimeout(context.WithoutCancel(ctx), min(c.timeout, 5*time.Second))
+func (c *Client) sendCancelAndTerminate(ctx context.Context, sessionID acpsdk.SessionId) error {
+	timeout := min(c.timeout, 5*time.Second)
+	sendCtx, sendCancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+	defer sendCancel()
 	sendDone := make(chan error, 1)
 	go func() {
 		sendDone <- c.conn.Cancel(sendCtx, acpsdk.CancelNotification{SessionId: sessionID})
 	}()
 	select {
-	case <-sendDone:
-		sendCancel()
+	case sendErr := <-sendDone:
 		grace := time.NewTimer(min(c.timeout, 100*time.Millisecond))
 		<-grace.C
 		grace.Stop()
+		return errors.Join(sendErr, c.terminateCancellation())
 	case <-sendCtx.Done():
-		sendCancel()
-		_ = c.terminateCancellation()
-		<-sendDone
-		return
+		teardownErr := c.terminateCancellation()
+		joinTimer := time.NewTimer(timeout)
+		defer joinTimer.Stop()
+		select {
+		case sendErr := <-sendDone:
+			return errors.Join(context.Cause(sendCtx), sendErr, teardownErr)
+		case <-joinTimer.C:
+			return errors.Join(
+				context.Cause(sendCtx),
+				teardownErr,
+				fmt.Errorf("join ACP cancel send: %w", context.DeadlineExceeded),
+			)
+		}
 	}
-	_ = c.terminateCancellation()
 }
 
 func (c *Client) terminateCancellation() error {
