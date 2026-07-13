@@ -661,3 +661,39 @@ harness driven only by durable transition/audit files.
 
 **Verdict reasoning:** FAIL until D81 is explicit; D82-D83 are Minor convergence
 corrections.
+
+## Cycle 15: Authority Rewrite Convergence
+
+**Status:** PASS
+
+**Findings (Critical/Important/Minor):** none. No `D84` issued.
+
+**D81-D83 mapping:** D81 closed by A/B/A2 fresh-process replay, lock blocking,
+durable transition reload, and one record per ID. D82 closed by requiring
+`recordId` and `action`. D83 closed by formatting the releaseguard source.
+D66-D80 remain closed or explicitly accepted.
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Project guidance | Clean | Local-first Go, audit, and Windows constraints hold. |
+| Assumptions | Clean | Fresh-process and real-start proofs remove cached/copied assumptions. |
+| Repo/artifact precedent | Clean | Existing process-lock, CI, and releaseguard patterns are used. |
+| YAGNI | Clean | No migration, protocol expansion, or downgrade barrier. |
+| Failure modes | Clean | Unconfirmed append, restart, contention, cancellation, and AIX are named. |
+| Security/privacy | Clean | Metadata-only owner-pinned audit mutation remains. |
+| Infrastructure | Clean | Local files/locks only. |
+| Multi-component validation | Clean | Manager/start and process-audit boundaries are explicit. |
+| Declared integration proof | Clean | Native Windows CI and releaseguard are required. |
+| Contributed UI proof | Clean | No UI contribution. |
+| Rollback | Clean | Upgrade-forward policy and accepted operator risk are explicit. |
+| Simpler alternative | Clean | One test-only restart harness is minimal. |
+| Intent drift | Clean | Locked manifest unchanged. |
+| Existence/runtime validity | Clean | Production seams/selectors exist. |
+
+**Alternative:** keep A/B/A2 narrowly test-only and drive it solely from
+persisted transition/audit paths.
+
+**Verdict reasoning:** PASS; no Critical/Important findings remain and the
+authority-first Task 6 contract is executable without manifest change.
