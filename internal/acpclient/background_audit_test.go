@@ -123,7 +123,7 @@ func TestBackgroundAuditCoordinatesConcurrentHandles(t *testing.T) {
 	}
 }
 
-func TestBackgroundAuditFirstCreationRequiresParentSync(t *testing.T) {
+func TestBackgroundAuditEveryAppendRequiresParentSync(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "background-audit.jsonl")
 	syncErr := errors.New("parent sync failed")
@@ -134,7 +134,10 @@ func TestBackgroundAuditFirstCreationRequiresParentSync(t *testing.T) {
 		if gotDir != dir {
 			t.Fatalf("sync parent = %q, want %q", gotDir, dir)
 		}
-		return syncErr
+		if syncCalls <= 2 {
+			return syncErr
+		}
+		return nil
 	}
 	record := BackgroundAuditRecord{
 		At:             time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC),
@@ -158,13 +161,23 @@ func TestBackgroundAuditFirstCreationRequiresParentSync(t *testing.T) {
 		t.Fatalf("records after sync failure = %#v", records)
 	}
 
-	audit.syncParent = func(string) error {
-		t.Fatal("existing WAL triggered first-create parent sync")
-		return nil
-	}
 	record.Action = BackgroundAuditStop
 	record.Outcome = BackgroundOutcomeStopped
+	if err := audit.Append(record); !errors.Is(err, syncErr) {
+		t.Fatalf("retry Append error = %v, want parent sync failure", err)
+	}
+	if syncCalls != 2 {
+		t.Fatalf("parent sync calls after retry = %d, want 2", syncCalls)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("Remove audit WAL: %v", err)
+	}
+	record.Action = BackgroundAuditResume
+	record.Outcome = BackgroundOutcomeResumed
 	if err := audit.Append(record); err != nil {
-		t.Fatalf("second Append: %v", err)
+		t.Fatalf("Append after deletion: %v", err)
+	}
+	if syncCalls != 3 {
+		t.Fatalf("parent sync calls after recreation = %d, want 3", syncCalls)
 	}
 }

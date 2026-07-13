@@ -109,8 +109,7 @@ func DrainQueue(ctx context.Context, store *Store, spec AgentSpec, opts RunOptio
 			}
 			result.ACPSessionID = string(runner.SessionID())
 			if rec.ACPSessionID == "" && result.ACPSessionID != "" {
-				rec.ACPSessionID = result.ACPSessionID
-				if err := store.Upsert(rec); err != nil {
+				if err := store.setACPSessionID(sessionID, result.ACPSessionID); err != nil {
 					return result, err
 				}
 			}

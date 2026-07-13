@@ -19,7 +19,8 @@ var (
 )
 
 type Store struct {
-	path string
+	path              string
+	transactionLoaded func()
 }
 
 type storeFile struct {
@@ -54,12 +55,14 @@ func (s *Store) Path() string {
 }
 
 func (s *Store) List() ([]SessionRecord, error) {
-	data, err := s.load()
+	var records []SessionRecord
+	err := s.readTransaction(func(data storeFile) error {
+		records = slices.Clone(data.Sessions)
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	records := slices.Clone(data.Sessions)
-	normalizeRecords(records)
 	slices.SortFunc(records, func(a, b SessionRecord) int {
 		return b.UpdatedAt.Compare(a.UpdatedAt)
 	})
@@ -67,45 +70,43 @@ func (s *Store) List() ([]SessionRecord, error) {
 }
 
 func (s *Store) Get(id string) (SessionRecord, error) {
-	records, err := s.List()
-	if err != nil {
-		return SessionRecord{}, err
-	}
-	for _, rec := range records {
-		if rec.ID == id {
-			return rec, nil
+	var record SessionRecord
+	err := s.readTransaction(func(data storeFile) error {
+		found, err := findSessionRecord(&data, id)
+		if err != nil {
+			return err
 		}
-	}
-	return SessionRecord{}, fmt.Errorf("%w: %s", ErrSessionNotFound, id)
+		record = *found
+		return nil
+	})
+	return record, err
 }
 
 func (s *Store) Upsert(rec SessionRecord) error {
 	if strings.TrimSpace(rec.ID) == "" {
 		return errors.New("acp client session id is required")
 	}
-	data, err := s.load()
-	if err != nil {
-		return err
-	}
-	now := time.Now().UTC()
-	createdAtZero := rec.CreatedAt.IsZero()
-	if createdAtZero {
-		rec.CreatedAt = now
-	}
-	if rec.UpdatedAt.IsZero() {
-		rec.UpdatedAt = rec.CreatedAt
-	}
-	for i, existing := range data.Sessions {
-		if existing.ID == rec.ID {
-			if createdAtZero {
-				rec.CreatedAt = existing.CreatedAt
-			}
-			data.Sessions[i] = rec
-			return s.save(data)
+	return s.mutateTransaction(func(data *storeFile) (bool, error) {
+		now := time.Now().UTC()
+		createdAtZero := rec.CreatedAt.IsZero()
+		if createdAtZero {
+			rec.CreatedAt = now
 		}
-	}
-	data.Sessions = append(data.Sessions, rec)
-	return s.save(data)
+		if rec.UpdatedAt.IsZero() {
+			rec.UpdatedAt = rec.CreatedAt
+		}
+		for i, existing := range data.Sessions {
+			if existing.ID == rec.ID {
+				if createdAtZero {
+					rec.CreatedAt = existing.CreatedAt
+				}
+				data.Sessions[i] = rec
+				return true, nil
+			}
+		}
+		data.Sessions = append(data.Sessions, rec)
+		return true, nil
+	})
 }
 
 func (s *Store) AppendQueuedPrompt(rec SessionRecord, prompt QueuedPrompt) (SessionRecord, error) {
@@ -122,25 +123,30 @@ func (s *Store) AppendQueuedPrompt(rec SessionRecord, prompt QueuedPrompt) (Sess
 	if prompt.Status == "" {
 		prompt.Status = QueuePromptStatusPending
 	}
-	existing, err := s.Get(rec.ID)
+	var result SessionRecord
+	err := s.mutateTransaction(func(data *storeFile) (bool, error) {
+		existing, err := findSessionRecord(data, rec.ID)
+		if errors.Is(err, ErrSessionNotFound) {
+			data.Sessions = append(data.Sessions, rec)
+			existing = &data.Sessions[len(data.Sessions)-1]
+			if existing.CreatedAt.IsZero() {
+				existing.CreatedAt = prompt.CreatedAt
+			}
+		} else if err != nil {
+			return false, err
+		} else {
+			*existing = mergeSessionMetadata(*existing, rec)
+		}
+		existing.Status = SessionStatusQueued
+		existing.UpdatedAt = prompt.CreatedAt
+		existing.PromptQueue = append(existing.PromptQueue, prompt)
+		result = *existing
+		return true, nil
+	})
 	if err != nil {
-		if !errors.Is(err, ErrSessionNotFound) {
-			return SessionRecord{}, err
-		}
-		existing = rec
-		if existing.CreatedAt.IsZero() {
-			existing.CreatedAt = prompt.CreatedAt
-		}
-	} else {
-		existing = mergeSessionMetadata(existing, rec)
-	}
-	existing.Status = SessionStatusQueued
-	existing.UpdatedAt = prompt.CreatedAt
-	existing.PromptQueue = append(existing.PromptQueue, prompt)
-	if err := s.Upsert(existing); err != nil {
 		return SessionRecord{}, err
 	}
-	return s.Get(existing.ID)
+	return result, nil
 }
 
 func (s *Store) NextQueuedPrompt(id string) (QueuedPrompt, bool, error) {
@@ -193,34 +199,37 @@ func (s *Store) MarkQueueFailed(id, queueID, message string, when time.Time) err
 }
 
 func (s *Store) CancelPendingQueue(id string, when time.Time) (int, error) {
-	rec, err := s.Get(id)
-	if err != nil {
-		return 0, err
-	}
 	if when.IsZero() {
 		when = time.Now().UTC()
 	}
 	when = when.UTC()
 	count := 0
-	hasRunning := false
-	for i := range rec.PromptQueue {
-		switch rec.PromptQueue[i].Status {
-		case QueuePromptStatusPending:
-			rec.PromptQueue[i].Status = QueuePromptStatusCanceled
-			rec.PromptQueue[i].CanceledAt = &when
-			count++
-		case QueuePromptStatusRunning:
-			hasRunning = true
+	err := s.mutateTransaction(func(data *storeFile) (bool, error) {
+		rec, err := findSessionRecord(data, id)
+		if err != nil {
+			return false, err
 		}
-	}
-	if count == 0 {
-		return 0, nil
-	}
-	if !hasRunning {
-		rec.Status = SessionStatusCanceled
-	}
-	rec.UpdatedAt = when
-	return count, s.Upsert(rec)
+		hasRunning := false
+		for i := range rec.PromptQueue {
+			switch rec.PromptQueue[i].Status {
+			case QueuePromptStatusPending:
+				rec.PromptQueue[i].Status = QueuePromptStatusCanceled
+				rec.PromptQueue[i].CanceledAt = &when
+				count++
+			case QueuePromptStatusRunning:
+				hasRunning = true
+			}
+		}
+		if count == 0 {
+			return false, nil
+		}
+		if !hasRunning {
+			rec.Status = SessionStatusCanceled
+		}
+		rec.UpdatedAt = when
+		return true, nil
+	})
+	return count, err
 }
 
 func (s *Store) RecoverStaleQueue(id string, when time.Time) (int, error) {
@@ -233,55 +242,60 @@ func (s *Store) RecoverStaleQueue(id string, when time.Time) (int, error) {
 }
 
 func (s *Store) recoverRunningQueueItems(id string, when time.Time) (int, error) {
-	rec, err := s.Get(id)
-	if err != nil {
-		return 0, err
-	}
 	if when.IsZero() {
 		when = time.Now().UTC()
 	}
 	when = when.UTC()
 	count := 0
-	for i := range rec.PromptQueue {
-		if rec.PromptQueue[i].Status != QueuePromptStatusRunning {
-			continue
+	err := s.mutateTransaction(func(data *storeFile) (bool, error) {
+		rec, err := findSessionRecord(data, id)
+		if err != nil {
+			return false, err
 		}
-		rec.PromptQueue[i].Status = QueuePromptStatusPending
-		rec.PromptQueue[i].StartedAt = nil
-		count++
-	}
-	if count == 0 {
-		return 0, nil
-	}
-	rec.Status = SessionStatusQueued
-	rec.UpdatedAt = when
-	return count, s.Upsert(rec)
+		for i := range rec.PromptQueue {
+			if rec.PromptQueue[i].Status != QueuePromptStatusRunning {
+				continue
+			}
+			rec.PromptQueue[i].Status = QueuePromptStatusPending
+			rec.PromptQueue[i].StartedAt = nil
+			count++
+		}
+		if count == 0 {
+			return false, nil
+		}
+		rec.Status = SessionStatusQueued
+		rec.UpdatedAt = when
+		return true, nil
+	})
+	return count, err
 }
 
 func (s *Store) MarkPendingCanceled(id string, when time.Time) error {
-	rec, err := s.Get(id)
-	if err != nil {
-		return err
-	}
-	if rec.PendingPrompt == nil || rec.PendingPrompt.Status != PendingPromptStatusPending {
-		return fmt.Errorf("session %s has no pending prompt", id)
-	}
 	when = when.UTC()
-	rec.PendingPrompt.Status = PendingPromptStatusCanceled
-	rec.PendingPrompt.CanceledAt = &when
-	pendingID := rec.PendingPrompt.ID
-	if pendingID == "" {
-		pendingID = storeKey(rec.PendingPrompt.Prompt)
-	}
-	for i := range rec.PromptQueue {
-		if rec.PromptQueue[i].ID == pendingID {
-			rec.PromptQueue[i].Status = QueuePromptStatusCanceled
-			rec.PromptQueue[i].CanceledAt = &when
+	return s.mutateTransaction(func(data *storeFile) (bool, error) {
+		rec, err := findSessionRecord(data, id)
+		if err != nil {
+			return false, err
 		}
-	}
-	rec.Status = SessionStatusCanceled
-	rec.UpdatedAt = when
-	return s.Upsert(rec)
+		if rec.PendingPrompt == nil || rec.PendingPrompt.Status != PendingPromptStatusPending {
+			return false, fmt.Errorf("session %s has no pending prompt", id)
+		}
+		rec.PendingPrompt.Status = PendingPromptStatusCanceled
+		rec.PendingPrompt.CanceledAt = &when
+		pendingID := rec.PendingPrompt.ID
+		if pendingID == "" {
+			pendingID = storeKey(rec.PendingPrompt.Prompt)
+		}
+		for i := range rec.PromptQueue {
+			if rec.PromptQueue[i].ID == pendingID {
+				rec.PromptQueue[i].Status = QueuePromptStatusCanceled
+				rec.PromptQueue[i].CanceledAt = &when
+			}
+		}
+		rec.Status = SessionStatusCanceled
+		rec.UpdatedAt = when
+		return true, nil
+	})
 }
 
 func (s *Store) WriteOwner(owner OwnerLock) error {
@@ -365,19 +379,21 @@ func (s *Store) RequestCancel(id string, when time.Time) error {
 		when = time.Now().UTC()
 	}
 	req := CancelRequest{SessionID: id, RequestedAt: when.UTC()}
-	if err := writeJSONFileAtomic(s.cancelPath(id), req, 0o600); err != nil {
-		return err
-	}
-	rec, err := s.Get(id)
-	if err != nil {
-		if errors.Is(err, ErrSessionNotFound) {
-			return nil
+	return s.mutateTransaction(func(data *storeFile) (bool, error) {
+		if err := writeJSONFileAtomic(s.cancelPath(id), req, 0o600); err != nil {
+			return false, err
 		}
-		return err
-	}
-	rec.Status = SessionStatusCancelRequested
-	rec.UpdatedAt = req.RequestedAt
-	return s.Upsert(rec)
+		rec, err := findSessionRecord(data, id)
+		if errors.Is(err, ErrSessionNotFound) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		rec.Status = SessionStatusCancelRequested
+		rec.UpdatedAt = req.RequestedAt
+		return true, nil
+	})
 }
 
 func (s *Store) CancelRequest(id string) (CancelRequest, error) {
@@ -391,7 +407,48 @@ func (s *Store) CancelRequest(id string) (CancelRequest, error) {
 	return req, nil
 }
 
-func (s *Store) load() (storeFile, error) {
+func (s *Store) readTransaction(read func(storeFile) error) error {
+	return s.withFileLock(func() error {
+		data, err := s.loadUnlocked()
+		if err != nil {
+			return err
+		}
+		return read(data)
+	})
+}
+
+func (s *Store) mutateTransaction(mutate func(*storeFile) (bool, error)) error {
+	return s.withFileLock(func() error {
+		data, err := s.loadUnlocked()
+		if err != nil {
+			return err
+		}
+		if s.transactionLoaded != nil {
+			s.transactionLoaded()
+		}
+		changed, err := mutate(&data)
+		if err != nil || !changed {
+			return err
+		}
+		return s.saveUnlocked(data)
+	})
+}
+
+func (s *Store) withFileLock(operation func() error) (err error) {
+	lock := backgroundPathLock(s.lockPath())
+	lock.Lock()
+	defer lock.Unlock()
+	release, err := acquireStoreFileLock(s.lockPath())
+	if err != nil {
+		return err
+	}
+	defer func() {
+		err = errors.Join(err, release())
+	}()
+	return operation()
+}
+
+func (s *Store) loadUnlocked() (storeFile, error) {
 	var data storeFile
 	b, err := os.ReadFile(s.path)
 	if err != nil {
@@ -415,12 +472,16 @@ func (s *Store) load() (storeFile, error) {
 	return data, nil
 }
 
-func (s *Store) save(data storeFile) error {
+func (s *Store) saveUnlocked(data storeFile) error {
 	normalizeRecords(data.Sessions)
 	slices.SortFunc(data.Sessions, func(a, b SessionRecord) int {
 		return b.UpdatedAt.Compare(a.UpdatedAt)
 	})
-	return writeJSONFileAtomic(s.path, data, 0o600)
+	return backgroundWriteJSONAtomic(s.path, data)
+}
+
+func (s *Store) lockPath() string {
+	return s.path + ".lock"
 }
 
 func (s *Store) ownerPath(id string) string {
@@ -488,22 +549,50 @@ func (s *Store) updateQueuedPrompt(id, queueID string, when time.Time, update fu
 	if strings.TrimSpace(queueID) == "" {
 		return errors.New("queue prompt id is required")
 	}
-	rec, err := s.Get(id)
-	if err != nil {
-		return err
-	}
 	if when.IsZero() {
 		when = time.Now().UTC()
 	}
 	when = when.UTC()
-	for i := range rec.PromptQueue {
-		if rec.PromptQueue[i].ID == queueID {
-			update(&rec, &rec.PromptQueue[i], when)
-			rec.UpdatedAt = when
-			return s.Upsert(rec)
+	return s.mutateTransaction(func(data *storeFile) (bool, error) {
+		rec, err := findSessionRecord(data, id)
+		if err != nil {
+			return false, err
+		}
+		for i := range rec.PromptQueue {
+			if rec.PromptQueue[i].ID == queueID {
+				update(rec, &rec.PromptQueue[i], when)
+				rec.UpdatedAt = when
+				return true, nil
+			}
+		}
+		return false, fmt.Errorf("%w: session %s queue prompt %s", ErrQueuePromptNotFound, id, queueID)
+	})
+}
+
+func (s *Store) setACPSessionID(id, acpSessionID string) error {
+	if acpSessionID == "" {
+		return nil
+	}
+	return s.mutateTransaction(func(data *storeFile) (bool, error) {
+		rec, err := findSessionRecord(data, id)
+		if err != nil {
+			return false, err
+		}
+		if rec.ACPSessionID != "" {
+			return false, nil
+		}
+		rec.ACPSessionID = acpSessionID
+		return true, nil
+	})
+}
+
+func findSessionRecord(data *storeFile, id string) (*SessionRecord, error) {
+	for i := range data.Sessions {
+		if data.Sessions[i].ID == id {
+			return &data.Sessions[i], nil
 		}
 	}
-	return fmt.Errorf("%w: session %s queue prompt %s", ErrQueuePromptNotFound, id, queueID)
+	return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, id)
 }
 
 func mergeSessionMetadata(existing, update SessionRecord) SessionRecord {

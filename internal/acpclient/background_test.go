@@ -1514,6 +1514,128 @@ func TestBackgroundManagerBlockedPolicyRequiresExplicitStartAfterRestart(t *test
 	eventuallyBackground(t, func() bool { return resumed.Load() == 1 })
 }
 
+func TestBackgroundManagerExplicitStartSupersedesStaleTerminalTransition(t *testing.T) {
+	dir := t.TempDir()
+	sessions := NewStore(filepath.Join(dir, "sessions.json"))
+	now := backgroundTestNow()
+	if err := sessions.Upsert(SessionRecord{ID: "session-1", Agent: "fixture", Status: SessionStatusQueued, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("Upsert session: %v", err)
+	}
+	store := NewBackgroundStore(filepath.Join(dir, "background.json"))
+	audit := NewBackgroundAudit(filepath.Join(dir, "background-audit.jsonl"))
+	var calls atomic.Int32
+	manager := NewBackgroundManager(sessions, store, audit, BackgroundManagerOptions{
+		Context: t.Context(),
+		Now:     backgroundTestClock,
+		Resolver: func(name string) (ResolvedBackgroundProfile, error) {
+			return trustedBackgroundProfile(name, "descriptor-hash"), nil
+		},
+		Watcher: func(ctx context.Context, _ *Store, _ AgentSpec, _ RunOptions, _ string, _ WatchOptions, _ func(WatchCycle)) (WatchResult, error) {
+			if calls.Add(1) == 1 {
+				return WatchResult{}, errors.New("terminal failure")
+			}
+			<-ctx.Done()
+			return WatchResult{}, ctx.Err()
+		},
+	})
+	if _, err := manager.Start("session-1", "fixture", true); err != nil {
+		t.Fatalf("initial Start: %v", err)
+	}
+	eventuallyBackground(t, func() bool {
+		policy, err := store.Get("session-1")
+		return err == nil && policy.State == BackgroundStateError
+	})
+	eventuallyBackground(t, func() bool {
+		manager.mu.Lock()
+		defer manager.mu.Unlock()
+		_, active := manager.active["session-1"]
+		_, transitioning := manager.transitions["session-1"]
+		return !active && !transitioning
+	})
+	terminal, err := store.Get("session-1")
+	if err != nil {
+		t.Fatalf("Get terminal policy: %v", err)
+	}
+	terminal.PersistenceDegraded = true
+	if err := store.putTransition(backgroundTransition{Policy: terminal, Action: BackgroundAuditError}); err != nil {
+		t.Fatalf("put stale transition: %v", err)
+	}
+	if _, err := os.Stat(store.transitionPath()); err != nil {
+		t.Fatalf("stale transition is not durable before explicit Start: %v", err)
+	}
+
+	if _, err := manager.Start("session-1", "fixture", true); err != nil {
+		t.Fatalf("explicit Start: %v", err)
+	}
+	eventuallyBackground(t, func() bool { return calls.Load() == 2 })
+	manager.Shutdown()
+
+	var resumed atomic.Int32
+	restarted := NewBackgroundManager(sessions, NewBackgroundStore(store.Path()), NewBackgroundAudit(audit.Path()), BackgroundManagerOptions{
+		Context: t.Context(),
+		Now:     backgroundTestClock,
+		Resolver: func(name string) (ResolvedBackgroundProfile, error) {
+			return trustedBackgroundProfile(name, "descriptor-hash"), nil
+		},
+		Watcher: func(ctx context.Context, _ *Store, _ AgentSpec, _ RunOptions, _ string, _ WatchOptions, _ func(WatchCycle)) (WatchResult, error) {
+			resumed.Add(1)
+			<-ctx.Done()
+			return WatchResult{}, ctx.Err()
+		},
+	})
+	t.Cleanup(restarted.Shutdown)
+	if err := restarted.Resume(); err != nil {
+		t.Fatalf("Resume after explicit Start: %v", err)
+	}
+	status, err := restarted.Get("session-1")
+	if err != nil {
+		t.Fatalf("Get resumed policy: %v", err)
+	}
+	if !status.Enabled || status.State != BackgroundStateRunning || status.Outcome != BackgroundOutcomeResumed {
+		t.Fatalf("stale terminal transition overrode explicit Start: %#v", status)
+	}
+	eventuallyBackground(t, func() bool { return resumed.Load() == 1 })
+}
+
+func TestBackgroundManagerLaunchFailsClosedWhenTransitionCannotClear(t *testing.T) {
+	dir := t.TempDir()
+	sessions := NewStore(filepath.Join(dir, "sessions.json"))
+	now := backgroundTestNow()
+	if err := sessions.Upsert(SessionRecord{ID: "session-1", Agent: "fixture", Status: SessionStatusQueued, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("Upsert session: %v", err)
+	}
+	store := NewBackgroundStore(filepath.Join(dir, "background.json"))
+	if err := os.Mkdir(store.transitionPath(), 0o700); err != nil {
+		t.Fatalf("Mkdir transition blocker: %v", err)
+	}
+	audit := NewBackgroundAudit(filepath.Join(dir, "background-audit.jsonl"))
+	var watchers atomic.Int32
+	manager := NewBackgroundManager(sessions, store, audit, BackgroundManagerOptions{
+		Context: t.Context(),
+		Now:     backgroundTestClock,
+		Resolver: func(name string) (ResolvedBackgroundProfile, error) {
+			return trustedBackgroundProfile(name, "descriptor-hash"), nil
+		},
+		Watcher: func(ctx context.Context, _ *Store, _ AgentSpec, _ RunOptions, _ string, _ WatchOptions, _ func(WatchCycle)) (WatchResult, error) {
+			watchers.Add(1)
+			<-ctx.Done()
+			return WatchResult{}, ctx.Err()
+		},
+	})
+	t.Cleanup(manager.Shutdown)
+	status, err := manager.Start("session-1", "fixture", true)
+	if !errors.Is(err, ErrBackgroundPersistenceDegraded) {
+		t.Fatalf("Start error = %v, want ErrBackgroundPersistenceDegraded", err)
+	}
+	if got := watchers.Load(); got != 0 {
+		t.Fatalf("watchers = %d, want zero when stale transition cannot clear", got)
+	}
+	if status.Enabled || status.State != BackgroundStateError || status.Outcome != BackgroundOutcomeStateWriteFailed || !status.PersistenceDegraded {
+		t.Fatalf("fail-closed status = %#v", status)
+	}
+	assertBackgroundAuditActions(t, audit, BackgroundAuditError)
+}
+
 func TestBackgroundManagerResumeRechecksPolicyAfterReservation(t *testing.T) {
 	dir := t.TempDir()
 	sessions := NewStore(filepath.Join(dir, "sessions.json"))

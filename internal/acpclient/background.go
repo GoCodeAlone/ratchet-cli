@@ -901,6 +901,12 @@ func (m *BackgroundManager) block(policy BackgroundPolicy, outcome string) error
 }
 
 func (m *BackgroundManager) persistBeforeLaunch(policy BackgroundPolicy, action string) (BackgroundPolicy, error) {
+	if err := m.store.removeTransition(policy.SessionID); err != nil {
+		failed := m.recordingFailure(policy, BackgroundOutcomeStateWriteFailed)
+		result := m.persistTerminal(failed, BackgroundAuditError)
+		m.rememberTerminal(result)
+		return result.policy, errors.Join(err, result.err)
+	}
 	if err := m.store.Upsert(policy); err != nil {
 		failed := m.recordingFailure(policy, BackgroundOutcomeStateWriteFailed)
 		result := m.persistTerminal(failed, BackgroundAuditError)

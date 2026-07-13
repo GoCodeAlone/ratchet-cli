@@ -609,3 +609,14 @@ supplemental partial-write recovery. Parent completion maps to lifecycle
 shutdown. New WAL creation requires file close plus supported parent-directory
 sync before success, and protected Windows directory ACEs inherit to raw child
 objects before creation. Scope: manifest unchanged; this hardens Task 6.
+
+### Backport 2026-07-13: Transactional ACP session projection
+
+Cause: atomic rename protected `sessions.json` parsing but did not serialize
+cross-handle or cross-process load/mutate/save transactions, so drain writeback
+could overwrite a concurrent enqueue. Change: guard every complete session-file
+transaction with an owner-only OS lock (`flock` or `LockFileEx`) and use private,
+crash-safe replacement on Windows; audit parent sync runs after every append,
+including retries; explicit start/resume durably removes any stale terminal
+transition before launch state/audit commit. Scope: manifest unchanged; this
+corrects Task 6.

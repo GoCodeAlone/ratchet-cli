@@ -75,11 +75,6 @@ func (a *BackgroundAudit) Append(record BackgroundAuditRecord) (err error) {
 	lock := backgroundPathLock(a.path)
 	lock.Lock()
 	defer lock.Unlock()
-	_, statErr := os.Stat(a.path)
-	created := errors.Is(statErr, os.ErrNotExist)
-	if statErr != nil && !created {
-		return statErr
-	}
 	f, err := backgroundOpenPrivateAppend(a.path)
 	if err != nil {
 		return err
@@ -95,10 +90,7 @@ func (a *BackgroundAudit) Append(record BackgroundAuditRecord) (err error) {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	if created {
-		return a.syncParent(filepath.Dir(a.path))
-	}
-	return nil
+	return a.syncParent(filepath.Dir(a.path))
 }
 
 func (a *BackgroundAudit) Read() ([]BackgroundAuditRecord, error) {
