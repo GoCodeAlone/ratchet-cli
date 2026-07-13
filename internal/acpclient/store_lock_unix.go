@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"golang.org/x/sys/unix"
 )
@@ -34,7 +35,7 @@ func lockStoreFile(path string, nonblocking bool) (func() error, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	fd, err := unix.Openat(int(dir.Fd()), filepath.Base(physicalPath), unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
+	fd, err := openStoreLockFileAt(int(dir.Fd()), filepath.Base(physicalPath))
 	closeDirErr := dir.Close()
 	if err != nil {
 		return nil, false, storeLockUnsafePathError(physicalPath, err)
@@ -66,6 +67,19 @@ func lockStoreFile(path string, nonblocking bool) (func() error, bool, error) {
 	return func() error {
 		return errors.Join(unix.Flock(int(f.Fd()), unix.LOCK_UN), f.Close())
 	}, true, nil
+}
+
+func openStoreLockFileAt(dirFD int, name string) (int, error) {
+	var err error
+	for range 16 {
+		var fd int
+		fd, err = unix.Openat(dirFD, name, unix.O_CREAT|unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0o600)
+		if !errors.Is(err, unix.ENOENT) {
+			return fd, err
+		}
+		runtime.Gosched()
+	}
+	return -1, err
 }
 
 func openStoreLockDirectory(path string) (*os.File, error) {

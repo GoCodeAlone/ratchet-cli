@@ -2,6 +2,8 @@ package acpclient
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -76,7 +78,8 @@ type BackgroundStatus struct {
 }
 
 type BackgroundStore struct {
-	path string
+	path                   string
+	afterListTransitionIDs func()
 }
 
 type backgroundFile struct {
@@ -84,8 +87,9 @@ type backgroundFile struct {
 }
 
 type backgroundTransition struct {
-	Policy BackgroundPolicy `json:"policy"`
-	Action string           `json:"action"`
+	Policy  BackgroundPolicy `json:"policy"`
+	Action  string           `json:"action"`
+	EventID string           `json:"eventId"`
 }
 
 type backgroundTransitionFile struct {
@@ -200,6 +204,9 @@ func (s *BackgroundStore) save(data backgroundFile) error {
 }
 
 func (s *BackgroundStore) putTransition(transition backgroundTransition) error {
+	if strings.TrimSpace(transition.EventID) == "" {
+		return errors.New("acp background transition event id is required")
+	}
 	path := s.transitionPath()
 	return withStoreProcessLock(path+".lock", func() error {
 		data, err := s.loadTransitions(path)
@@ -220,21 +227,48 @@ func (s *BackgroundStore) putTransition(transition backgroundTransition) error {
 	})
 }
 
-func (s *BackgroundStore) listTransitions() ([]backgroundTransition, error) {
+func (s *BackgroundStore) listTransitionIDs() ([]string, error) {
 	path := s.transitionPath()
-	var transitions []backgroundTransition
+	var sessionIDs []string
 	err := withStoreProcessLock(path+".lock", func() error {
 		data, err := s.loadTransitions(path)
 		if err != nil {
 			return err
 		}
-		transitions = slices.Clone(data.Transitions)
+		sessionIDs = make([]string, 0, len(data.Transitions))
+		for _, transition := range data.Transitions {
+			sessionIDs = append(sessionIDs, transition.Policy.SessionID)
+		}
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	return transitions, nil
+	if s.afterListTransitionIDs != nil {
+		s.afterListTransitionIDs()
+	}
+	return sessionIDs, nil
+}
+
+func (s *BackgroundStore) getTransition(sessionID string) (backgroundTransition, bool, error) {
+	path := s.transitionPath()
+	var current backgroundTransition
+	var found bool
+	err := withStoreProcessLock(path+".lock", func() error {
+		data, err := s.loadTransitions(path)
+		if err != nil {
+			return err
+		}
+		for _, transition := range data.Transitions {
+			if transition.Policy.SessionID == sessionID {
+				current = transition
+				found = true
+				break
+			}
+		}
+		return nil
+	})
+	return current, found, err
 }
 
 func (s *BackgroundStore) removeTransition(sessionID string) error {
@@ -944,7 +978,11 @@ func (m *BackgroundManager) block(policy BackgroundPolicy, outcome string) error
 }
 
 func (m *BackgroundManager) persistBeforeLaunch(policy BackgroundPolicy, action string) (BackgroundPolicy, error) {
-	if err := m.store.removeTransition(policy.SessionID); err != nil {
+	transition, err := newBackgroundTransition(policy, action)
+	if err != nil {
+		return policy, err
+	}
+	if err := m.store.putTransition(transition); err != nil {
 		failed := m.recordingFailure(policy, BackgroundOutcomeStateWriteFailed)
 		result := m.persistTerminal(failed, BackgroundAuditError)
 		m.rememberTerminal(result)
@@ -956,8 +994,14 @@ func (m *BackgroundManager) persistBeforeLaunch(policy BackgroundPolicy, action 
 		m.rememberTerminal(result)
 		return result.policy, errors.Join(err, result.err)
 	}
-	if err := m.appendAudit(policy, action); err != nil {
+	if err := m.appendAudit(transition); err != nil {
 		failed := m.recordingFailure(policy, BackgroundOutcomeAuditAppendFailed)
+		result := m.persistTerminal(failed, BackgroundAuditError)
+		m.rememberTerminal(result)
+		return result.policy, errors.Join(err, result.err)
+	}
+	if err := m.store.removeTransition(policy.SessionID); err != nil {
+		failed := m.recordingFailure(policy, BackgroundOutcomeStateWriteFailed)
 		result := m.persistTerminal(failed, BackgroundAuditError)
 		m.rememberTerminal(result)
 		return result.policy, errors.Join(err, result.err)
@@ -981,11 +1025,31 @@ type backgroundRecordingResult struct {
 }
 
 func (m *BackgroundManager) persistTerminal(policy BackgroundPolicy, action string) backgroundRecordingResult {
+	transition, err := newBackgroundTransition(policy, action)
+	if err != nil {
+		policy.PersistenceDegraded = true
+		return backgroundRecordingResult{policy: policy, err: errors.Join(ErrBackgroundPersistenceDegraded, err)}
+	}
+	return m.persistTerminalTransition(transition, true)
+}
+
+func (m *BackgroundManager) persistTerminalTransition(transition backgroundTransition, persistTransition bool) backgroundRecordingResult {
+	policy := transition.Policy
 	policy.Enabled = false
 	policy.PersistenceDegraded = true
-	transitionErr := m.store.putTransition(backgroundTransition{Policy: policy, Action: action})
+	transition.Policy = policy
+	var transitionErr error
+	if persistTransition {
+		transitionErr = m.store.putTransition(transition)
+		if transitionErr != nil {
+			return backgroundRecordingResult{
+				policy: policy,
+				err:    errors.Join(ErrBackgroundPersistenceDegraded, transitionErr),
+			}
+		}
+	}
 	stateErr := m.store.Upsert(policy)
-	auditErr := m.appendAudit(policy, action)
+	auditErr := m.appendAudit(transition)
 	result := backgroundRecordingResult{
 		policy:        policy,
 		stateRecorded: stateErr == nil,
@@ -1027,24 +1091,38 @@ func (m *BackgroundManager) rememberTerminal(result backgroundRecordingResult) {
 }
 
 func (m *BackgroundManager) reconcileTransitions() error {
-	transitions, err := m.store.listTransitions()
+	sessionIDs, err := m.store.listTransitionIDs()
 	if err != nil {
 		return errors.Join(ErrBackgroundPersistenceDegraded, err)
 	}
 	var reconcileErr error
-	for _, transition := range transitions {
-		if err := m.reserveTransition(transition.Policy.SessionID); err != nil {
-			if errors.Is(err, ErrBackgroundTransitionBusy) {
-				continue
-			}
-			reconcileErr = errors.Join(reconcileErr, err)
+	for _, sessionID := range sessionIDs {
+		err := m.reconcileTransition(sessionID)
+		if errors.Is(err, ErrBackgroundTransitionBusy) {
 			continue
 		}
-		result := m.persistTerminal(transition.Policy, transition.Action)
-		m.rememberTerminal(result)
-		reconcileErr = errors.Join(reconcileErr, result.err, m.releaseTransition(transition.Policy.SessionID))
+		reconcileErr = errors.Join(reconcileErr, err)
 	}
 	return reconcileErr
+}
+
+func (m *BackgroundManager) reconcileTransition(sessionID string) (err error) {
+	if err := m.reserveTransition(sessionID); err != nil {
+		return err
+	}
+	defer func() {
+		err = errors.Join(err, m.releaseTransition(sessionID))
+	}()
+	transition, found, err := m.store.getTransition(sessionID)
+	if err != nil {
+		return errors.Join(ErrBackgroundPersistenceDegraded, err)
+	}
+	if !found {
+		return nil
+	}
+	result := m.persistTerminalTransition(transition, false)
+	m.rememberTerminal(result)
+	return result.err
 }
 
 func (m *BackgroundManager) reconcileTerminalAudits() error {
@@ -1260,15 +1338,25 @@ func backgroundCancellationOnly(err error) bool {
 	return errors.Is(err, context.Canceled)
 }
 
-func (m *BackgroundManager) appendAudit(policy BackgroundPolicy, action string) error {
+func (m *BackgroundManager) appendAudit(transition backgroundTransition) error {
+	policy := transition.Policy
 	return m.audit.Append(BackgroundAuditRecord{
+		RecordID:       transition.EventID,
 		At:             policy.UpdatedAt,
-		Action:         action,
+		Action:         transition.Action,
 		SessionID:      policy.SessionID,
 		Profile:        policy.Profile,
 		DescriptorHash: policy.DescriptorHash,
 		Outcome:        policy.Outcome,
 	})
+}
+
+func newBackgroundTransition(policy BackgroundPolicy, action string) (backgroundTransition, error) {
+	var eventID [16]byte
+	if _, err := rand.Read(eventID[:]); err != nil {
+		return backgroundTransition{}, fmt.Errorf("generate acp background audit event id: %w", err)
+	}
+	return backgroundTransition{Policy: policy, Action: action, EventID: hex.EncodeToString(eventID[:])}, nil
 }
 
 func (m *BackgroundManager) currentTime() time.Time {

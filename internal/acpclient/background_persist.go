@@ -3,9 +3,17 @@ package acpclient
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"sync"
 )
+
+type backgroundAuditTransaction interface {
+	File() *os.File
+	ValidateForMutation() error
+	SyncParent() error
+	Close() error
+}
 
 var backgroundPathLocks sync.Map
 

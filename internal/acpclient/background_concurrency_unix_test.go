@@ -5,12 +5,10 @@ package acpclient
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
-
-	"golang.org/x/sys/unix"
 )
 
 func TestBackgroundManagerBlockedAuditDoesNotPreventShutdownCancellation(t *testing.T) {
@@ -18,11 +16,7 @@ func TestBackgroundManagerBlockedAuditDoesNotPreventShutdownCancellation(t *test
 	if _, err := manager.Start("session-2", "fixture", true); err != nil {
 		t.Fatalf("Start session-2: %v", err)
 	}
-	fifo := filepath.Join(t.TempDir(), "audit.fifo")
-	if err := unix.Mkfifo(fifo, 0o600); err != nil {
-		t.Fatalf("Mkfifo: %v", err)
-	}
-	audit.path = fifo
+	auditBlocked, releaseAudit := blockBackgroundAuditMutation(audit)
 	startDone := make(chan error, 1)
 	go func() {
 		_, err := manager.Start("session-1", "fixture", true)
@@ -32,6 +26,7 @@ func TestBackgroundManagerBlockedAuditDoesNotPreventShutdownCancellation(t *test
 		policy, err := store.Get("session-1")
 		return err == nil && policy.State == BackgroundStateRunning
 	})
+	<-auditBlocked
 	shutdownDone := make(chan struct{})
 	go func() {
 		manager.Shutdown()
@@ -40,8 +35,7 @@ func TestBackgroundManagerBlockedAuditDoesNotPreventShutdownCancellation(t *test
 	select {
 	case <-workerCanceled:
 	case <-time.After(500 * time.Millisecond):
-		unblocker := openBackgroundFIFO(t, fifo)
-		_ = unblocker.Close()
+		releaseAudit()
 		t.Fatal("Shutdown could not cancel active worker while another session audit was blocked")
 	}
 	returnedBeforePersistence := false
@@ -50,8 +44,7 @@ func TestBackgroundManagerBlockedAuditDoesNotPreventShutdownCancellation(t *test
 		returnedBeforePersistence = true
 	case <-time.After(100 * time.Millisecond):
 	}
-	unblocker := openBackgroundFIFO(t, fifo)
-	defer unblocker.Close() //nolint:errcheck
+	releaseAudit()
 	select {
 	case <-shutdownDone:
 	case <-time.After(2 * time.Second):
@@ -67,11 +60,7 @@ func TestBackgroundManagerBlockedAuditDoesNotPreventShutdownCancellation(t *test
 
 func TestBackgroundManagerRejectsConcurrentTransitionOnSameSession(t *testing.T) {
 	manager, store, audit, _ := newBlockedAuditManager(t)
-	fifo := filepath.Join(t.TempDir(), "audit.fifo")
-	if err := unix.Mkfifo(fifo, 0o600); err != nil {
-		t.Fatalf("Mkfifo: %v", err)
-	}
-	audit.path = fifo
+	auditBlocked, releaseAudit := blockBackgroundAuditMutation(audit)
 	firstDone := make(chan error, 1)
 	go func() {
 		_, err := manager.Start("session-1", "fixture", true)
@@ -81,6 +70,7 @@ func TestBackgroundManagerRejectsConcurrentTransitionOnSameSession(t *testing.T)
 		policy, err := store.Get("session-1")
 		return err == nil && policy.State == BackgroundStateRunning
 	})
+	<-auditBlocked
 	secondDone := make(chan error, 1)
 	go func() {
 		_, err := manager.Start("session-1", "fixture", true)
@@ -89,17 +79,14 @@ func TestBackgroundManagerRejectsConcurrentTransitionOnSameSession(t *testing.T)
 	select {
 	case err := <-secondDone:
 		if !errors.Is(err, ErrBackgroundTransitionBusy) {
-			unblocker := openBackgroundFIFO(t, fifo)
-			_ = unblocker.Close()
+			releaseAudit()
 			t.Fatalf("second Start error = %v, want ErrBackgroundTransitionBusy", err)
 		}
 	case <-time.After(500 * time.Millisecond):
-		unblocker := openBackgroundFIFO(t, fifo)
-		_ = unblocker.Close()
+		releaseAudit()
 		t.Fatal("second Start blocked behind first transition")
 	}
-	unblocker := openBackgroundFIFO(t, fifo)
-	defer unblocker.Close() //nolint:errcheck
+	releaseAudit()
 	if err := <-firstDone; err != nil {
 		t.Fatalf("first Start: %v", err)
 	}
@@ -198,12 +185,7 @@ func TestBackgroundManagerStopOwnsTerminalPersistenceUntilWorkerJoin(t *testing.
 	if _, err := manager.Start("session-1", "fixture", true); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if err := os.Remove(audit.Path()); err != nil {
-		t.Fatalf("Remove audit: %v", err)
-	}
-	if err := unix.Mkfifo(audit.Path(), 0o600); err != nil {
-		t.Fatalf("Mkfifo: %v", err)
-	}
+	auditBlocked, releaseAudit := blockBackgroundAuditMutation(audit)
 	stopDone := make(chan struct {
 		status BackgroundStatus
 		err    error
@@ -219,6 +201,7 @@ func TestBackgroundManagerStopOwnsTerminalPersistenceUntilWorkerJoin(t *testing.
 		policy, err := store.Get("session-1")
 		return err == nil && policy.State == BackgroundStateDisabled && policy.Outcome == BackgroundOutcomeStopped
 	})
+	<-auditBlocked
 	close(releaseWorker)
 	deadline := time.Now().Add(250 * time.Millisecond)
 	var concurrentPolicy BackgroundPolicy
@@ -233,8 +216,7 @@ func TestBackgroundManagerStopOwnsTerminalPersistenceUntilWorkerJoin(t *testing.
 		}
 		time.Sleep(time.Millisecond)
 	}
-	unblocker := openBackgroundFIFO(t, audit.Path())
-	defer unblocker.Close() //nolint:errcheck
+	releaseAudit()
 	result := <-stopDone
 	if result.err != nil {
 		t.Fatalf("Stop: %v", result.err)
@@ -277,11 +259,15 @@ func newBlockedAuditManager(t *testing.T) (*BackgroundManager, *BackgroundStore,
 	return manager, store, audit, canceled
 }
 
-func openBackgroundFIFO(t *testing.T, path string) *os.File {
-	t.Helper()
-	f, err := os.OpenFile(path, os.O_RDWR, 0)
-	if err != nil {
-		t.Fatalf("open FIFO: %v", err)
+func blockBackgroundAuditMutation(audit *BackgroundAudit) (<-chan struct{}, func()) {
+	blocked := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	audit.beforeMutation = func() {
+		once.Do(func() {
+			close(blocked)
+			<-release
+		})
 	}
-	return f
+	return blocked, func() { close(release) }
 }

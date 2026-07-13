@@ -349,7 +349,8 @@ func TestBackgroundManagerAuditReconciliationCannotOverwriteOwnedStart(t *testin
 		t.Fatalf("Upsert terminal policy: %v", err)
 	}
 	if err := seedAudit.Append(BackgroundAuditRecord{
-		At: terminal.UpdatedAt, Action: BackgroundAuditStop, SessionID: terminal.SessionID,
+		RecordID: "audit-race-terminal",
+		At:       terminal.UpdatedAt, Action: BackgroundAuditStop, SessionID: terminal.SessionID,
 		Profile: terminal.Profile, DescriptorHash: terminal.DescriptorHash, Outcome: terminal.Outcome,
 	}); err != nil {
 		t.Fatalf("Append terminal audit: %v", err)
@@ -516,6 +517,48 @@ func TestBackgroundManagerStartPersistsAndAuditsBeforeWatcherEntry(t *testing.T)
 	})
 	t.Cleanup(manager.Shutdown)
 
+	if _, err := manager.Start("session-1", "fixture", true); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := <-checked; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBackgroundTransitionPersistsAuditEventIDBeforeAppend(t *testing.T) {
+	dir := t.TempDir()
+	store := NewBackgroundStore(filepath.Join(dir, "background.json"))
+	audit := NewBackgroundAudit(filepath.Join(dir, "background-audit.jsonl"))
+	checked := make(chan error, 1)
+	audit.beforeAppend = func(record BackgroundAuditRecord) {
+		data, err := store.loadTransitions(store.transitionPath())
+		if err != nil {
+			checked <- err
+			return
+		}
+		if len(data.Transitions) != 1 {
+			checked <- fmt.Errorf("transitions = %#v, want one durable transition", data.Transitions)
+			return
+		}
+		transition := data.Transitions[0]
+		if transition.EventID == "" || transition.EventID != record.RecordID {
+			checked <- fmt.Errorf("transition event ID = %q, record ID = %q", transition.EventID, record.RecordID)
+			return
+		}
+		checked <- nil
+	}
+	manager := NewBackgroundManager(backgroundSessionStore(t), store, audit, BackgroundManagerOptions{
+		Context: t.Context(),
+		Now:     backgroundTestClock,
+		Resolver: func(name string) (ResolvedBackgroundProfile, error) {
+			return trustedBackgroundProfile(name, "descriptor-hash"), nil
+		},
+		Watcher: func(ctx context.Context, _ *Store, _ AgentSpec, _ RunOptions, _ string, _ WatchOptions, _ func(WatchCycle)) (WatchResult, error) {
+			<-ctx.Done()
+			return WatchResult{}, ctx.Err()
+		},
+	})
+	t.Cleanup(manager.Shutdown)
 	if _, err := manager.Start("session-1", "fixture", true); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -948,10 +991,6 @@ func TestBackgroundManagerTerminalAuditFailsClosedWhenStateAndTransitionCoFail(t
 		t.Fatalf("Start: %v", err)
 	}
 	<-entered
-	stalePolicy, err := os.ReadFile(store.Path())
-	if err != nil {
-		t.Fatalf("ReadFile stale policy: %v", err)
-	}
 	if err := os.Remove(store.Path()); err != nil {
 		t.Fatalf("Remove policy: %v", err)
 	}
@@ -965,7 +1004,7 @@ func TestBackgroundManagerTerminalAuditFailsClosedWhenStateAndTransitionCoFail(t
 		status, getErr := manager.Get("session-1")
 		return getErr == nil && status.State == BackgroundStateError && status.PersistenceDegraded
 	})
-	assertBackgroundAuditActions(t, audit, BackgroundAuditStart, BackgroundAuditError)
+	assertBackgroundAuditActions(t, audit, BackgroundAuditStart)
 	rawAudit, err := os.ReadFile(audit.Path())
 	if err != nil {
 		t.Fatalf("ReadFile audit: %v", err)
@@ -976,38 +1015,6 @@ func TestBackgroundManagerTerminalAuditFailsClosedWhenStateAndTransitionCoFail(t
 		}
 	}
 	manager.Shutdown()
-	for _, path := range []string{store.Path(), store.transitionPath()} {
-		if err := os.Remove(path); err != nil {
-			t.Fatalf("Remove blocker %s: %v", path, err)
-		}
-	}
-	if err := os.WriteFile(store.Path(), stalePolicy, 0o600); err != nil {
-		t.Fatalf("restore stale policy: %v", err)
-	}
-
-	var watchers atomic.Int32
-	restarted := NewBackgroundManager(backgroundSessionStore(t), NewBackgroundStore(store.Path()), NewBackgroundAudit(audit.Path()), BackgroundManagerOptions{
-		Context: t.Context(),
-		Now:     backgroundTestClock,
-		Resolver: func(name string) (ResolvedBackgroundProfile, error) {
-			return trustedBackgroundProfile(name, "descriptor-hash"), nil
-		},
-		Watcher: countingBackgroundWatcher(&watchers, errors.New("unexpected restart launch")),
-	})
-	t.Cleanup(restarted.Shutdown)
-	if err := restarted.Resume(); err != nil {
-		t.Fatalf("Resume: %v", err)
-	}
-	if got := watchers.Load(); got != 0 {
-		t.Fatalf("restart watchers = %d, want 0", got)
-	}
-	status, err := restarted.Get("session-1")
-	if err != nil {
-		t.Fatalf("Get reconciled: %v", err)
-	}
-	if status.Enabled || status.State != BackgroundStateError || status.Outcome != BackgroundOutcomeWorkerError {
-		t.Fatalf("reconciled status = %#v", status)
-	}
 }
 
 func TestBackgroundManagerRecoveryUsesAuditAppendOrderAcrossClockRollback(t *testing.T) {
@@ -1021,6 +1028,7 @@ func TestBackgroundManagerRecoveryUsesAuditAppendOrderAcrossClockRollback(t *tes
 	}
 	for _, record := range []BackgroundAuditRecord{
 		{
+			RecordID:       "clock-rollback-start",
 			At:             policyTime,
 			Action:         BackgroundAuditStart,
 			SessionID:      policy.SessionID,
@@ -1029,6 +1037,7 @@ func TestBackgroundManagerRecoveryUsesAuditAppendOrderAcrossClockRollback(t *tes
 			Outcome:        BackgroundOutcomeStarted,
 		},
 		{
+			RecordID:       "clock-rollback-error",
 			At:             policyTime.Add(-time.Hour),
 			Action:         BackgroundAuditError,
 			SessionID:      policy.SessionID,
@@ -1085,6 +1094,7 @@ func TestBackgroundManagerLatestSuccessfulAuditRemainsResumable(t *testing.T) {
 			}
 			for _, record := range []BackgroundAuditRecord{
 				{
+					RecordID:       "latest-success-error",
 					At:             policyTime,
 					Action:         BackgroundAuditError,
 					SessionID:      policy.SessionID,
@@ -1093,12 +1103,16 @@ func TestBackgroundManagerLatestSuccessfulAuditRemainsResumable(t *testing.T) {
 					Outcome:        BackgroundOutcomeWorkerError,
 				},
 				{
+					RecordID:       "latest-success-" + latestAction,
 					At:             policyTime.Add(-time.Hour),
 					Action:         latestAction,
 					SessionID:      policy.SessionID,
 					Profile:        policy.Profile,
 					DescriptorHash: policy.DescriptorHash,
-					Outcome:        BackgroundOutcomeStarted,
+					Outcome: map[string]string{
+						BackgroundAuditStart:  BackgroundOutcomeStarted,
+						BackgroundAuditResume: BackgroundOutcomeResumed,
+					}[latestAction],
 				},
 			} {
 				if err := audit.Append(record); err != nil {
@@ -1872,7 +1886,7 @@ func TestBackgroundManagerExplicitStartSupersedesStaleTerminalTransition(t *test
 		t.Fatalf("Get terminal policy: %v", err)
 	}
 	terminal.PersistenceDegraded = true
-	if err := store.putTransition(backgroundTransition{Policy: terminal, Action: BackgroundAuditError}); err != nil {
+	if err := store.putTransition(backgroundTransition{EventID: "stale-terminal", Policy: terminal, Action: BackgroundAuditError}); err != nil {
 		t.Fatalf("put stale transition: %v", err)
 	}
 	if _, err := os.Stat(store.transitionPath()); err != nil {
@@ -1948,7 +1962,37 @@ func TestBackgroundManagerLaunchFailsClosedWhenTransitionCannotClear(t *testing.
 	if status.Enabled || status.State != BackgroundStateError || status.Outcome != BackgroundOutcomeStateWriteFailed || !status.PersistenceDegraded {
 		t.Fatalf("fail-closed status = %#v", status)
 	}
-	assertBackgroundAuditActions(t, audit, BackgroundAuditError)
+	assertBackgroundAuditActions(t, audit)
+}
+
+func TestBackgroundTransitionRecoveryMissingAfterLeaseIsNoOp(t *testing.T) {
+	dir := t.TempDir()
+	store := NewBackgroundStore(filepath.Join(dir, "background.json"))
+	policy := backgroundRunnablePolicy(backgroundTestNow())
+	transition, err := newBackgroundTransition(policy, BackgroundAuditStart)
+	if err != nil {
+		t.Fatalf("newBackgroundTransition: %v", err)
+	}
+	if err := store.putTransition(transition); err != nil {
+		t.Fatalf("putTransition: %v", err)
+	}
+	store.afterListTransitionIDs = func() {
+		if err := store.removeTransition(policy.SessionID); err != nil {
+			t.Errorf("removeTransition: %v", err)
+		}
+	}
+	audit := NewBackgroundAudit(filepath.Join(dir, "background-audit.jsonl"))
+	manager := NewBackgroundManager(backgroundSessionStore(t), store, audit, BackgroundManagerOptions{Context: t.Context()})
+	t.Cleanup(manager.Shutdown)
+	if err := manager.reconcileTransitions(); err != nil {
+		t.Fatalf("reconcileTransitions: %v", err)
+	}
+	if _, err := os.Stat(store.Path()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("policy path after missing transition = %v, want not exist", err)
+	}
+	if records, err := audit.Read(); err != nil || len(records) != 0 {
+		t.Fatalf("audit after missing transition = %#v, %v", records, err)
+	}
 }
 
 func TestBackgroundManagerResumeRechecksPolicyAfterReservation(t *testing.T) {

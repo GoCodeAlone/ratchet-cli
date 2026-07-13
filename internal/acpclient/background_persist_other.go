@@ -8,6 +8,14 @@ import (
 	"path/filepath"
 )
 
+func backgroundOpenAuditTransaction(path string, _ bool) (backgroundAuditTransaction, error) {
+	release, err := acquireStoreFileLock(path + ".lock")
+	if err != nil {
+		return nil, err
+	}
+	return nil, errors.Join(errors.New("unsupported audit transaction unexpectedly acquired a process lock"), release())
+}
+
 func backgroundWriteFileAtomic(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {

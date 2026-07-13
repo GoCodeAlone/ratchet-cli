@@ -3,9 +3,12 @@
 package acpclient
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -56,6 +59,8 @@ func TestBackgroundWindowsAuditAppendUsesPrivateDirectoryACL(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "private")
 	path := filepath.Join(dir, "background-audit.jsonl")
 	if err := NewBackgroundAudit(path).Append(BackgroundAuditRecord{
+		RecordID:       "windows-private-audit",
+		At:             time.Date(2026, 7, 13, 20, 0, 0, 0, time.UTC),
 		Action:         BackgroundAuditError,
 		SessionID:      "session-1",
 		Profile:        "fixture",
@@ -66,6 +71,152 @@ func TestBackgroundWindowsAuditAppendUsesPrivateDirectoryACL(t *testing.T) {
 	}
 	assertBackgroundWindowsPrivateDACL(t, dir)
 	assertBackgroundWindowsPrivateDACL(t, path)
+}
+
+func TestBackgroundWindowsAuditRejectsReparsePoint(t *testing.T) {
+	audit := NewBackgroundAudit(filepath.Join(t.TempDir(), "background-audit.jsonl"))
+	if err := backgroundEnsureOwnedPrivateDir(filepath.Dir(audit.Path())); err != nil {
+		t.Fatalf("create audit parent: %v", err)
+	}
+	target := filepath.Join(t.TempDir(), "target.jsonl")
+	const targetData = "target must not change\r\n"
+	if err := os.WriteFile(target, []byte(targetData), 0o600); err != nil {
+		t.Fatalf("WriteFile target: %v", err)
+	}
+	if err := os.Symlink(target, audit.Path()); err != nil {
+		t.Fatalf("Symlink audit target: %v", err)
+	}
+	if err := audit.Append(backgroundWindowsAuditRecord("reparse-event")); !errors.Is(err, ErrStoreLockPathUnsafe) {
+		t.Fatalf("Append error = %v, want ErrStoreLockPathUnsafe", err)
+	}
+	if got, err := os.ReadFile(target); err != nil || string(got) != targetData {
+		t.Fatalf("reparse target = %q, %v", got, err)
+	}
+}
+
+func TestBackgroundWindowsAuditRejectsHardLink(t *testing.T) {
+	audit := NewBackgroundAudit(filepath.Join(t.TempDir(), "background-audit.jsonl"))
+	if err := audit.Append(backgroundWindowsAuditRecord("hard-link-seed")); err != nil {
+		t.Fatalf("seed Append: %v", err)
+	}
+	before, err := os.ReadFile(audit.Path())
+	if err != nil {
+		t.Fatalf("ReadFile before: %v", err)
+	}
+	if err := os.Link(audit.Path(), filepath.Join(t.TempDir(), "linked.jsonl")); err != nil {
+		t.Fatalf("Link audit target: %v", err)
+	}
+	if err := audit.Append(backgroundWindowsAuditRecord("hard-link-event")); !errors.Is(err, ErrStoreLockPathUnsafe) {
+		t.Fatalf("Append error = %v, want ErrStoreLockPathUnsafe", err)
+	}
+	if after, err := os.ReadFile(audit.Path()); err != nil || string(after) != string(before) {
+		t.Fatalf("hard-linked audit changed: before %q, after %q, err %v", before, after, err)
+	}
+}
+
+func TestBackgroundWindowsAuditRejectsParentReplacement(t *testing.T) {
+	audit := NewBackgroundAudit(filepath.Join(t.TempDir(), "background-audit.jsonl"))
+	if err := audit.Append(backgroundWindowsAuditRecord("parent-seed")); err != nil {
+		t.Fatalf("seed Append: %v", err)
+	}
+	parent := filepath.Dir(audit.Path())
+	moved := parent + "-moved"
+	var once sync.Once
+	var replacementErr error
+	audit.beforeMutation = func() {
+		once.Do(func() {
+			replacementErr = os.Rename(parent, moved)
+			if replacementErr == nil {
+				if err := backgroundEnsureOwnedPrivateDir(parent); err != nil {
+					t.Errorf("create replacement parent: %v", err)
+				}
+			}
+		})
+	}
+	appendErr := audit.Append(backgroundWindowsAuditRecord("parent-event"))
+	if replacementErr == nil {
+		if !errors.Is(appendErr, ErrStoreLockPathUnsafe) {
+			t.Fatalf("Append after successful parent replacement = %v, want ErrStoreLockPathUnsafe", appendErr)
+		}
+		return
+	}
+	if appendErr != nil {
+		t.Fatalf("Append after OS denied parent replacement: %v", appendErr)
+	}
+}
+
+func TestBackgroundWindowsAuditRejectsWeakDACL(t *testing.T) {
+	audit := NewBackgroundAudit(filepath.Join(t.TempDir(), "background-audit.jsonl"))
+	if err := audit.Append(backgroundWindowsAuditRecord("weak-dacl-seed")); err != nil {
+		t.Fatalf("seed Append: %v", err)
+	}
+	before, err := os.ReadFile(audit.Path())
+	if err != nil {
+		t.Fatalf("ReadFile before: %v", err)
+	}
+	backgroundSetWindowsWeakDACL(t, audit.Path())
+	if err := audit.Append(backgroundWindowsAuditRecord("weak-dacl-event")); !errors.Is(err, ErrStoreLockPathUnsafe) {
+		t.Fatalf("Append error = %v, want ErrStoreLockPathUnsafe", err)
+	}
+	if after, err := os.ReadFile(audit.Path()); err != nil || string(after) != string(before) {
+		t.Fatalf("weak-DACL audit changed: before %q, after %q, err %v", before, after, err)
+	}
+}
+
+func backgroundWindowsAuditRecord(recordID string) BackgroundAuditRecord {
+	return BackgroundAuditRecord{
+		RecordID:       recordID,
+		At:             time.Date(2026, 7, 13, 20, 0, 0, 0, time.UTC),
+		Action:         BackgroundAuditError,
+		SessionID:      "session-1",
+		Profile:        "fixture",
+		DescriptorHash: "descriptor-hash",
+		Outcome:        BackgroundOutcomeWorkerError,
+	}
+}
+
+func backgroundSetWindowsWeakDACL(t *testing.T, path string) {
+	t.Helper()
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatalf("GetTokenUser: %v", err)
+	}
+	everyone, err := windows.StringToSid("S-1-1-0")
+	if err != nil {
+		t.Fatalf("StringToSid Everyone: %v", err)
+	}
+	acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{
+		{
+			AccessPermissions: windows.GENERIC_ALL,
+			AccessMode:        windows.GRANT_ACCESS,
+			Trustee: windows.TRUSTEE{
+				TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeType: windows.TRUSTEE_IS_USER,
+				TrusteeValue: windows.TrusteeValueFromSID(user.User.Sid),
+			},
+		},
+		{
+			AccessPermissions: windows.GENERIC_READ,
+			AccessMode:        windows.GRANT_ACCESS,
+			Trustee: windows.TRUSTEE{
+				TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeType: windows.TRUSTEE_IS_WELL_KNOWN_GROUP,
+				TrusteeValue: windows.TrusteeValueFromSID(everyone),
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("ACLFromEntries: %v", err)
+	}
+	if err := windows.SetNamedSecurityInfo(
+		path,
+		windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.UNPROTECTED_DACL_SECURITY_INFORMATION,
+		nil,
+		nil,
+		acl,
+		nil,
+	); err != nil {
+		t.Fatalf("SetNamedSecurityInfo weak DACL: %v", err)
+	}
 }
 
 func TestBackgroundWindowsPrivateDirectoryACLIsInheritedByRawChild(t *testing.T) {

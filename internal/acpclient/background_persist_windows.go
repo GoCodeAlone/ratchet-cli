@@ -5,8 +5,10 @@ package acpclient
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -15,6 +17,20 @@ const (
 	backgroundMoveFileFlags      = windows.MOVEFILE_REPLACE_EXISTING | windows.MOVEFILE_WRITE_THROUGH
 	backgroundPrivateInheritance = windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT
 )
+
+type backgroundWindowsFileIDInfo struct {
+	VolumeSerialNumber uint64
+	FileID             [16]byte
+}
+
+type backgroundWindowsAuditTransaction struct {
+	path           string
+	parentPath     string
+	parent         *os.File
+	parentIdentity backgroundWindowsFileIDInfo
+	file           *os.File
+	release        func() error
+}
 
 func backgroundWriteFileAtomic(path string, data []byte) error {
 	dir := filepath.Dir(path)
@@ -55,15 +71,286 @@ func backgroundOpenPrivateAppend(path string) (*os.File, error) {
 	if err := backgroundEnsurePrivateDir(filepath.Dir(path)); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	f, _, err := backgroundOpenWindowsAuditFile(path, true)
 	if err != nil {
 		return nil, err
 	}
-	if err := backgroundSetPrivateACL(path); err != nil {
+	if _, err := f.Seek(0, io.SeekEnd); err != nil {
 		_ = f.Close()
 		return nil, err
 	}
 	return f, nil
+}
+
+func backgroundOpenAuditTransaction(path string, create bool) (backgroundAuditTransaction, error) {
+	parentPath := filepath.Dir(path)
+	parent, parentIdentity, parentErr := backgroundOpenWindowsAuditParent(parentPath)
+	if parentErr != nil && !errors.Is(parentErr, os.ErrNotExist) {
+		return nil, parentErr
+	}
+	release, err := acquireStoreFileLock(path + ".lock")
+	if err != nil {
+		if parent != nil {
+			_ = parent.Close()
+		}
+		return nil, err
+	}
+	if parent == nil {
+		parent, parentIdentity, err = backgroundOpenWindowsAuditParent(parentPath)
+	} else {
+		err = backgroundValidateWindowsParentIdentity(parentPath, parentIdentity)
+	}
+	if err != nil {
+		return nil, errors.Join(err, release(), closeBackgroundFile(parent))
+	}
+	f, _, err := backgroundOpenWindowsAuditFile(path, create)
+	if errors.Is(err, os.ErrNotExist) && !create {
+		return &backgroundWindowsAuditTransaction{
+			path: path, parentPath: parentPath, parent: parent,
+			parentIdentity: parentIdentity, release: release,
+		}, nil
+	}
+	if err != nil {
+		return nil, errors.Join(err, release(), parent.Close())
+	}
+	return &backgroundWindowsAuditTransaction{
+		path: path, parentPath: parentPath, parent: parent,
+		parentIdentity: parentIdentity, file: f, release: release,
+	}, nil
+}
+
+func backgroundOpenWindowsAuditParent(path string) (*os.File, backgroundWindowsFileIDInfo, error) {
+	pathPtr, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, backgroundWindowsFileIDInfo{}, err
+	}
+	handle, err := windows.CreateFile(
+		pathPtr,
+		windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT,
+		0,
+	)
+	if err != nil {
+		if backgroundWindowsPathNotExist(err) {
+			return nil, backgroundWindowsFileIDInfo{}, os.ErrNotExist
+		}
+		return nil, backgroundWindowsFileIDInfo{}, storeLockUnsafePathError(path, err)
+	}
+	f := os.NewFile(uintptr(handle), path)
+	if f == nil {
+		_ = windows.CloseHandle(handle)
+		return nil, backgroundWindowsFileIDInfo{}, errors.New("create audit parent handle")
+	}
+	if err := backgroundValidateWindowsPrivateHandle(handle, path, true); err != nil {
+		_ = f.Close()
+		return nil, backgroundWindowsFileIDInfo{}, err
+	}
+	identity, err := backgroundWindowsHandleIdentity(handle)
+	if err != nil {
+		_ = f.Close()
+		return nil, backgroundWindowsFileIDInfo{}, err
+	}
+	return f, identity, nil
+}
+
+func backgroundOpenWindowsAuditFile(path string, create bool) (*os.File, bool, error) {
+	pathPtr, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, false, err
+	}
+	const existingAccess = windows.GENERIC_READ | windows.GENERIC_WRITE | windows.READ_CONTROL
+	handle, err := windows.CreateFile(
+		pathPtr,
+		existingAccess,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT,
+		0,
+	)
+	created := false
+	if err != nil && backgroundWindowsPathNotExist(err) && create {
+		handle, err = windows.CreateFile(
+			pathPtr,
+			existingAccess|windows.WRITE_DAC,
+			windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
+			nil,
+			windows.CREATE_NEW,
+			windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT,
+			0,
+		)
+		created = err == nil
+		if errors.Is(err, windows.ERROR_FILE_EXISTS) || errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+			handle, err = windows.CreateFile(
+				pathPtr,
+				existingAccess,
+				windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
+				nil,
+				windows.OPEN_EXISTING,
+				windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT,
+				0,
+			)
+			created = false
+		}
+	}
+	if err != nil {
+		if backgroundWindowsPathNotExist(err) && !create {
+			return nil, false, os.ErrNotExist
+		}
+		return nil, false, storeLockUnsafePathError(path, err)
+	}
+	f := os.NewFile(uintptr(handle), path)
+	if f == nil {
+		_ = windows.CloseHandle(handle)
+		return nil, false, errors.New("create audit file handle")
+	}
+	if created {
+		if err := backgroundSetPrivateHandleACL(handle); err != nil {
+			_ = f.Close()
+			_ = os.Remove(path)
+			return nil, false, err
+		}
+	}
+	if err := backgroundValidateWindowsPrivateHandle(handle, path, false); err != nil {
+		_ = f.Close()
+		if created {
+			_ = os.Remove(path)
+		}
+		return nil, false, err
+	}
+	return f, created, nil
+}
+
+func backgroundWindowsPathNotExist(err error) bool {
+	return errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND)
+}
+
+func backgroundValidateWindowsPrivateHandle(handle windows.Handle, path string, directory bool) error {
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(handle, &info); err != nil {
+		return err
+	}
+	isDirectory := info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0
+	if isDirectory != directory || info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		return storeLockUnsafePathError(path, errors.New("target type or reparse attributes are unsafe"))
+	}
+	if !directory && info.NumberOfLinks != 1 {
+		return storeLockUnsafePathError(path, fmt.Errorf("target has %d links, want one", info.NumberOfLinks))
+	}
+	descriptor, err := windows.GetSecurityInfo(
+		handle,
+		windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION,
+	)
+	if err != nil {
+		return storeLockUnsafePathError(path, err)
+	}
+	owner, _, err := descriptor.Owner()
+	if err != nil {
+		return storeLockUnsafePathError(path, err)
+	}
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return err
+	}
+	if owner == nil || !owner.Equals(user.User.Sid) {
+		return storeLockUnsafePathError(path, errors.New("target owner is not the current user"))
+	}
+	control, _, err := descriptor.Control()
+	if err != nil {
+		return storeLockUnsafePathError(path, err)
+	}
+	if control&windows.SE_DACL_PROTECTED == 0 {
+		return storeLockUnsafePathError(path, errors.New("target DACL is not protected"))
+	}
+	dacl, _, err := descriptor.DACL()
+	if err != nil {
+		return storeLockUnsafePathError(path, err)
+	}
+	if dacl == nil || dacl.AceCount != 1 {
+		return storeLockUnsafePathError(path, errors.New("target DACL is not owner-only"))
+	}
+	var ace *windows.ACCESS_ALLOWED_ACE
+	if err := windows.GetAce(dacl, 0, &ace); err != nil {
+		return storeLockUnsafePathError(path, err)
+	}
+	aceSID := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+	if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE ||
+		ace.Mask != windows.GENERIC_ALL ||
+		!aceSID.Equals(user.User.Sid) {
+		return storeLockUnsafePathError(path, errors.New("target DACL is not owner-only full control"))
+	}
+	return nil
+}
+
+func backgroundWindowsHandleIdentity(handle windows.Handle) (backgroundWindowsFileIDInfo, error) {
+	var identity backgroundWindowsFileIDInfo
+	err := windows.GetFileInformationByHandleEx(
+		handle,
+		windows.FileIdInfo,
+		(*byte)(unsafe.Pointer(&identity)),
+		uint32(unsafe.Sizeof(identity)),
+	)
+	return identity, err
+}
+
+func backgroundValidateWindowsParentIdentity(path string, want backgroundWindowsFileIDInfo) error {
+	parent, got, err := backgroundOpenWindowsAuditParent(path)
+	if err != nil {
+		return err
+	}
+	defer parent.Close() //nolint:errcheck
+	if got != want {
+		return storeLockUnsafePathError(path, errors.New("audit parent identity changed"))
+	}
+	return nil
+}
+
+func closeBackgroundFile(f *os.File) error {
+	if f == nil {
+		return nil
+	}
+	return f.Close()
+}
+
+func (t *backgroundWindowsAuditTransaction) File() *os.File { return t.file }
+
+func (t *backgroundWindowsAuditTransaction) ValidateForMutation() error {
+	if t.file == nil {
+		return storeLockUnsafePathError(t.path, os.ErrNotExist)
+	}
+	if err := backgroundValidateWindowsPrivateHandle(windows.Handle(t.file.Fd()), t.path, false); err != nil {
+		return err
+	}
+	if err := backgroundValidateWindowsParentIdentity(t.parentPath, t.parentIdentity); err != nil {
+		return err
+	}
+	want, err := backgroundWindowsHandleIdentity(windows.Handle(t.file.Fd()))
+	if err != nil {
+		return err
+	}
+	current, _, err := backgroundOpenWindowsAuditFile(t.path, false)
+	if err != nil {
+		return err
+	}
+	defer current.Close() //nolint:errcheck
+	got, err := backgroundWindowsHandleIdentity(windows.Handle(current.Fd()))
+	if err != nil {
+		return err
+	}
+	if got != want {
+		return storeLockUnsafePathError(t.path, errors.New("audit target identity changed"))
+	}
+	return nil
+}
+
+func (t *backgroundWindowsAuditTransaction) SyncParent() error { return nil }
+
+func (t *backgroundWindowsAuditTransaction) Close() error {
+	return errors.Join(t.release(), t.parent.Close())
 }
 
 func backgroundEnsurePrivateDir(path string) error {
@@ -155,20 +442,7 @@ func backgroundSyncParentDir(string) error {
 }
 
 func backgroundSetPrivateACL(path string) error {
-	user, err := windows.GetCurrentProcessToken().GetTokenUser()
-	if err != nil {
-		return err
-	}
-	acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{{
-		AccessPermissions: windows.GENERIC_ALL,
-		AccessMode:        windows.GRANT_ACCESS,
-		Inheritance:       backgroundPrivateInheritance,
-		Trustee: windows.TRUSTEE{
-			TrusteeForm:  windows.TRUSTEE_IS_SID,
-			TrusteeType:  windows.TRUSTEE_IS_USER,
-			TrusteeValue: windows.TrusteeValueFromSID(user.User.Sid),
-		},
-	}}, nil)
+	acl, err := backgroundPrivateACL()
 	if err != nil {
 		return err
 	}
@@ -181,4 +455,41 @@ func backgroundSetPrivateACL(path string) error {
 		acl,
 		nil,
 	)
+}
+
+func backgroundSetPrivateHandleACL(handle windows.Handle) error {
+	acl, err := backgroundPrivateACL()
+	if err != nil {
+		return err
+	}
+	return windows.SetSecurityInfo(
+		handle,
+		windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil,
+		nil,
+		acl,
+		nil,
+	)
+}
+
+func backgroundPrivateACL() (*windows.ACL, error) {
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return nil, err
+	}
+	acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{{
+		AccessPermissions: windows.GENERIC_ALL,
+		AccessMode:        windows.GRANT_ACCESS,
+		Inheritance:       backgroundPrivateInheritance,
+		Trustee: windows.TRUSTEE{
+			TrusteeForm:  windows.TRUSTEE_IS_SID,
+			TrusteeType:  windows.TRUSTEE_IS_USER,
+			TrusteeValue: windows.TrusteeValueFromSID(user.User.Sid),
+		},
+	}}, nil)
+	if err != nil {
+		return nil, err
+	}
+	return acl, nil
 }

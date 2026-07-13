@@ -7,10 +7,39 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"golang.org/x/sys/unix"
 )
+
+func TestStoreProcessLockConcurrentFirstOpen(t *testing.T) {
+	const contenders = 64
+	for iteration := range 20 {
+		logicalPath := filepath.Join(t.TempDir(), "events", "session.events.jsonl.lock")
+		start := make(chan struct{})
+		errs := make(chan error, contenders)
+		var wg sync.WaitGroup
+		for range contenders {
+			wg.Go(func() {
+				<-start
+				release, err := acquireStoreFileLock(logicalPath)
+				if err == nil {
+					err = release()
+				}
+				errs <- err
+			})
+		}
+		close(start)
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			if err != nil {
+				t.Fatalf("iteration %d: acquire first lock: %v", iteration, err)
+			}
+		}
+	}
+}
 
 func TestSessionStoreCrossProcessLockBlocks(t *testing.T) {
 	runSessionStoreCrossProcessLockBlocks(t, holdSessionStoreTestLock)

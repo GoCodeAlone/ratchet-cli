@@ -188,12 +188,13 @@ func TestBackgroundWindowsPolicyTransitionAuditLocksArePrivate(t *testing.T) {
 	if err := store.Upsert(policy); err != nil {
 		t.Fatalf("Upsert policy: %v", err)
 	}
-	if err := store.putTransition(backgroundTransition{Policy: policy, Action: BackgroundAuditStart}); err != nil {
+	if err := store.putTransition(backgroundTransition{EventID: "windows-private-transition", Policy: policy, Action: BackgroundAuditStart}); err != nil {
 		t.Fatalf("putTransition: %v", err)
 	}
 	audit := NewBackgroundAudit(filepath.Join(dir, "background-audit.jsonl"))
 	if err := audit.Append(BackgroundAuditRecord{
-		At: now, Action: BackgroundAuditStart, SessionID: policy.SessionID,
+		RecordID: "windows-private-audit",
+		At:       now, Action: BackgroundAuditStart, SessionID: policy.SessionID,
 		Profile: policy.Profile, DescriptorHash: policy.DescriptorHash, Outcome: policy.Outcome,
 	}); err != nil {
 		t.Fatalf("Append audit: %v", err)
