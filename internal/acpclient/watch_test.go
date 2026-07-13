@@ -200,16 +200,18 @@ func TestWatchQueueReturnsDrainBusy(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Upsert: %v", err)
 	}
-	if err := store.WriteOwner(OwnerLock{
+	lease, err := store.AcquireOwnerLease(OwnerLock{
 		SessionID:          "watch-busy",
 		PID:                os.Getpid(),
 		CommandFingerprint: "other",
 		StartedAt:          now,
-	}); err != nil {
-		t.Fatalf("WriteOwner: %v", err)
+	})
+	if err != nil {
+		t.Fatalf("AcquireOwnerLease: %v", err)
 	}
+	defer func() { _ = lease.Release() }()
 
-	_, err := WatchQueue(t.Context(), store, AgentSpec{Name: "fixture", Command: "fixture"}, RunOptions{}, "watch-busy", WatchOptions{
+	_, err = WatchQueue(t.Context(), store, AgentSpec{Name: "fixture", Command: "fixture"}, RunOptions{}, "watch-busy", WatchOptions{
 		Interval:    time.Millisecond,
 		MaxPerCycle: 1,
 		Now:         fixedClock(now.Add(time.Minute)),

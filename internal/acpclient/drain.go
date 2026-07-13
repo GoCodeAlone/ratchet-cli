@@ -34,7 +34,7 @@ type DrainResult struct {
 	Remaining    int
 }
 
-func DrainQueue(ctx context.Context, store *Store, spec AgentSpec, opts RunOptions, sessionID string, drainOpts DrainOptions) (DrainResult, error) {
+func DrainQueue(ctx context.Context, store *Store, spec AgentSpec, opts RunOptions, sessionID string, drainOpts DrainOptions) (result DrainResult, err error) {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return DrainResult{}, errors.New("acp client session id is required")
@@ -43,33 +43,30 @@ func DrainQueue(ctx context.Context, store *Store, spec AgentSpec, opts RunOptio
 		return DrainResult{}, errors.New("acp client store is required")
 	}
 	now := drainOpts.now()
-	if err := store.AcquireOwner(OwnerLock{
+	lease, err := store.AcquireOwnerLease(OwnerLock{
 		SessionID:          sessionID,
 		PID:                os.Getpid(),
 		CommandFingerprint: spec.Fingerprint(),
 		StartedAt:          now,
-	}); err != nil {
-		if errors.Is(err, os.ErrExist) {
-			if _, ownerErr := store.Owner(sessionID); ownerErr != nil {
-				return DrainResult{}, ownerErr
-			}
+	})
+	if err != nil {
+		if errors.Is(err, ErrOwnerLeaseBusy) {
 			return DrainResult{}, fmt.Errorf("%w: %s", ErrDrainBusy, sessionID)
 		}
 		return DrainResult{}, err
 	}
+	defer func() { err = errors.Join(err, lease.Release()) }()
 	if _, err := store.recoverRunningQueueItems(sessionID, now); err != nil {
-		_ = store.ClearOwner(sessionID)
 		return DrainResult{}, err
 	}
 
-	result := DrainResult{SessionID: sessionID}
+	result = DrainResult{SessionID: sessionID}
 	var runner DrainPromptRunner
 	var closeRunner func() error
 	defer func() {
 		if closeRunner != nil {
 			_ = closeRunner()
 		}
-		_ = store.ClearOwner(sessionID)
 	}()
 
 	max := drainOpts.Max

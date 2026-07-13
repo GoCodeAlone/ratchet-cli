@@ -6,9 +6,78 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 )
+
+func TestImportSessionConcurrentCollisionIsTransactional(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state", "sessions.json")
+	now := time.Date(2026, 7, 13, 17, 30, 0, 0, time.UTC)
+	archive := Archive{
+		FormatVersion: archiveFormatVersion,
+		ExportedAt:    now.Format(time.RFC3339Nano),
+		ExportedBy:    "ratchet-cli",
+		Session: ArchiveSession{
+			RecordID:    "same-id",
+			CWDRelative: ".",
+			CreatedAt:   now.Format(time.RFC3339Nano),
+			UpdatedAt:   now.Format(time.RFC3339Nano),
+			State: SessionRecord{
+				ID:        "same-id",
+				Status:    SessionStatusCompleted,
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
+		},
+	}
+	archivePath := writeArchiveFixture(t, archive)
+
+	stores := []*Store{NewStore(path), NewStore(path)}
+	ready := make(chan struct{}, len(stores))
+	release := make(chan struct{})
+	for _, store := range stores {
+		store.beforeMutation = func() {
+			ready <- struct{}{}
+			<-release
+		}
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, len(stores))
+	for _, store := range stores {
+		wg.Go(func() {
+			_, err := ImportSession(store, archivePath, ImportOptions{HomeDir: t.TempDir()})
+			errs <- err
+		})
+	}
+	for range stores {
+		select {
+		case <-ready:
+		case <-time.After(2 * time.Second):
+			t.Fatal("imports did not both reach record insertion")
+		}
+	}
+	close(release)
+	wg.Wait()
+	close(errs)
+
+	successes := 0
+	collisions := 0
+	for err := range errs {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, ErrSessionArchiveCollision):
+			collisions++
+		default:
+			t.Fatalf("ImportSession error = %v", err)
+		}
+	}
+	if successes != 1 || collisions != 1 {
+		t.Fatalf("imports = %d successes, %d collisions; want one each", successes, collisions)
+	}
+}
 
 func TestExportSessionWritesACPXShapedArchive(t *testing.T) {
 	home := t.TempDir()
@@ -102,11 +171,13 @@ func TestExportSessionRefusesActiveOwner(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Upsert: %v", err)
 	}
-	if err := store.WriteOwner(OwnerLock{SessionID: "active", PID: os.Getpid(), StartedAt: now}); err != nil {
-		t.Fatalf("WriteOwner: %v", err)
+	lease, err := store.AcquireOwnerLease(OwnerLock{SessionID: "active", PID: os.Getpid(), StartedAt: now})
+	if err != nil {
+		t.Fatalf("AcquireOwnerLease: %v", err)
 	}
+	defer func() { _ = lease.Release() }()
 
-	err := ExportSession(store, "active", filepath.Join(t.TempDir(), "archive.json"), ExportOptions{Now: fixedArchiveClock(now)})
+	err = ExportSession(store, "active", filepath.Join(t.TempDir(), "archive.json"), ExportOptions{Now: fixedArchiveClock(now)})
 	if !errors.Is(err, ErrSessionActive) {
 		t.Fatalf("ExportSession error = %v, want ErrSessionActive", err)
 	}

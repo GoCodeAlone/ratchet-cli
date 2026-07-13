@@ -166,11 +166,6 @@ func ImportSession(store *Store, archivePath string, opts ImportOptions) (Sessio
 	if opts.SessionID != "" {
 		rec.ID = opts.SessionID
 	}
-	if _, err := store.Get(rec.ID); err == nil {
-		return SessionRecord{}, fmt.Errorf("%w: %s", ErrSessionArchiveCollision, rec.ID)
-	} else if !errors.Is(err, ErrSessionNotFound) {
-		return SessionRecord{}, err
-	}
 	if opts.Cwd != "" {
 		cwd, err := normalizeImportCWD(opts.Cwd)
 		if err != nil {
@@ -199,7 +194,7 @@ func ImportSession(store *Store, archivePath string, opts ImportOptions) (Sessio
 	if rec.UpdatedAt.IsZero() {
 		rec.UpdatedAt = parseArchiveTime(archive.Session.UpdatedAt)
 	}
-	if err := store.Upsert(rec); err != nil {
+	if err := store.InsertSession(rec); err != nil {
 		return SessionRecord{}, err
 	}
 	if len(archive.RawHistory) > 0 {

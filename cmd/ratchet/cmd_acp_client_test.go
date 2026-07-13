@@ -931,6 +931,100 @@ func TestExecuteACPClientExecPersistsSessionRecord(t *testing.T) {
 	}
 }
 
+func TestExecuteACPClientExecLifecyclePreservesConcurrentQueueAndTurns(t *testing.T) {
+	store := acpclient.NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 13, 18, 0, 0, 0, time.UTC)
+	if err := store.Upsert(acpclient.SessionRecord{
+		ID:        "s-concurrent",
+		Status:    acpclient.SessionStatusQueued,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Turns: []acpclient.TurnSummary{{
+			Prompt:    "prior",
+			Response:  "prior response",
+			CreatedAt: now,
+		}},
+		PromptQueue: []acpclient.QueuedPrompt{{
+			ID:        "q-before",
+			Prompt:    "before start",
+			Status:    acpclient.QueuePromptStatusPending,
+			CreatedAt: now,
+		}},
+	}); err != nil {
+		t.Fatalf("seed Upsert: %v", err)
+	}
+	runner := &lifecycleACPClientExecRunner{
+		store: store,
+		result: acpclient.Result{
+			SessionID:  "s-concurrent",
+			StopReason: acpsdk.StopReasonEndTurn,
+			Text:       "latest response",
+		},
+	}
+	if err := executeACPClientExecWithStore(t.Context(), acpClientExecOptions{
+		Agent:   "custom",
+		Command: "/bin/fixture-agent",
+		Prompt:  "latest",
+		Cwd:     ".",
+	}, runner, store, io.Discard); err != nil {
+		t.Fatalf("executeACPClientExecWithStore: %v", err)
+	}
+
+	got, err := store.Get("s-concurrent")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got.PromptQueue) != 2 || got.PromptQueue[0].ID != "q-before" || got.PromptQueue[1].ID != "q-during" {
+		t.Fatalf("PromptQueue = %#v, want both concurrent prompts", got.PromptQueue)
+	}
+	if len(got.Turns) != 2 || got.Turns[0].Prompt != "prior" || got.Turns[1].Prompt != "latest" {
+		t.Fatalf("Turns = %#v, want prior then latest", got.Turns)
+	}
+}
+
+func TestExecuteACPClientExecHoldsOwnerLeaseForRunnerLifetime(t *testing.T) {
+	for _, runnerErr := range []error{nil, errors.New("runner failed")} {
+		name := "success"
+		if runnerErr != nil {
+			name = "error"
+		}
+		t.Run(name, func(t *testing.T) {
+			store := acpclient.NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+			runner := &ownerCheckingACPClientExecRunner{store: store, err: runnerErr}
+			err := executeACPClientExecWithStore(t.Context(), acpClientExecOptions{
+				Agent:   "custom",
+				Command: "/bin/fixture-agent",
+				Prompt:  "lease",
+				Cwd:     ".",
+			}, runner, store, io.Discard)
+			if !errors.Is(err, runnerErr) {
+				t.Fatalf("executeACPClientExecWithStore error = %v, want %v", err, runnerErr)
+			}
+			if _, err := store.Owner("s-owner-lifetime"); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("Owner after runner return = %v, want os.ErrNotExist", err)
+			}
+		})
+	}
+}
+
+func TestExecuteACPClientExecReleasesPriorLeaseWhenSessionIDChanges(t *testing.T) {
+	store := acpclient.NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	runner := &switchingOwnerACPClientExecRunner{store: store}
+	if err := executeACPClientExecWithStore(t.Context(), acpClientExecOptions{
+		Agent:   "custom",
+		Command: "/bin/fixture-agent",
+		Prompt:  "switch",
+		Cwd:     ".",
+	}, runner, store, io.Discard); err != nil {
+		t.Fatalf("executeACPClientExecWithStore: %v", err)
+	}
+	for _, sessionID := range []string{"s-owner-first", "s-owner-second"} {
+		if _, err := store.Owner(sessionID); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("Owner %s after runner return = %v, want os.ErrNotExist", sessionID, err)
+		}
+	}
+}
+
 func TestExecuteACPClientExecNoWaitQueuesPrompt(t *testing.T) {
 	store := acpclient.NewStore(filepath.Join(t.TempDir(), "sessions.json"))
 	runner := &fakeACPClientExecRunner{}
@@ -1916,14 +2010,16 @@ func TestACPClientStatusAndCancelActiveOwner(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Upsert: %v", err)
 	}
-	if err := store.WriteOwner(acpclient.OwnerLock{
+	lease, err := store.AcquireOwnerLease(acpclient.OwnerLock{
 		SessionID:          "s-active",
 		PID:                12345,
 		CommandFingerprint: "abcdef123456",
 		StartedAt:          now,
-	}); err != nil {
-		t.Fatalf("WriteOwner: %v", err)
+	})
+	if err != nil {
+		t.Fatalf("AcquireOwnerLease: %v", err)
 	}
+	defer func() { _ = lease.Release() }()
 
 	var statusOut bytes.Buffer
 	if err := executeACPClientStatus(store, "s-active", false, &statusOut); err != nil {
@@ -1949,7 +2045,7 @@ func TestACPClientStatusAndCancelActiveOwner(t *testing.T) {
 	}
 }
 
-func TestACPClientCancelReturnsCorruptOwnerError(t *testing.T) {
+func TestACPClientCancelIgnoresCorruptStaleOwnerProjection(t *testing.T) {
 	store := acpclient.NewStore(filepath.Join(t.TempDir(), "sessions.json"))
 	now := time.Date(2026, 7, 1, 19, 50, 0, 0, time.UTC)
 	if err := store.Upsert(acpclient.SessionRecord{
@@ -1976,15 +2072,15 @@ func TestACPClientCancelReturnsCorruptOwnerError(t *testing.T) {
 
 	var out bytes.Buffer
 	err := executeACPClientCancel(store, "s-corrupt-owner", false, &out)
-	if err == nil || !strings.Contains(err.Error(), "read") {
-		t.Fatalf("executeACPClientCancel error = %v, want corrupt owner error", err)
+	if err != nil {
+		t.Fatalf("executeACPClientCancel: %v", err)
 	}
 	rec, err := store.Get("s-corrupt-owner")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if rec.PendingPrompt.Status != acpclient.PendingPromptStatusPending {
-		t.Fatalf("pending prompt status = %q, want pending", rec.PendingPrompt.Status)
+	if rec.PendingPrompt.Status != acpclient.PendingPromptStatusCanceled {
+		t.Fatalf("pending prompt status = %q, want canceled", rec.PendingPrompt.Status)
 	}
 }
 
@@ -2048,6 +2144,85 @@ type fakeACPClientExecRunner struct {
 	result acpclient.Result
 	err    error
 	calls  []fakeACPClientExecCall
+}
+
+type lifecycleACPClientExecRunner struct {
+	store  *acpclient.Store
+	result acpclient.Result
+}
+
+type ownerCheckingACPClientExecRunner struct {
+	store *acpclient.Store
+	err   error
+}
+
+type switchingOwnerACPClientExecRunner struct {
+	store *acpclient.Store
+}
+
+func (r *switchingOwnerACPClientExecRunner) RunPrompt(_ context.Context, _ acpclient.AgentSpec, opts acpclient.RunOptions, _ string) (acpclient.Result, error) {
+	if err := opts.SessionStarted("s-owner-first"); err != nil {
+		return acpclient.Result{}, err
+	}
+	if _, err := r.store.Owner("s-owner-first"); err != nil {
+		return acpclient.Result{}, fmt.Errorf("first owner not live: %w", err)
+	}
+	blocker, err := r.store.AcquireOwnerLease(acpclient.OwnerLock{
+		SessionID: "s-owner-second",
+		PID:       os.Getpid(),
+		StartedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		return acpclient.Result{}, fmt.Errorf("block second owner: %w", err)
+	}
+	if err := opts.SessionStarted("s-owner-second"); !errors.Is(err, acpclient.ErrOwnerLeaseBusy) {
+		_ = blocker.Release()
+		return acpclient.Result{}, fmt.Errorf("failed session switch error = %v, want ErrOwnerLeaseBusy", err)
+	}
+	if _, err := r.store.Owner("s-owner-first"); !errors.Is(err, os.ErrNotExist) {
+		_ = blocker.Release()
+		return acpclient.Result{}, fmt.Errorf("first owner after session switch = %v", err)
+	}
+	if err := blocker.Release(); err != nil {
+		return acpclient.Result{}, fmt.Errorf("release second owner blocker: %w", err)
+	}
+	if err := opts.SessionStarted("s-owner-second"); err != nil {
+		return acpclient.Result{}, fmt.Errorf("retry session switch: %w", err)
+	}
+	if _, err := r.store.Owner("s-owner-second"); err != nil {
+		return acpclient.Result{}, fmt.Errorf("second owner not live: %w", err)
+	}
+	return acpclient.Result{SessionID: "s-owner-second", StopReason: acpsdk.StopReasonEndTurn, Text: "done"}, nil
+}
+
+func (r *ownerCheckingACPClientExecRunner) RunPrompt(_ context.Context, _ acpclient.AgentSpec, opts acpclient.RunOptions, _ string) (acpclient.Result, error) {
+	const sessionID = "s-owner-lifetime"
+	if err := opts.SessionStarted(sessionID); err != nil {
+		return acpclient.Result{}, err
+	}
+	if _, err := r.store.Owner(sessionID); err != nil {
+		return acpclient.Result{}, fmt.Errorf("owner not live during run: %w", err)
+	}
+	other, err := r.store.AcquireOwnerLease(acpclient.OwnerLock{SessionID: sessionID, PID: os.Getpid(), StartedAt: time.Now().UTC()})
+	if other != nil {
+		_ = other.Release()
+	}
+	if !errors.Is(err, acpclient.ErrOwnerLeaseBusy) {
+		return acpclient.Result{}, fmt.Errorf("second owner claim error = %v", err)
+	}
+	return acpclient.Result{SessionID: sessionID, StopReason: acpsdk.StopReasonEndTurn, Text: "done"}, r.err
+}
+
+func (r *lifecycleACPClientExecRunner) RunPrompt(_ context.Context, _ acpclient.AgentSpec, opts acpclient.RunOptions, _ string) (acpclient.Result, error) {
+	if err := opts.SessionStarted(string(r.result.SessionID)); err != nil {
+		return acpclient.Result{}, err
+	}
+	_, err := r.store.AppendQueuedPrompt(acpclient.SessionRecord{ID: string(r.result.SessionID)}, acpclient.QueuedPrompt{
+		ID:        "q-during",
+		Prompt:    "during run",
+		CreatedAt: time.Date(2026, 7, 13, 18, 1, 0, 0, time.UTC),
+	})
+	return r.result, err
 }
 
 type fakeACPClientExecCall struct {

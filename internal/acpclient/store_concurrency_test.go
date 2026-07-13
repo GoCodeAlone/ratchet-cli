@@ -77,6 +77,76 @@ func TestSessionStoreSerializesTwoHandlePromptAppends(t *testing.T) {
 	}
 }
 
+func TestSessionLifecycleUpdatesPreserveQueueAndTurns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sessions.json")
+	store := NewStore(path)
+	now := time.Date(2026, 7, 13, 17, 0, 0, 0, time.UTC)
+	if err := store.Upsert(SessionRecord{
+		ID:        "session-lifecycle",
+		Status:    SessionStatusQueued,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Turns: []TurnSummary{{
+			Prompt:    "prior",
+			Response:  "prior response",
+			CreatedAt: now,
+		}},
+		PromptQueue: []QueuedPrompt{{
+			ID:        "q-1",
+			Prompt:    "queued",
+			Status:    QueuePromptStatusPending,
+			CreatedAt: now,
+		}},
+	}); err != nil {
+		t.Fatalf("seed Upsert: %v", err)
+	}
+
+	startedAt := now.Add(time.Minute)
+	if err := store.MarkSessionStarted(SessionRecord{
+		ID:                 "session-lifecycle",
+		Agent:              "fixture",
+		CommandFingerprint: "fingerprint",
+		Cwd:                "/tmp/project",
+		Status:             SessionStatusRunning,
+		CreatedAt:          startedAt,
+		UpdatedAt:          startedAt,
+	}); err != nil {
+		t.Fatalf("MarkSessionStarted: %v", err)
+	}
+	completedAt := startedAt.Add(time.Minute)
+	if err := store.MarkSessionCompleted(SessionRecord{
+		ID:                 "session-lifecycle",
+		Agent:              "fixture",
+		CommandFingerprint: "fingerprint",
+		Cwd:                "/tmp/project",
+		Status:             SessionStatusCompleted,
+		UpdatedAt:          completedAt,
+		LastStopReason:     "end_turn",
+		Summary:            "latest response",
+	}, TurnSummary{
+		Prompt:     "latest",
+		Response:   "latest response",
+		StopReason: "end_turn",
+		CreatedAt:  completedAt,
+	}); err != nil {
+		t.Fatalf("MarkSessionCompleted: %v", err)
+	}
+
+	got, err := store.Get("session-lifecycle")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !got.CreatedAt.Equal(now) {
+		t.Fatalf("CreatedAt = %s, want original %s", got.CreatedAt, now)
+	}
+	if len(got.PromptQueue) != 1 || got.PromptQueue[0].ID != "q-1" {
+		t.Fatalf("PromptQueue = %#v, want preserved q-1", got.PromptQueue)
+	}
+	if len(got.Turns) != 2 || got.Turns[0].Prompt != "prior" || got.Turns[1].Prompt != "latest" {
+		t.Fatalf("Turns = %#v, want prior then latest", got.Turns)
+	}
+}
+
 func TestWatchQueueConcurrentSessionsPreserveCrossHandleEnqueuesExactlyOnce(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sessions.json")
 	workerStore := NewStore(path)

@@ -9,18 +9,31 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
 var (
-	ErrSessionNotFound     = errors.New("acp client session not found")
-	ErrQueuePromptNotFound = errors.New("acp client queue prompt not found")
-	ErrInvalidOwnerLock    = errors.New("acp client owner lock is invalid")
+	ErrSessionNotFound             = errors.New("acp client session not found")
+	ErrQueuePromptNotFound         = errors.New("acp client queue prompt not found")
+	ErrInvalidOwnerLock            = errors.New("acp client owner lock is invalid")
+	ErrOwnerLeaseBusy              = errors.New("acp client owner lease is held")
+	ErrStoreProcessLockUnsupported = errors.New("acp client cross-process store locks are unsupported")
 )
 
+type OwnerLease struct {
+	mu       sync.Mutex
+	store    *Store
+	owner    OwnerLock
+	release  func() error
+	released bool
+}
+
 type Store struct {
-	path              string
-	transactionLoaded func()
+	path                string
+	beforeMutation      func()
+	transactionLoaded   func()
+	eventLogWritePaused func()
 }
 
 type storeFile struct {
@@ -105,6 +118,77 @@ func (s *Store) Upsert(rec SessionRecord) error {
 			}
 		}
 		data.Sessions = append(data.Sessions, rec)
+		return true, nil
+	})
+}
+
+func (s *Store) InsertSession(rec SessionRecord) error {
+	if strings.TrimSpace(rec.ID) == "" {
+		return errors.New("acp client session id is required")
+	}
+	return s.mutateTransaction(func(data *storeFile) (bool, error) {
+		if _, err := findSessionRecord(data, rec.ID); err == nil {
+			return false, fmt.Errorf("%w: %s", ErrSessionArchiveCollision, rec.ID)
+		} else if !errors.Is(err, ErrSessionNotFound) {
+			return false, err
+		}
+		now := time.Now().UTC()
+		if rec.CreatedAt.IsZero() {
+			rec.CreatedAt = now
+		}
+		if rec.UpdatedAt.IsZero() {
+			rec.UpdatedAt = rec.CreatedAt
+		}
+		data.Sessions = append(data.Sessions, rec)
+		return true, nil
+	})
+}
+
+func (s *Store) MarkSessionStarted(rec SessionRecord) error {
+	return s.updateSessionLifecycle(rec, nil)
+}
+
+func (s *Store) MarkSessionCompleted(rec SessionRecord, turn TurnSummary) error {
+	return s.updateSessionLifecycle(rec, &turn)
+}
+
+func (s *Store) updateSessionLifecycle(rec SessionRecord, turn *TurnSummary) error {
+	if strings.TrimSpace(rec.ID) == "" {
+		return errors.New("acp client session id is required")
+	}
+	return s.mutateTransaction(func(data *storeFile) (bool, error) {
+		now := time.Now().UTC()
+		existing, err := findSessionRecord(data, rec.ID)
+		if errors.Is(err, ErrSessionNotFound) {
+			if rec.CreatedAt.IsZero() {
+				rec.CreatedAt = now
+			}
+			if rec.UpdatedAt.IsZero() {
+				rec.UpdatedAt = rec.CreatedAt
+			}
+			if turn != nil {
+				rec.Turns = append(rec.Turns, *turn)
+			}
+			data.Sessions = append(data.Sessions, rec)
+			return true, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		if rec.ACPSessionID == "" {
+			rec.ACPSessionID = existing.ACPSessionID
+		}
+		rec.CreatedAt = existing.CreatedAt
+		if rec.UpdatedAt.IsZero() {
+			rec.UpdatedAt = now
+		}
+		rec.Turns = slices.Clone(existing.Turns)
+		if turn != nil {
+			rec.Turns = append(rec.Turns, *turn)
+		}
+		rec.PendingPrompt = existing.PendingPrompt
+		rec.PromptQueue = slices.Clone(existing.PromptQueue)
+		*existing = rec
 		return true, nil
 	})
 }
@@ -298,77 +382,83 @@ func (s *Store) MarkPendingCanceled(id string, when time.Time) error {
 	})
 }
 
-func (s *Store) WriteOwner(owner OwnerLock) error {
+func (s *Store) AcquireOwnerLease(owner OwnerLock) (*OwnerLease, error) {
+	if s == nil {
+		return nil, errors.New("acp client store is required")
+	}
 	if strings.TrimSpace(owner.SessionID) == "" {
-		return errors.New("owner session id is required")
+		return nil, errors.New("owner session id is required")
 	}
 	if owner.StartedAt.IsZero() {
 		owner.StartedAt = time.Now().UTC()
 	}
-	return writeJSONFileAtomic(s.ownerPath(owner.SessionID), owner, 0o600)
+	var lease *OwnerLease
+	err := withStoreProcessLock(s.ownerClaimPath(owner.SessionID), func() error {
+		release, acquired, err := tryStoreFileLock(s.ownerLeasePath(owner.SessionID))
+		if err != nil {
+			return err
+		}
+		if !acquired {
+			return fmt.Errorf("%w: %s", ErrOwnerLeaseBusy, owner.SessionID)
+		}
+		if err := backgroundWriteJSONAtomic(s.ownerPath(owner.SessionID), owner); err != nil {
+			return errors.Join(err, release())
+		}
+		lease = &OwnerLease{store: s, owner: owner, release: release}
+		return nil
+	})
+	return lease, err
 }
 
-func (s *Store) AcquireOwner(owner OwnerLock) error {
-	if strings.TrimSpace(owner.SessionID) == "" {
-		return errors.New("owner session id is required")
+func (l *OwnerLease) Release() error {
+	if l == nil {
+		return nil
 	}
-	if owner.StartedAt.IsZero() {
-		owner.StartedAt = time.Now().UTC()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.released {
+		return nil
 	}
-	path := s.ownerPath(owner.SessionID)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	b, err := json.MarshalIndent(owner, "", "  ")
-	if err != nil {
-		return err
-	}
-	b = append(b, '\n')
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
-	}
-	removeOnError := true
-	defer func() {
-		if removeOnError {
-			_ = os.Remove(path)
+	return withStoreProcessLock(l.store.ownerClaimPath(l.owner.SessionID), func() error {
+		if err := backgroundRemoveFile(l.store.ownerPath(l.owner.SessionID)); err != nil {
+			return err
 		}
-	}()
-	if _, err := f.Write(b); err != nil {
-		_ = f.Close()
+		err := l.release()
+		l.released = true
 		return err
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	removeOnError = false
-	return nil
+	})
 }
 
 func (s *Store) Owner(id string) (OwnerLock, error) {
 	var owner OwnerLock
-	if err := readJSONFile(s.ownerPath(id), &owner); err != nil {
-		return OwnerLock{}, err
-	}
-	if owner.SessionID == "" {
-		owner.SessionID = id
-	}
-	if owner.PID == 0 || owner.StartedAt.IsZero() {
-		return OwnerLock{}, fmt.Errorf("%w: %s", ErrInvalidOwnerLock, id)
-	}
-	return owner, nil
-}
-
-func (s *Store) ClearOwner(id string) error {
-	err := os.Remove(s.ownerPath(id))
-	if err == nil || errors.Is(err, os.ErrNotExist) {
+	err := withStoreProcessLock(s.ownerClaimPath(id), func() error {
+		release, acquired, err := tryStoreFileLock(s.ownerLeasePath(id))
+		if err != nil {
+			return err
+		}
+		if acquired {
+			removeErr := backgroundRemoveFile(s.ownerPath(id))
+			releaseErr := release()
+			if removeErr != nil || releaseErr != nil {
+				return errors.Join(removeErr, releaseErr)
+			}
+			return fmt.Errorf("%w: %s", os.ErrNotExist, id)
+		}
+		if err := readJSONFile(s.ownerPath(id), &owner); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("%w: live lease metadata unavailable for %s", ErrInvalidOwnerLock, id)
+			}
+			return err
+		}
+		if owner.SessionID == "" {
+			owner.SessionID = id
+		}
+		if owner.PID == 0 || owner.StartedAt.IsZero() {
+			return fmt.Errorf("%w: %s", ErrInvalidOwnerLock, id)
+		}
 		return nil
-	}
-	return err
+	})
+	return owner, err
 }
 
 func (s *Store) RequestCancel(id string, when time.Time) error {
@@ -418,6 +508,9 @@ func (s *Store) readTransaction(read func(storeFile) error) error {
 }
 
 func (s *Store) mutateTransaction(mutate func(*storeFile) (bool, error)) error {
+	if s.beforeMutation != nil {
+		s.beforeMutation()
+	}
 	return s.withFileLock(func() error {
 		data, err := s.loadUnlocked()
 		if err != nil {
@@ -435,10 +528,14 @@ func (s *Store) mutateTransaction(mutate func(*storeFile) (bool, error)) error {
 }
 
 func (s *Store) withFileLock(operation func() error) (err error) {
-	lock := backgroundPathLock(s.lockPath())
+	return withStoreProcessLock(s.lockPath(), operation)
+}
+
+func withStoreProcessLock(path string, operation func() error) (err error) {
+	lock := backgroundPathLock(path)
 	lock.Lock()
 	defer lock.Unlock()
-	release, err := acquireStoreFileLock(s.lockPath())
+	release, err := acquireStoreFileLock(path)
 	if err != nil {
 		return err
 	}
@@ -486,6 +583,14 @@ func (s *Store) lockPath() string {
 
 func (s *Store) ownerPath(id string) string {
 	return filepath.Join(filepath.Dir(s.path), "owners", storeKey(id)+".json")
+}
+
+func (s *Store) ownerLeasePath(id string) string {
+	return filepath.Join(filepath.Dir(s.path), "owners", storeKey(id)+".lock")
+}
+
+func (s *Store) ownerClaimPath(id string) string {
+	return filepath.Join(filepath.Dir(s.path), "owners", storeKey(id)+".claim.lock")
 }
 
 func (s *Store) cancelPath(id string) string {

@@ -57,6 +57,31 @@ func TestSessionStoreReplacementAndLockAreOwnerOnly(t *testing.T) {
 	}
 }
 
+func TestEventLogReplacementAndLockAreOwnerOnly(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(filepath.Join(dir, "sessions.json"))
+	if err := store.WriteEventLog("private", []EventLogLine{{
+		Direction: EventDirectionInbound,
+		Message:   json.RawMessage(`{"jsonrpc":"2.0","id":1,"result":{}}`),
+	}}); err != nil {
+		t.Fatalf("WriteEventLog: %v", err)
+	}
+	path := store.eventLogPath("private")
+	for _, privatePath := range []string{filepath.Dir(path), path, path + ".lock"} {
+		info, err := os.Stat(privatePath)
+		if err != nil {
+			t.Fatalf("Stat %s: %v", privatePath, err)
+		}
+		want := os.FileMode(0o600)
+		if info.IsDir() {
+			want = 0o700
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Fatalf("mode %s = %o, want %o", privatePath, got, want)
+		}
+	}
+}
+
 func holdSessionStoreTestLock(path string) (func() error, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err

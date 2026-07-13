@@ -178,8 +178,9 @@ func TestSessionStorePendingPromptAndOwnerLifecycle(t *testing.T) {
 	}
 
 	owner := OwnerLock{SessionID: "sess-active", PID: 12345, CommandFingerprint: "fp", StartedAt: now}
-	if err := store.WriteOwner(owner); err != nil {
-		t.Fatalf("WriteOwner: %v", err)
+	lease, err := store.AcquireOwnerLease(owner)
+	if err != nil {
+		t.Fatalf("AcquireOwnerLease: %v", err)
 	}
 	gotOwner, err := store.Owner("sess-active")
 	if err != nil {
@@ -198,30 +199,35 @@ func TestSessionStorePendingPromptAndOwnerLifecycle(t *testing.T) {
 	if cancelReq.SessionID != "sess-active" || cancelReq.RequestedAt.IsZero() {
 		t.Fatalf("CancelRequest = %#v", cancelReq)
 	}
-	if err := store.ClearOwner("sess-active"); err != nil {
-		t.Fatalf("ClearOwner: %v", err)
+	if err := lease.Release(); err != nil {
+		t.Fatalf("Release: %v", err)
 	}
 	if _, err := store.Owner("sess-active"); err == nil {
 		t.Fatal("Owner after ClearOwner succeeded, want error")
 	}
 }
 
-func TestSessionStoreAcquireOwnerDoesNotOverwriteExistingOwner(t *testing.T) {
+func TestSessionStoreOwnerLeaseDoesNotOverwriteExistingOwner(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
 	now := time.Date(2026, 7, 1, 20, 0, 0, 0, time.UTC)
 	original := OwnerLock{SessionID: "sess-lock", PID: 111, CommandFingerprint: "first", StartedAt: now}
-	if err := store.WriteOwner(original); err != nil {
-		t.Fatalf("WriteOwner: %v", err)
+	lease, err := store.AcquireOwnerLease(original)
+	if err != nil {
+		t.Fatalf("AcquireOwnerLease original: %v", err)
 	}
+	defer func() { _ = lease.Release() }()
 
-	err := store.AcquireOwner(OwnerLock{
+	other, err := store.AcquireOwnerLease(OwnerLock{
 		SessionID:          "sess-lock",
 		PID:                222,
 		CommandFingerprint: "second",
 		StartedAt:          now.Add(time.Second),
 	})
-	if !errors.Is(err, os.ErrExist) {
-		t.Fatalf("AcquireOwner error = %v, want os.ErrExist", err)
+	if other != nil {
+		_ = other.Release()
+	}
+	if !errors.Is(err, ErrOwnerLeaseBusy) {
+		t.Fatalf("AcquireOwnerLease error = %v, want ErrOwnerLeaseBusy", err)
 	}
 	got, err := store.Owner("sess-lock")
 	if err != nil {
@@ -499,9 +505,11 @@ func TestSessionStoreRecoverStaleQueueKeepsRunningItemsWithReadableOwner(t *test
 	}); err != nil {
 		t.Fatalf("Upsert: %v", err)
 	}
-	if err := store.WriteOwner(OwnerLock{SessionID: "recover-readable-owner", PID: 123, StartedAt: started}); err != nil {
-		t.Fatalf("WriteOwner: %v", err)
+	lease, err := store.AcquireOwnerLease(OwnerLock{SessionID: "recover-readable-owner", PID: 123, StartedAt: started})
+	if err != nil {
+		t.Fatalf("AcquireOwnerLease: %v", err)
 	}
+	defer func() { _ = lease.Release() }()
 
 	count, err := store.RecoverStaleQueue("recover-readable-owner", now.Add(2*time.Minute))
 	if err != nil {
@@ -519,7 +527,7 @@ func TestSessionStoreRecoverStaleQueueKeepsRunningItemsWithReadableOwner(t *test
 	}
 }
 
-func TestSessionStoreRecoverStaleQueueReportsInvalidOwner(t *testing.T) {
+func TestSessionStoreRecoverStaleQueueIgnoresInvalidStaleProjection(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
 	now := time.Date(2026, 7, 1, 21, 27, 0, 0, time.UTC)
 	started := now.Add(time.Minute)
@@ -546,19 +554,19 @@ func TestSessionStoreRecoverStaleQueueReportsInvalidOwner(t *testing.T) {
 		t.Fatalf("write owner: %v", err)
 	}
 
-	if _, err := store.RecoverStaleQueue("recover-invalid-owner", now.Add(2*time.Minute)); err == nil {
-		t.Fatal("RecoverStaleQueue with invalid owner succeeded, want error")
+	if count, err := store.RecoverStaleQueue("recover-invalid-owner", now.Add(2*time.Minute)); err != nil || count != 1 {
+		t.Fatalf("RecoverStaleQueue with invalid stale owner = %d, %v; want 1, nil", count, err)
 	}
 	got, err := store.Get("recover-invalid-owner")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.PromptQueue[0].Status != QueuePromptStatusRunning {
-		t.Fatalf("invalid-owner recovery changed prompt = %#v", got.PromptQueue[0])
+	if got.PromptQueue[0].Status != QueuePromptStatusPending {
+		t.Fatalf("invalid stale-owner recovery prompt = %#v, want pending", got.PromptQueue[0])
 	}
 }
 
-func TestSessionStoreRecoverStaleQueueReportsCorruptOwner(t *testing.T) {
+func TestSessionStoreRecoverStaleQueueIgnoresCorruptStaleProjection(t *testing.T) {
 	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
 	now := time.Date(2026, 7, 1, 21, 30, 0, 0, time.UTC)
 	started := now.Add(time.Minute)
@@ -585,15 +593,15 @@ func TestSessionStoreRecoverStaleQueueReportsCorruptOwner(t *testing.T) {
 		t.Fatalf("write owner: %v", err)
 	}
 
-	if _, err := store.RecoverStaleQueue("recover-corrupt-owner", now.Add(2*time.Minute)); err == nil {
-		t.Fatal("RecoverStaleQueue with corrupt owner succeeded, want error")
+	if count, err := store.RecoverStaleQueue("recover-corrupt-owner", now.Add(2*time.Minute)); err != nil || count != 1 {
+		t.Fatalf("RecoverStaleQueue with corrupt stale owner = %d, %v; want 1, nil", count, err)
 	}
 	got, err := store.Get("recover-corrupt-owner")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.PromptQueue[0].Status != QueuePromptStatusRunning {
-		t.Fatalf("corrupt-owner recovery changed prompt = %#v", got.PromptQueue[0])
+	if got.PromptQueue[0].Status != QueuePromptStatusPending {
+		t.Fatalf("corrupt stale-owner recovery prompt = %#v, want pending", got.PromptQueue[0])
 	}
 }
 

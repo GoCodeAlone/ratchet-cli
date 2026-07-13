@@ -620,3 +620,15 @@ crash-safe replacement on Windows; audit parent sync runs after every append,
 including retries; explicit start/resume durably removes any stale terminal
 transition before launch state/audit commit. Scope: manifest unchanged; this
 corrects Task 6.
+
+### Backport 2026-07-13: Transactional ACP session adjuncts
+
+Cause: caller-side session read/replace, owner JSON existence, and unlocked
+event-log sequencing remained stale cross-process snapshots. Change: lifecycle
+record updates and archive insert-if-absent checks transact under the complete
+sessions lock; a drain/direct run holds a per-session OS owner lease and treats
+JSON as metadata only; every event-log read/append/replace/metadata/copy uses a
+per-log OS transaction lock. Unsupported platforms return
+`ErrStoreProcessLockUnsupported`; no in-process fallback claims cross-process
+safety. Scope: manifest unchanged; this completes Task 6's transactional state
+boundary.

@@ -245,7 +245,7 @@ func executeACPClientExec(ctx context.Context, opts acpClientExecOptions, runner
 	return executeACPClientExecWithStore(ctx, opts, runner, nil, w)
 }
 
-func executeACPClientExecWithStore(ctx context.Context, opts acpClientExecOptions, runner acpClientExecRunner, store *acpclient.Store, w io.Writer) error {
+func executeACPClientExecWithStore(ctx context.Context, opts acpClientExecOptions, runner acpClientExecRunner, store *acpclient.Store, w io.Writer) (err error) {
 	prompt := opts.Prompt
 	if opts.File != "" {
 		b, err := os.ReadFile(opts.File)
@@ -322,10 +322,29 @@ func executeACPClientExecWithStore(ctx context.Context, opts acpClientExecOption
 		return nil
 	}
 	var activeSessionID string
+	var activeOwnerLease *acpclient.OwnerLease
 	if store != nil {
 		runOpts.SessionStarted = func(sessionID string) error {
-			activeSessionID = sessionID
+			if activeOwnerLease != nil && activeSessionID == sessionID {
+				return nil
+			}
+			if activeOwnerLease != nil {
+				if err := activeOwnerLease.Release(); err != nil {
+					return err
+				}
+				activeOwnerLease = nil
+				activeSessionID = ""
+			}
 			now := time.Now().UTC()
+			lease, err := store.AcquireOwnerLease(acpclient.OwnerLock{
+				SessionID:          sessionID,
+				PID:                os.Getpid(),
+				CommandFingerprint: spec.Fingerprint(),
+				StartedAt:          now,
+			})
+			if err != nil {
+				return err
+			}
 			rec := acpclient.SessionRecord{
 				ID:                 sessionID,
 				Agent:              spec.Name,
@@ -335,27 +354,20 @@ func executeACPClientExecWithStore(ctx context.Context, opts acpClientExecOption
 				CreatedAt:          now,
 				UpdatedAt:          now,
 			}
-			if existing, err := store.Get(sessionID); err == nil {
-				rec.CreatedAt = existing.CreatedAt
-				rec.Turns = existing.Turns
+			if err := store.MarkSessionStarted(rec); err != nil {
+				return errors.Join(err, lease.Release())
 			}
-			if err := store.Upsert(rec); err != nil {
-				return err
-			}
-			return store.WriteOwner(acpclient.OwnerLock{
-				SessionID:          sessionID,
-				PID:                os.Getpid(),
-				CommandFingerprint: spec.Fingerprint(),
-				StartedAt:          now,
-			})
+			activeSessionID = sessionID
+			activeOwnerLease = lease
+			return nil
 		}
 		runOpts.CancelRequested = func(sessionID string) bool {
 			_, err := store.CancelRequest(sessionID)
 			return err == nil
 		}
 		defer func() {
-			if activeSessionID != "" {
-				_ = store.ClearOwner(activeSessionID)
+			if activeOwnerLease != nil {
+				err = errors.Join(err, activeOwnerLease.Release())
 			}
 		}()
 	}
@@ -375,18 +387,13 @@ func executeACPClientExecWithStore(ctx context.Context, opts acpClientExecOption
 			UpdatedAt:          now,
 			LastStopReason:     string(result.StopReason),
 			Summary:            summarizeACPClientText(result.Text),
-			Turns: []acpclient.TurnSummary{{
-				Prompt:     summarizeACPClientText(prompt),
-				Response:   summarizeACPClientText(result.Text),
-				StopReason: string(result.StopReason),
-				CreatedAt:  now,
-			}},
 		}
-		if existing, err := store.Get(rec.ID); err == nil {
-			rec.CreatedAt = existing.CreatedAt
-			rec.Turns = append(existing.Turns, rec.Turns...)
-		}
-		if err := store.Upsert(rec); err != nil {
+		if err := store.MarkSessionCompleted(rec, acpclient.TurnSummary{
+			Prompt:     summarizeACPClientText(prompt),
+			Response:   summarizeACPClientText(result.Text),
+			StopReason: string(result.StopReason),
+			CreatedAt:  now,
+		}); err != nil {
 			return err
 		}
 		if len(result.Events) > 0 {

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/windows"
 )
@@ -42,6 +43,42 @@ func TestBackgroundWindowsStoreLockAndReplacementArePrivate(t *testing.T) {
 	assertBackgroundWindowsPrivateDACL(t, dir)
 	assertBackgroundWindowsPrivateDACL(t, path)
 	assertBackgroundWindowsPrivateDACL(t, path+".lock")
+}
+
+func TestBackgroundWindowsEventLogLockAndReplacementArePrivate(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "private")
+	store := NewStore(filepath.Join(dir, "sessions.json"))
+	if err := store.WriteEventLog("private", []EventLogLine{{
+		Direction: EventDirectionInbound,
+		Message:   json.RawMessage(`{"jsonrpc":"2.0","id":1,"result":{}}`),
+	}}); err != nil {
+		t.Fatalf("WriteEventLog: %v", err)
+	}
+	path := store.eventLogPath("private")
+	assertBackgroundWindowsPrivateDACL(t, filepath.Dir(path))
+	assertBackgroundWindowsPrivateDACL(t, path)
+	assertBackgroundWindowsPrivateDACL(t, path+".lock")
+}
+
+func TestBackgroundWindowsOwnerLeaseIsExclusiveAndPrivate(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "private")
+	store := NewStore(filepath.Join(dir, "sessions.json"))
+	lease, err := store.AcquireOwnerLease(OwnerLock{SessionID: "private", PID: os.Getpid(), StartedAt: time.Now().UTC()})
+	if err != nil {
+		t.Fatalf("AcquireOwnerLease: %v", err)
+	}
+	defer func() { _ = lease.Release() }()
+	other, err := NewStore(store.Path()).AcquireOwnerLease(OwnerLock{SessionID: "private", PID: os.Getpid(), StartedAt: time.Now().UTC()})
+	if other != nil {
+		_ = other.Release()
+	}
+	if !errors.Is(err, ErrOwnerLeaseBusy) {
+		t.Fatalf("second owner lease error = %v, want ErrOwnerLeaseBusy", err)
+	}
+	assertBackgroundWindowsPrivateDACL(t, filepath.Dir(store.ownerPath("private")))
+	assertBackgroundWindowsPrivateDACL(t, store.ownerPath("private"))
+	assertBackgroundWindowsPrivateDACL(t, store.ownerLeasePath("private"))
+	assertBackgroundWindowsPrivateDACL(t, store.ownerClaimPath("private"))
 }
 
 func holdSessionStoreTestLock(path string) (func() error, error) {
