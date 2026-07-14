@@ -830,3 +830,15 @@ Rewrite contract:
   under the CI selector. A host-injected unsupported-lock no-write
   proof covers AIX behavior; AIX remains cross-build-only and returns
   `ErrStoreProcessLockUnsupported` before mutation.
+
+### Backport 2026-07-14: Cancellation launch admission
+
+Cause: cancellation could commit after a queue item became `running` but before
+`StartRunner`, and direct drain/watch callers did not repair the authoritative
+session-to-sidecar projection. Change: serialize cancellation commit and the
+authoritative pre-launch recheck plus synchronous runner start through a
+per-session process lock; reconcile cancellation projections before direct
+drain/watch ownership. Scope: no manifest change; this closes Task 6 review
+findings. Evidence: deterministic cancel-first/start-first tests pass under
+`-race` and 20 repetitions; projection repair/failure tests launch no worker or
+owner before reconciliation succeeds.

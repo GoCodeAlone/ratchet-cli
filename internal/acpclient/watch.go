@@ -56,6 +56,9 @@ func WatchQueue(ctx context.Context, store *Store, spec AgentSpec, opts RunOptio
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := store.ReconcileCancellationRequests(); err != nil {
+		return WatchResult{}, err
+	}
 	lease, err := acquireDrainOwnerLease(store, spec, sessionID, watchOpts.now())
 	if err != nil {
 		return WatchResult{}, err

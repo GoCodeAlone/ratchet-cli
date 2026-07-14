@@ -292,6 +292,85 @@ func TestWatchQueueStopsWhenRunnerCloseFails(t *testing.T) {
 	}
 }
 
+func TestWatchQueueReconcilesCancellationProjectionBeforeWork(t *testing.T) {
+	t.Run("missing", func(t *testing.T) {
+		store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+		now := time.Date(2026, 7, 13, 15, 20, 0, 0, time.UTC)
+		if err := store.Upsert(SessionRecord{
+			ID: "watch-missing-projection", Status: SessionStatusCancelRequested, CreatedAt: now, UpdatedAt: now,
+			PromptQueue: []QueuedPrompt{{ID: "q-1", Prompt: "cancel", Status: QueuePromptStatusPending, CreatedAt: now}},
+		}); err != nil {
+			t.Fatalf("Upsert: %v", err)
+		}
+
+		if _, err := WatchQueue(t.Context(), store, AgentSpec{Name: "fixture", Command: "fixture"}, RunOptions{}, "watch-missing-projection", WatchOptions{
+			StopWhenEmpty: true,
+			Sleep:         instantWatchSleep,
+			StartRunner: func(context.Context, AgentSpec, RunOptions, string) (DrainPromptRunner, func() error, error) {
+				t.Fatal("StartRunner called for canceled session")
+				return nil, nil, nil
+			},
+		}, nil); err != nil {
+			t.Fatalf("WatchQueue: %v", err)
+		}
+		if _, err := store.CancelRequest("watch-missing-projection"); err != nil {
+			t.Fatalf("CancelRequest projection: %v", err)
+		}
+	})
+
+	t.Run("stale", func(t *testing.T) {
+		store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+		now := time.Date(2026, 7, 13, 15, 21, 0, 0, time.UTC)
+		if _, err := store.AppendQueuedPrompt(SessionRecord{ID: "watch-stale-projection"}, QueuedPrompt{ID: "q-1", Prompt: "run", CreatedAt: now}); err != nil {
+			t.Fatalf("AppendQueuedPrompt: %v", err)
+		}
+		if err := backgroundWriteJSONAtomic(store.cancelPath("watch-stale-projection"), CancelRequest{SessionID: "watch-stale-projection", RequestedAt: now}); err != nil {
+			t.Fatalf("write stale projection: %v", err)
+		}
+
+		if _, err := WatchQueue(t.Context(), store, AgentSpec{Name: "fixture", Command: "fixture"}, RunOptions{}, "watch-stale-projection", WatchOptions{
+			StopWhenEmpty: true,
+			Sleep:         instantWatchSleep,
+			StartRunner: func(context.Context, AgentSpec, RunOptions, string) (DrainPromptRunner, func() error, error) {
+				if _, err := store.CancelRequest("watch-stale-projection"); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("stale projection still exists at StartRunner: %v", err)
+				}
+				return &fakeDrainRunner{sessionID: "acp-watch-reconciled"}, func() error { return nil }, nil
+			},
+		}, nil); err != nil {
+			t.Fatalf("WatchQueue: %v", err)
+		}
+	})
+}
+
+func TestWatchQueueProjectionRepairFailurePreventsOwnershipAndLaunch(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 13, 15, 25, 0, 0, time.UTC)
+	if err := store.Upsert(SessionRecord{ID: "watch-repair-failure", Status: SessionStatusCancelRequested, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	repairErr := errors.New("watch projection repair failed")
+	store.cancelWriter = func(string, CancelRequest) error { return repairErr }
+	starts := 0
+
+	_, err := WatchQueue(t.Context(), store, AgentSpec{Name: "fixture", Command: "fixture"}, RunOptions{}, "watch-repair-failure", WatchOptions{
+		StopWhenEmpty: true,
+		StartRunner: func(context.Context, AgentSpec, RunOptions, string) (DrainPromptRunner, func() error, error) {
+			starts++
+			return nil, nil, nil
+		},
+	}, nil)
+	if !errors.Is(err, ErrStoreCommitUnconfirmed) || !errors.Is(err, repairErr) {
+		t.Fatalf("WatchQueue error = %v, want unconfirmed repair cause", err)
+	}
+	if starts != 0 {
+		t.Fatalf("StartRunner calls = %d, want 0", starts)
+	}
+	if _, ownerErr := store.Owner("watch-repair-failure"); !errors.Is(ownerErr, os.ErrNotExist) {
+		t.Fatalf("Owner after repair failure = %v, want os.ErrNotExist", ownerErr)
+	}
+}
+
 func instantWatchSleep(context.Context, time.Duration) error {
 	return nil
 }

@@ -42,6 +42,9 @@ func DrainQueue(ctx context.Context, store *Store, spec AgentSpec, opts RunOptio
 	if store == nil {
 		return DrainResult{}, errors.New("acp client store is required")
 	}
+	if err := store.ReconcileCancellationRequests(); err != nil {
+		return DrainResult{}, err
+	}
 	lease, err := acquireDrainOwnerLease(store, spec, sessionID, drainOpts.now())
 	if err != nil {
 		return DrainResult{}, err
@@ -122,10 +125,6 @@ func drainQueueOwned(ctx context.Context, store *Store, spec AgentSpec, opts Run
 			return result, err
 		}
 		if runner == nil {
-			rec, err := store.Get(sessionID)
-			if err != nil {
-				return result, err
-			}
 			startOpts := opts
 			priorCancel := startOpts.CancelRequested
 			startOpts.CancelRequested = func(acpSessionID string) (bool, error) {
@@ -135,7 +134,29 @@ func drainQueueOwned(ctx context.Context, store *Store, spec AgentSpec, opts Run
 			if start == nil {
 				start = defaultDrainStartRunner
 			}
-			runner, closeRunner, err = start(ctx, spec, startOpts, rec.ACPSessionID)
+			var rec SessionRecord
+			err = store.withLaunchAdmission(sessionID, func() error {
+				var getErr error
+				rec, getErr = store.Get(sessionID)
+				if getErr != nil {
+					return getErr
+				}
+				if cancellationLatched(rec.Status) {
+					return ErrCancelRequested
+				}
+				runner, closeRunner, getErr = start(ctx, spec, startOpts, rec.ACPSessionID)
+				return getErr
+			})
+			if errors.Is(err, ErrCancelRequested) {
+				recovered, canceled, recoverErr := store.recoverRunningQueueItems(sessionID, drainOpts.now())
+				if canceled {
+					result.Canceled += recovered
+				}
+				if recoverErr != nil {
+					return result, recoverErr
+				}
+				break
+			}
 			if err != nil {
 				_, _, recoverErr := store.recoverRunningQueueItems(sessionID, drainOpts.now())
 				return result, errors.Join(err, recoverErr)

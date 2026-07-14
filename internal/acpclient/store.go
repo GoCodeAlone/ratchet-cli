@@ -32,14 +32,15 @@ type OwnerLease struct {
 }
 
 type Store struct {
-	path                string
-	beforeMutation      func()
-	transactionLoaded   func()
-	eventLogWritePaused func()
-	sessionWriter       func(storeFile) error
-	eventLogWriter      func(string, []byte) error
-	eventLogRemover     func(string) error
-	cancelWriter        func(string, CancelRequest) error
+	path                  string
+	beforeMutation        func()
+	beforeLaunchAdmission func()
+	transactionLoaded     func()
+	eventLogWritePaused   func()
+	sessionWriter         func(storeFile) error
+	eventLogWriter        func(string, []byte) error
+	eventLogRemover       func(string) error
+	cancelWriter          func(string, CancelRequest) error
 }
 
 type storeFile struct {
@@ -583,12 +584,16 @@ func (s *Store) RequestCancelActiveExecution(id string, when time.Time) error {
 		if !owner.Cancelable() {
 			return fmt.Errorf("%w: %s", ErrOwnerNotCancelable, id)
 		}
-		return s.requestCancel(id, when)
+		return s.withLaunchAdmission(id, func() error {
+			return s.requestCancel(id, when)
+		})
 	})
 }
 
 func (s *Store) RequestCancel(id string, when time.Time) error {
-	return s.requestCancel(id, when)
+	return s.withLaunchAdmission(id, func() error {
+		return s.requestCancel(id, when)
+	})
 }
 
 func (s *Store) requestCancel(id string, when time.Time) error {
@@ -731,6 +736,13 @@ func (s *Store) withFileLock(operation func() error) (err error) {
 	return withStoreProcessLock(s.lockPath(), operation)
 }
 
+func (s *Store) withLaunchAdmission(id string, operation func() error) error {
+	if s.beforeLaunchAdmission != nil {
+		s.beforeLaunchAdmission()
+	}
+	return withStoreProcessLock(s.launchAdmissionPath(id), operation)
+}
+
 func withStoreProcessLock(path string, operation func() error) (err error) {
 	lock := backgroundPathLock(path)
 	lock.Lock()
@@ -794,6 +806,10 @@ func (s *Store) ownerLeasePath(id string) string {
 
 func (s *Store) ownerClaimPath(id string) string {
 	return filepath.Join(filepath.Dir(s.path), "owners", storeKey(id)+".claim.lock")
+}
+
+func (s *Store) launchAdmissionPath(id string) string {
+	return filepath.Join(filepath.Dir(s.path), "launch-admissions", storeKey(id)+".lock")
 }
 
 func (s *Store) cancelPath(id string) string {
