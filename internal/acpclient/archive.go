@@ -190,9 +190,10 @@ func ImportSession(store *Store, archivePath string, opts ImportOptions) (Sessio
 	if opts.CommandFingerprint != "" {
 		rec.CommandFingerprint = opts.CommandFingerprint
 	}
-	if rec.Status == SessionStatusCancelRequested {
+	switch rec.Status {
+	case SessionStatusCancelRequested:
 		rec.Status = SessionStatusCanceled
-	} else if rec.Status == SessionStatusRunning || rec.Status == "" {
+	case SessionStatusRunning, "":
 		rec.Status = SessionStatusCompleted
 	}
 	if rec.CreatedAt.IsZero() {

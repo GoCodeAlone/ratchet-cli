@@ -635,24 +635,6 @@ func (s *Store) writeCancel(path string, request CancelRequest) error {
 	return backgroundWriteJSONAtomic(path, request)
 }
 
-func fileSnapshot(path string) ([]byte, bool, error) {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, err
-	}
-	return data, true, nil
-}
-
-func restoreFileSnapshot(path string, data []byte, existed bool) error {
-	if !existed {
-		return backgroundRemoveFile(path)
-	}
-	return backgroundWriteFileAtomic(path, data)
-}
-
 func (s *Store) CancelRequest(id string) (CancelRequest, error) {
 	var req CancelRequest
 	if err := readJSONFile(s.cancelPath(id), &req); err != nil {
