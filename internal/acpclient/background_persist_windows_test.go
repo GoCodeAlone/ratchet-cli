@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -58,7 +59,8 @@ func TestBackgroundWindowsAtomicReplacementDoesNotRewriteExistingParentDACL(t *t
 func TestBackgroundWindowsAuditAppendUsesPrivateDirectoryACL(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "private")
 	path := filepath.Join(dir, "background-audit.jsonl")
-	if err := NewBackgroundAudit(path).Append(BackgroundAuditRecord{
+	audit := NewBackgroundAudit(path)
+	if err := audit.Append(BackgroundAuditRecord{
 		RecordID:       "windows-private-audit",
 		At:             time.Date(2026, 7, 13, 20, 0, 0, 0, time.UTC),
 		Action:         BackgroundAuditError,
@@ -70,7 +72,8 @@ func TestBackgroundWindowsAuditAppendUsesPrivateDirectoryACL(t *testing.T) {
 		t.Fatalf("Append: %v", err)
 	}
 	assertBackgroundWindowsPrivateDACL(t, dir)
-	assertBackgroundWindowsPrivateDACL(t, path)
+	assertBackgroundWindowsPrivateDACL(t, filepath.Dir(audit.Path()))
+	assertBackgroundWindowsPrivateDACL(t, audit.Path())
 }
 
 func TestBackgroundWindowsAuditFreshNamespaceAndLockArePrivate(t *testing.T) {
@@ -395,8 +398,9 @@ func TestBackgroundWindowsPrivateValidationAcceptsEquivalentOwnerACEs(t *testing
 		t.Fatalf("GetTokenUser: %v", err)
 	}
 	sid := user.User.Sid.String()
+	rights := "0x" + strconv.FormatUint(uint64(backgroundWindowsFileAllAccess), 16)
 	descriptor, err := windows.SecurityDescriptorFromString(
-		"O:" + sid + "D:P(A;;GA;;;" + sid + ")(A;OICIIO;GA;;;" + sid + ")",
+		"O:" + sid + "D:P(A;;" + rights + ";;;" + sid + ")(A;OICIIO;" + rights + ";;;" + sid + ")",
 	)
 	if err != nil {
 		t.Fatalf("SecurityDescriptorFromString: %v", err)
