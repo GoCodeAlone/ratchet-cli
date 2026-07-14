@@ -476,7 +476,7 @@ func assertBackgroundWindowsOwnerOnlyACL(t *testing.T, dacl *windows.ACL, user *
 		}
 		aceSID := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
 		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE ||
-			ace.Mask != windows.GENERIC_ALL ||
+			ace.Mask != backgroundWindowsFileAllAccess ||
 			!aceSID.Equals(user) {
 			t.Fatalf("ACE %d = type %#x mask %#x sid %s, want current-user full control", i, ace.Header.AceType, ace.Mask, aceSID)
 		}

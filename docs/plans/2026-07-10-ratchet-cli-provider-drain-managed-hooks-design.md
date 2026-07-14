@@ -959,9 +959,10 @@ error/output regressions and `TestCLI_ACPClientBackgroundDrainLifecycle` pass.
 
 Cause: an elevated Windows hosted runner assigns the Administrators group as
 owner for new files, and Windows may split one inheritable owner grant into
-multiple equivalent ACEs. Change: private ACL installation explicitly assigns
-the current process user as owner and validates every ACE by type, rights, and
-principal instead of requiring one physical ACE. Scope: no manifest change;
-this closes Task 6's native Windows gate. Evidence: the native
+multiple equivalent ACEs. Applied ACLs also expand generic rights into the
+concrete file full-control mask. Change: private ACL installation explicitly
+assigns the current process user as owner and validates every ACE by type,
+concrete rights, and principal instead of requiring one physical encoding.
+Scope: no manifest change; this closes Task 6's native Windows gate. Evidence: the native
 `TestBackgroundWindows` selector covers owner assignment, inherited privacy,
 equivalent ACEs, reparse points, hard links, parent replacement, and weak DACLs.

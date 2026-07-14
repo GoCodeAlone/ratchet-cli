@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	backgroundMoveFileFlags      = windows.MOVEFILE_REPLACE_EXISTING | windows.MOVEFILE_WRITE_THROUGH
-	backgroundPrivateInheritance = windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT
+	backgroundMoveFileFlags                            = windows.MOVEFILE_REPLACE_EXISTING | windows.MOVEFILE_WRITE_THROUGH
+	backgroundPrivateInheritance                       = windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT
+	backgroundWindowsFileAllAccess windows.ACCESS_MASK = windows.STANDARD_RIGHTS_REQUIRED | windows.SYNCHRONIZE | 0x1ff
 )
 
 type backgroundWindowsFileIDInfo struct {
@@ -288,7 +289,7 @@ func backgroundValidateWindowsPrivateHandle(handle windows.Handle, path string, 
 		}
 		aceSID := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
 		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE ||
-			ace.Mask != windows.GENERIC_ALL ||
+			ace.Mask != backgroundWindowsFileAllAccess ||
 			!aceSID.Equals(user.User.Sid) {
 			return storeLockUnsafePathError(path, errors.New("target DACL is not owner-only full control"))
 		}
@@ -496,7 +497,7 @@ func backgroundPrivateSecurity() (*windows.SID, *windows.ACL, error) {
 		return nil, nil, err
 	}
 	acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{{
-		AccessPermissions: windows.GENERIC_ALL,
+		AccessPermissions: backgroundWindowsFileAllAccess,
 		AccessMode:        windows.GRANT_ACCESS,
 		Inheritance:       backgroundPrivateInheritance,
 		Trustee: windows.TRUSTEE{
