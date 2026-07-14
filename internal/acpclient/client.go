@@ -204,7 +204,10 @@ func (r *SessionRunner) Prompt(ctx context.Context, prompt string) (Result, erro
 	if err := c.callbacks.RecordEvent(EventDirectionOutbound, promptRequestEventMessage(requestID, r.sessionID, prompt)); err != nil {
 		return Result{}, err
 	}
-	stopCancelWatcher := c.startCancelWatcher(callCtx, r.sessionID, cancelExecution)
+	stopCancelWatcher, err := c.startCancelWatcher(callCtx, r.sessionID, cancelExecution)
+	if err != nil {
+		return Result{}, err
+	}
 	updateCount := c.callbacks.UpdateCount()
 	// The SDK auto-sends an unbounded cancel when its prompt context is canceled.
 	// Keep that context live so the causal watcher owns the single bounded send.
@@ -331,9 +334,9 @@ func (c *Client) stderrString() string {
 	return c.stderr.String()
 }
 
-func (c *Client) startCancelWatcher(ctx context.Context, sessionID acpsdk.SessionId, cancelExecution context.CancelCauseFunc) func() error {
+func (c *Client) startCancelWatcher(ctx context.Context, sessionID acpsdk.SessionId, cancelExecution context.CancelCauseFunc) (func() error, error) {
 	if c == nil || c.cancelReq == nil {
-		return func() error { return nil }
+		return func() error { return nil }, nil
 	}
 	done := make(chan struct{})
 	finished := make(chan error, 1)
@@ -359,7 +362,7 @@ func (c *Client) startCancelWatcher(ctx context.Context, sessionID acpsdk.Sessio
 		return latchedErr
 	}
 	if err := check(); err != nil {
-		return func() error { return err }
+		return nil, err
 	}
 	go func() {
 		interval := c.cancelPollInterval
@@ -390,7 +393,7 @@ func (c *Client) startCancelWatcher(ctx context.Context, sessionID acpsdk.Sessio
 			return err
 		}
 		return check()
-	}
+	}, nil
 }
 
 func (c *Client) sendCancelAndTerminate(ctx context.Context, sessionID acpsdk.SessionId) error {

@@ -237,7 +237,16 @@ func (defaultACPClientExecRunner) RunPrompt(ctx context.Context, spec acpclient.
 	if err != nil {
 		return acpclient.Result{}, err
 	}
-	defer client.Close() //nolint:errcheck
+	return runACPClientPrompt(ctx, client, prompt)
+}
+
+type acpClientPromptClient interface {
+	RunPrompt(context.Context, string) (acpclient.Result, error)
+	Close() error
+}
+
+func runACPClientPrompt(ctx context.Context, client acpClientPromptClient, prompt string) (result acpclient.Result, err error) {
+	defer func() { err = errors.Join(err, client.Close()) }()
 	return client.RunPrompt(ctx, prompt)
 }
 

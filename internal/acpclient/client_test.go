@@ -250,9 +250,9 @@ func TestClientCancellationAuthorityErrorIncludesTeardownFailure(t *testing.T) {
 	}
 	executionCtx, cancelExecution := context.WithCancelCause(t.Context())
 
-	err := client.startCancelWatcher(t.Context(), "authority-session", cancelExecution)()
+	stopWatcher, err := client.startCancelWatcher(t.Context(), "authority-session", cancelExecution)
 	if !errors.Is(err, authorityErr) {
-		t.Fatalf("cancel watcher error = %v, want authority error", err)
+		t.Fatalf("cancel watcher start error = %v, want authority error", err)
 	}
 	if !errors.Is(err, teardownErr) {
 		t.Fatalf("cancel watcher error = %v, want teardown error", err)
@@ -262,6 +262,9 @@ func TestClientCancellationAuthorityErrorIncludesTeardownFailure(t *testing.T) {
 	}
 	if strings.Index(err.Error(), authorityErr.Error()) > strings.Index(err.Error(), teardownErr.Error()) {
 		t.Fatalf("cancel watcher error = %q, want authority error first", err)
+	}
+	if stopWatcher != nil {
+		t.Fatal("cancel watcher returned a stop function after initial authority failure")
 	}
 }
 
@@ -539,9 +542,10 @@ func TestClientCancellationClosesAndJoinsBlockedSend(t *testing.T) {
 		},
 	})
 	executionCtx, cancelExecution := context.WithCancelCause(t.Context())
-	watcherReady := make(chan func() error, 1)
+	watcherReady := make(chan error, 1)
 	go func() {
-		watcherReady <- client.startCancelWatcher(t.Context(), "blocked-send-session", cancelExecution)
+		_, err := client.startCancelWatcher(t.Context(), "blocked-send-session", cancelExecution)
+		watcherReady <- err
 	}()
 
 	select {
@@ -550,13 +554,12 @@ func TestClientCancellationClosesAndJoinsBlockedSend(t *testing.T) {
 		t.Fatal("ACP cancel send did not start")
 	}
 	select {
-	case stopWatcher := <-watcherReady:
+	case err := <-watcherReady:
 		select {
 		case <-writer.finished:
 		default:
 			t.Fatal("cancel watcher returned before the send goroutine finished")
 		}
-		err := stopWatcher()
 		if !errors.Is(err, ErrCancelRequested) {
 			t.Fatalf("cancel watcher error = %v, want ErrCancelRequested", err)
 		}

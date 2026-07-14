@@ -122,6 +122,9 @@ func WatchQueue(ctx context.Context, store *Store, spec AgentSpec, opts RunOptio
 				onCycle(cycle)
 			}
 			if watchOpts.StopWhenEmpty || reachedMaxWatchCycles(result.Cycles, watchOpts.MaxCycles) {
+				if err := finalizeWatchCancellation(store, sessionID, watchOpts.now(), &result); err != nil {
+					return result, err
+				}
 				return result, nil
 			}
 			if err := sleep(ctx, interval); err != nil {
@@ -159,12 +162,30 @@ func WatchQueue(ctx context.Context, store *Store, spec AgentSpec, opts RunOptio
 			return result, err
 		}
 		if reachedMaxWatchCycles(result.Cycles, watchOpts.MaxCycles) {
+			if err := finalizeWatchCancellation(store, sessionID, watchOpts.now(), &result); err != nil {
+				return result, err
+			}
 			return result, nil
 		}
 		if err := sleep(ctx, interval); err != nil {
 			return result, err
 		}
 	}
+}
+
+func finalizeWatchCancellation(store *Store, sessionID string, now time.Time, result *WatchResult) error {
+	return store.withLaunchAdmission(sessionID, func() error {
+		requested, err := store.CheckCancellation(sessionID)
+		if err != nil || !requested {
+			return err
+		}
+		recovered, canceled, recoverErr := store.recoverRunningQueueItems(sessionID, now)
+		if canceled {
+			result.Canceled += recovered
+		}
+		result.Remaining = countPendingQueue(store, sessionID)
+		return errors.Join(ErrCancelRequested, recoverErr)
+	})
 }
 
 func watchQueueWork(store *Store, sessionID string) (int, error) {

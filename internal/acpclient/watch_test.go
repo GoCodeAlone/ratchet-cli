@@ -324,6 +324,36 @@ func TestWatchQueueIdleCancellationTerminatesWatch(t *testing.T) {
 	}
 }
 
+func TestWatchQueueCancellationDuringFinalIdleCycleWins(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 14, 8, 5, 0, 0, time.UTC)
+	if err := store.Upsert(SessionRecord{ID: "watch-final-cancel", Status: SessionStatusQueued, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	result, err := WatchQueue(t.Context(), store, AgentSpec{Name: "fixture", Command: "fixture"}, RunOptions{}, "watch-final-cancel", WatchOptions{
+		StopWhenEmpty: true,
+		Now:           fixedClock(now.Add(time.Minute)),
+	}, func(WatchCycle) {
+		if cancelErr := store.RequestCancel("watch-final-cancel", now.Add(2*time.Minute)); cancelErr != nil {
+			t.Fatalf("RequestCancel: %v", cancelErr)
+		}
+	})
+	if !errors.Is(err, ErrCancelRequested) {
+		t.Fatalf("WatchQueue error = %v, want ErrCancelRequested", err)
+	}
+	if result.Cycles != 1 {
+		t.Fatalf("cycles = %d, want 1", result.Cycles)
+	}
+	rec, getErr := store.Get("watch-final-cancel")
+	if getErr != nil {
+		t.Fatalf("Get: %v", getErr)
+	}
+	if rec.Status != SessionStatusCanceled {
+		t.Fatalf("status = %q, want %q", rec.Status, SessionStatusCanceled)
+	}
+}
+
 func TestWatchQueueReconcilesCancellationProjectionBeforeWork(t *testing.T) {
 	t.Run("missing", func(t *testing.T) {
 		store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))

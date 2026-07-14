@@ -830,6 +830,20 @@ func TestExecuteACPClientExecHumanOutput(t *testing.T) {
 	}
 }
 
+func TestRunACPClientPromptPreservesCleanupError(t *testing.T) {
+	promptErr := errors.New("prompt failed")
+	cleanupErr := errors.New("cleanup failed")
+	client := &fakeACPClientPromptClient{promptErr: promptErr, closeErr: cleanupErr}
+
+	_, err := runACPClientPrompt(t.Context(), client, "fixture")
+	if !errors.Is(err, promptErr) || !errors.Is(err, cleanupErr) {
+		t.Fatalf("runACPClientPrompt error = %v, want prompt and cleanup errors", err)
+	}
+	if !client.closed {
+		t.Fatal("prompt client was not closed")
+	}
+}
+
 func TestExecuteACPClientExecUsesTrustedProfile(t *testing.T) {
 	setupDefaultACPProfile(t, "fixture", true)
 	runner := &fakeACPClientExecRunner{
@@ -2207,6 +2221,21 @@ type fakeACPClientExecRunner struct {
 	result acpclient.Result
 	err    error
 	calls  []fakeACPClientExecCall
+}
+
+type fakeACPClientPromptClient struct {
+	promptErr error
+	closeErr  error
+	closed    bool
+}
+
+func (c *fakeACPClientPromptClient) RunPrompt(context.Context, string) (acpclient.Result, error) {
+	return acpclient.Result{}, c.promptErr
+}
+
+func (c *fakeACPClientPromptClient) Close() error {
+	c.closed = true
+	return c.closeErr
 }
 
 type lifecycleACPClientExecRunner struct {

@@ -1038,25 +1038,56 @@ func (m *BackgroundManager) workerDone(sessionID string, worker *backgroundWorke
 	if stopOwns {
 		workerOwnsPersistence = <-stopOwner.handoff
 	}
-	if workerOwnsPersistence && !managerCancellation {
-		policy := worker.policy
-		policy.Enabled = false
-		policy.UpdatedAt = m.currentTime()
-		action := BackgroundAuditError
-		switch {
-		case workerErr == nil:
-			policy.State = BackgroundStateDisabled
-			policy.Outcome = BackgroundOutcomeCompleted
-			action = BackgroundAuditStop
-		case sessionCancellation:
-			policy.State = BackgroundStateDisabled
-			policy.Outcome = BackgroundOutcomeStopped
-			action = BackgroundAuditStop
-		default:
-			policy.State = BackgroundStateError
-			policy.Outcome = outcome
+	if workerOwnsPersistence {
+		admissionErr := m.sessions.withLaunchAdmission(sessionID, func() error {
+			cancelRequested, authorityErr := m.sessions.CheckCancellation(sessionID)
+			if authorityErr != nil {
+				workerErr = errors.Join(workerErr, authorityErr)
+				outcome = BackgroundOutcomeWorkerError
+				managerCancellation = false
+				sessionCancellation = false
+			} else if cancelRequested && (workerErr == nil || backgroundCancellationOnly(workerErr)) {
+				managerCancellation = false
+				sessionCancellation = true
+			}
+			if managerCancellation {
+				return nil
+			}
+
+			policy := worker.policy
+			policy.Enabled = false
+			policy.UpdatedAt = m.currentTime()
+			action := BackgroundAuditError
+			switch {
+			case sessionCancellation:
+				policy.State = BackgroundStateDisabled
+				policy.Outcome = BackgroundOutcomeStopped
+				action = BackgroundAuditStop
+			case workerErr == nil:
+				policy.State = BackgroundStateDisabled
+				policy.Outcome = BackgroundOutcomeCompleted
+				action = BackgroundAuditStop
+			default:
+				policy.State = BackgroundStateError
+				policy.Outcome = outcome
+			}
+			result = m.persistTerminal(policy, action)
+			return nil
+		})
+		if admissionErr != nil {
+			workerErr = errors.Join(workerErr, admissionErr)
+			outcome = BackgroundOutcomeWorkerError
+			managerCancellation = false
+			result.policy = worker.policy
+			result.policy.Enabled = false
+			result.policy.State = BackgroundStateError
+			result.policy.Outcome = outcome
+			result.policy.PersistenceDegraded = true
+			result.policy.UpdatedAt = m.currentTime()
+			result.stateRecorded = false
+			result.auditRecorded = false
+			result.err = errors.Join(result.err, admissionErr)
 		}
-		result = m.persistTerminal(policy, action)
 	}
 	if stopOwns && !workerOwnsPersistence && worker.releaseLease != nil {
 		m.mu.Lock()

@@ -863,3 +863,16 @@ the per-session launch lock; persist cancellation-only worker exit as
 `stopped`; join startup cleanup failure. Joined independent failures remain
 errors. Scope: no manifest change; this closes Task 6 review cycle 3. Evidence:
 the four deterministic regressions pass 20 repetitions and under `-race`.
+
+### Backport 2026-07-14: Terminal cancellation authority
+
+Cause: final idle/maximum-cycle return and background completion persistence
+could outrun a committed session cancellation; manager shutdown could mask that
+session latch; initial cancellation still entered the prompt RPC; direct CLI
+execution discarded close errors. Change: recheck WatchQueue and worker terminal
+authority under per-session launch admission, persist cancellation-only or nil
+worker exit as `stopped` when the latch is authoritative, abort before prompt on
+initial authority failure, and join direct-client cleanup errors. Independent
+joined worker failures remain errors. Scope: no manifest change; this closes
+Task 6 review cycle 4. Evidence: four deterministic regressions fail without
+the correction and pass with it under focused tests.

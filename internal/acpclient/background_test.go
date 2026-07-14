@@ -783,6 +783,7 @@ func TestBackgroundManagerSessionCancellationPersistsStopUnlessJoinedWithFailure
 		wantOutcome string
 		wantAction  string
 	}{
+		{name: "normal_completion_race", workerErr: nil, wantState: BackgroundStateDisabled, wantOutcome: BackgroundOutcomeStopped, wantAction: BackgroundAuditStop},
 		{name: "cancellation", workerErr: ErrCancelRequested, wantState: BackgroundStateDisabled, wantOutcome: BackgroundOutcomeStopped, wantAction: BackgroundAuditStop},
 		{name: "joined_failure", workerErr: errors.Join(ErrCancelRequested, independentErr), wantState: BackgroundStateError, wantOutcome: BackgroundOutcomeWorkerError, wantAction: BackgroundAuditError},
 	} {
@@ -818,6 +819,41 @@ func TestBackgroundManagerSessionCancellationPersistsStopUnlessJoinedWithFailure
 			assertBackgroundAuditActions(t, audit, BackgroundAuditStart, test.wantAction)
 		})
 	}
+}
+
+func TestBackgroundManagerShutdownPreservesCommittedSessionCancellation(t *testing.T) {
+	dir := t.TempDir()
+	now := backgroundTestNow()
+	sessions := NewStore(filepath.Join(dir, "sessions.json"))
+	if err := sessions.Upsert(SessionRecord{ID: "session-1", Status: SessionStatusQueued, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	store := NewBackgroundStore(filepath.Join(dir, "background.json"))
+	audit := NewBackgroundAudit(filepath.Join(dir, "background-audit.jsonl"))
+	canceled := make(chan struct{})
+	manager := NewBackgroundManager(sessions, store, audit, BackgroundManagerOptions{
+		Context: t.Context(),
+		Now:     func() time.Time { return now },
+		Resolver: func(name string) (ResolvedBackgroundProfile, error) {
+			return trustedBackgroundProfile(name, "descriptor-hash"), nil
+		},
+		Watcher: func(ctx context.Context, _ *Store, _ AgentSpec, _ RunOptions, _ string, _ WatchOptions, _ func(WatchCycle)) (WatchResult, error) {
+			if err := sessions.RequestCancel("session-1", now.Add(time.Second)); err != nil {
+				return WatchResult{}, err
+			}
+			close(canceled)
+			<-ctx.Done()
+			return WatchResult{}, ErrCancelRequested
+		},
+	})
+
+	if _, err := manager.Start("session-1", "fixture", true); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	<-canceled
+	manager.Shutdown()
+	assertBackgroundPolicy(t, store, "session-1", BackgroundStateDisabled, BackgroundOutcomeStopped, false)
+	assertBackgroundAuditActions(t, audit, BackgroundAuditStart, BackgroundAuditStop)
 }
 
 func TestBackgroundManagerCanceledSessionRecoveryFailureFailsClosed(t *testing.T) {
