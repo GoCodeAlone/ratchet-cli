@@ -897,3 +897,15 @@ queryable; expose narrow service injection; exercise the combined real boundary
 plus concrete missing/profile-drift paths; validate protobuf timestamps and nil
 shutdown. Scope: no manifest change; Task 7 review cycle 1. Evidence: focused
 daemon/client regressions fail before and pass after the correction.
+
+### Backport 2026-07-14: Admitted shutdown preservation
+
+Cause: shutdown racing an admitted start or resume could persist the enabled
+policy, reject worker launch, then rewrite that durable request as
+`disabled/stopped`. Change: manager closure after durable admission releases the
+transition and returns `ErrBackgroundManagerClosed` without disabling the
+policy; only explicit stop or authoritative session cancellation may do so.
+Constructor failure now closes injected managers, and typed-nil injection
+selects the disabled manager. Scope: no manifest change; Task 7 review cycle 2.
+Evidence: deterministic start/resume race and lifecycle regressions fail with
+the fixes reverted and pass with them restored.

@@ -367,6 +367,44 @@ func TestBackgroundDrainE2EHarnessIsDisabled(t *testing.T) {
 	}
 }
 
+func TestWithACPBackgroundDrainManagerTreatsTypedNilAsDisabled(t *testing.T) {
+	var manager *fakeACPBackgroundDrainManager
+	svc := &Service{}
+	WithACPBackgroundDrainManager(manager)(svc)
+
+	_, err := svc.StartACPBackgroundDrain(t.Context(), &pb.StartACPBackgroundDrainReq{
+		SessionId: "session-1", Profile: "fixture", Acknowledged: true,
+	})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("code = %s, want disabled %s: %v", status.Code(err), codes.FailedPrecondition, err)
+	}
+}
+
+func TestNewServiceShutsDownInjectedBackgroundManagerWhenCronStartFails(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	if err := EnsureDataDir(); err != nil {
+		t.Fatalf("EnsureDataDir: %v", err)
+	}
+
+	var shutdown atomic.Bool
+	manager := &fakeACPBackgroundDrainManager{shutdown: func() { shutdown.Store(true) }}
+	_, err := NewService(t.Context(), func(svc *Service) {
+		svc.acpBackground = manager
+		if closeErr := svc.engine.DB.Close(); closeErr != nil {
+			t.Fatalf("close engine database: %v", closeErr)
+		}
+	})
+	if err == nil {
+		t.Fatal("NewService succeeded with a closed cron database")
+	}
+	if !shutdown.Load() {
+		t.Fatal("injected ACP background manager was not shut down")
+	}
+}
+
 func TestServiceShutdownWaitsForACPBackgroundDrainWorkerWithoutDisablingPolicy(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 7, 14, 9, 10, 0, 0, time.UTC)

@@ -56,6 +56,13 @@ func TestBackgroundManagerBlockedAuditDoesNotPreventShutdownCancellation(t *test
 	if returnedBeforePersistence {
 		t.Fatal("Shutdown returned before admitted Start persistence completed")
 	}
+	persisted, err := store.Get("session-1")
+	if err != nil {
+		t.Fatalf("Get admitted Start policy: %v", err)
+	}
+	if !persisted.Enabled || persisted.State != BackgroundStateRunning || persisted.Outcome != BackgroundOutcomeStarted {
+		t.Fatalf("admitted Start policy after shutdown = %#v, want enabled/running/started", persisted)
+	}
 }
 
 func TestBackgroundManagerRejectsConcurrentTransitionOnSameSession(t *testing.T) {
@@ -93,7 +100,7 @@ func TestBackgroundManagerRejectsConcurrentTransitionOnSameSession(t *testing.T)
 	manager.Shutdown()
 }
 
-func TestBackgroundManagerResumeShutdownBeforeLaunchDisablesPolicy(t *testing.T) {
+func TestBackgroundManagerResumeShutdownBeforeLaunchPreservesPolicy(t *testing.T) {
 	dir := t.TempDir()
 	store := NewBackgroundStore(filepath.Join(dir, "background.json"))
 	audit := NewBackgroundAudit(filepath.Join(dir, "background-audit.jsonl"))
@@ -161,8 +168,8 @@ func TestBackgroundManagerResumeShutdownBeforeLaunchDisablesPolicy(t *testing.T)
 	if err != nil {
 		t.Fatalf("Get policy: %v", err)
 	}
-	if persisted.Enabled || persisted.State != BackgroundStateDisabled || persisted.Outcome != BackgroundOutcomeStopped {
-		t.Fatalf("policy after shutdown race = %#v, want disabled/stopped", persisted)
+	if !persisted.Enabled || persisted.State != BackgroundStateRunning || persisted.Outcome != BackgroundOutcomeResumed {
+		t.Fatalf("policy after shutdown race = %#v, want enabled/running/resumed", persisted)
 	}
 }
 

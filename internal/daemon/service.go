@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -80,11 +81,24 @@ type ServiceOption func(*Service)
 
 func WithACPBackgroundDrainManager(manager ACPBackgroundDrainManager) ServiceOption {
 	return func(svc *Service) {
-		if manager == nil {
+		if isNilACPBackgroundDrainManager(manager) {
 			svc.acpBackground = disabledACPBackgroundDrainManager{}
 			return
 		}
 		svc.acpBackground = manager
+	}
+}
+
+func isNilACPBackgroundDrainManager(manager ACPBackgroundDrainManager) bool {
+	if manager == nil {
+		return true
+	}
+	value := reflect.ValueOf(manager)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
 	}
 }
 
@@ -207,8 +221,7 @@ func NewService(ctx context.Context, options ...ServiceOption) (*Service, error)
 		}()
 	})
 	if err := svc.cron.Start(ctx); err != nil {
-		providerOps.Stop()
-		engine.Close()
+		svc.Close()
 		return nil, fmt.Errorf("start cron scheduler: %w", err)
 	}
 	svc.jobs.Register("session", NewSessionJobProvider(svc.sessions))
@@ -357,7 +370,7 @@ func (s *Service) RequestReload(req *pb.ReloadReq, stream pb.RatchetDaemon_Reque
 }
 
 // SetShutdownFunc injects the cancel function that shuts down the daemon.
-// Called by daemon main after NewService returns.
+// Called by daemon startup after NewDaemonService returns.
 func (s *Service) SetShutdownFunc(fn func()) {
 	s.shutdownFn = fn
 }

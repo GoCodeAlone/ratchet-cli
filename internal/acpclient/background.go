@@ -588,13 +588,7 @@ func (m *BackgroundManager) Start(sessionID, profile string, acknowledged bool) 
 		return backgroundStatus(result.policy), errors.Join(ErrCancelRequested, launchErr, cancelErr, result.err)
 	}
 	if errors.Is(launchErr, ErrBackgroundManagerClosed) {
-		persisted.Enabled = false
-		persisted.State = BackgroundStateDisabled
-		persisted.Outcome = BackgroundOutcomeStopped
-		persisted.UpdatedAt = m.currentTime()
-		result := m.persistTerminal(persisted, BackgroundAuditStop)
-		m.rememberTerminal(result)
-		return backgroundStatus(result.policy), errors.Join(launchErr, result.err)
+		return backgroundStatus(persisted), launchErr
 	}
 	return backgroundStatus(persisted), launchErr
 }
@@ -867,13 +861,7 @@ func (m *BackgroundManager) Resume() error {
 			continue
 		}
 		if errors.Is(launchErr, ErrBackgroundManagerClosed) {
-			persisted.Enabled = false
-			persisted.State = BackgroundStateDisabled
-			persisted.Outcome = BackgroundOutcomeStopped
-			persisted.UpdatedAt = m.currentTime()
-			result := m.persistTerminal(persisted, BackgroundAuditStop)
-			m.rememberTerminal(result)
-			return errors.Join(launchErr, result.err, m.releaseTransition(policy.SessionID))
+			return errors.Join(launchErr, m.releaseTransition(policy.SessionID))
 		}
 		return errors.Join(launchErr, m.releaseTransition(policy.SessionID))
 	}
