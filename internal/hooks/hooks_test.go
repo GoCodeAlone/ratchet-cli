@@ -263,6 +263,34 @@ func TestHookCommandForGOOS(t *testing.T) {
 	}
 }
 
+func TestManagedHookTrustIsImmutable(t *testing.T) {
+	hook := Hook{
+		Command:    "echo managed",
+		Event:      PreCommand,
+		SourceKind: SourceManaged,
+		SourceID:   "managed:managed-hooks.yaml",
+	}
+	hook.Hash = hook.DescriptorHash()
+	store := &TrustStore{
+		Trusted:  map[string]bool{},
+		Disabled: map[string]bool{hook.Hash: true},
+	}
+	cfg := &HookConfig{Hooks: map[Event][]Hook{PreCommand: {hook}}}
+
+	cfg.ApplyTrust(store)
+
+	got := cfg.Hooks[PreCommand][0]
+	if !got.Trusted {
+		t.Fatal("managed hook was untrusted by local state")
+	}
+	if got.Disabled {
+		t.Fatal("managed hook was disabled by local state")
+	}
+	if !got.runnable() {
+		t.Fatal("managed hook is not runnable")
+	}
+}
+
 func TestEscapeDataForGOOS(t *testing.T) {
 	data := map[string]string{"value": "it's ok"}
 	if got := escapeDataForGOOS(data, "linux")["value"]; got != "'it'\\''s ok'" {

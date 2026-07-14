@@ -144,6 +144,8 @@ jobs:
         run: git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
       - name: Run Windows ACP background persistence tests
         run: go test ./internal/acpclient -run '^TestBackgroundWindows' -count=1
+      - name: Run Windows managed policy security tests
+        run: go test ./internal/hooks -run 'Managed|SecurePolicy' -count=1
       - name: Run Windows daemon lock tests
         run: go test ./internal/daemon -run 'DaemonLock' -count=1
       - name: Run Windows ConPTY provider save

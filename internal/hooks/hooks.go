@@ -98,6 +98,7 @@ const (
 	SourceUser    SourceKind = "user"
 	SourceProject SourceKind = "project"
 	SourcePlugin  SourceKind = "plugin"
+	SourceManaged SourceKind = "managed"
 )
 
 // Hook defines a single hook command with an optional glob pattern.
@@ -115,6 +116,7 @@ type Hook struct {
 	Hash                string     `yaml:"-"`
 	Trusted             bool       `yaml:"-"`
 	Disabled            bool       `yaml:"-"`
+	Suppressed          bool       `yaml:"-"`
 	UnsupportedPlatform bool       `yaml:"-"`
 }
 
@@ -129,6 +131,9 @@ type LoadOptions struct {
 	TrustStore  *TrustStore
 	SkipUser    bool
 	SkipProject bool
+	ManagedPath string
+
+	managedReadFile func(string) ([]byte, error)
 }
 
 // Load reads hook configs from ~/.ratchet/hooks.yaml and .ratchet/hooks.yaml.
@@ -232,8 +237,9 @@ func (hc *HookConfig) AnnotateSource(meta SourceMetadata) {
 			h.PluginName = meta.PluginName
 			h.PluginVersion = meta.PluginVersion
 			h.Hash = h.DescriptorHash()
-			h.Trusted = meta.TrustByDefault
-			if meta.TrustStore != nil {
+			h.Trusted = meta.TrustByDefault || meta.Kind == SourceManaged
+			h.Disabled = false
+			if meta.TrustStore != nil && meta.Kind != SourceManaged {
 				h.Disabled = meta.TrustStore.IsDisabled(h.Hash)
 				h.Trusted = h.Trusted || meta.TrustStore.IsTrusted(h.Hash)
 				if h.Disabled {
@@ -261,9 +267,9 @@ func (hc *HookConfig) ApplyTrust(store *TrustStore) {
 				h.Event = event
 			}
 			h.Hash = h.DescriptorHash()
-			h.Trusted = h.SourceKind == "" || h.SourceKind == SourceUser
+			h.Trusted = h.SourceKind == "" || h.SourceKind == SourceUser || h.SourceKind == SourceManaged
 			h.Disabled = false
-			if store != nil {
+			if store != nil && h.SourceKind != SourceManaged {
 				h.Disabled = store.IsDisabled(h.Hash)
 				h.Trusted = h.Trusted || store.IsTrusted(h.Hash)
 				if h.Disabled {
@@ -319,7 +325,7 @@ func (h Hook) commandForGOOS(goos string) (string, bool) {
 }
 
 func (h Hook) runnable() bool {
-	if h.Disabled || h.UnsupportedPlatform {
+	if h.Disabled || h.Suppressed || h.UnsupportedPlatform {
 		return false
 	}
 	return h.SourceKind == "" || h.Trusted
