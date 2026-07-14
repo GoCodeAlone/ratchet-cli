@@ -110,8 +110,8 @@ func DefaultHookAuditPath() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve managed hook audit home: %w", err)
 	}
-	if strings.TrimSpace(home) == "" {
-		return "", errors.New("resolve managed hook audit home: empty path")
+	if strings.TrimSpace(home) == "" || !filepath.IsAbs(home) {
+		return "", errors.New("resolve managed hook audit home: absolute path is required")
 	}
 	return filepath.Join(home, ".ratchet", hookAuditDirectoryName, hookAuditFileName), nil
 }
@@ -232,36 +232,52 @@ func (a *HookAudit) Read(limit int) (records []HookAuditRecord, err error) {
 	lock := hookAuditPathLock(a.path)
 	lock.Lock()
 	defer lock.Unlock()
-	f, _, err := openHookAuditFile(a.path, false)
-	if errors.Is(err, os.ErrNotExist) {
-		return []HookAuditRecord{}, nil
+	records, activeInfo, err := readHookAuditGeneration(a.path, limit)
+	if err != nil || len(records) == limit {
+		return records, err
 	}
+	archive, archiveInfo, err := readHookAuditGeneration(a.path+hookAuditArchiveSuffix, limit-len(records))
 	if err != nil {
 		return nil, err
 	}
-	defer func() { err = errors.Join(err, f.Close()) }()
-	info, err := f.Stat()
+	if activeInfo != nil && archiveInfo != nil && os.SameFile(activeInfo, archiveInfo) {
+		return records, nil
+	}
+	return append(records, archive...), nil
+}
+
+func readHookAuditGeneration(path string, limit int) (records []HookAuditRecord, info os.FileInfo, err error) {
+	f, _, err := openHookAuditFile(path, false)
+	if errors.Is(err, os.ErrNotExist) {
+		return []HookAuditRecord{}, nil, nil
+	}
 	if err != nil {
-		return nil, fmt.Errorf("stat managed hook audit: %w", err)
+		return nil, nil, err
+	}
+	defer func() { err = errors.Join(err, f.Close()) }()
+	info, err = f.Stat()
+	if err != nil {
+		return nil, nil, fmt.Errorf("stat managed hook audit: %w", err)
 	}
 	if info.Size() > maxHookAuditBytes {
-		return nil, errors.New("managed hook audit exceeds maximum size")
+		return nil, nil, errors.New("managed hook audit exceeds maximum size")
 	}
 	data, err := io.ReadAll(io.LimitReader(f, maxHookAuditBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("read managed hook audit: %w", err)
+		return nil, nil, fmt.Errorf("read managed hook audit: %w", err)
 	}
 	if len(data) > maxHookAuditBytes {
-		return nil, errors.New("managed hook audit exceeds maximum size")
+		return nil, nil, errors.New("managed hook audit exceeds maximum size")
 	}
 	if len(data) > 0 && data[len(data)-1] != '\n' {
 		committed := bytes.LastIndexByte(data, '\n') + 1
 		data = data[:committed]
 	}
 	if len(data) == 0 {
-		return []HookAuditRecord{}, nil
+		return []HookAuditRecord{}, info, nil
 	}
-	return decodeHookAuditRecords(data, limit)
+	records, err = decodeHookAuditRecords(data, limit)
+	return records, info, err
 }
 
 func decodeHookAuditRecords(data []byte, limit int) ([]HookAuditRecord, error) {

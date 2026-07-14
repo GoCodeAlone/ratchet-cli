@@ -6,11 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/user"
 	"path/filepath"
 	"reflect"
-	"strconv"
 )
+
+var hookAuditEffectiveUID = os.Geteuid
 
 func openHookAuditFile(path string, create bool) (*os.File, bool, error) {
 	parent := filepath.Dir(path)
@@ -120,15 +120,11 @@ func validateHookAuditOwner(path string, info os.FileInfo) error {
 	if !ok {
 		return fmt.Errorf("managed hook audit owner cannot be verified: %s", path)
 	}
-	current, err := user.Current()
-	if err != nil {
-		return err
+	currentUID := hookAuditEffectiveUID()
+	if currentUID < 0 {
+		return fmt.Errorf("managed hook audit owner cannot be verified: %s", path)
 	}
-	currentUID, err := strconv.ParseUint(current.Uid, 10, 64)
-	if err != nil {
-		return err
-	}
-	if uid != currentUID {
+	if uid != uint64(currentUID) {
 		return fmt.Errorf("managed hook audit is not owned by the current user: %s", path)
 	}
 	return nil

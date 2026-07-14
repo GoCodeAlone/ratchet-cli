@@ -169,6 +169,28 @@ func TestHooksAuditReportsNewestFirstJSONAndAbsentFile(t *testing.T) {
 		t.Fatalf("audit records = %+v", records)
 	}
 
+	if err := os.Rename(auditPath, auditPath+".1"); err != nil {
+		t.Fatalf("archive audit: %v", err)
+	}
+	if err := audit.Append(hooks.HookAuditRecord{
+		Timestamp: now.Add(2 * time.Second), Event: hooks.PreCommand,
+		Hash: strings.Repeat("c", 64), Source: hooks.SourceManaged,
+		Result: hooks.HookAuditCommandFailed, DurationMS: 2,
+	}); err != nil {
+		t.Fatalf("Append active generation: %v", err)
+	}
+	out = captureStdout(t, func() {
+		if err := handleHooksAudit([]string{"--json", "--limit", "2"}); err != nil {
+			t.Fatalf("handleHooksAudit generations: %v", err)
+		}
+	})
+	if err := json.Unmarshal([]byte(out), &records); err != nil {
+		t.Fatalf("Unmarshal generations: %v\n%s", err, out)
+	}
+	if len(records) != 2 || records[0].Result != hooks.HookAuditCommandFailed || records[1].Result != hooks.HookAuditSuccess {
+		t.Fatalf("multi-generation audit records = %+v", records)
+	}
+
 	t.Setenv("HOME", t.TempDir())
 	out = captureStdout(t, func() {
 		if err := handleHooksAudit([]string{"--json"}); err != nil {

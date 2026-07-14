@@ -15,6 +15,7 @@ import (
 const (
 	hookAuditWindowsFileAllAccess windows.ACCESS_MASK = windows.STANDARD_RIGHTS_REQUIRED | windows.SYNCHRONIZE | 0x1ff
 	hookAuditWindowsInheritance                       = windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT
+	hookAuditWindowsFileShare                         = windows.FILE_SHARE_READ | windows.FILE_SHARE_WRITE | windows.FILE_SHARE_DELETE
 )
 
 type hookAuditWindowsFileID struct {
@@ -57,7 +58,7 @@ func hookAuditWindowsOpenFile(path string, create bool) (*os.File, bool, error) 
 	handle, err := windows.CreateFile(
 		pathPtr,
 		access,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
+		hookAuditWindowsFileShare,
 		nil,
 		windows.OPEN_EXISTING,
 		windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT,
@@ -68,7 +69,7 @@ func hookAuditWindowsOpenFile(path string, create bool) (*os.File, bool, error) 
 		handle, err = windows.CreateFile(
 			pathPtr,
 			access|windows.WRITE_DAC|windows.WRITE_OWNER,
-			windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
+			hookAuditWindowsFileShare,
 			nil,
 			windows.CREATE_NEW,
 			windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT,
@@ -79,7 +80,7 @@ func hookAuditWindowsOpenFile(path string, create bool) (*os.File, bool, error) 
 			handle, err = windows.CreateFile(
 				pathPtr,
 				access,
-				windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
+				hookAuditWindowsFileShare,
 				nil,
 				windows.OPEN_EXISTING,
 				windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT,

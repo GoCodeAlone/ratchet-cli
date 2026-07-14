@@ -4,6 +4,7 @@ package hooks
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -19,6 +20,39 @@ func TestManagedHookAuditWindowsCreatesOwnerOnlyDACL(t *testing.T) {
 	}
 	assertManagedHookAuditWindowsPrivate(t, filepath.Dir(path))
 	assertManagedHookAuditWindowsPrivate(t, path)
+}
+
+func TestManagedHookAuditWindowsReaderAllowsRotation(t *testing.T) {
+	if hookAuditWindowsFileShare&windows.FILE_SHARE_DELETE == 0 {
+		t.Fatal("audit file share mask does not permit rotation")
+	}
+	path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
+	audit := NewHookAudit(path)
+	if err := audit.Append(managedAuditRecord(HookAuditStarted)); err != nil {
+		t.Fatalf("seed Append: %v", err)
+	}
+	reader, _, err := openHookAuditFile(path, false)
+	if err != nil {
+		t.Fatalf("open reader: %v", err)
+	}
+	defer reader.Close() //nolint:errcheck
+	writer, _, err := openHookAuditFile(path, true)
+	if err != nil {
+		t.Fatalf("open writer: %v", err)
+	}
+	next, err := audit.rotate(writer)
+	if err != nil {
+		t.Fatalf("rotate with open reader: %v", err)
+	}
+	if err := next.Close(); err != nil {
+		t.Fatalf("close rotated active audit: %v", err)
+	}
+	if _, err := reader.Seek(0, io.SeekStart); err != nil {
+		t.Fatalf("seek retained reader: %v", err)
+	}
+	if data, err := io.ReadAll(reader); err != nil || len(data) == 0 {
+		t.Fatalf("retained reader data = %d bytes, %v", len(data), err)
+	}
 }
 
 func TestManagedHookAuditWindowsRejectsWeakDACL(t *testing.T) {

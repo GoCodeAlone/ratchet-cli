@@ -33,6 +33,17 @@ func TestDefaultHookAuditPathFailsClosedWhenHomeUnavailable(t *testing.T) {
 	}
 }
 
+func TestDefaultHookAuditPathRejectsRelativeHome(t *testing.T) {
+	original := hookAuditUserHomeDir
+	t.Cleanup(func() { hookAuditUserHomeDir = original })
+	hookAuditUserHomeDir = func() (string, error) { return filepath.Join("relative", "home"), nil }
+
+	path, err := DefaultHookAuditPath()
+	if err == nil || path != "" {
+		t.Fatalf("DefaultHookAuditPath = %q, %v; want empty path and error", path, err)
+	}
+}
+
 func TestManagedHookAuditRecordsMetadataOnly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
 	audit := NewHookAudit(path)
@@ -377,8 +388,8 @@ func TestManagedHookAuditRotatesBeforeCapacityDisablesExecution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Read active audit: %v", err)
 	}
-	if len(records) != 1 || records[0].Hash != next.Hash {
-		t.Fatalf("active records = %+v, want only post-rotation record", records)
+	if len(records) != 10 || records[0].Hash != next.Hash || records[1].Hash != seed.Hash {
+		t.Fatalf("combined records = %+v, want active followed by archive", records)
 	}
 	archivePath := path + ".1"
 	archiveRecords, err := NewHookAudit(archivePath).Read(1)
