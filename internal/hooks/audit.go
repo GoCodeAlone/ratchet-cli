@@ -152,7 +152,13 @@ func (a *HookAudit) Append(record HookAuditRecord) (err error) {
 			lock.degraded = &degraded
 		}
 	}()
-
+	releaseProcessLock, err := acquireHookAuditProcessLock(a.path)
+	if err != nil {
+		return fmt.Errorf("lock managed hook audit: %w", err)
+	}
+	defer func() {
+		err = errors.Join(err, releaseProcessLock())
+	}()
 	record.Timestamp = record.Timestamp.UTC()
 	records := []HookAuditRecord{record}
 	if lock.degraded != nil {

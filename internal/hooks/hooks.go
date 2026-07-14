@@ -393,10 +393,10 @@ func (hc *HookConfig) RunWithOptions(event Event, data map[string]string, opts R
 			continue
 		}
 
-		hash := h.Hash
-		if hash == "" {
-			hash = h.DescriptorHash()
+		if h.Event == "" {
+			h.Event = event
 		}
+		hash := h.DescriptorHash()
 		started := managedHookNow()
 		startRecord := HookAuditRecord{
 			Timestamp: started.UTC(),

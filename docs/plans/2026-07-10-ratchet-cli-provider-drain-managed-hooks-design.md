@@ -983,8 +983,13 @@ lone `started` record denotes an attempted launch with no terminal confirmation;
 it never claims command execution or success. Append success is linearized only
 after a post-persistence path-to-handle identity check, so file or parent
 replacement cannot admit a managed launch whose canonical audit record is
-missing. Scope: no manifest change; Task 10 rewrite after quality loop 5.
-Evidence: forced replacement failure preserves the archive; root-home,
-restrictive-umask, namespace-chain, parent-replacement, hard-link, and diagnostic
-regressions plus focused/race gates pass; native Windows syscall interception
-checks private write-through creation and Windows binaries cross-compile.
+missing. Every append also holds an owner-private OS sidecar lock across the
+complete repair/rotate/write/sync/revalidate transaction; Unix creation reopens
+and validates a concurrent winner. Audit identity is recomputed from the event
+descriptor immediately before launch rather than trusting cached metadata.
+Scope: no manifest change; Task 10 rewrite after quality loop 5. Evidence:
+forced replacement failure preserves the archive; subprocess contention,
+concurrent first-create, current-hash, root-home, restrictive-umask,
+namespace-chain, parent-replacement, hard-link, and diagnostic regressions plus
+focused/race gates pass; native Windows syscall interception checks private
+write-through creation and Windows binaries cross-compile.

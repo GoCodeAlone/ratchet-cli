@@ -41,18 +41,21 @@ func openHookAuditFile(path string, create bool) (*os.File, bool, error) {
 			return nil, false, os.ErrNotExist
 		}
 		f, openErr := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR|os.O_APPEND, 0o600)
-		if openErr != nil {
+		if openErr != nil && !errors.Is(openErr, os.ErrExist) {
 			return nil, false, fmt.Errorf("create managed hook audit: %w", openErr)
 		}
-		if chmodErr := f.Chmod(0o600); chmodErr != nil {
-			_ = f.Close()
-			return nil, false, fmt.Errorf("secure managed hook audit: %w", chmodErr)
+		if openErr == nil {
+			if chmodErr := f.Chmod(0o600); chmodErr != nil {
+				_ = f.Close()
+				return nil, false, fmt.Errorf("secure managed hook audit: %w", chmodErr)
+			}
+			if identityErr := validateHookAuditIdentity(path, f); identityErr != nil {
+				_ = f.Close()
+				return nil, false, identityErr
+			}
+			return f, true, nil
 		}
-		if identityErr := validateHookAuditIdentity(path, f); identityErr != nil {
-			_ = f.Close()
-			return nil, false, identityErr
-		}
-		return f, true, nil
+		before, err = os.Lstat(path)
 	}
 	if err != nil {
 		return nil, false, fmt.Errorf("inspect managed hook audit: %w", err)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -348,6 +349,103 @@ func TestManagedHookAuditRejectsParentReplacementDuringAppend(t *testing.T) {
 	}
 	if info.Size() != 0 {
 		t.Fatalf("replacement audit size = %d, want no committed record", info.Size())
+	}
+}
+
+func TestManagedHookAuditSerializesAcrossProcesses(t *testing.T) {
+	if os.Getenv("RATCHET_AUDIT_PROCESS_CHILD") == "1" {
+		if err := os.WriteFile(os.Getenv("RATCHET_AUDIT_PROCESS_READY"), nil, 0o600); err != nil {
+			t.Fatalf("write child ready marker: %v", err)
+		}
+		if err := NewHookAudit(os.Getenv("RATCHET_AUDIT_PROCESS_PATH")).Append(managedAuditRecord(HookAuditSuccess)); err != nil {
+			t.Fatalf("child Append: %v", err)
+		}
+		return
+	}
+
+	root := t.TempDir()
+	path := filepath.Join(root, "private", "hooks.jsonl")
+	ready := filepath.Join(root, "child-ready")
+	audit := NewHookAudit(path)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	audit.syncFile = func(file *os.File) error {
+		if err := file.Sync(); err != nil {
+			return err
+		}
+		close(entered)
+		<-release
+		return nil
+	}
+	parentDone := make(chan error, 1)
+	go func() { parentDone <- audit.Append(managedAuditRecord(HookAuditStarted)) }()
+	<-entered
+
+	command := exec.Command(os.Args[0], "-test.run=^TestManagedHookAuditSerializesAcrossProcesses$")
+	command.Env = append(os.Environ(),
+		"RATCHET_AUDIT_PROCESS_CHILD=1",
+		"RATCHET_AUDIT_PROCESS_PATH="+path,
+		"RATCHET_AUDIT_PROCESS_READY="+ready,
+	)
+	if err := command.Start(); err != nil {
+		close(release)
+		t.Fatalf("start audit child: %v", err)
+	}
+	childDone := make(chan error, 1)
+	go func() { childDone <- command.Wait() }()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			close(release)
+			t.Fatal("timed out waiting for audit child")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	var earlyChildErr error
+	childFinishedEarly := false
+	select {
+	case earlyChildErr = <-childDone:
+		childFinishedEarly = true
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(release)
+	if err := <-parentDone; err != nil {
+		t.Fatalf("parent Append: %v", err)
+	}
+	if !childFinishedEarly {
+		earlyChildErr = <-childDone
+	}
+	if earlyChildErr != nil {
+		t.Fatalf("child process: %v", earlyChildErr)
+	}
+	if childFinishedEarly {
+		t.Fatal("child audit transaction completed while parent transaction was held")
+	}
+}
+
+func TestManagedHookExecutionRecomputesAuditHash(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
+	hook := managedAuditTestHook(managedAuditSuccessCommand())
+	staleHash := strings.Repeat("f", 64)
+	hook.Hash = staleHash
+	cfg := &HookConfig{Hooks: map[Event][]Hook{PreCommand: {hook}}}
+
+	if err := cfg.RunWithOptions(PreCommand, nil, RunOptions{Audit: NewHookAudit(path)}); err != nil {
+		t.Fatalf("RunWithOptions: %v", err)
+	}
+	records, err := NewHookAudit(path).Read(2)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	wantHash := hook.DescriptorHash()
+	for _, record := range records {
+		if record.Hash != wantHash || record.Hash == staleHash {
+			t.Fatalf("audit hash = %q, want current descriptor %q", record.Hash, wantHash)
+		}
 	}
 }
 

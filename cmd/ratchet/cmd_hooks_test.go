@@ -157,6 +157,7 @@ func TestHooksInspectionRejectsPositionalArguments(t *testing.T) {
 func TestHooksAuditReportsNewestFirstJSONAndAbsentFile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	auditPath, err := hooks.DefaultHookAuditPath()
 	if err != nil {
 		t.Fatalf("DefaultHookAuditPath: %v", err)
@@ -211,7 +212,9 @@ func TestHooksAuditReportsNewestFirstJSONAndAbsentFile(t *testing.T) {
 		t.Fatalf("multi-generation audit records = %+v", records)
 	}
 
-	t.Setenv("HOME", t.TempDir())
+	absentHome := t.TempDir()
+	t.Setenv("HOME", absentHome)
+	t.Setenv("USERPROFILE", absentHome)
 	out = captureStdout(t, func() {
 		if err := handleHooksAudit([]string{"--json"}); err != nil {
 			t.Fatalf("handleHooksAudit absent: %v", err)

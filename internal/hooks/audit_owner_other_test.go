@@ -5,6 +5,7 @@ package hooks
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -44,5 +45,35 @@ func TestManagedHookAuditRejectsHardLink(t *testing.T) {
 	}
 	if err := audit.Append(managedAuditRecord(HookAuditSuccess)); err == nil {
 		t.Fatal("Append accepted hard-linked audit target")
+	}
+}
+
+func TestManagedHookAuditConcurrentFirstCreationReopensWinner(t *testing.T) {
+	for attempt := range 20 {
+		path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatalf("attempt %d: MkdirAll: %v", attempt, err)
+		}
+		start := make(chan struct{})
+		errs := make(chan error, 32)
+		var group sync.WaitGroup
+		for range 32 {
+			group.Go(func() {
+				<-start
+				file, _, err := openHookAuditFile(path, true)
+				if err == nil {
+					err = file.Close()
+				}
+				errs <- err
+			})
+		}
+		close(start)
+		group.Wait()
+		close(errs)
+		for err := range errs {
+			if err != nil {
+				t.Fatalf("attempt %d: concurrent create: %v", attempt, err)
+			}
+		}
 	}
 }
