@@ -842,3 +842,12 @@ drain/watch ownership. Scope: no manifest change; this closes Task 6 review
 findings. Evidence: deterministic cancel-first/start-first tests pass under
 `-race` and 20 repetitions; projection repair/failure tests launch no worker or
 owner before reconciliation succeeds.
+
+### Backport 2026-07-14: Terminal test observation
+
+Cause: terminal policy state becomes visible before the terminal audit append
+and in-memory completion guard, but sibling tests treated that earlier state as
+completion. Change: terminal-record assertions wait for the manager's terminal
+guard; production persistence ordering is unchanged. Scope: no manifest change;
+Task 6 verification only. Evidence: the four worker terminal paths pass under
+`go test -race ... -count=20`.

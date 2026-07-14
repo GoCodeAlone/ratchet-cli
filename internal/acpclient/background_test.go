@@ -986,6 +986,7 @@ func TestBackgroundManagerWorkerErrorPersistsErrorWithoutRetry(t *testing.T) {
 		policy, err := store.Get("session-1")
 		return err == nil && policy.State == BackgroundStateError
 	})
+	eventuallyBackgroundTerminal(t, manager, "session-1")
 	if got := watchers.Load(); got != 1 {
 		t.Fatalf("watchers = %d, want exactly 1", got)
 	}
@@ -1026,6 +1027,7 @@ func TestBackgroundManagerPanickingWatcherIsGuardedUntilExplicitStart(t *testing
 		status, err := manager.Get("session-1")
 		return err == nil && status.State == BackgroundStateError
 	})
+	eventuallyBackgroundTerminal(t, manager, "session-1")
 	status, err := manager.Get("session-1")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
@@ -1096,6 +1098,7 @@ func TestBackgroundManagerWorkerErrorStateWriteFailureGuardsResume(t *testing.T)
 		status, err = manager.Get("session-1")
 		return err == nil && status.State == BackgroundStateError
 	})
+	eventuallyBackgroundTerminal(t, manager, "session-1")
 	if status.Enabled || status.Outcome != BackgroundOutcomeWorkerError {
 		t.Fatalf("status = %#v, want disabled worker_error", status)
 	}
@@ -1144,12 +1147,7 @@ func TestBackgroundManagerWorkerErrorAuditFailureGuardsResume(t *testing.T) {
 		policy, err := store.Get("session-1")
 		return err == nil && policy.State == BackgroundStateError
 	})
-	eventuallyBackground(t, func() bool {
-		manager.mu.Lock()
-		defer manager.mu.Unlock()
-		_, ok := manager.terminal["session-1"]
-		return ok
-	})
+	eventuallyBackgroundTerminal(t, manager, "session-1")
 	status, err := manager.Get("session-1")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
@@ -2678,6 +2676,16 @@ func assertBackgroundTerminalRecording(t *testing.T, manager *BackgroundManager,
 	if guard.stateRecorded != wantState || guard.auditRecorded != wantAudit {
 		t.Fatalf("terminal recording = state:%t audit:%t, want state:%t audit:%t", guard.stateRecorded, guard.auditRecorded, wantState, wantAudit)
 	}
+}
+
+func eventuallyBackgroundTerminal(t *testing.T, manager *BackgroundManager, sessionID string) {
+	t.Helper()
+	eventuallyBackground(t, func() bool {
+		manager.mu.Lock()
+		defer manager.mu.Unlock()
+		_, ok := manager.terminal[sessionID]
+		return ok
+	})
 }
 
 func countingBackgroundWatcher(count *atomic.Int32, result error) BackgroundWatcher {
