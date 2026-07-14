@@ -1084,7 +1084,7 @@ func (s *Service) GetTeamStatus(ctx context.Context, req *pb.TeamStatusReq) (*pb
 func (s *Service) CreateCron(ctx context.Context, req *pb.CreateCronReq) (*pb.CronJob, error) {
 	j, err := s.cron.Create(ctx, req.SessionId, req.Schedule, req.Command)
 	if err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "create cron: %v", err)
+		return nil, mapCronRPCError("create", err, codes.InvalidArgument)
 	}
 	return cronJobToPB(j), nil
 }
@@ -1110,7 +1110,7 @@ func (s *Service) PauseCron(ctx context.Context, req *pb.CronJobReq) (*pb.Empty,
 
 func (s *Service) ResumeCron(ctx context.Context, req *pb.CronJobReq) (*pb.Empty, error) {
 	if err := s.cron.Resume(ctx, req.JobId); err != nil {
-		return nil, status.Errorf(codes.NotFound, "resume cron: %v", err)
+		return nil, mapCronRPCError("resume", err, codes.NotFound)
 	}
 	return &pb.Empty{}, nil
 }
@@ -1120,6 +1120,13 @@ func (s *Service) StopCron(ctx context.Context, req *pb.CronJobReq) (*pb.Empty, 
 		return nil, status.Errorf(codes.Internal, "stop cron: %v", err)
 	}
 	return &pb.Empty{}, nil
+}
+
+func mapCronRPCError(operation string, err error, fallback codes.Code) error {
+	if errors.Is(err, errCronSchedulerClosed) {
+		return status.Errorf(codes.FailedPrecondition, "%s cron: %v", operation, err)
+	}
+	return status.Errorf(fallback, "%s cron: %v", operation, err)
 }
 
 // StartFleet starts a fleet of workers for plan execution and streams status events.

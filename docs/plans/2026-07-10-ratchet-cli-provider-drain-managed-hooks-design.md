@@ -934,3 +934,12 @@ no row, while admitted active jobs remain durable for restart. Scope: no
 manifest change; Task 7 review cycle 4. Evidence: a blocked real SIGUSR1
 checkpoint and closed-create persistence tests fail before and pass after the
 corrections.
+
+### Backport 2026-07-14: Final lifecycle cleanup
+
+Cause: scheduler tests canceled entries without joining them, and closed
+scheduler errors used request-validation codes. Change: tests start and close
+real schedulers, restart persistence through `Close`, and map create/resume
+closure to `FailedPrecondition`. Scope: no manifest change; Task 7 review cycle
+5 minors. Evidence: cron lifecycle tests pass and the code-mapping regression
+fails with the helper bypassed.
