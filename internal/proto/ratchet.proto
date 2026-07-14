@@ -729,6 +729,31 @@ message ProviderOperation {
   ProviderSaveResult result = 8;
 }
 
+message StartACPBackgroundDrainReq {
+  string session_id = 1;
+  string profile = 2;
+  bool acknowledged = 3;
+}
+
+message ACPBackgroundDrainReq {
+  string session_id = 1;
+}
+
+message ACPBackgroundDrain {
+  string session_id = 1;
+  string profile = 2;
+  string pinned_hash = 3;
+  string state = 4;
+  google.protobuf.Timestamp acknowledged_at = 5;
+  google.protobuf.Timestamp started_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+  string last_outcome = 8;
+}
+
+message ACPBackgroundDrainList {
+  repeated ACPBackgroundDrain drains = 1;
+}
+
 // === Service ===
 
 service RatchetDaemon {
@@ -768,6 +793,12 @@ service RatchetDaemon {
   rpc RemoveProvider(RemoveProviderReq) returns (Empty);
   rpc SetDefaultProvider(SetDefaultProviderReq) returns (Empty);
   rpc UpdateProviderModel(UpdateProviderModelReq) returns (Empty);
+
+  // ACP background drains
+  rpc StartACPBackgroundDrain(StartACPBackgroundDrainReq) returns (ACPBackgroundDrain);
+  rpc StopACPBackgroundDrain(ACPBackgroundDrainReq) returns (ACPBackgroundDrain);
+  rpc GetACPBackgroundDrain(ACPBackgroundDrainReq) returns (ACPBackgroundDrain);
+  rpc ListACPBackgroundDrains(Empty) returns (ACPBackgroundDrainList);
 
   // Agents
   rpc ListAgents(Empty) returns (AgentList);

@@ -14,9 +14,10 @@ import (
 )
 
 var (
-	ErrMissingCommand = errors.New("acp client command is required")
-	ErrShellCommand   = errors.New("acp client command must be an executable path/name, with args passed separately")
-	ErrUnknownAgent   = errors.New("unknown acp client agent")
+	ErrMissingCommand  = errors.New("acp client command is required")
+	ErrShellCommand    = errors.New("acp client command must be an executable path/name, with args passed separately")
+	ErrUnknownAgent    = errors.New("unknown acp client agent")
+	ErrCancelRequested = errors.New("acp client cancellation requested")
 )
 
 type AgentSpec struct {
@@ -34,7 +35,7 @@ type RunOptions struct {
 	AllowWrites     bool
 	Timeout         time.Duration
 	SessionStarted  func(sessionID string) error
-	CancelRequested func(sessionID string) bool
+	CancelRequested func(sessionID string) (bool, error)
 }
 
 type SessionRecord struct {
@@ -68,6 +69,9 @@ const (
 	QueuePromptStatusCompleted = "completed"
 	QueuePromptStatusCanceled  = "canceled"
 	QueuePromptStatusFailed    = "failed"
+
+	OwnerKindExecution = "execution"
+	OwnerKindSnapshot  = "snapshot"
 )
 
 type TurnSummary struct {
@@ -102,7 +106,12 @@ type OwnerLock struct {
 	SessionID          string    `json:"sessionId"`
 	PID                int       `json:"pid"`
 	CommandFingerprint string    `json:"commandFingerprint"`
+	Kind               string    `json:"kind,omitempty"`
 	StartedAt          time.Time `json:"startedAt"`
+}
+
+func (o OwnerLock) Cancelable() bool {
+	return o.Kind == "" || o.Kind == OwnerKindExecution
 }
 
 type CancelRequest struct {
@@ -150,7 +159,7 @@ func (r Registry) WithProfiles(profiles []Profile) (Registry, error) {
 		next.specs[name] = cloneSpec(spec)
 	}
 	for _, profile := range profiles {
-		if !profile.Trusted {
+		if !profile.TrustValid() {
 			continue
 		}
 		name := strings.TrimSpace(profile.Name)

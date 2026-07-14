@@ -16,7 +16,7 @@ possible.
 | blackboard | `ratchet blackboard write coordination status ready` / `ratchet blackboard read coordination status` / `ratchet blackboard export [section] --jsonl` / `ratchet blackboard export [section] --workflow-messaging --jsonl` | daemon gRPC `BlackboardWrite`/`BlackboardRead`/`BlackboardList` | Supported for same-device, daemon-scoped volatile local coordination data across separate terminal invocations, local notification-event export, and Workflow `step.messaging_send` handoff metadata | `TestHarnessSmokeBlackboardCLI`; blackboard export command tests. |
 | session lineage | `ratchet sessions history`, `ratchet sessions clone`, `ratchet sessions fork`, `ratchet sessions tree`, `ratchet sessions browse`, `ratchet sessions summary`, `ratchet sessions compactions`, `ratchet sessions export` | daemon gRPC session history/clone/fork/tree/summary/compaction/export APIs plus Bubble Tea session tree browser | Supported for separate fork/clone sessions, branch summaries, persisted compaction records, archive session links, daemon session export bundles, JSONL session/message/compaction exports, and Pi-style in-place branch navigation through `ctrl+b`, `/tree`, and `sessions browse` | `TestSessionLineageHistoryCloneForkTreeRPC`; `TestCompactionRecordRPC`; `TestHandleSessionsHistoryCloneForkTree`; `TestHandleSessionsExportWritesSensitiveBundle`; `TestHandleSessionsExportWritesJSONLRecords`; `TestAppCtrlBOpensSessionTreeBrowser`; `TestParseTreeRequestsSessionTreeNavigation`; `TestHandleSessionsBrowseRunsInjectedBrowser`. |
 | ACP | `ratchet acp` / `ratchet acp config zed` | ACP stdio JSON-RPC agent wrapping daemon service plus Zed settings writer | Supported for initialize/new/load/prompt/cancel/model/mode and custom Zed ACP agent config | `TestACPStdioPromptSmoke`; `TestHarnessSmokeInitializeNewAndLoadSession`; `TestParityNewSessionIDCanBeLoaded`; `TestWriteZedACPConfig`; `TestRunACPConfigZedWritesSettings`. |
-| ACP client | `ratchet acp client exec --command <agent> "prompt"` | typed `acp-go-sdk` client over child-process stdio plus local JSON state under XDG state | Supported for one-shot exec, persisted session metadata, sessions list/show/status, multi-prompt FIFO `--no-wait` queue, explicit queue inspection/drain, cooperative cancel requests, ratchet-cli archive v1 export/import with raw ACPX event logs, `sessions events`, saved compare bundles, Go-native ACPX flow replay bundles, `flow replay`, trusted ACP launch profiles, and `ratchet acp client profiles verify` redacted profile checks | `TestACPClientExecBinarySmoke`; `TestDrainQueueAgainstFixtureProcessReusesSession`; `TestClientRunPromptAgainstFixtureProcess`; `TestSessionStoreLoadsMissingFileAndPersistsRecords`; profile command, archive, compare, and flow replay tests. |
+| ACP client | `ratchet acp client exec --command <agent> "prompt"` | typed `acp-go-sdk` client over child-process stdio plus local JSON state under XDG state | Supported for one-shot exec, persisted session metadata, sessions list/show/status, multi-prompt FIFO `--no-wait` queue, explicit queue inspection/drain, acknowledged daemon background drain through a built-in agent or trusted profile, cooperative cancel requests, ratchet-cli archive v1 export/import with raw ACPX event logs, `sessions events`, saved compare bundles, Go-native ACPX flow replay bundles, `flow replay`, trusted ACP launch profiles, and `ratchet acp client profiles verify` redacted profile checks | `TestACPClientExecBinarySmoke`; `TestCLI_ACPClientBackgroundDrainLifecycle`; `TestDrainQueueAgainstFixtureProcessReusesSession`; `TestClientRunPromptAgainstFixtureProcess`; `TestSessionStoreLoadsMissingFileAndPersistsRecords`; profile command, archive, compare, and flow replay tests. |
 | MCP | `ratchet mcp blackboard` / `ratchet mcp daemon` / `ratchet mcp config zed` | stdio JSON-RPC blackboard or daemon server plus config writers | Supported for standalone blackboard plus daemon session/project/blackboard/team status tools and Zed/Claude/Copilot/generic config entries | `TestHarnessSmokeJSONRPCInitializeToolsListAndCall`; `TestDaemonMCPToolCallsUseDaemonClient`; `TestWriteZedMCPConfig`; `TestHandleMCPConfigZedWritesSettings`. |
 | team | `ratchet team start "task"` | daemon team manager / mesh executor | Supported when provider configured | Existing team and mesh tests cover service behavior. |
 
@@ -142,11 +142,11 @@ amd64/arm64 zip artifacts in the GoReleaser output while adding raw event
 archives, compare artifacts, and replay-grade flow bundles. The policy
 boundaries are tracked in
 [docs/policy-matrix.md](policy-matrix.md): runtime trust rules, persistent
-trust grants, permission prompts, hook trust, ACP launch profiles, and explicit
-ACP client watch/drain are supported, while daemon background drain, managed
-hooks remain deferred, TypeScript extension SDK remains deferred, ACPX
-TypeScript flow runtime compatibility, and local-first channel gateways remain
-deferred.
+trust grants, permission prompts, hook trust, ACP launch profiles, explicit ACP
+client watch/drain, and acknowledged per-session background drain are supported.
+Managed hooks remain deferred, TypeScript extension SDK remains deferred, ACPX
+TypeScript flow runtime compatibility remains deferred, arbitrary ACP scheduling
+remains deferred, and local-first channel gateways remain deferred.
 
 ## ACP Matrix
 
@@ -178,12 +178,13 @@ disk.
 | sessions list/show/status | Supported | `ratchet acp client sessions list`, `ratchet acp client sessions show <id>`, and `ratchet acp client status <id>`; command tests cover empty, one-session, and invalid-id cases. |
 | no-wait FIFO queue | Supported | `ratchet acp client exec --no-wait --session <id>` appends prompt text to a local FIFO queue under XDG state; use `ratchet acp client queue <id>` to inspect it. |
 | drain FIFO queue | Supported | `ratchet acp client drain <id> --command <agent> --max <n>` drains pending prompts through one ACP session; binary smoke verifies two queued prompts complete on the same fixture session. |
-| watch FIFO queue | Supported as explicit foreground worker | `ratchet acp client watch <id> --command <agent> --stop-when-empty` polls the local FIFO queue and delegates each cycle to the same drain path. It runs only while the operator-started foreground command is active; daemon background drain remains deferred. Binary smoke verifies queued prompts complete without printing prompt bodies in watch output. |
+| watch FIFO queue | Supported as explicit foreground worker | `ratchet acp client watch <id> --command <agent> --stop-when-empty` polls the local FIFO queue and delegates each cycle to the same drain path. It runs only while the operator-started foreground command is active. Binary smoke verifies queued prompts complete without printing prompt bodies in watch output. |
+| background FIFO drain | Supported with explicit acknowledgement | `ratchet acp client background start <id> --agent <profile> --acknowledge-unattended` asks the daemon to drain one persisted session through a trusted launch profile. Trusted descriptor pinning blocks missing, untrusted, or changed profiles; blocked policies perform no automatic retry. `background status [<id>]` reports metadata, `background stop <id>` disables the policy, and unchanged policies resume after daemon restart. The release-shaped fixture proof completes two prompts, resumes after restart, and blocks descriptor drift without logging prompt text. Windows parity covers persisted policy/DACL safety in native CI and command cross-build compatibility; production daemon IPC remains Unix-only. Arbitrary ACP scheduling remains deferred. |
 | cancel | Supported as cooperative request | `ratchet acp client cancel <id>` marks pending queued prompts canceled or writes a cancel-request file for active owners; active clients poll and send ACP cancel. |
 | import/export archives | Supported | `ratchet acp client sessions export <id> --history summary|raw|both --output <archive.json>` writes summary archives, raw ACPX-compatible JSON-RPC history, or both; `sessions import <archive.json> --session <id>` imports ratchet summary archives and `exported_by:"acpx"` raw history archives. `ratchet acp client sessions events <id>` reports or copies raw ACPX event logs. Raw export fails when no sidecar is available instead of inventing wire history. Archives and event logs may contain prompt/response content and are sensitive local conversation data. |
 | compare commands | Supported | `ratchet acp client compare --save --command <agent-a> --command <agent-b> "prompt"` runs agents serially, emits table or JSON rows, and persists `compare.json` plus per-agent `events.ndjson` files when `--save` is set. Binary smoke proves compare through the built CLI and fixture ACP agent. |
 | flow commands | Supported | `ratchet acp client flow run flow.json --input-json '{"task":"x"}' --command <agent> --allow shell` runs JSON v1 flows with `acp`, `compute`, `action`, and `checkpoint` nodes, template prompts, shared ACP session handles, JSON output, and Go-native ACPX durable replay bundles. `ratchet acp client flow replay <run-dir> --json` validates and summarizes both legacy ratchet bundles and upstream-shaped ACPX durable bundles through the shared `workflow-plugin-acpx` runtime, including `manifest.json`, `flow.json`, `trace.ndjson`, projections, artifacts, and session event links without contacting agents or executing actions. Action nodes require `--allow shell`; cwd escapes require `--allow outside-cwd`; action stdout/stderr is sensitive local command output. Ratchet does not execute `.flow.ts` files or embed a TypeScript ACPX runtime. |
-| ACP launch profiles | Supported with local trust | `ratchet acp client profiles list`, `add`, `install`, `trust`, and `remove` manage reviewed launch specs under ratchet state. Profiles store command metadata and env key names only. Built-in ACP agents win over profile names, profile names cannot shadow built-ins, and only trusted profiles resolve through `--agent` for `exec`, `drain`, `watch`, `compare`, and `flow run`. Plugin `acpProfiles` templates are copied locally before use. |
+| ACP launch profiles | Supported with local trust | `ratchet acp client profiles list`, `add`, `install`, `trust`, and `remove` manage reviewed launch specs under ratchet state. Profiles store command metadata and env key names only. Built-in ACP agents win over profile names, profile names cannot shadow built-ins, and custom stored agents resolve only through trusted profiles. Foreground commands and acknowledged background drain therefore use a built-in agent or trusted profile. Plugin `acpProfiles` templates are copied locally before use. |
 | ACP profile verify | Supported | `ratchet acp client profiles verify <name> [--json]` resolves a trusted profile, runs a small ACP prompt, and emits redacted metadata: session id, stop reason, command fingerprint, and response byte count. `ratchet acp client profiles verify --all --json` verifies trusted profiles and reports untrusted profiles as skipped. Neither form prints prompt text, response text, or env values. |
 
 ### ACP client examples
@@ -212,6 +213,12 @@ ratchet acp client watch work \
   --command ./agent \
   --stop-when-empty \
   --max-per-cycle 2
+
+ratchet acp client background start work \
+  --agent local-agent \
+  --acknowledge-unattended
+ratchet acp client background status work --json
+ratchet acp client background stop work
 ```
 
 ## MCP Matrix
@@ -278,8 +285,8 @@ Scriptable equivalents are available through `ratchet trust list`,
 `ratchet trust grants`, `ratchet trust allow|deny`,
 `ratchet trust persist`, `ratchet trust revoke`, and `ratchet trust reset`.
 The broader Policy Matrix lives in [docs/policy-matrix.md](policy-matrix.md),
-including the explicit watch/drain boundary, sensitive local policy metadata
-warning, hook trust, ACP launch profiles, and deferred background drain and
-extension SDK boundaries. `ratchet policy matrix`,
+including foreground watch/drain, acknowledged background drain, sensitive
+local policy metadata warnings, hook trust, ACP launch profiles, and deferred
+arbitrary scheduling and extension SDK boundaries. `ratchet policy matrix`,
 `ratchet policy matrix --json`, and `ratchet policy matrix --status deferred`
 expose a read-only CLI view of that matrix.

@@ -15,7 +15,11 @@ import (
 	"time"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/acpclient"
+	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 	acpsdk "github.com/coder/acp-go-sdk"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func TestParseACPClientExecCommand(t *testing.T) {
@@ -239,9 +243,334 @@ func TestACPClientUsageLabelsHistoryAsShowAlias(t *testing.T) {
 		t.Fatalf("kind = %q, want help", cmd.kind)
 	}
 	printACPClientUsage(&out)
-	if !strings.Contains(out.String(), "history (alias for show)") {
-		t.Fatalf("usage output missing history alias label:\n%s", out.String())
+	for _, want := range []string{"history (alias for show)", "background", "start, status, stop"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("usage output missing %q:\n%s", want, out.String())
+		}
 	}
+	for _, want := range []string{
+		"  watch      Explicitly watch and drain queued prompts through an external ACP agent",
+		"  background Manage unattended daemon queue drains",
+		"             Subcommands: start, status, stop",
+		"  status     Show ACP client session status",
+	} {
+		if !strings.Contains("\n"+out.String(), "\n"+want+"\n") {
+			t.Fatalf("usage output has unstable indentation for %q:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestACPClientBackgroundParsesCommands(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		kind      string
+		sessionID string
+		json      bool
+	}{
+		{name: "help", args: []string{"background"}, kind: "background-help"},
+		{name: "start", args: []string{"background", "start", "session-1", "--agent", "fixture", "--acknowledge-unattended"}, kind: "background-start", sessionID: "session-1"},
+		{name: "start json", args: []string{"background", "start", "session-1", "--agent", "fixture", "--acknowledge-unattended", "--json"}, kind: "background-start", sessionID: "session-1", json: true},
+		{name: "status all", args: []string{"background", "status", "--json"}, kind: "background-status", json: true},
+		{name: "status one", args: []string{"background", "status", "session-1", "--json"}, kind: "background-status", sessionID: "session-1", json: true},
+		{name: "stop", args: []string{"background", "stop", "session-1", "--json"}, kind: "background-stop", sessionID: "session-1", json: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cmd, err := parseACPClientCommand(test.args)
+			if err != nil {
+				t.Fatalf("parseACPClientCommand: %v", err)
+			}
+			if string(cmd.kind) != test.kind || cmd.sessionID != test.sessionID || cmd.json != test.json {
+				t.Fatalf("command = %#v, want kind=%q session=%q json=%t", cmd, test.kind, test.sessionID, test.json)
+			}
+		})
+	}
+}
+
+func TestACPClientBackgroundRejectsUnsafeOrIncompleteCommands(t *testing.T) {
+	tests := [][]string{
+		{"background", "start", "session-1", "--agent", "fixture"},
+		{"background", "start", "session-1", "--acknowledge-unattended"},
+		{"background", "start", "session-1", "--agent", "fixture", "--acknowledge-unattended", "--command", "agent"},
+		{"background", "start", "", "--agent", "fixture", "--acknowledge-unattended"},
+		{"background", "status", "session-1", "extra"},
+		{"background", "stop"},
+		{"background", "stop", "session-1", "extra"},
+	}
+	for _, args := range tests {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			if _, err := parseACPClientCommand(args); err == nil {
+				t.Fatalf("parseACPClientCommand(%#v) succeeded, want error", args)
+			}
+		})
+	}
+}
+
+func TestACPClientBackgroundSubcommandHelpNeedsNoOperands(t *testing.T) {
+	for _, subcommand := range []string{"start", "status", "stop"} {
+		for _, help := range []string{"help", "--help", "-h"} {
+			t.Run(subcommand+"_"+help, func(t *testing.T) {
+				cmd, err := parseACPClientCommand([]string{"background", subcommand, help})
+				if err != nil {
+					t.Fatalf("parse help: %v", err)
+				}
+				if cmd.kind != acpClientCommandBackgroundHelp {
+					t.Fatalf("kind = %q, want %q", cmd.kind, acpClientCommandBackgroundHelp)
+				}
+			})
+		}
+	}
+}
+
+func TestExecuteACPClientBackgroundUsesRPCAndStableMetadataOutput(t *testing.T) {
+	now := time.Date(2026, 7, 14, 11, 0, 0, 0, time.UTC)
+	drain := &pb.ACPBackgroundDrain{
+		SessionId: "session-1", Profile: "fixture", PinnedHash: "sha256:pinned",
+		State: "running", LastOutcome: "started",
+		AcknowledgedAt: timestamppb.New(now), StartedAt: timestamppb.New(now.Add(time.Second)), UpdatedAt: timestamppb.New(now.Add(2 * time.Second)),
+	}
+	client := &fakeACPClientBackgroundRPC{
+		start: func(_ context.Context, sessionID, profile string, acknowledged bool) (*pb.ACPBackgroundDrain, error) {
+			if sessionID != "session-1" || profile != "fixture" || !acknowledged {
+				t.Fatalf("start args = %q/%q/%t", sessionID, profile, acknowledged)
+			}
+			return drain, nil
+		},
+	}
+	cmd, err := parseACPClientCommand([]string{"background", "start", "session-1", "--agent", "fixture", "--acknowledge-unattended"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	var out bytes.Buffer
+	if err := executeACPClientBackground(t.Context(), client, cmd, &out); err != nil {
+		t.Fatalf("executeACPClientBackground: %v", err)
+	}
+	want := "SESSION\tPROFILE\tSTATE\tOUTCOME\tUPDATED\tACTION\n" +
+		"session-1\tfixture\trunning\tstarted\t2026-07-14T11:00:02Z\t-\n"
+	if out.String() != want {
+		t.Fatalf("output = %q, want %q", out.String(), want)
+	}
+}
+
+func TestExecuteACPClientBackgroundJSONContainsMetadataOnly(t *testing.T) {
+	now := time.Date(2026, 7, 14, 11, 0, 0, 0, time.UTC)
+	client := &fakeACPClientBackgroundRPC{list: func(context.Context) (*pb.ACPBackgroundDrainList, error) {
+		return &pb.ACPBackgroundDrainList{Drains: []*pb.ACPBackgroundDrain{{
+			SessionId: "session-1", Profile: "fixture", PinnedHash: "sha256:pinned", State: "blocked", LastOutcome: "profile_drift",
+			AcknowledgedAt: timestamppb.New(now), UpdatedAt: timestamppb.New(now.Add(time.Second)),
+		}}}, nil
+	}}
+	cmd, err := parseACPClientCommand([]string{"background", "status", "--json"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	var out bytes.Buffer
+	if err := executeACPClientBackground(t.Context(), client, cmd, &out); err != nil {
+		t.Fatalf("executeACPClientBackground: %v", err)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
+		t.Fatalf("decode JSON: %v\n%s", err, out.String())
+	}
+	if len(rows) != 1 || rows[0]["state"] != "blocked" || rows[0]["last_outcome"] != "profile_drift" {
+		t.Fatalf("rows = %#v", rows)
+	}
+	allowed := map[string]bool{
+		"session_id": true, "profile": true, "pinned_hash": true, "state": true,
+		"acknowledged_at": true, "started_at": true, "updated_at": true, "last_outcome": true, "action": true,
+	}
+	for key := range rows[0] {
+		if !allowed[key] {
+			t.Fatalf("content-bearing or unstable JSON field %q in %#v", key, rows[0])
+		}
+	}
+	if action, _ := rows[0]["action"].(string); !strings.Contains(action, "retrust") {
+		t.Fatalf("blocked action = %q, want retrust guidance", action)
+	}
+}
+
+func TestExecuteACPClientBackgroundReturnsActionableRPCError(t *testing.T) {
+	client := &fakeACPClientBackgroundRPC{start: func(context.Context, string, string, bool) (*pb.ACPBackgroundDrain, error) {
+		return nil, status.Error(codes.FailedPrecondition, "profile descriptor drifted")
+	}}
+	cmd, err := parseACPClientCommand([]string{"background", "start", "session-1", "--agent", "fixture", "--acknowledge-unattended"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	err = executeACPClientBackground(t.Context(), client, cmd, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "enabled") || !strings.Contains(err.Error(), "retrust") || !strings.Contains(err.Error(), "profile descriptor drifted") {
+		t.Fatalf("error = %v, want actionable enablement and retrust guidance", err)
+	}
+}
+
+func TestACPClientBackgroundActionsDistinguishMissingProfile(t *testing.T) {
+	action := acpClientBackgroundAction(acpclient.BackgroundStateBlocked, acpclient.BackgroundOutcomeProfileMissing)
+	for _, want := range []string{"restore or recreate", "trust", "start again"} {
+		if !strings.Contains(action, want) {
+			t.Fatalf("missing-profile action = %q, want %q", action, want)
+		}
+	}
+	if strings.Contains(action, "retrust") {
+		t.Fatalf("missing-profile action = %q, cannot retrust a missing profile", action)
+	}
+}
+
+func TestACPClientBackgroundErrorStatesAreActionable(t *testing.T) {
+	tests := []struct {
+		outcome string
+		want    []string
+	}{
+		{outcome: acpclient.BackgroundOutcomeWorkerError, want: []string{"daemon logs", "start again"}},
+		{outcome: acpclient.BackgroundOutcomeWorkerPanic, want: []string{"daemon logs", "start again"}},
+		{outcome: acpclient.BackgroundOutcomeStateWriteFailed, want: []string{"state access", "start again"}},
+		{outcome: acpclient.BackgroundOutcomeAuditAppendFailed, want: []string{"state access", "start again"}},
+		{outcome: acpclient.BackgroundOutcomePolicyInvalid, want: []string{"policy", "start again"}},
+	}
+	for _, test := range tests {
+		t.Run(test.outcome, func(t *testing.T) {
+			action := acpClientBackgroundAction(acpclient.BackgroundStateError, test.outcome)
+			for _, want := range test.want {
+				if !strings.Contains(action, want) {
+					t.Fatalf("action = %q, want %q", action, want)
+				}
+			}
+		})
+	}
+}
+
+func TestACPClientBackgroundErrorsAreOperationSpecific(t *testing.T) {
+	tests := []struct {
+		name      string
+		operation string
+		code      codes.Code
+		want      []string
+		forbid    string
+	}{
+		{name: "start not found", operation: "start", code: codes.NotFound, want: []string{"session", "profile"}},
+		{name: "status not found", operation: "status", code: codes.NotFound, want: []string{"no background policy", "session"}, forbid: "profile"},
+		{name: "stop not found", operation: "stop", code: codes.NotFound, want: []string{"no background policy", "session"}, forbid: "profile"},
+		{name: "busy", operation: "start", code: codes.Aborted, want: []string{"transition", "background status", "retry"}},
+		{name: "canceled", operation: "start", code: codes.Canceled, want: []string{"session cancellation", "background status"}, forbid: "daemon status"},
+		{name: "unavailable", operation: "start", code: codes.Unavailable, want: []string{"daemon unavailable", "restart", "retry"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := actionableACPClientBackgroundError(test.operation, status.Error(test.code, "fixture failure"))
+			for _, want := range test.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error = %q, want %q", err, want)
+				}
+			}
+			if test.forbid != "" && strings.Contains(err.Error(), test.forbid) {
+				t.Fatalf("error = %q, forbid %q", err, test.forbid)
+			}
+		})
+	}
+}
+
+func TestHandleACPClientBackgroundWrapsDaemonConnectionFailure(t *testing.T) {
+	original := ensureACPClientBackground
+	t.Cleanup(func() { ensureACPClientBackground = original })
+	ensureACPClientBackground = func() (acpClientBackgroundConnection, error) {
+		return nil, errors.New("fixture dial failure")
+	}
+	err := handleACPClient([]string{"background", "status", "session-1"})
+	if err == nil {
+		t.Fatal("handleACPClient succeeded, want daemon connection failure")
+	}
+	for _, want := range []string{"daemon unavailable", "restart", "retry", "fixture dial failure"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error = %q, want %q", err, want)
+		}
+	}
+}
+
+func TestExecuteACPClientBackgroundEscapesHumanMetadataControls(t *testing.T) {
+	client := &fakeACPClientBackgroundRPC{start: func(context.Context, string, string, bool) (*pb.ACPBackgroundDrain, error) {
+		return &pb.ACPBackgroundDrain{
+			SessionId:   "session\nforged",
+			Profile:     "profile\tcolumn\x1b[31m",
+			State:       acpclient.BackgroundStateRunning,
+			LastOutcome: acpclient.BackgroundOutcomeStarted,
+		}, nil
+	}}
+	cmd, err := parseACPClientCommand([]string{"background", "start", "session-1", "--agent", "fixture", "--acknowledge-unattended"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	var out bytes.Buffer
+	if err := executeACPClientBackground(t.Context(), client, cmd, &out); err != nil {
+		t.Fatalf("executeACPClientBackground: %v", err)
+	}
+	if strings.Count(out.String(), "\n") != 2 || strings.ContainsRune(out.String(), '\x1b') {
+		t.Fatalf("human output contains row or terminal injection: %q", out.String())
+	}
+	for _, escaped := range []string{`session\nforged`, `profile\tcolumn\x1b[31m`} {
+		if !strings.Contains(out.String(), escaped) {
+			t.Fatalf("human output = %q, want escaped %q", out.String(), escaped)
+		}
+	}
+}
+
+func TestExecuteACPClientBackgroundRejectsInvalidTimestamp(t *testing.T) {
+	client := &fakeACPClientBackgroundRPC{list: func(context.Context) (*pb.ACPBackgroundDrainList, error) {
+		return &pb.ACPBackgroundDrainList{Drains: []*pb.ACPBackgroundDrain{{
+			SessionId: "session-1",
+			UpdatedAt: &timestamppb.Timestamp{Seconds: 253402300800},
+		}}}, nil
+	}}
+	cmd, err := parseACPClientCommand([]string{"background", "status", "--json"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	var out bytes.Buffer
+	err = executeACPClientBackground(t.Context(), client, cmd, &out)
+	if err == nil || !strings.Contains(err.Error(), "invalid") || !strings.Contains(err.Error(), "timestamp") {
+		t.Fatalf("error = %v, want invalid timestamp", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("invalid timestamp emitted output %q", out.String())
+	}
+}
+
+func TestExecuteACPClientBackgroundHelpNeedsNoClient(t *testing.T) {
+	cmd, err := parseACPClientCommand([]string{"background"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	var out bytes.Buffer
+	if err := executeACPClientBackground(t.Context(), nil, cmd, &out); err != nil {
+		t.Fatalf("execute help: %v", err)
+	}
+	for _, want := range []string{"background start", "background status", "background stop"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("help missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
+type fakeACPClientBackgroundRPC struct {
+	start func(context.Context, string, string, bool) (*pb.ACPBackgroundDrain, error)
+	stop  func(context.Context, string) (*pb.ACPBackgroundDrain, error)
+	get   func(context.Context, string) (*pb.ACPBackgroundDrain, error)
+	list  func(context.Context) (*pb.ACPBackgroundDrainList, error)
+}
+
+func (f *fakeACPClientBackgroundRPC) StartACPBackgroundDrain(ctx context.Context, sessionID, profile string, acknowledged bool) (*pb.ACPBackgroundDrain, error) {
+	return f.start(ctx, sessionID, profile, acknowledged)
+}
+
+func (f *fakeACPClientBackgroundRPC) StopACPBackgroundDrain(ctx context.Context, sessionID string) (*pb.ACPBackgroundDrain, error) {
+	return f.stop(ctx, sessionID)
+}
+
+func (f *fakeACPClientBackgroundRPC) GetACPBackgroundDrain(ctx context.Context, sessionID string) (*pb.ACPBackgroundDrain, error) {
+	return f.get(ctx, sessionID)
+}
+
+func (f *fakeACPClientBackgroundRPC) ListACPBackgroundDrains(ctx context.Context) (*pb.ACPBackgroundDrainList, error) {
+	return f.list(ctx)
 }
 
 func TestParseACPClientSessionCommands(t *testing.T) {
@@ -830,6 +1159,20 @@ func TestExecuteACPClientExecHumanOutput(t *testing.T) {
 	}
 }
 
+func TestRunACPClientPromptPreservesCleanupError(t *testing.T) {
+	promptErr := errors.New("prompt failed")
+	cleanupErr := errors.New("cleanup failed")
+	client := &fakeACPClientPromptClient{promptErr: promptErr, closeErr: cleanupErr}
+
+	_, err := runACPClientPrompt(t.Context(), client, "fixture")
+	if !errors.Is(err, promptErr) || !errors.Is(err, cleanupErr) {
+		t.Fatalf("runACPClientPrompt error = %v, want prompt and cleanup errors", err)
+	}
+	if !client.closed {
+		t.Fatal("prompt client was not closed")
+	}
+}
+
 func TestExecuteACPClientExecUsesTrustedProfile(t *testing.T) {
 	setupDefaultACPProfile(t, "fixture", true)
 	runner := &fakeACPClientExecRunner{
@@ -928,6 +1271,141 @@ func TestExecuteACPClientExecPersistsSessionRecord(t *testing.T) {
 	}
 	if len(rec.Turns) != 1 || rec.Turns[0].Prompt != "hello persisted" || rec.Turns[0].Response != "persisted response" {
 		t.Fatalf("Turns = %#v", rec.Turns)
+	}
+}
+
+func TestExecuteACPClientExecEventFailureDoesNotCommitCompletion(t *testing.T) {
+	dir := t.TempDir()
+	store := acpclient.NewStore(filepath.Join(dir, "sessions.json"))
+	eventsPath := filepath.Join(dir, "events")
+	if err := os.WriteFile(eventsPath, []byte("blocks event directory\n"), 0o600); err != nil {
+		t.Fatalf("write event directory blocker: %v", err)
+	}
+	runner := &fakeACPClientExecRunner{result: acpclient.Result{
+		SessionID: "s-event-retry", StopReason: acpsdk.StopReasonEndTurn, Text: "response",
+		Events: []acpclient.EventLogLine{{
+			Direction: acpclient.EventDirectionOutbound,
+			Message:   json.RawMessage(`{"jsonrpc":"2.0","id":1,"result":{}}`),
+		}},
+	}}
+	run := func() error {
+		return executeACPClientExecWithStore(t.Context(), acpClientExecOptions{
+			Agent: "custom", Command: "/bin/fixture-agent", Prompt: "retry", Cwd: ".",
+		}, runner, store, io.Discard)
+	}
+	if err := run(); err == nil {
+		t.Fatal("executeACPClientExecWithStore with blocked event directory succeeded")
+	}
+	if _, err := store.Get("s-event-retry"); !errors.Is(err, acpclient.ErrSessionNotFound) {
+		t.Fatalf("completion committed without events: %v", err)
+	}
+	if err := os.Remove(eventsPath); err != nil {
+		t.Fatalf("remove event directory blocker: %v", err)
+	}
+	if err := run(); err != nil {
+		t.Fatalf("executeACPClientExecWithStore retry: %v", err)
+	}
+	rec, err := store.Get("s-event-retry")
+	if err != nil || rec.Status != acpclient.SessionStatusCompleted || len(rec.Turns) != 1 {
+		t.Fatalf("record after retry = %#v, %v", rec, err)
+	}
+	events, err := store.ReadEventLog("s-event-retry")
+	if err != nil || len(events) != 1 {
+		t.Fatalf("events after retry = %#v, %v", events, err)
+	}
+}
+
+func TestExecuteACPClientExecLifecyclePreservesConcurrentQueueAndTurns(t *testing.T) {
+	store := acpclient.NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 13, 18, 0, 0, 0, time.UTC)
+	if err := store.Upsert(acpclient.SessionRecord{
+		ID:        "s-concurrent",
+		Status:    acpclient.SessionStatusQueued,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Turns: []acpclient.TurnSummary{{
+			Prompt:    "prior",
+			Response:  "prior response",
+			CreatedAt: now,
+		}},
+		PromptQueue: []acpclient.QueuedPrompt{{
+			ID:        "q-before",
+			Prompt:    "before start",
+			Status:    acpclient.QueuePromptStatusPending,
+			CreatedAt: now,
+		}},
+	}); err != nil {
+		t.Fatalf("seed Upsert: %v", err)
+	}
+	runner := &lifecycleACPClientExecRunner{
+		store: store,
+		result: acpclient.Result{
+			SessionID:  "s-concurrent",
+			StopReason: acpsdk.StopReasonEndTurn,
+			Text:       "latest response",
+		},
+	}
+	if err := executeACPClientExecWithStore(t.Context(), acpClientExecOptions{
+		Agent:   "custom",
+		Command: "/bin/fixture-agent",
+		Prompt:  "latest",
+		Cwd:     ".",
+	}, runner, store, io.Discard); err != nil {
+		t.Fatalf("executeACPClientExecWithStore: %v", err)
+	}
+
+	got, err := store.Get("s-concurrent")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got.PromptQueue) != 2 || got.PromptQueue[0].ID != "q-before" || got.PromptQueue[1].ID != "q-during" {
+		t.Fatalf("PromptQueue = %#v, want both concurrent prompts", got.PromptQueue)
+	}
+	if len(got.Turns) != 2 || got.Turns[0].Prompt != "prior" || got.Turns[1].Prompt != "latest" {
+		t.Fatalf("Turns = %#v, want prior then latest", got.Turns)
+	}
+}
+
+func TestExecuteACPClientExecHoldsOwnerLeaseForRunnerLifetime(t *testing.T) {
+	for _, runnerErr := range []error{nil, errors.New("runner failed")} {
+		name := "success"
+		if runnerErr != nil {
+			name = "error"
+		}
+		t.Run(name, func(t *testing.T) {
+			store := acpclient.NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+			runner := &ownerCheckingACPClientExecRunner{store: store, err: runnerErr}
+			err := executeACPClientExecWithStore(t.Context(), acpClientExecOptions{
+				Agent:   "custom",
+				Command: "/bin/fixture-agent",
+				Prompt:  "lease",
+				Cwd:     ".",
+			}, runner, store, io.Discard)
+			if !errors.Is(err, runnerErr) {
+				t.Fatalf("executeACPClientExecWithStore error = %v, want %v", err, runnerErr)
+			}
+			if _, err := store.Owner("s-owner-lifetime"); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("Owner after runner return = %v, want os.ErrNotExist", err)
+			}
+		})
+	}
+}
+
+func TestExecuteACPClientExecReleasesPriorLeaseWhenSessionIDChanges(t *testing.T) {
+	store := acpclient.NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	runner := &switchingOwnerACPClientExecRunner{store: store}
+	if err := executeACPClientExecWithStore(t.Context(), acpClientExecOptions{
+		Agent:   "custom",
+		Command: "/bin/fixture-agent",
+		Prompt:  "switch",
+		Cwd:     ".",
+	}, runner, store, io.Discard); err != nil {
+		t.Fatalf("executeACPClientExecWithStore: %v", err)
+	}
+	for _, sessionID := range []string{"s-owner-first", "s-owner-second"} {
+		if _, err := store.Owner(sessionID); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("Owner %s after runner return = %v, want os.ErrNotExist", sessionID, err)
+		}
 	}
 }
 
@@ -1916,14 +2394,16 @@ func TestACPClientStatusAndCancelActiveOwner(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Upsert: %v", err)
 	}
-	if err := store.WriteOwner(acpclient.OwnerLock{
+	lease, err := store.AcquireOwnerLease(acpclient.OwnerLock{
 		SessionID:          "s-active",
 		PID:                12345,
 		CommandFingerprint: "abcdef123456",
 		StartedAt:          now,
-	}); err != nil {
-		t.Fatalf("WriteOwner: %v", err)
+	})
+	if err != nil {
+		t.Fatalf("AcquireOwnerLease: %v", err)
 	}
+	defer func() { _ = lease.Release() }()
 
 	var statusOut bytes.Buffer
 	if err := executeACPClientStatus(store, "s-active", false, &statusOut); err != nil {
@@ -1949,7 +2429,29 @@ func TestACPClientStatusAndCancelActiveOwner(t *testing.T) {
 	}
 }
 
-func TestACPClientCancelReturnsCorruptOwnerError(t *testing.T) {
+func TestACPClientCancelRejectsSnapshotOwnerWithoutDurableRequest(t *testing.T) {
+	store := acpclient.NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 13, 21, 15, 0, 0, time.UTC)
+	if err := store.Upsert(acpclient.SessionRecord{ID: "s-snapshot", Status: acpclient.SessionStatusCompleted, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	lease, err := store.AcquireOwnerLease(acpclient.OwnerLock{
+		SessionID: "s-snapshot", PID: os.Getpid(), Kind: acpclient.OwnerKindSnapshot, StartedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("AcquireOwnerLease: %v", err)
+	}
+	defer func() { _ = lease.Release() }()
+	var out bytes.Buffer
+	if err := executeACPClientCancel(store, "s-snapshot", false, &out); !errors.Is(err, acpclient.ErrOwnerNotCancelable) {
+		t.Fatalf("executeACPClientCancel error = %v, want ErrOwnerNotCancelable", err)
+	}
+	if _, err := store.CancelRequest("s-snapshot"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("snapshot cancel request = %v, want os.ErrNotExist", err)
+	}
+}
+
+func TestACPClientCancelIgnoresCorruptStaleOwnerProjection(t *testing.T) {
 	store := acpclient.NewStore(filepath.Join(t.TempDir(), "sessions.json"))
 	now := time.Date(2026, 7, 1, 19, 50, 0, 0, time.UTC)
 	if err := store.Upsert(acpclient.SessionRecord{
@@ -1976,15 +2478,15 @@ func TestACPClientCancelReturnsCorruptOwnerError(t *testing.T) {
 
 	var out bytes.Buffer
 	err := executeACPClientCancel(store, "s-corrupt-owner", false, &out)
-	if err == nil || !strings.Contains(err.Error(), "read") {
-		t.Fatalf("executeACPClientCancel error = %v, want corrupt owner error", err)
+	if err != nil {
+		t.Fatalf("executeACPClientCancel: %v", err)
 	}
 	rec, err := store.Get("s-corrupt-owner")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if rec.PendingPrompt.Status != acpclient.PendingPromptStatusPending {
-		t.Fatalf("pending prompt status = %q, want pending", rec.PendingPrompt.Status)
+	if rec.PendingPrompt.Status != acpclient.PendingPromptStatusCanceled {
+		t.Fatalf("pending prompt status = %q, want canceled", rec.PendingPrompt.Status)
 	}
 }
 
@@ -2048,6 +2550,100 @@ type fakeACPClientExecRunner struct {
 	result acpclient.Result
 	err    error
 	calls  []fakeACPClientExecCall
+}
+
+type fakeACPClientPromptClient struct {
+	promptErr error
+	closeErr  error
+	closed    bool
+}
+
+func (c *fakeACPClientPromptClient) RunPrompt(context.Context, string) (acpclient.Result, error) {
+	return acpclient.Result{}, c.promptErr
+}
+
+func (c *fakeACPClientPromptClient) Close() error {
+	c.closed = true
+	return c.closeErr
+}
+
+type lifecycleACPClientExecRunner struct {
+	store  *acpclient.Store
+	result acpclient.Result
+}
+
+type ownerCheckingACPClientExecRunner struct {
+	store *acpclient.Store
+	err   error
+}
+
+type switchingOwnerACPClientExecRunner struct {
+	store *acpclient.Store
+}
+
+func (r *switchingOwnerACPClientExecRunner) RunPrompt(_ context.Context, _ acpclient.AgentSpec, opts acpclient.RunOptions, _ string) (acpclient.Result, error) {
+	if err := opts.SessionStarted("s-owner-first"); err != nil {
+		return acpclient.Result{}, err
+	}
+	if _, err := r.store.Owner("s-owner-first"); err != nil {
+		return acpclient.Result{}, fmt.Errorf("first owner not live: %w", err)
+	}
+	blocker, err := r.store.AcquireOwnerLease(acpclient.OwnerLock{
+		SessionID: "s-owner-second",
+		PID:       os.Getpid(),
+		StartedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		return acpclient.Result{}, fmt.Errorf("block second owner: %w", err)
+	}
+	if err := opts.SessionStarted("s-owner-second"); !errors.Is(err, acpclient.ErrOwnerLeaseBusy) {
+		_ = blocker.Release()
+		return acpclient.Result{}, fmt.Errorf("failed session switch error = %v, want ErrOwnerLeaseBusy", err)
+	}
+	if _, err := r.store.Owner("s-owner-first"); !errors.Is(err, os.ErrNotExist) {
+		_ = blocker.Release()
+		return acpclient.Result{}, fmt.Errorf("first owner after session switch = %v", err)
+	}
+	if err := blocker.Release(); err != nil {
+		return acpclient.Result{}, fmt.Errorf("release second owner blocker: %w", err)
+	}
+	if err := opts.SessionStarted("s-owner-second"); err != nil {
+		return acpclient.Result{}, fmt.Errorf("retry session switch: %w", err)
+	}
+	if _, err := r.store.Owner("s-owner-second"); err != nil {
+		return acpclient.Result{}, fmt.Errorf("second owner not live: %w", err)
+	}
+	return acpclient.Result{SessionID: "s-owner-second", StopReason: acpsdk.StopReasonEndTurn, Text: "done"}, nil
+}
+
+func (r *ownerCheckingACPClientExecRunner) RunPrompt(_ context.Context, _ acpclient.AgentSpec, opts acpclient.RunOptions, _ string) (acpclient.Result, error) {
+	const sessionID = "s-owner-lifetime"
+	if err := opts.SessionStarted(sessionID); err != nil {
+		return acpclient.Result{}, err
+	}
+	if _, err := r.store.Owner(sessionID); err != nil {
+		return acpclient.Result{}, fmt.Errorf("owner not live during run: %w", err)
+	}
+	other, err := r.store.AcquireOwnerLease(acpclient.OwnerLock{SessionID: sessionID, PID: os.Getpid(), StartedAt: time.Now().UTC()})
+	if other != nil {
+		_ = other.Release()
+	}
+	if !errors.Is(err, acpclient.ErrOwnerLeaseBusy) {
+		return acpclient.Result{}, fmt.Errorf("second owner claim error = %v", err)
+	}
+	return acpclient.Result{SessionID: sessionID, StopReason: acpsdk.StopReasonEndTurn, Text: "done"}, r.err
+}
+
+func (r *lifecycleACPClientExecRunner) RunPrompt(_ context.Context, _ acpclient.AgentSpec, opts acpclient.RunOptions, _ string) (acpclient.Result, error) {
+	if err := opts.SessionStarted(string(r.result.SessionID)); err != nil {
+		return acpclient.Result{}, err
+	}
+	_, err := r.store.AppendQueuedPrompt(acpclient.SessionRecord{ID: string(r.result.SessionID)}, acpclient.QueuedPrompt{
+		ID:        "q-during",
+		Prompt:    "during run",
+		CreatedAt: time.Date(2026, 7, 13, 18, 1, 0, 0, time.UTC),
+	})
+	return r.result, err
 }
 
 type fakeACPClientExecCall struct {

@@ -138,76 +138,72 @@ func (s *Store) AppendEventLog(id string, events []EventLogLine) (err error) {
 	if len(events) == 0 {
 		return nil
 	}
-	path := s.eventLogPath(id)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	nextSeq := 1
-	if existing, err := s.ReadEventLog(id); err == nil && len(existing) > 0 {
-		nextSeq = existing[len(existing)-1].Seq + 1
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if cerr := f.Close(); err == nil && cerr != nil {
-			err = cerr
+	return s.withEventLogLock(id, func(path string) error {
+		nextSeq := 1
+		existing, readErr := readEventLogPath(path)
+		if readErr == nil && len(existing) > 0 {
+			nextSeq = existing[len(existing)-1].Seq + 1
+		} else if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+			return readErr
 		}
-	}()
-	for _, event := range events {
-		if err := ValidateJSONRPCMessage(event.Message); err != nil {
-			return err
-		}
-		event.Seq = nextSeq
-		nextSeq = event.Seq + 1
-		if event.At.IsZero() {
-			event.At = time.Now().UTC()
-		} else {
-			event.At = event.At.UTC()
-		}
-		if event.Direction == "" {
-			event.Direction = EventDirectionInbound
-		}
-		line, err := json.Marshal(event)
+		appendBytes, err := encodeEventLog(events, nextSeq)
 		if err != nil {
 			return err
 		}
-		if _, err := f.Write(append(line, '\n')); err != nil {
+		f, err := backgroundOpenPrivateAppend(path)
+		if err != nil {
 			return err
 		}
-	}
-	if err := f.Chmod(0o600); err != nil {
-		return err
-	}
-	return f.Sync()
+		if _, err := io.Copy(f, bytes.NewReader(appendBytes)); err != nil {
+			_ = f.Close()
+			return err
+		}
+		if err := f.Sync(); err != nil {
+			_ = f.Close()
+			return err
+		}
+		if err := f.Close(); err != nil {
+			return err
+		}
+		return backgroundSyncParentDir(filepath.Dir(path))
+	})
 }
 
 func (s *Store) WriteEventLog(id string, events []EventLogLine) error {
-	if s == nil {
-		return errors.New("acp client store is required")
-	}
-	path := s.eventLogPath(id)
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return s.AppendEventLog(id, events)
+	return s.withEventLogLock(id, func(path string) error {
+		data, err := encodeEventLog(events, 1)
+		if err != nil {
+			return err
+		}
+		if s.eventLogWritePaused != nil {
+			s.eventLogWritePaused()
+		}
+		return backgroundWriteFileAtomic(path, data)
+	})
 }
 
 func (s *Store) ReadEventLog(id string) ([]EventLogLine, error) {
-	if s == nil {
-		return nil, errors.New("acp client store is required")
-	}
-	path := s.eventLogPath(id)
+	var events []EventLogLine
+	err := s.withEventLogLock(id, func(path string) error {
+		var err error
+		events, err = readEventLogPath(path)
+		return err
+	})
+	return events, err
+}
+
+func readEventLogPath(path string) ([]EventLogLine, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close() //nolint:errcheck
+	return readEventLog(f, path)
+}
+
+func readEventLog(r io.Reader, path string) ([]EventLogLine, error) {
 	var events []EventLogLine
-	scanner := bufio.NewScanner(f)
+	scanner := bufio.NewScanner(r)
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 16*1024*1024)
 	for scanner.Scan() {
@@ -234,54 +230,216 @@ func (s *Store) CopyEventLog(id, outputPath string) (err error) {
 	if outputPath == "" {
 		return errors.New("event log output path is required")
 	}
-	if _, err := s.ReadEventLog(id); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
-		return err
-	}
-	src, err := os.Open(s.eventLogPath(id))
-	if err != nil {
-		return err
-	}
-	defer src.Close() //nolint:errcheck
-	dst, err := os.OpenFile(outputPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if cerr := dst.Close(); err == nil && cerr != nil {
-			err = cerr
+	var snapshot []byte
+	if err := s.withEventLogLock(id, func(path string) error {
+		var err error
+		snapshot, err = os.ReadFile(path)
+		if err != nil {
+			return err
 		}
-	}()
-	if _, err := io.Copy(dst, src); err != nil {
+		_, err = readEventLog(bytes.NewReader(snapshot), path)
+		return err
+	}); err != nil {
 		return err
 	}
-	if err := dst.Chmod(0o600); err != nil {
-		return err
-	}
-	return dst.Sync()
+	return backgroundWriteFileAtomic(outputPath, snapshot)
 }
 
 func (s *Store) EventLogMetadata(id string) (EventLogMetadata, error) {
-	if s == nil {
-		return EventLogMetadata{}, errors.New("acp client store is required")
-	}
-	path := s.eventLogPath(id)
-	meta := EventLogMetadata{SessionID: id, Path: path}
-	if _, err := os.Stat(path); err != nil {
+	meta := EventLogMetadata{SessionID: strings.TrimSpace(id)}
+	err := s.withEventLogLock(id, func(path string) error {
+		meta.Path = path
+		f, err := os.Open(path)
 		if errors.Is(err, os.ErrNotExist) {
-			return meta, nil
+			return nil
 		}
-		return EventLogMetadata{}, err
-	}
-	events, err := s.ReadEventLog(id)
+		if err != nil {
+			return err
+		}
+		defer f.Close() //nolint:errcheck
+		if _, err := f.Stat(); err != nil {
+			return err
+		}
+		events, err := readEventLog(f, path)
+		if err != nil {
+			return err
+		}
+		meta.Exists = true
+		meta.Count = len(events)
+		return nil
+	})
 	if err != nil {
 		return EventLogMetadata{}, err
 	}
-	meta.Exists = true
-	meta.Count = len(events)
 	return meta, nil
+}
+
+func (s *Store) withEventLogLock(id string, operation func(string) error) (err error) {
+	if s == nil {
+		return errors.New("acp client store is required")
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return errors.New("acp client session id is required")
+	}
+	path := s.eventLogPath(id)
+	lockPath := path + ".lock"
+	lock := backgroundPathLock(lockPath)
+	lock.Lock()
+	defer lock.Unlock()
+	release, err := acquireStoreFileLock(lockPath)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, release()) }()
+	return operation(path)
+}
+
+func (s *Store) transitionSession(id string, events []EventLogLine, mutate func(*storeFile) (bool, error), afterCommit func() error) error {
+	if s.beforeMutation != nil {
+		s.beforeMutation()
+	}
+	return s.withFileLock(func() error {
+		data, err := s.loadUnlocked()
+		if err != nil {
+			return err
+		}
+		if s.transactionLoaded != nil {
+			s.transactionLoaded()
+		}
+		changed, err := mutate(&data)
+		if err != nil || !changed {
+			return err
+		}
+		if len(events) == 0 {
+			var confirmationErr error
+			if err := s.saveUnlocked(data); err != nil {
+				if !backgroundWriteCommitted(err) {
+					return err
+				}
+				confirmationErr = backgroundPostCommitCause(err)
+			}
+			if afterCommit != nil {
+				confirmationErr = errors.Join(confirmationErr, transitionConfirmationCause(afterCommit()))
+			}
+			if confirmationErr != nil {
+				return storeCommitUnconfirmed(confirmationErr)
+			}
+			return nil
+		}
+		return s.withEventLogLock(id, func(path string) error {
+			original, existed, nextSeq, err := eventLogSnapshot(path)
+			if err != nil {
+				return err
+			}
+			appended, err := encodeEventLog(events, nextSeq)
+			if err != nil {
+				return err
+			}
+			updated := append(slices.Clone(original), appended...)
+			if len(original) > 0 && original[len(original)-1] != '\n' {
+				updated = append(append(slices.Clone(original), '\n'), appended...)
+			}
+			var eventConfirmationErr error
+			if err := s.replaceEventLog(path, updated); err != nil {
+				if !backgroundWriteCommitted(err) {
+					return err
+				}
+				eventConfirmationErr = backgroundPostCommitCause(err)
+			}
+			if err := s.saveUnlocked(data); err != nil {
+				if backgroundWriteCommitted(err) {
+					eventConfirmationErr = errors.Join(eventConfirmationErr, backgroundPostCommitCause(err))
+				} else {
+					restoreErr := restoreEventLogSnapshot(path, original, existed)
+					return errors.Join(eventConfirmationErr, err, backgroundPostCommitCause(restoreErr))
+				}
+			}
+			if afterCommit != nil {
+				eventConfirmationErr = errors.Join(eventConfirmationErr, transitionConfirmationCause(afterCommit()))
+			}
+			if eventConfirmationErr != nil {
+				return storeCommitUnconfirmed(eventConfirmationErr)
+			}
+			return nil
+		})
+	})
+}
+
+func transitionConfirmationCause(err error) error {
+	if err == nil {
+		return nil
+	}
+	if backgroundWriteCommitted(err) {
+		return backgroundPostCommitCause(err)
+	}
+	return err
+}
+
+func (s *Store) replaceEventLog(path string, data []byte) error {
+	if s.eventLogWriter != nil {
+		return s.eventLogWriter(path, data)
+	}
+	return backgroundWriteFileAtomic(path, data)
+}
+
+func (s *Store) removeEventLog(path string) error {
+	if s.eventLogRemover != nil {
+		return s.eventLogRemover(path)
+	}
+	return backgroundRemoveFile(path)
+}
+
+func eventLogSnapshot(path string) ([]byte, bool, int, error) {
+	original, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, 1, nil
+	}
+	if err != nil {
+		return nil, false, 0, err
+	}
+	events, err := readEventLog(bytes.NewReader(original), path)
+	if err != nil {
+		return nil, false, 0, err
+	}
+	nextSeq := 1
+	if len(events) > 0 {
+		nextSeq = events[len(events)-1].Seq + 1
+	}
+	return original, true, nextSeq, nil
+}
+
+func restoreEventLogSnapshot(path string, original []byte, existed bool) error {
+	if !existed {
+		return backgroundRemoveFile(path)
+	}
+	return backgroundWriteFileAtomic(path, original)
+}
+
+func encodeEventLog(events []EventLogLine, nextSeq int) ([]byte, error) {
+	var data bytes.Buffer
+	for _, event := range events {
+		if err := ValidateJSONRPCMessage(event.Message); err != nil {
+			return nil, err
+		}
+		event.Seq = nextSeq
+		nextSeq++
+		if event.At.IsZero() {
+			event.At = time.Now().UTC()
+		} else {
+			event.At = event.At.UTC()
+		}
+		if event.Direction == "" {
+			event.Direction = EventDirectionInbound
+		}
+		line, err := json.Marshal(event)
+		if err != nil {
+			return nil, err
+		}
+		data.Write(line)
+		data.WriteByte('\n')
+	}
+	return data.Bytes(), nil
 }
 
 func (s *Store) eventLogPath(id string) string {

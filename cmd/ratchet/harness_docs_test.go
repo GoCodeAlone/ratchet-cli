@@ -53,7 +53,7 @@ func TestHarnessEmulationDocsCoverPolicyMatrixLayers(t *testing.T) {
 		"Supported",
 		"Partial",
 		"Deferred",
-		"Explicit watch/drain only",
+		"Supported with explicit acknowledgement",
 		"sensitive local policy metadata",
 		"action nodes",
 		"--allow shell",
@@ -87,6 +87,16 @@ func TestHarnessEmulationDocsCoverPolicyMatrixLayers(t *testing.T) {
 		"hook trust",
 		"ACP launch profiles",
 		"ratchet acp client watch",
+		"ratchet acp client background start",
+		"ratchet acp client background status",
+		"ratchet acp client background stop",
+		"--acknowledge-unattended",
+		"built-in agent or trusted profile",
+		"descriptor pinning",
+		"no automatic retry",
+		"Windows parity",
+		"production daemon IPC remains Unix-only",
+		"arbitrary ACP scheduling remains deferred",
 		"ratchet blackboard write coordination status ready",
 		"ratchet blackboard read coordination status",
 		"ratchet blackboard export [section] --jsonl",
@@ -113,6 +123,14 @@ func TestHarnessEmulationDocsCoverPolicyMatrixLayers(t *testing.T) {
 	} {
 		if !strings.Contains(publicDocs, required) {
 			t.Fatalf("public harness docs missing %q", required)
+		}
+	}
+	for _, stale := range []string{
+		"daemon background drain remains deferred",
+		"No daemon background drain is supported",
+	} {
+		if strings.Contains(publicDocs+"\n"+matrix, stale) {
+			t.Fatalf("harness docs retain stale background-drain claim %q", stale)
 		}
 	}
 }

@@ -6,9 +6,78 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 )
+
+func TestImportSessionConcurrentCollisionIsTransactional(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state", "sessions.json")
+	now := time.Date(2026, 7, 13, 17, 30, 0, 0, time.UTC)
+	archive := Archive{
+		FormatVersion: archiveFormatVersion,
+		ExportedAt:    now.Format(time.RFC3339Nano),
+		ExportedBy:    "ratchet-cli",
+		Session: ArchiveSession{
+			RecordID:    "same-id",
+			CWDRelative: ".",
+			CreatedAt:   now.Format(time.RFC3339Nano),
+			UpdatedAt:   now.Format(time.RFC3339Nano),
+			State: SessionRecord{
+				ID:        "same-id",
+				Status:    SessionStatusCompleted,
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
+		},
+	}
+	archivePath := writeArchiveFixture(t, archive)
+
+	stores := []*Store{NewStore(path), NewStore(path)}
+	ready := make(chan struct{}, len(stores))
+	release := make(chan struct{})
+	for _, store := range stores {
+		store.beforeMutation = func() {
+			ready <- struct{}{}
+			<-release
+		}
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, len(stores))
+	for _, store := range stores {
+		wg.Go(func() {
+			_, err := ImportSession(store, archivePath, ImportOptions{HomeDir: t.TempDir()})
+			errs <- err
+		})
+	}
+	for range stores {
+		select {
+		case <-ready:
+		case <-time.After(2 * time.Second):
+			t.Fatal("imports did not both reach record insertion")
+		}
+	}
+	close(release)
+	wg.Wait()
+	close(errs)
+
+	successes := 0
+	collisions := 0
+	for err := range errs {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, ErrSessionArchiveCollision):
+			collisions++
+		default:
+			t.Fatalf("ImportSession error = %v", err)
+		}
+	}
+	if successes != 1 || collisions != 1 {
+		t.Fatalf("imports = %d successes, %d collisions; want one each", successes, collisions)
+	}
+}
 
 func TestExportSessionWritesACPXShapedArchive(t *testing.T) {
 	home := t.TempDir()
@@ -102,13 +171,50 @@ func TestExportSessionRefusesActiveOwner(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Upsert: %v", err)
 	}
-	if err := store.WriteOwner(OwnerLock{SessionID: "active", PID: os.Getpid(), StartedAt: now}); err != nil {
-		t.Fatalf("WriteOwner: %v", err)
+	lease, err := store.AcquireOwnerLease(OwnerLock{SessionID: "active", PID: os.Getpid(), StartedAt: now})
+	if err != nil {
+		t.Fatalf("AcquireOwnerLease: %v", err)
 	}
+	defer func() { _ = lease.Release() }()
 
-	err := ExportSession(store, "active", filepath.Join(t.TempDir(), "archive.json"), ExportOptions{Now: fixedArchiveClock(now)})
+	err = ExportSession(store, "active", filepath.Join(t.TempDir(), "archive.json"), ExportOptions{Now: fixedArchiveClock(now)})
 	if !errors.Is(err, ErrSessionActive) {
 		t.Fatalf("ExportSession error = %v, want ErrSessionActive", err)
+	}
+}
+
+func TestExportSessionHoldsOwnerLeaseAcrossSnapshot(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 13, 20, 10, 0, 0, time.UTC)
+	if err := store.Upsert(SessionRecord{ID: "snapshot", Status: SessionStatusCompleted, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	if err := store.WriteEventLog("snapshot", []EventLogLine{{
+		At: now, Direction: EventDirectionInbound,
+		Message: json.RawMessage(`{"jsonrpc":"2.0","id":1,"result":{}}`),
+	}}); err != nil {
+		t.Fatalf("WriteEventLog: %v", err)
+	}
+	var claimErr error
+	err := ExportSession(store, "snapshot", filepath.Join(t.TempDir(), "archive.json"), ExportOptions{
+		HistoryMode: ArchiveHistoryModeRaw,
+		Now: func() time.Time {
+			other, err := store.AcquireOwnerLease(OwnerLock{SessionID: "snapshot", PID: os.Getpid(), StartedAt: now.Add(time.Second)})
+			if other != nil {
+				_ = other.Release()
+			}
+			claimErr = err
+			return now
+		},
+	})
+	if err != nil {
+		t.Fatalf("ExportSession: %v", err)
+	}
+	if !errors.Is(claimErr, ErrOwnerLeaseBusy) {
+		t.Fatalf("snapshot owner claim = %v, want ErrOwnerLeaseBusy", claimErr)
+	}
+	if _, err := store.Owner("snapshot"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Owner after export = %v, want os.ErrNotExist", err)
 	}
 }
 
@@ -253,6 +359,9 @@ func TestImportSessionRejectsInvalidRawHistory(t *testing.T) {
 	if !errors.Is(err, ErrInvalidSessionArchive) {
 		t.Fatalf("ImportSession error = %v, want ErrInvalidSessionArchive", err)
 	}
+	if _, err := store.Get("bad-raw"); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("invalid raw history left session behind: %v", err)
+	}
 
 	archivePath = writeRawArchiveFixture(t, map[string]any{
 		"format_version": 1,
@@ -279,6 +388,79 @@ func TestImportSessionRejectsInvalidRawHistory(t *testing.T) {
 	_, err = ImportSession(store, archivePath, ImportOptions{})
 	if !errors.Is(err, ErrInvalidSessionArchive) {
 		t.Fatalf("ImportSession summary-shaped acpx history error = %v, want ErrInvalidSessionArchive", err)
+	}
+}
+
+func TestImportSessionEventLogFailureLeavesNoCollisionAndCanRetry(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(filepath.Join(dir, "sessions.json"))
+	now := time.Date(2026, 7, 13, 20, 15, 0, 0, time.UTC)
+	archivePath := writeRawArchiveFixture(t, map[string]any{
+		"format_version": 1,
+		"exported_at":    now.Format(time.RFC3339Nano),
+		"exported_by":    "acpx",
+		"session": map[string]any{
+			"record_id": "retry-import", "cwd_relative": ".", "created_at": now.Format(time.RFC3339Nano), "updated_at": now.Format(time.RFC3339Nano),
+			"state": map[string]any{"id": "retry-import", "status": "completed", "createdAt": now.Format(time.RFC3339Nano), "updatedAt": now.Format(time.RFC3339Nano)},
+		},
+		"history": []json.RawMessage{json.RawMessage(`{"jsonrpc":"2.0","id":1,"result":{}}`)},
+	})
+	eventsPath := filepath.Join(dir, "events")
+	if err := os.WriteFile(eventsPath, []byte("blocks event directory\n"), 0o600); err != nil {
+		t.Fatalf("write event directory blocker: %v", err)
+	}
+	if _, err := ImportSession(store, archivePath, ImportOptions{}); err == nil {
+		t.Fatal("ImportSession with blocked event directory succeeded")
+	}
+	if _, err := store.Get("retry-import"); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("failed import left session behind: %v", err)
+	}
+	if err := os.Remove(eventsPath); err != nil {
+		t.Fatalf("remove event directory blocker: %v", err)
+	}
+	if _, err := ImportSession(store, archivePath, ImportOptions{}); err != nil {
+		t.Fatalf("ImportSession retry: %v", err)
+	}
+	events, err := store.ReadEventLog("retry-import")
+	if err != nil || len(events) != 1 {
+		t.Fatalf("retry event log = %#v, %v; want one event", events, err)
+	}
+}
+
+func TestImportSessionPostCommitErrorKeepsRawHistory(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(filepath.Join(dir, "sessions.json"))
+	now := time.Date(2026, 7, 13, 22, 30, 0, 0, time.UTC)
+	archivePath := writeRawArchiveFixture(t, map[string]any{
+		"format_version": 1,
+		"exported_at":    now.Format(time.RFC3339Nano),
+		"exported_by":    "acpx",
+		"session": map[string]any{
+			"record_id": "postcommit-import", "cwd_relative": ".", "created_at": now.Format(time.RFC3339Nano), "updated_at": now.Format(time.RFC3339Nano),
+			"state": map[string]any{"id": "postcommit-import", "status": "completed", "createdAt": now.Format(time.RFC3339Nano), "updatedAt": now.Format(time.RFC3339Nano)},
+		},
+		"history": []json.RawMessage{json.RawMessage(`{"jsonrpc":"2.0","id":1,"result":{"imported":true}}`)},
+	})
+	store.sessionWriter = func(data storeFile) error {
+		if err := backgroundWriteJSONAtomic(store.path, data); err != nil {
+			return err
+		}
+		return newBackgroundPostCommitError(errors.New("session durability confirmation failed"))
+	}
+	if _, err := ImportSession(store, archivePath, ImportOptions{}); !errors.Is(err, ErrStoreCommitUnconfirmed) {
+		t.Fatalf("ImportSession error = %v, want ErrStoreCommitUnconfirmed", err)
+	}
+
+	reopened := NewStore(store.Path())
+	if _, err := reopened.Get("postcommit-import"); err != nil {
+		t.Fatalf("Get committed import: %v", err)
+	}
+	events, err := reopened.ReadEventLog("postcommit-import")
+	if err != nil {
+		t.Fatalf("ReadEventLog: %v", err)
+	}
+	if len(events) != 1 || events[0].Seq != 1 {
+		t.Fatalf("imported event projection = %#v, want one event", events)
 	}
 }
 
@@ -341,6 +523,51 @@ func TestImportSessionValidatesVersionAndCollisions(t *testing.T) {
 	_, err = ImportSession(store, writeArchiveFixture(t, archive), ImportOptions{SessionID: "other"})
 	if !errors.Is(err, ErrUnsupportedArchiveVersion) {
 		t.Fatalf("unsupported version error = %v, want ErrUnsupportedArchiveVersion", err)
+	}
+}
+
+func TestImportSessionCancellationIsTerminalAndCreateOnly(t *testing.T) {
+	store := NewStore(filepath.Join(t.TempDir(), "sessions.json"))
+	now := time.Date(2026, 7, 13, 13, 40, 0, 0, time.UTC)
+	archive := Archive{
+		FormatVersion: archiveFormatVersion,
+		ExportedAt:    now.Format(time.RFC3339Nano),
+		ExportedBy:    "ratchet-cli",
+		Session: ArchiveSession{
+			RecordID:    "canceled-import",
+			CWDRelative: ".",
+			CreatedAt:   now.Format(time.RFC3339Nano),
+			UpdatedAt:   now.Format(time.RFC3339Nano),
+			State: SessionRecord{
+				ID:        "canceled-import",
+				Status:    SessionStatusCancelRequested,
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
+		},
+	}
+	archivePath := writeArchiveFixture(t, archive)
+
+	imported, err := ImportSession(store, archivePath, ImportOptions{HomeDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("ImportSession: %v", err)
+	}
+	if imported.Status != SessionStatusCanceled {
+		t.Fatalf("Status = %q, want %q", imported.Status, SessionStatusCanceled)
+	}
+
+	archive.Session.State.Status = SessionStatusCompleted
+	archive.Session.State.Summary = "replacement"
+	_, err = ImportSession(store, writeArchiveFixture(t, archive), ImportOptions{HomeDir: t.TempDir()})
+	if !errors.Is(err, ErrSessionArchiveCollision) {
+		t.Fatalf("collision error = %v, want ErrSessionArchiveCollision", err)
+	}
+	rec, err := store.Get("canceled-import")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if rec.Status != SessionStatusCanceled || rec.Summary != "" {
+		t.Fatalf("record after collision = %#v", rec)
 	}
 }
 

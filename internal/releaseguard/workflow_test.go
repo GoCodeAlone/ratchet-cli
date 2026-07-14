@@ -146,6 +146,16 @@ func TestCIRequiresWindowsProviderDurability(t *testing.T) {
 		"go test -tags tui_smoke ./internal/tui -run 'WindowsConPTYProviderSave' -count=1 -timeout=10m")
 }
 
+func TestCIRequiresNativeWindowsBackgroundPersistence(t *testing.T) {
+	workflow := loadWorkflow(t, ".github/workflows/ci.yml")
+	job := requireJob(t, workflow, "windows-conpty-smoke")
+	if job.RunsOn != "windows-2025" {
+		t.Fatalf("windows-conpty-smoke runs-on = %q, want windows-2025", job.RunsOn)
+	}
+	requireRun(t, job, "Run Windows ACP background persistence tests",
+		"go test ./internal/acpclient -run '^TestBackgroundWindows' -count=1")
+}
+
 func TestReleaseWorkflowPrePublishGuards(t *testing.T) {
 	workflow := loadWorkflow(t, ".github/workflows/release.yml")
 	job := requireJob(t, workflow, "release")

@@ -1,10 +1,15 @@
 package daemon
 
 import (
-	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 
 	_ "modernc.org/sqlite"
 )
@@ -22,15 +27,22 @@ func newTestCronDB(t *testing.T) *sql.DB {
 	return db
 }
 
+func startTestCronScheduler(t *testing.T, scheduler *CronScheduler) {
+	t.Helper()
+	if err := scheduler.Start(t.Context()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(scheduler.Close)
+}
+
 func TestCronScheduler_CreateInterval(t *testing.T) {
 	db := newTestCronDB(t)
 	ticks := make(chan string, 10)
 	cs := NewCronScheduler(db, func(sessionID, command string) {
 		ticks <- command
 	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	startTestCronScheduler(t, cs)
+	ctx := t.Context()
 
 	job, err := cs.Create(ctx, "sess1", "100ms", "ping")
 	if err != nil {
@@ -56,9 +68,8 @@ func TestCronScheduler_Pause(t *testing.T) {
 	cs := NewCronScheduler(db, func(sessionID, command string) {
 		ticks <- command
 	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	startTestCronScheduler(t, cs)
+	ctx := t.Context()
 
 	job, err := cs.Create(ctx, "sess1", "50ms", "work")
 	if err != nil {
@@ -96,9 +107,8 @@ func TestCronScheduler_Resume(t *testing.T) {
 	cs := NewCronScheduler(db, func(sessionID, command string) {
 		ticks <- command
 	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	startTestCronScheduler(t, cs)
+	ctx := t.Context()
 
 	job, err := cs.Create(ctx, "sess1", "50ms", "work")
 	if err != nil {
@@ -136,9 +146,8 @@ func TestCronScheduler_Stop(t *testing.T) {
 	cs := NewCronScheduler(db, func(sessionID, command string) {
 		ticks <- command
 	})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	startTestCronScheduler(t, cs)
+	ctx := t.Context()
 
 	job, err := cs.Create(ctx, "sess1", "50ms", "work")
 	if err != nil {
@@ -181,9 +190,10 @@ func TestCronScheduler_PersistReload(t *testing.T) {
 	ticks := make(chan string, 10)
 
 	cs1 := NewCronScheduler(db, func(_, cmd string) { ticks <- cmd })
-	ctx := context.Background()
+	startTestCronScheduler(t, cs1)
+	ctx := t.Context()
 
-	job, err := cs1.Create(ctx, "sess1", "50ms", "reload-cmd")
+	_, err := cs1.Create(ctx, "sess1", "50ms", "reload-cmd")
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -194,20 +204,12 @@ func TestCronScheduler_PersistReload(t *testing.T) {
 		t.Fatal("no tick from first scheduler")
 	}
 
-	// Simulate restart: stop old, create new scheduler with same DB.
-	if err := cs1.Stop(ctx, job.ID); err != nil {
-		t.Fatalf("Stop: %v", err)
-	}
-	// Reset to active so reload picks it up.
-	if _, err := db.Exec(`UPDATE cron_jobs SET status='active' WHERE id=?`, job.ID); err != nil {
-		t.Fatal(err)
-	}
+	// Simulate a daemon restart without disabling the durable active job.
+	cs1.Close()
 
 	ticks2 := make(chan string, 10)
 	cs2 := NewCronScheduler(db, func(_, cmd string) { ticks2 <- cmd })
-	if err := cs2.Start(ctx); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
+	startTestCronScheduler(t, cs2)
 
 	select {
 	case cmd := <-ticks2:
@@ -218,12 +220,42 @@ func TestCronScheduler_PersistReload(t *testing.T) {
 		t.Fatal("no tick after reload")
 	}
 
-	// Cleanup.
-	cs2.mu.Lock()
-	for _, e := range cs2.entries {
-		e.cancel()
+}
+
+func TestCronScheduler_CreateAfterCloseDoesNotPersist(t *testing.T) {
+	db := newTestCronDB(t)
+	cs := NewCronScheduler(db, nil)
+	if err := cs.Start(t.Context()); err != nil {
+		t.Fatalf("Start: %v", err)
 	}
-	cs2.mu.Unlock()
+	cs.Close()
+
+	if _, err := cs.Create(t.Context(), "session-1", time.Hour.String(), "tick"); !errors.Is(err, errCronSchedulerClosed) {
+		t.Fatalf("Create error = %v, want errCronSchedulerClosed", err)
+	}
+	var count int
+	if err := db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM cron_jobs`).Scan(&count); err != nil {
+		t.Fatalf("count cron jobs: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("persisted cron jobs = %d, want 0", count)
+	}
+}
+
+func TestCronRPCsMapClosedSchedulerToFailedPrecondition(t *testing.T) {
+	cs := NewCronScheduler(newTestCronDB(t), nil)
+	startTestCronScheduler(t, cs)
+	cs.Close()
+	svc := &Service{cron: cs}
+
+	_, err := svc.CreateCron(t.Context(), &pb.CreateCronReq{SessionId: "session-1", Schedule: time.Hour.String(), Command: "tick"})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("CreateCron code = %s, want %s: %v", status.Code(err), codes.FailedPrecondition, err)
+	}
+	_, err = svc.ResumeCron(t.Context(), &pb.CronJobReq{JobId: "job-1"})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("ResumeCron code = %s, want %s: %v", status.Code(err), codes.FailedPrecondition, err)
+	}
 }
 
 func TestParseSchedule(t *testing.T) {

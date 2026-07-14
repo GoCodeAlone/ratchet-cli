@@ -183,8 +183,7 @@ The ACP client queue persists prompt text under the user's XDG state directory.
 Do not use `--no-wait` for prompts that should not be written to local disk.
 `ratchet acp client watch` is an explicit foreground worker: it drains queued
 prompts only while the operator-started command is running and still requires an
-explicit `--command` or `--agent` launch target. It is not a hidden daemon
-background drain.
+explicit `--command` or `--agent` launch target.
 
 Reviewed ACP launch profiles make repeated client runs safer:
 
@@ -199,6 +198,27 @@ Profiles store command, args, cwd, and env key names only, never secret values.
 Use `ratchet acp client profiles verify` as a credential-free CI contract check
 for trusted profiles. `--all` verifies trusted profiles and reports untrusted
 profiles as skipped without printing prompts, responses, or env values.
+
+For an unattended, per-session drain, use a built-in agent or trusted profile
+and acknowledge the execution policy explicitly:
+
+```sh
+ratchet acp client background start work --agent local --acknowledge-unattended
+ratchet acp client background status work --json
+ratchet acp client background stop work
+```
+
+Background start accepts a built-in agent name or profile name, not a raw
+command or argv. Built-ins use compiled descriptors; custom stored agents must
+use trusted profiles. Descriptor pinning binds the policy to the resolved launch
+definition. The daemon resumes an unchanged policy after restart; a missing,
+untrusted, or changed profile blocks the drain with no automatic retry until the
+operator reviews the status and starts it again. Status and daemon logs expose
+metadata, not queued prompt, environment, or command text. Windows parity for
+persisted policy safety is enforced by native DACL/attack tests, and the command
+is cross-built for Windows. The production daemon IPC remains Unix-only, so the
+daemon-owned runtime path currently requires a Unix host. This is not a general
+scheduler: arbitrary ACP scheduling remains deferred.
 
 ### Archives, Compare, And Flow Replay
 

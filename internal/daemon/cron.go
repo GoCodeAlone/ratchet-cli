@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -34,12 +35,16 @@ type cronEntry struct {
 
 // CronScheduler manages cron jobs with SQLite persistence.
 type CronScheduler struct {
-	db         *sql.DB
-	onTick     func(sessionID, command string)
-	mu         sync.Mutex
-	entries    map[string]*cronEntry
-	parentCtx  context.Context // propagated to goroutines spawned by Resume
+	db        *sql.DB
+	onTick    func(sessionID, command string)
+	mu        sync.Mutex
+	entries   map[string]*cronEntry
+	parentCtx context.Context // propagated to goroutines spawned by Resume
+	closed    bool
+	wg        sync.WaitGroup
 }
+
+var errCronSchedulerClosed = errors.New("cron scheduler is closed")
 
 // NewCronScheduler creates a scheduler. onTick is called each time a job fires.
 func NewCronScheduler(db *sql.DB, onTick func(sessionID, command string)) *CronScheduler {
@@ -55,6 +60,10 @@ func NewCronScheduler(db *sql.DB, onTick func(sessionID, command string)) *CronS
 // The context is stored so Resume can propagate it to restarted goroutines.
 func (cs *CronScheduler) Start(ctx context.Context) error {
 	cs.mu.Lock()
+	if cs.closed {
+		cs.mu.Unlock()
+		return errCronSchedulerClosed
+	}
 	cs.parentCtx = ctx
 	cs.mu.Unlock()
 	rows, err := cs.db.QueryContext(ctx,
@@ -71,7 +80,9 @@ func (cs *CronScheduler) Start(ctx context.Context) error {
 			log.Printf("cron: scan job: %v", err)
 			continue
 		}
-		cs.startEntry(j)
+		if err := cs.startEntry(j); err != nil {
+			return err
+		}
 	}
 	return rows.Err()
 }
@@ -95,14 +106,18 @@ func (cs *CronScheduler) Create(ctx context.Context, sessionID, schedule, comman
 	nextRun := time.Now().Add(mustParseScheduleDuration(schedule))
 	j.NextRun = nextRun.UTC().Format(time.RFC3339)
 
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	if cs.closed {
+		return CronJob{}, errCronSchedulerClosed
+	}
 	if _, err := cs.db.ExecContext(ctx,
 		`INSERT INTO cron_jobs (id, session_id, schedule, command, status, next_run, run_count) VALUES (?,?,?,?,?,?,?)`,
 		j.ID, j.SessionID, j.Schedule, j.Command, j.Status, j.NextRun, j.RunCount,
 	); err != nil {
 		return CronJob{}, fmt.Errorf("persist cron job: %w", err)
 	}
-
-	cs.startEntry(j)
+	cs.startEntryLocked(j)
 	return j, nil
 }
 
@@ -151,12 +166,12 @@ func (cs *CronScheduler) Pause(ctx context.Context, jobID string) error {
 
 // Resume restarts a paused job.
 func (cs *CronScheduler) Resume(ctx context.Context, jobID string) error {
-	// Extract parentCtx before acquiring entry.mu to avoid lock-order inversion
-	// (cs.mu must always be acquired before entry.mu).
 	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	if cs.closed {
+		return errCronSchedulerClosed
+	}
 	entry, ok := cs.entries[jobID]
-	parent := cs.parentCtx
-	cs.mu.Unlock()
 	if !ok {
 		return fmt.Errorf("cron job %s not found", jobID)
 	}
@@ -176,11 +191,7 @@ func (cs *CronScheduler) Resume(ctx context.Context, jobID string) error {
 		return err
 	}
 
-	newCtx, cancel := context.WithCancel(parent)
-	entry.mu.Lock()
-	entry.cancel = cancel
-	entry.mu.Unlock()
-	go cs.run(newCtx, entry)
+	cs.restartEntryLocked(entry)
 	return nil
 }
 
@@ -204,19 +215,57 @@ func (cs *CronScheduler) Stop(ctx context.Context, jobID string) error {
 // startEntry launches the goroutine for a job using the daemon's parent context.
 // Using parentCtx (not the RPC request context) ensures the goroutine survives
 // after the CreateCron RPC returns.
-func (cs *CronScheduler) startEntry(j CronJob) {
+func (cs *CronScheduler) startEntry(j CronJob) error {
 	cs.mu.Lock()
-	parent := cs.parentCtx
-	cs.mu.Unlock()
+	defer cs.mu.Unlock()
+	if cs.closed {
+		return errCronSchedulerClosed
+	}
+	cs.startEntryLocked(j)
+	return nil
+}
 
-	runCtx, cancel := context.WithCancel(parent)
+func (cs *CronScheduler) startEntryLocked(j CronJob) {
+	runCtx, cancel := context.WithCancel(cs.parentCtx)
 	entry := &cronEntry{job: j, cancel: cancel}
-
-	cs.mu.Lock()
 	cs.entries[j.ID] = entry
-	cs.mu.Unlock()
+	cs.wg.Add(1)
+	go func() {
+		defer cs.wg.Done()
+		cs.run(runCtx, entry)
+	}()
+}
 
-	go cs.run(runCtx, entry)
+func (cs *CronScheduler) restartEntryLocked(entry *cronEntry) {
+	runCtx, cancel := context.WithCancel(cs.parentCtx)
+	entry.mu.Lock()
+	entry.cancel = cancel
+	entry.mu.Unlock()
+	cs.wg.Add(1)
+	go func() {
+		defer cs.wg.Done()
+		cs.run(runCtx, entry)
+	}()
+}
+
+// Close stops in-memory scheduling and waits for admitted callbacks. Durable
+// active job state remains unchanged so a later daemon can resume it.
+func (cs *CronScheduler) Close() {
+	if cs == nil {
+		return
+	}
+	cs.mu.Lock()
+	if !cs.closed {
+		cs.closed = true
+		for _, entry := range cs.entries {
+			entry.mu.Lock()
+			cancel := entry.cancel
+			entry.mu.Unlock()
+			cancel()
+		}
+	}
+	cs.mu.Unlock()
+	cs.wg.Wait()
 }
 
 // run is the per-job ticker goroutine.

@@ -47,7 +47,7 @@ var policyMatrixRows = []policyMatrixRow{
 		Layer:  "ACP client queue/drain",
 		Owner:  "internal/acpclient",
 		Status: "explicit-operator",
-		Rule:   "Queued prompts execute only through operator-started watch or drain commands; background daemon drain is deferred.",
+		Rule:   "Foreground watch/drain requires an operator launch target; background drain requires explicit acknowledgement and a trusted profile pinned to the session policy.",
 	},
 	{
 		Layer:  "ACP archive/compare/replay artifacts",
@@ -59,7 +59,7 @@ var policyMatrixRows = []policyMatrixRow{
 		Layer:  "ACP launch profiles",
 		Owner:  "internal/acpclient profile store plus plugin templates",
 		Status: "supported",
-		Rule:   "Trusted local launch specs may be used by explicit foreground ACP commands.",
+		Rule:   "Trusted local launch specs may be used by explicit foreground ACP commands and acknowledged per-session background drains.",
 	},
 	{
 		Layer:  "Release artifact gates",
@@ -110,10 +110,10 @@ var policyMatrixRows = []policyMatrixRow{
 		Rule:   "Team messaging exists; per-agent permission scopes and channel routing need a future design.",
 	},
 	{
-		Layer:  "Background drain",
+		Layer:  "Arbitrary ACP scheduling",
 		Owner:  "future design",
 		Status: "deferred",
-		Rule:   "Hidden background execution needs owner/session scope, cancellation, audit evidence, and redaction boundaries.",
+		Rule:   "Cron-like or command-bearing ACP scheduling beyond acknowledged per-session drains needs a future policy design.",
 	},
 	{
 		Layer:  "Managed hooks",

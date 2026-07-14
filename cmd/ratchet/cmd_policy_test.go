@@ -51,12 +51,16 @@ func TestRunPolicyMatrixJSON(t *testing.T) {
 	}
 	statuses := map[string]bool{}
 	layers := map[string]bool{}
+	var queueDrain policyMatrixRow
 	for _, row := range payload.Rows {
 		if row.Layer == "" || row.Owner == "" || row.Status == "" || row.Rule == "" {
 			t.Fatalf("incomplete row: %#v", row)
 		}
 		statuses[row.Status] = true
 		layers[row.Layer] = true
+		if row.Layer == "ACP client queue/drain" {
+			queueDrain = row
+		}
 	}
 	for _, want := range []string{"supported", "partial", "explicit-operator", "deferred"} {
 		if !statuses[want] {
@@ -68,6 +72,12 @@ func TestRunPolicyMatrixJSON(t *testing.T) {
 			t.Fatalf("json layers missing %q", want)
 		}
 	}
+	if queueDrain.Status != "explicit-operator" || !strings.Contains(queueDrain.Rule, "acknowledgement") || !strings.Contains(queueDrain.Rule, "trusted profile") {
+		t.Fatalf("ACP client queue/drain row = %#v, want explicit acknowledgement and trusted profile", queueDrain)
+	}
+	if layers["Background drain"] || !layers["Arbitrary ACP scheduling"] {
+		t.Fatalf("policy layers retain deferred background drain or omit arbitrary scheduling: %#v", layers)
+	}
 }
 
 func TestRunPolicyMatrixStatusFilterText(t *testing.T) {
@@ -76,7 +86,7 @@ func TestRunPolicyMatrixStatusFilterText(t *testing.T) {
 		t.Fatalf("runPolicy matrix --status deferred: %v", err)
 	}
 	out := stdout.String()
-	for _, want := range []string{"Background drain", "Managed hooks", "deferred"} {
+	for _, want := range []string{"Arbitrary ACP scheduling", "Managed hooks", "deferred"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("filtered policy matrix missing %q:\n%s", want, out)
 		}

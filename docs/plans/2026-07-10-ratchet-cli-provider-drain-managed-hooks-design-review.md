@@ -345,3 +345,355 @@ shared panic-safe worker guard.
 
 **Verdict reasoning:** PASS; all Critical/Important findings D1-D36 are resolved.
 D37-D39 are straightforward conservative implementation refinements.
+
+## Cycle 8: Task 6 Authority-First Rewrite
+
+**Status:** FAIL
+
+**Findings (Critical):** none.
+
+**Findings (Important):**
+
+- `D40` Cancellation authority read errors were undefined and boolean callers
+  could continue unattended work. Require an error-bearing, fail-closed check.
+- `D41` A compatibility sidecar cannot atomically notify an older worker after
+  primary commit. Define degradation, reconciliation, and quiesced downgrade.
+- `D42` Append-only tail repair cannot unblock startup `Read`. Use one lock-held
+  audit repair primitive from both read and append.
+- `D43` Newline commit, required fields/actions, malformed committed records,
+  and unknown-field compatibility were unspecified.
+- `D44` Path-only canonicalization leaves parent retarget and hard-link races.
+  Pin lock/data operations to one parent identity and validate the opened file.
+- `D46` Shared append repair could alter raw ACP event-log semantics. Share only
+  secure open; keep framing/repair audit-specific.
+- `D47` The rewrite lacked explicit crash, process-race, restart, downgrade, and
+  native Windows proofs.
+
+**Findings (Minor):**
+
+- `D45` Specify `list IDs -> lease -> reload`, missing behavior, and no writes
+  after release.
+- `D48` Specify hash field order, nil/empty, env ordering, and legacy retrust.
+- `D49` State that AIX process-locked mutation is unsupported/fail-closed even
+  though cross-compilation remains required.
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Guidance/intent | Finding | Cancellation and owner-only claims were incomplete. |
+| Assumptions/failure/rollback | Finding | Authority errors, old-worker notification, and startup repair were undefined. |
+| Security/concurrency | Finding | Parent identity, hard links, and transition lock order needed contracts. |
+| Compatibility/portability | Finding | JSON/hash evolution, downgrade, Windows, and AIX needed explicit behavior. |
+| Repo precedent/scope | Finding | Audit repair must not change raw event logs. |
+| Validation | Finding | Real restart/process/native-platform proofs were missing. |
+| YAGNI/infrastructure | Clean | No SQLite, migration, or external infrastructure is justified. |
+
+**Alternatives:** audit-specific recovery over shared secure open; honest
+best-effort legacy projection with reconciliation instead of atomicity claims.
+
+**Verdict reasoning:** FAIL; D40-D44, D46, and D47 remain Important.
+
+## Cycle 9: Task 6 Authority-First Rewrite
+
+**Status:** FAIL
+
+**Cycle 8 mapping:** D42, D45, D46, D48 resolved; D40, D41, D43, D44, D47
+remained open through D51-D56; D49 behavior resolved but lacked proof.
+
+**Findings (Critical):**
+
+- `D50` Cancellation was not monotonic: queue/lifecycle writeback could replace
+  `cancel_requested` after a successful authority check.
+
+**Findings (Important):**
+
+- `D51` Boolean cancellation callbacks could not propagate authority/ACP-cancel
+  errors into prompt and child-process termination.
+- `D52` Mutating audit `Read` lacked the same pinned-handle protections as
+  append; audit needed a dedicated owner-only namespace.
+- `D53` Projection reconciliation lock order and an executable quiesced
+  downgrade-readiness operation were undefined.
+- `D54` Fault injection did not prove real crash, cross-process race,
+  mixed-reader executable, native Windows, and unsupported-target boundaries.
+- `D55` Profile mutation could race trusted resolution and durable launch.
+
+**Findings (Minor):**
+
+- `D56` Enumerate required audit fields and action/outcome consistency.
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Guidance/authority/failure | Finding | D50-D51 violated fail-closed authority. |
+| Crash/restart/validation | Finding | D54 required process-shaped proof. |
+| Security/concurrency | Finding | D52/D55 required pinned audit/profile ownership. |
+| Compatibility/rollback | Finding | D53 required transactional reconciliation and readiness. |
+| Framing/schema | Finding | D56 required explicit semantic validation. |
+| Intent/scope/YAGNI/infra | Clean | Locked scope and no-migration approach remain intact. |
+
+**Alternatives:** sticky conditional queue claims; one owner-only,
+handle-relative audit transaction layer.
+
+**Verdict reasoning:** FAIL; D50 is Critical and D51-D55 remain Important.
+
+## Cycle 10: Monotonic Cancellation and Recovery Rewrite
+
+**Status:** FAIL
+
+**Findings (Critical):**
+
+- `D57` Enqueue, stale recovery, and lifecycle replacement remained independent
+  status writers that could clear the cancellation latch.
+
+**Findings (Important):**
+
+- `D58` Error/cancel watcher precedence, grace, forced kill, join, and reaping
+  were not causal or deterministic.
+- `D59` Downgrade readiness lacked durable admission/lifetime semantics; explicit
+  unsupported downgrade is safer.
+- `D60` Audit errors after newline write lacked commit classification and
+  idempotent retry reconciliation.
+- `D61` A worker goroutine was not child-start acknowledgement for releasing a
+  profile trust lease.
+- `D62` Windows pinned-parent/file-ID and opened-object validation mechanics were
+  unnamed.
+- `D63` Cancellation and profile races lacked separate-process real-fixture
+  proofs.
+- `D64` The proposed downgrade command was absent from the locked Task 8 command
+  contract and rollback.
+
+**Findings (Minor):**
+
+- `D65` Enumerate the exact audit action/outcome matrix and evolution rule.
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Guidance/state/failure | Finding | D57-D61 left state and commit ambiguity. |
+| Security/platform | Finding | D62 required named Windows mechanics. |
+| Validation/integration | Finding | D63 required real process interleavings. |
+| Rollback/scope | Finding | D59/D64 made downgrade non-executable. |
+| YAGNI/intent/infra | Clean | No migration or remote control plane was added. |
+
+**Alternatives:** one guarded session transition function; upgrade-forward-only
+released recovery.
+
+**Verdict reasoning:** FAIL; D57 is Critical and D58-D64 remain Important.
+
+## Cycle 11: Authoritative Transition Closure
+
+**Status:** FAIL
+
+**Findings (Critical):** none.
+
+**Findings (Important):**
+
+- `D66` Guarded transitions omitted whole-record/import writers; require every
+  writer to use the guard or an explicit create-only collision check.
+- `D67` Cancellation observation and a blocked ACP cancel send lacked one
+  bounded first-cause contract; latch `ErrCancelRequested`, bound send, then
+  kill/reap and join every watcher/send goroutine.
+- `D68` Last-record audit deduplication fails after an interleaved append; use a
+  stable record ID or scan all committed records for complete equality.
+- `D69` Windows parent revalidation retained a replacement window; exclude
+  `FILE_SHARE_DELETE` and pin `FileIdInfo` before child open/validation.
+- `D70` Profile mutation proof could remain in-process; require a second
+  mutator process racing a fixture child's real start acknowledgement.
+- `D71` Task 8 rollback conflicted with upgrade-forward-only released state;
+  permit source reversion only before release and retain authority-aware state
+  handling in post-release patches.
+
+**Prior mapping:** D57-D65 resolved or narrowed to D66-D71. Sticky cancellation,
+session-primary projection, ID/lease/reload transitions, audit schema, Unix
+`openat`, and AIX fail-before-write remain clean.
+
+**Verdict reasoning:** FAIL; D66-D71 are concrete Important contract gaps.
+
+## Cycle 12: Executable Authority Contract
+
+**Status:** FAIL
+
+**Findings (Critical):** none.
+
+**Findings (Important):**
+
+- `D72` Task 6 omitted store/archive/client/drain/platform files and the writer
+  inventory/process proofs required by its rewrite. Recommendation: add an
+  authority-first execution backport inside Task 6; manifest stays unchanged.
+- `D73` Execution-context cancellation could cancel the ACP cancel send, and
+  authority failures were conflated with user cancellation. Recommendation:
+  define callback outcomes and use an independent bounded send context.
+- `D74` Visible-metadata-derived audit IDs can collide for distinct same-time
+  events. Recommendation: persist a random event ID before first append.
+- `D75` Native Windows attack tests were not named in the plan despite the
+  existing `^TestBackgroundWindows` CI selector. Recommendation: name the tests
+  and require that CI job, not only a cross-build.
+- `D76` A copied-profile resolver cannot retain a process lease through real
+  `exec.Cmd.Start`. Recommendation: define a lease-owning callback boundary and
+  a second-process fixture race.
+- `D77` Released downgrade was advisory rather than mechanically blocked.
+  Recommendation: isolate old readers or explicitly accept unsupported manual
+  downgrade as operator risk.
+
+**D66-D71 mapping:** D66 partial via D72; D67 partial via D73; D68 open via D74;
+D69 partial via D75; D70 open via D76; D71 partial via D77.
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Finding | D75 conflicts with the named Windows runtime-proof rule. |
+| Assumptions under attack | Finding | D73/D77 relied on cancellation/downgrade behavior without enforcement. |
+| Repo-precedent conflicts | Finding | D76 lacked process-lock ownership for file-backed mutation. |
+| Artifact-class precedent | Finding | Existing Windows selection needs explicitly named test artifacts. |
+| YAGNI violations | Clean | Rewrite remains demonstrated state/security hardening. |
+| Missing failure modes | Finding | Send-context loss, ID collision, and old-binary access were open. |
+| Security/privacy architecture | Finding | Native Windows privileged-path attacks lacked proof. |
+| Infrastructure impact | Clean | No cloud resource changes. |
+| Multi-component validation | Finding | Process/profile/store/Windows boundaries were incomplete. |
+| Declared integration proof | Finding | ACP recovery lacked required process/native cases. |
+| Contributed UI rendering proof | Clean | Task 6 contributes no UI. |
+| Rollback story | Finding | Released rollback was advisory. |
+| Simpler alternative not considered | Finding | Persisted event IDs simplify audit identity. |
+| User-intent drift | Clean | Locked daemon-drain scope is preserved. |
+| Existence/runtime-validity | Finding | Runtime surfaces required by the contract were omitted. |
+
+**Alternative:** persist one transition event ID and cancellation/audit payload;
+reuse the ID on retry and let the profile-store callback own launch trust.
+
+**Verdict reasoning:** FAIL; D72-D77 require contract backports or an explicit
+accepted risk before implementation.
+
+## Cycle 13: Release-Shaped Authority Proofs
+
+**Status:** FAIL
+
+**Findings (Critical):** none.
+
+**Findings (Important):**
+
+- `D78` Standalone `WithTrustedProfile` proof could pass while the production
+  manager/`WatchQueue` path launched from copied profile data. Recommendation:
+  carry the lease-owned closure through production `StartRunner` and prove the
+  real fixture start blocks a second mutator process.
+- `D79` Same-process audit retry/interleaving could not prove owner lock,
+  restart, or all-record scan behavior across daemons. Recommendation: use
+  cooperating subprocesses around the unconfirmed retry.
+
+**Findings (Minor):**
+
+- `D80` The broad Windows selector could pass after one named attack test was
+  deleted. Recommendation: releaseguard all four declarations and the selector.
+
+**D72-D77 mapping:** D72/D73/D77 closed; D74/D76 contracts closed with D79/D78
+proof gaps; D75 contract closed with Minor D80. D66-D71 remain closed.
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Project-guidance conflicts | Clean | Go/local-state/Windows/audit guidance preserved. |
+| Assumptions under attack | Finding | Standalone callback proof did not guarantee production wiring. |
+| Repo-precedent conflicts | Finding | Audit proof omitted established subprocess contention. |
+| Artifact-class precedent | Finding | Broad Windows selection lacked non-vacuous presence proof. |
+| YAGNI violations | Clean | Rewrite remains demonstrated hardening. |
+| Missing failure modes | Finding | Cross-process retry/interleaving was not required. |
+| Security/privacy architecture | Clean | Metadata-only, fail-closed boundaries remain. |
+| Infrastructure impact | Clean | No infrastructure changes. |
+| Multi-component validation | Finding | Manager/profile and multi-daemon proofs were incomplete. |
+| Declared integration proof | Finding | Production lease-owned launch race was missing. |
+| Contributed UI rendering proof | Clean | No UI contribution. |
+| Rollback story | Clean | Upgrade-forward recovery and accepted risk are explicit. |
+| Simpler alternative not considered | Clean | Lease-owned closure is minimal. |
+| User-intent drift | Clean | Manifest and Windows support preserved. |
+| Existence/runtime-validity | Finding | Selector did not require all named tests to exist. |
+
+**Alternative:** carry the trusted launch closure, not copied profile data,
+through `WatchOptions.StartRunner`.
+
+**Verdict reasoning:** FAIL; D78-D79 are Important proof-wiring gaps. D80 is
+Minor but cheap to close in the same Task 6 releaseguard.
+
+## Cycle 14: Restart-Shaped Audit Proof
+
+**Status:** FAIL
+
+**Findings (Critical):** none.
+
+**Findings (Important):**
+
+- `D81` Cooperating live subprocesses did not require a fresh-process retry or
+  observe lock ownership. Recommendation: A commits-unconfirmed and exits; B
+  appends under the lock; fresh A2 reloads the transition and retries; assert
+  peer blocking and one record per ID.
+
+**Findings (Minor):**
+
+- `D82` Required audit fields omitted `action` and `recordId`.
+- `D83` Task 6's `gofmt` omitted its new releaseguard source.
+
+**D78-D80 mapping:** D78/D80 closed. D79 remains open only through D81.
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Project guidance | Clean | Go, metadata-only audit, and Windows CI preserved. |
+| Assumptions | Finding | Live process coordination did not prove restart. |
+| Repo/artifact precedent | Clean | Existing subprocess/releaseguard locations fit. |
+| YAGNI | Clean | Authority controls remain justified. |
+| Failure modes | Finding | Restart after unconfirmed commit was under-specified. |
+| Security/privacy | Finding | Required schema identity/action fields were ambiguous. |
+| Infrastructure | Clean | No infrastructure change. |
+| Multi-component validation | Finding | Fresh-process recovery boundary was missing. |
+| Declared integration proof | Finding | Audit process integration needed restart proof. |
+| Contributed UI proof | Clean | No UI contribution. |
+| Rollback | Clean | Accepted upgrade-forward boundary remains explicit. |
+| Simpler alternative | Clean | A restart harness directly proves the boundary. |
+| Intent drift | Clean | Manifest unchanged. |
+| Existence/runtime validity | Clean | Production seams and selectors exist. |
+
+**Alternative:** make the audit helper itself a three-stage A/B/A2 restart
+harness driven only by durable transition/audit files.
+
+**Verdict reasoning:** FAIL until D81 is explicit; D82-D83 are Minor convergence
+corrections.
+
+## Cycle 15: Authority Rewrite Convergence
+
+**Status:** PASS
+
+**Findings (Critical/Important/Minor):** none. No `D84` issued.
+
+**D81-D83 mapping:** D81 closed by A/B/A2 fresh-process replay, lock blocking,
+durable transition reload, and one record per ID. D82 closed by requiring
+`recordId` and `action`. D83 closed by formatting the releaseguard source.
+D66-D80 remain closed or explicitly accepted.
+
+**Bug-class scan transcript:**
+
+| Class | Result | Note |
+|---|---|---|
+| Project guidance | Clean | Local-first Go, audit, and Windows constraints hold. |
+| Assumptions | Clean | Fresh-process and real-start proofs remove cached/copied assumptions. |
+| Repo/artifact precedent | Clean | Existing process-lock, CI, and releaseguard patterns are used. |
+| YAGNI | Clean | No migration, protocol expansion, or downgrade barrier. |
+| Failure modes | Clean | Unconfirmed append, restart, contention, cancellation, and AIX are named. |
+| Security/privacy | Clean | Metadata-only owner-pinned audit mutation remains. |
+| Infrastructure | Clean | Local files/locks only. |
+| Multi-component validation | Clean | Manager/start and process-audit boundaries are explicit. |
+| Declared integration proof | Clean | Native Windows CI and releaseguard are required. |
+| Contributed UI proof | Clean | No UI contribution. |
+| Rollback | Clean | Upgrade-forward policy and accepted operator risk are explicit. |
+| Simpler alternative | Clean | One test-only restart harness is minimal. |
+| Intent drift | Clean | Locked manifest unchanged. |
+| Existence/runtime validity | Clean | Production seams/selectors exist. |
+
+**Alternative:** keep A/B/A2 narrowly test-only and drive it solely from
+persisted transition/audit paths.
+
+**Verdict reasoning:** PASS; no Critical/Important findings remain and the
+authority-first Task 6 contract is executable without manifest change.

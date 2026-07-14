@@ -142,6 +142,8 @@ jobs:
           cache: true
       - name: Configure Git for private modules
         run: git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
+      - name: Run Windows ACP background persistence tests
+        run: go test ./internal/acpclient -run '^TestBackgroundWindows' -count=1
       - name: Run Windows daemon lock tests
         run: go test ./internal/daemon -run 'DaemonLock' -count=1
       - name: Run Windows ConPTY provider save

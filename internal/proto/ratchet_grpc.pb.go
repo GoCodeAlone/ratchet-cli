@@ -19,81 +19,85 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	RatchetDaemon_CreateSession_FullMethodName          = "/ratchet.RatchetDaemon/CreateSession"
-	RatchetDaemon_ListSessions_FullMethodName           = "/ratchet.RatchetDaemon/ListSessions"
-	RatchetDaemon_ListSessionMessages_FullMethodName    = "/ratchet.RatchetDaemon/ListSessionMessages"
-	RatchetDaemon_CloneSession_FullMethodName           = "/ratchet.RatchetDaemon/CloneSession"
-	RatchetDaemon_ForkSession_FullMethodName            = "/ratchet.RatchetDaemon/ForkSession"
-	RatchetDaemon_GetSessionTree_FullMethodName         = "/ratchet.RatchetDaemon/GetSessionTree"
-	RatchetDaemon_ListSessionCompactions_FullMethodName = "/ratchet.RatchetDaemon/ListSessionCompactions"
-	RatchetDaemon_UpdateSessionSummary_FullMethodName   = "/ratchet.RatchetDaemon/UpdateSessionSummary"
-	RatchetDaemon_AttachSession_FullMethodName          = "/ratchet.RatchetDaemon/AttachSession"
-	RatchetDaemon_DetachSession_FullMethodName          = "/ratchet.RatchetDaemon/DetachSession"
-	RatchetDaemon_KillSession_FullMethodName            = "/ratchet.RatchetDaemon/KillSession"
-	RatchetDaemon_SendMessage_FullMethodName            = "/ratchet.RatchetDaemon/SendMessage"
-	RatchetDaemon_RespondToPermission_FullMethodName    = "/ratchet.RatchetDaemon/RespondToPermission"
-	RatchetDaemon_GetTrustState_FullMethodName          = "/ratchet.RatchetDaemon/GetTrustState"
-	RatchetDaemon_SetTrustMode_FullMethodName           = "/ratchet.RatchetDaemon/SetTrustMode"
-	RatchetDaemon_AddTrustRule_FullMethodName           = "/ratchet.RatchetDaemon/AddTrustRule"
-	RatchetDaemon_ResetTrust_FullMethodName             = "/ratchet.RatchetDaemon/ResetTrust"
-	RatchetDaemon_AddTrustGrant_FullMethodName          = "/ratchet.RatchetDaemon/AddTrustGrant"
-	RatchetDaemon_RevokeTrustGrant_FullMethodName       = "/ratchet.RatchetDaemon/RevokeTrustGrant"
-	RatchetDaemon_AddProvider_FullMethodName            = "/ratchet.RatchetDaemon/AddProvider"
-	RatchetDaemon_CommitProviderSave_FullMethodName     = "/ratchet.RatchetDaemon/CommitProviderSave"
-	RatchetDaemon_GetProviderOperation_FullMethodName   = "/ratchet.RatchetDaemon/GetProviderOperation"
-	RatchetDaemon_ListProviders_FullMethodName          = "/ratchet.RatchetDaemon/ListProviders"
-	RatchetDaemon_TestProvider_FullMethodName           = "/ratchet.RatchetDaemon/TestProvider"
-	RatchetDaemon_RemoveProvider_FullMethodName         = "/ratchet.RatchetDaemon/RemoveProvider"
-	RatchetDaemon_SetDefaultProvider_FullMethodName     = "/ratchet.RatchetDaemon/SetDefaultProvider"
-	RatchetDaemon_UpdateProviderModel_FullMethodName    = "/ratchet.RatchetDaemon/UpdateProviderModel"
-	RatchetDaemon_ListAgents_FullMethodName             = "/ratchet.RatchetDaemon/ListAgents"
-	RatchetDaemon_GetAgentStatus_FullMethodName         = "/ratchet.RatchetDaemon/GetAgentStatus"
-	RatchetDaemon_StartTeam_FullMethodName              = "/ratchet.RatchetDaemon/StartTeam"
-	RatchetDaemon_GetTeamStatus_FullMethodName          = "/ratchet.RatchetDaemon/GetTeamStatus"
-	RatchetDaemon_ApprovePlan_FullMethodName            = "/ratchet.RatchetDaemon/ApprovePlan"
-	RatchetDaemon_RejectPlan_FullMethodName             = "/ratchet.RatchetDaemon/RejectPlan"
-	RatchetDaemon_StartFleet_FullMethodName             = "/ratchet.RatchetDaemon/StartFleet"
-	RatchetDaemon_GetFleetStatus_FullMethodName         = "/ratchet.RatchetDaemon/GetFleetStatus"
-	RatchetDaemon_KillFleetWorker_FullMethodName        = "/ratchet.RatchetDaemon/KillFleetWorker"
-	RatchetDaemon_CreateCron_FullMethodName             = "/ratchet.RatchetDaemon/CreateCron"
-	RatchetDaemon_ListCrons_FullMethodName              = "/ratchet.RatchetDaemon/ListCrons"
-	RatchetDaemon_PauseCron_FullMethodName              = "/ratchet.RatchetDaemon/PauseCron"
-	RatchetDaemon_ResumeCron_FullMethodName             = "/ratchet.RatchetDaemon/ResumeCron"
-	RatchetDaemon_StopCron_FullMethodName               = "/ratchet.RatchetDaemon/StopCron"
-	RatchetDaemon_ListJobs_FullMethodName               = "/ratchet.RatchetDaemon/ListJobs"
-	RatchetDaemon_PauseJob_FullMethodName               = "/ratchet.RatchetDaemon/PauseJob"
-	RatchetDaemon_ResumeJob_FullMethodName              = "/ratchet.RatchetDaemon/ResumeJob"
-	RatchetDaemon_KillJob_FullMethodName                = "/ratchet.RatchetDaemon/KillJob"
-	RatchetDaemon_Health_FullMethodName                 = "/ratchet.RatchetDaemon/Health"
-	RatchetDaemon_Shutdown_FullMethodName               = "/ratchet.RatchetDaemon/Shutdown"
-	RatchetDaemon_CheckVersion_FullMethodName           = "/ratchet.RatchetDaemon/CheckVersion"
-	RatchetDaemon_RequestReload_FullMethodName          = "/ratchet.RatchetDaemon/RequestReload"
-	RatchetDaemon_RegisterMeshNode_FullMethodName       = "/ratchet.RatchetDaemon/RegisterMeshNode"
-	RatchetDaemon_MeshStream_FullMethodName             = "/ratchet.RatchetDaemon/MeshStream"
-	RatchetDaemon_BlackboardRead_FullMethodName         = "/ratchet.RatchetDaemon/BlackboardRead"
-	RatchetDaemon_BlackboardWrite_FullMethodName        = "/ratchet.RatchetDaemon/BlackboardWrite"
-	RatchetDaemon_BlackboardList_FullMethodName         = "/ratchet.RatchetDaemon/BlackboardList"
-	RatchetDaemon_ListTeams_FullMethodName              = "/ratchet.RatchetDaemon/ListTeams"
-	RatchetDaemon_KillTeam_FullMethodName               = "/ratchet.RatchetDaemon/KillTeam"
-	RatchetDaemon_RenameTeam_FullMethodName             = "/ratchet.RatchetDaemon/RenameTeam"
-	RatchetDaemon_TeamAddAgent_FullMethodName           = "/ratchet.RatchetDaemon/TeamAddAgent"
-	RatchetDaemon_TeamRemoveAgent_FullMethodName        = "/ratchet.RatchetDaemon/TeamRemoveAgent"
-	RatchetDaemon_AttachTeam_FullMethodName             = "/ratchet.RatchetDaemon/AttachTeam"
-	RatchetDaemon_SteerTeam_FullMethodName              = "/ratchet.RatchetDaemon/SteerTeam"
-	RatchetDaemon_DirectMessage_FullMethodName          = "/ratchet.RatchetDaemon/DirectMessage"
-	RatchetDaemon_RespondToHuman_FullMethodName         = "/ratchet.RatchetDaemon/RespondToHuman"
-	RatchetDaemon_ListPendingHuman_FullMethodName       = "/ratchet.RatchetDaemon/ListPendingHuman"
-	RatchetDaemon_StartProject_FullMethodName           = "/ratchet.RatchetDaemon/StartProject"
-	RatchetDaemon_ListProjects_FullMethodName           = "/ratchet.RatchetDaemon/ListProjects"
-	RatchetDaemon_PauseProject_FullMethodName           = "/ratchet.RatchetDaemon/PauseProject"
-	RatchetDaemon_ResumeProject_FullMethodName          = "/ratchet.RatchetDaemon/ResumeProject"
-	RatchetDaemon_KillProject_FullMethodName            = "/ratchet.RatchetDaemon/KillProject"
-	RatchetDaemon_GetProjectStatus_FullMethodName       = "/ratchet.RatchetDaemon/GetProjectStatus"
-	RatchetDaemon_CreateTask_FullMethodName             = "/ratchet.RatchetDaemon/CreateTask"
-	RatchetDaemon_ClaimTask_FullMethodName              = "/ratchet.RatchetDaemon/ClaimTask"
-	RatchetDaemon_UpdateTask_FullMethodName             = "/ratchet.RatchetDaemon/UpdateTask"
-	RatchetDaemon_ListTasks_FullMethodName              = "/ratchet.RatchetDaemon/ListTasks"
-	RatchetDaemon_GetTask_FullMethodName                = "/ratchet.RatchetDaemon/GetTask"
+	RatchetDaemon_CreateSession_FullMethodName           = "/ratchet.RatchetDaemon/CreateSession"
+	RatchetDaemon_ListSessions_FullMethodName            = "/ratchet.RatchetDaemon/ListSessions"
+	RatchetDaemon_ListSessionMessages_FullMethodName     = "/ratchet.RatchetDaemon/ListSessionMessages"
+	RatchetDaemon_CloneSession_FullMethodName            = "/ratchet.RatchetDaemon/CloneSession"
+	RatchetDaemon_ForkSession_FullMethodName             = "/ratchet.RatchetDaemon/ForkSession"
+	RatchetDaemon_GetSessionTree_FullMethodName          = "/ratchet.RatchetDaemon/GetSessionTree"
+	RatchetDaemon_ListSessionCompactions_FullMethodName  = "/ratchet.RatchetDaemon/ListSessionCompactions"
+	RatchetDaemon_UpdateSessionSummary_FullMethodName    = "/ratchet.RatchetDaemon/UpdateSessionSummary"
+	RatchetDaemon_AttachSession_FullMethodName           = "/ratchet.RatchetDaemon/AttachSession"
+	RatchetDaemon_DetachSession_FullMethodName           = "/ratchet.RatchetDaemon/DetachSession"
+	RatchetDaemon_KillSession_FullMethodName             = "/ratchet.RatchetDaemon/KillSession"
+	RatchetDaemon_SendMessage_FullMethodName             = "/ratchet.RatchetDaemon/SendMessage"
+	RatchetDaemon_RespondToPermission_FullMethodName     = "/ratchet.RatchetDaemon/RespondToPermission"
+	RatchetDaemon_GetTrustState_FullMethodName           = "/ratchet.RatchetDaemon/GetTrustState"
+	RatchetDaemon_SetTrustMode_FullMethodName            = "/ratchet.RatchetDaemon/SetTrustMode"
+	RatchetDaemon_AddTrustRule_FullMethodName            = "/ratchet.RatchetDaemon/AddTrustRule"
+	RatchetDaemon_ResetTrust_FullMethodName              = "/ratchet.RatchetDaemon/ResetTrust"
+	RatchetDaemon_AddTrustGrant_FullMethodName           = "/ratchet.RatchetDaemon/AddTrustGrant"
+	RatchetDaemon_RevokeTrustGrant_FullMethodName        = "/ratchet.RatchetDaemon/RevokeTrustGrant"
+	RatchetDaemon_AddProvider_FullMethodName             = "/ratchet.RatchetDaemon/AddProvider"
+	RatchetDaemon_CommitProviderSave_FullMethodName      = "/ratchet.RatchetDaemon/CommitProviderSave"
+	RatchetDaemon_GetProviderOperation_FullMethodName    = "/ratchet.RatchetDaemon/GetProviderOperation"
+	RatchetDaemon_ListProviders_FullMethodName           = "/ratchet.RatchetDaemon/ListProviders"
+	RatchetDaemon_TestProvider_FullMethodName            = "/ratchet.RatchetDaemon/TestProvider"
+	RatchetDaemon_RemoveProvider_FullMethodName          = "/ratchet.RatchetDaemon/RemoveProvider"
+	RatchetDaemon_SetDefaultProvider_FullMethodName      = "/ratchet.RatchetDaemon/SetDefaultProvider"
+	RatchetDaemon_UpdateProviderModel_FullMethodName     = "/ratchet.RatchetDaemon/UpdateProviderModel"
+	RatchetDaemon_StartACPBackgroundDrain_FullMethodName = "/ratchet.RatchetDaemon/StartACPBackgroundDrain"
+	RatchetDaemon_StopACPBackgroundDrain_FullMethodName  = "/ratchet.RatchetDaemon/StopACPBackgroundDrain"
+	RatchetDaemon_GetACPBackgroundDrain_FullMethodName   = "/ratchet.RatchetDaemon/GetACPBackgroundDrain"
+	RatchetDaemon_ListACPBackgroundDrains_FullMethodName = "/ratchet.RatchetDaemon/ListACPBackgroundDrains"
+	RatchetDaemon_ListAgents_FullMethodName              = "/ratchet.RatchetDaemon/ListAgents"
+	RatchetDaemon_GetAgentStatus_FullMethodName          = "/ratchet.RatchetDaemon/GetAgentStatus"
+	RatchetDaemon_StartTeam_FullMethodName               = "/ratchet.RatchetDaemon/StartTeam"
+	RatchetDaemon_GetTeamStatus_FullMethodName           = "/ratchet.RatchetDaemon/GetTeamStatus"
+	RatchetDaemon_ApprovePlan_FullMethodName             = "/ratchet.RatchetDaemon/ApprovePlan"
+	RatchetDaemon_RejectPlan_FullMethodName              = "/ratchet.RatchetDaemon/RejectPlan"
+	RatchetDaemon_StartFleet_FullMethodName              = "/ratchet.RatchetDaemon/StartFleet"
+	RatchetDaemon_GetFleetStatus_FullMethodName          = "/ratchet.RatchetDaemon/GetFleetStatus"
+	RatchetDaemon_KillFleetWorker_FullMethodName         = "/ratchet.RatchetDaemon/KillFleetWorker"
+	RatchetDaemon_CreateCron_FullMethodName              = "/ratchet.RatchetDaemon/CreateCron"
+	RatchetDaemon_ListCrons_FullMethodName               = "/ratchet.RatchetDaemon/ListCrons"
+	RatchetDaemon_PauseCron_FullMethodName               = "/ratchet.RatchetDaemon/PauseCron"
+	RatchetDaemon_ResumeCron_FullMethodName              = "/ratchet.RatchetDaemon/ResumeCron"
+	RatchetDaemon_StopCron_FullMethodName                = "/ratchet.RatchetDaemon/StopCron"
+	RatchetDaemon_ListJobs_FullMethodName                = "/ratchet.RatchetDaemon/ListJobs"
+	RatchetDaemon_PauseJob_FullMethodName                = "/ratchet.RatchetDaemon/PauseJob"
+	RatchetDaemon_ResumeJob_FullMethodName               = "/ratchet.RatchetDaemon/ResumeJob"
+	RatchetDaemon_KillJob_FullMethodName                 = "/ratchet.RatchetDaemon/KillJob"
+	RatchetDaemon_Health_FullMethodName                  = "/ratchet.RatchetDaemon/Health"
+	RatchetDaemon_Shutdown_FullMethodName                = "/ratchet.RatchetDaemon/Shutdown"
+	RatchetDaemon_CheckVersion_FullMethodName            = "/ratchet.RatchetDaemon/CheckVersion"
+	RatchetDaemon_RequestReload_FullMethodName           = "/ratchet.RatchetDaemon/RequestReload"
+	RatchetDaemon_RegisterMeshNode_FullMethodName        = "/ratchet.RatchetDaemon/RegisterMeshNode"
+	RatchetDaemon_MeshStream_FullMethodName              = "/ratchet.RatchetDaemon/MeshStream"
+	RatchetDaemon_BlackboardRead_FullMethodName          = "/ratchet.RatchetDaemon/BlackboardRead"
+	RatchetDaemon_BlackboardWrite_FullMethodName         = "/ratchet.RatchetDaemon/BlackboardWrite"
+	RatchetDaemon_BlackboardList_FullMethodName          = "/ratchet.RatchetDaemon/BlackboardList"
+	RatchetDaemon_ListTeams_FullMethodName               = "/ratchet.RatchetDaemon/ListTeams"
+	RatchetDaemon_KillTeam_FullMethodName                = "/ratchet.RatchetDaemon/KillTeam"
+	RatchetDaemon_RenameTeam_FullMethodName              = "/ratchet.RatchetDaemon/RenameTeam"
+	RatchetDaemon_TeamAddAgent_FullMethodName            = "/ratchet.RatchetDaemon/TeamAddAgent"
+	RatchetDaemon_TeamRemoveAgent_FullMethodName         = "/ratchet.RatchetDaemon/TeamRemoveAgent"
+	RatchetDaemon_AttachTeam_FullMethodName              = "/ratchet.RatchetDaemon/AttachTeam"
+	RatchetDaemon_SteerTeam_FullMethodName               = "/ratchet.RatchetDaemon/SteerTeam"
+	RatchetDaemon_DirectMessage_FullMethodName           = "/ratchet.RatchetDaemon/DirectMessage"
+	RatchetDaemon_RespondToHuman_FullMethodName          = "/ratchet.RatchetDaemon/RespondToHuman"
+	RatchetDaemon_ListPendingHuman_FullMethodName        = "/ratchet.RatchetDaemon/ListPendingHuman"
+	RatchetDaemon_StartProject_FullMethodName            = "/ratchet.RatchetDaemon/StartProject"
+	RatchetDaemon_ListProjects_FullMethodName            = "/ratchet.RatchetDaemon/ListProjects"
+	RatchetDaemon_PauseProject_FullMethodName            = "/ratchet.RatchetDaemon/PauseProject"
+	RatchetDaemon_ResumeProject_FullMethodName           = "/ratchet.RatchetDaemon/ResumeProject"
+	RatchetDaemon_KillProject_FullMethodName             = "/ratchet.RatchetDaemon/KillProject"
+	RatchetDaemon_GetProjectStatus_FullMethodName        = "/ratchet.RatchetDaemon/GetProjectStatus"
+	RatchetDaemon_CreateTask_FullMethodName              = "/ratchet.RatchetDaemon/CreateTask"
+	RatchetDaemon_ClaimTask_FullMethodName               = "/ratchet.RatchetDaemon/ClaimTask"
+	RatchetDaemon_UpdateTask_FullMethodName              = "/ratchet.RatchetDaemon/UpdateTask"
+	RatchetDaemon_ListTasks_FullMethodName               = "/ratchet.RatchetDaemon/ListTasks"
+	RatchetDaemon_GetTask_FullMethodName                 = "/ratchet.RatchetDaemon/GetTask"
 )
 
 // RatchetDaemonClient is the client API for RatchetDaemon service.
@@ -132,6 +136,11 @@ type RatchetDaemonClient interface {
 	RemoveProvider(ctx context.Context, in *RemoveProviderReq, opts ...grpc.CallOption) (*Empty, error)
 	SetDefaultProvider(ctx context.Context, in *SetDefaultProviderReq, opts ...grpc.CallOption) (*Empty, error)
 	UpdateProviderModel(ctx context.Context, in *UpdateProviderModelReq, opts ...grpc.CallOption) (*Empty, error)
+	// ACP background drains
+	StartACPBackgroundDrain(ctx context.Context, in *StartACPBackgroundDrainReq, opts ...grpc.CallOption) (*ACPBackgroundDrain, error)
+	StopACPBackgroundDrain(ctx context.Context, in *ACPBackgroundDrainReq, opts ...grpc.CallOption) (*ACPBackgroundDrain, error)
+	GetACPBackgroundDrain(ctx context.Context, in *ACPBackgroundDrainReq, opts ...grpc.CallOption) (*ACPBackgroundDrain, error)
+	ListACPBackgroundDrains(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ACPBackgroundDrainList, error)
 	// Agents
 	ListAgents(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*AgentList, error)
 	GetAgentStatus(ctx context.Context, in *AgentStatusReq, opts ...grpc.CallOption) (*Agent, error)
@@ -486,6 +495,46 @@ func (c *ratchetDaemonClient) UpdateProviderModel(ctx context.Context, in *Updat
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Empty)
 	err := c.cc.Invoke(ctx, RatchetDaemon_UpdateProviderModel_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ratchetDaemonClient) StartACPBackgroundDrain(ctx context.Context, in *StartACPBackgroundDrainReq, opts ...grpc.CallOption) (*ACPBackgroundDrain, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ACPBackgroundDrain)
+	err := c.cc.Invoke(ctx, RatchetDaemon_StartACPBackgroundDrain_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ratchetDaemonClient) StopACPBackgroundDrain(ctx context.Context, in *ACPBackgroundDrainReq, opts ...grpc.CallOption) (*ACPBackgroundDrain, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ACPBackgroundDrain)
+	err := c.cc.Invoke(ctx, RatchetDaemon_StopACPBackgroundDrain_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ratchetDaemonClient) GetACPBackgroundDrain(ctx context.Context, in *ACPBackgroundDrainReq, opts ...grpc.CallOption) (*ACPBackgroundDrain, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ACPBackgroundDrain)
+	err := c.cc.Invoke(ctx, RatchetDaemon_GetACPBackgroundDrain_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *ratchetDaemonClient) ListACPBackgroundDrains(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ACPBackgroundDrainList, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ACPBackgroundDrainList)
+	err := c.cc.Invoke(ctx, RatchetDaemon_ListACPBackgroundDrains_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1056,6 +1105,11 @@ type RatchetDaemonServer interface {
 	RemoveProvider(context.Context, *RemoveProviderReq) (*Empty, error)
 	SetDefaultProvider(context.Context, *SetDefaultProviderReq) (*Empty, error)
 	UpdateProviderModel(context.Context, *UpdateProviderModelReq) (*Empty, error)
+	// ACP background drains
+	StartACPBackgroundDrain(context.Context, *StartACPBackgroundDrainReq) (*ACPBackgroundDrain, error)
+	StopACPBackgroundDrain(context.Context, *ACPBackgroundDrainReq) (*ACPBackgroundDrain, error)
+	GetACPBackgroundDrain(context.Context, *ACPBackgroundDrainReq) (*ACPBackgroundDrain, error)
+	ListACPBackgroundDrains(context.Context, *Empty) (*ACPBackgroundDrainList, error)
 	// Agents
 	ListAgents(context.Context, *Empty) (*AgentList, error)
 	GetAgentStatus(context.Context, *AgentStatusReq) (*Agent, error)
@@ -1208,6 +1262,18 @@ func (UnimplementedRatchetDaemonServer) SetDefaultProvider(context.Context, *Set
 }
 func (UnimplementedRatchetDaemonServer) UpdateProviderModel(context.Context, *UpdateProviderModelReq) (*Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateProviderModel not implemented")
+}
+func (UnimplementedRatchetDaemonServer) StartACPBackgroundDrain(context.Context, *StartACPBackgroundDrainReq) (*ACPBackgroundDrain, error) {
+	return nil, status.Error(codes.Unimplemented, "method StartACPBackgroundDrain not implemented")
+}
+func (UnimplementedRatchetDaemonServer) StopACPBackgroundDrain(context.Context, *ACPBackgroundDrainReq) (*ACPBackgroundDrain, error) {
+	return nil, status.Error(codes.Unimplemented, "method StopACPBackgroundDrain not implemented")
+}
+func (UnimplementedRatchetDaemonServer) GetACPBackgroundDrain(context.Context, *ACPBackgroundDrainReq) (*ACPBackgroundDrain, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetACPBackgroundDrain not implemented")
+}
+func (UnimplementedRatchetDaemonServer) ListACPBackgroundDrains(context.Context, *Empty) (*ACPBackgroundDrainList, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListACPBackgroundDrains not implemented")
 }
 func (UnimplementedRatchetDaemonServer) ListAgents(context.Context, *Empty) (*AgentList, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListAgents not implemented")
@@ -1842,6 +1908,78 @@ func _RatchetDaemon_UpdateProviderModel_Handler(srv interface{}, ctx context.Con
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RatchetDaemonServer).UpdateProviderModel(ctx, req.(*UpdateProviderModelReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RatchetDaemon_StartACPBackgroundDrain_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StartACPBackgroundDrainReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RatchetDaemonServer).StartACPBackgroundDrain(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RatchetDaemon_StartACPBackgroundDrain_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RatchetDaemonServer).StartACPBackgroundDrain(ctx, req.(*StartACPBackgroundDrainReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RatchetDaemon_StopACPBackgroundDrain_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ACPBackgroundDrainReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RatchetDaemonServer).StopACPBackgroundDrain(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RatchetDaemon_StopACPBackgroundDrain_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RatchetDaemonServer).StopACPBackgroundDrain(ctx, req.(*ACPBackgroundDrainReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RatchetDaemon_GetACPBackgroundDrain_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ACPBackgroundDrainReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RatchetDaemonServer).GetACPBackgroundDrain(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RatchetDaemon_GetACPBackgroundDrain_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RatchetDaemonServer).GetACPBackgroundDrain(ctx, req.(*ACPBackgroundDrainReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _RatchetDaemon_ListACPBackgroundDrains_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RatchetDaemonServer).ListACPBackgroundDrains(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RatchetDaemon_ListACPBackgroundDrains_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RatchetDaemonServer).ListACPBackgroundDrains(ctx, req.(*Empty))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2770,6 +2908,22 @@ var RatchetDaemon_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdateProviderModel",
 			Handler:    _RatchetDaemon_UpdateProviderModel_Handler,
+		},
+		{
+			MethodName: "StartACPBackgroundDrain",
+			Handler:    _RatchetDaemon_StartACPBackgroundDrain_Handler,
+		},
+		{
+			MethodName: "StopACPBackgroundDrain",
+			Handler:    _RatchetDaemon_StopACPBackgroundDrain_Handler,
+		},
+		{
+			MethodName: "GetACPBackgroundDrain",
+			Handler:    _RatchetDaemon_GetACPBackgroundDrain_Handler,
+		},
+		{
+			MethodName: "ListACPBackgroundDrains",
+			Handler:    _RatchetDaemon_ListACPBackgroundDrains_Handler,
 		},
 		{
 			MethodName: "ListAgents",

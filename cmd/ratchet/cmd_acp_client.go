@@ -11,47 +11,59 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/acpclient"
+	"github.com/GoCodeAlone/ratchet-cli/internal/client"
 	"github.com/GoCodeAlone/ratchet-cli/internal/plugins"
+	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type acpClientCommandKind string
 
 const (
-	acpClientCommandHandled        acpClientCommandKind = "handled"
-	acpClientCommandHelp           acpClientCommandKind = "help"
-	acpClientCommandExec           acpClientCommandKind = "exec"
-	acpClientCommandCompare        acpClientCommandKind = "compare"
-	acpClientCommandFlowRun        acpClientCommandKind = "flow-run"
-	acpClientCommandFlowReplay     acpClientCommandKind = "flow-replay"
-	acpClientCommandSessionsList   acpClientCommandKind = "sessions-list"
-	acpClientCommandSessionsShow   acpClientCommandKind = "sessions-show"
-	acpClientCommandSessionsExport acpClientCommandKind = "sessions-export"
-	acpClientCommandSessionsImport acpClientCommandKind = "sessions-import"
-	acpClientCommandSessionsEvents acpClientCommandKind = "sessions-events"
-	acpClientCommandStatus         acpClientCommandKind = "status"
-	acpClientCommandCancel         acpClientCommandKind = "cancel"
-	acpClientCommandQueue          acpClientCommandKind = "queue"
-	acpClientCommandDrain          acpClientCommandKind = "drain"
-	acpClientCommandWatch          acpClientCommandKind = "watch"
-	acpClientCommandProfiles       acpClientCommandKind = "profiles"
+	acpClientCommandHandled          acpClientCommandKind = "handled"
+	acpClientCommandHelp             acpClientCommandKind = "help"
+	acpClientCommandExec             acpClientCommandKind = "exec"
+	acpClientCommandCompare          acpClientCommandKind = "compare"
+	acpClientCommandFlowRun          acpClientCommandKind = "flow-run"
+	acpClientCommandFlowReplay       acpClientCommandKind = "flow-replay"
+	acpClientCommandSessionsList     acpClientCommandKind = "sessions-list"
+	acpClientCommandSessionsShow     acpClientCommandKind = "sessions-show"
+	acpClientCommandSessionsExport   acpClientCommandKind = "sessions-export"
+	acpClientCommandSessionsImport   acpClientCommandKind = "sessions-import"
+	acpClientCommandSessionsEvents   acpClientCommandKind = "sessions-events"
+	acpClientCommandStatus           acpClientCommandKind = "status"
+	acpClientCommandCancel           acpClientCommandKind = "cancel"
+	acpClientCommandQueue            acpClientCommandKind = "queue"
+	acpClientCommandDrain            acpClientCommandKind = "drain"
+	acpClientCommandWatch            acpClientCommandKind = "watch"
+	acpClientCommandProfiles         acpClientCommandKind = "profiles"
+	acpClientCommandBackgroundHelp   acpClientCommandKind = "background-help"
+	acpClientCommandBackgroundStart  acpClientCommandKind = "background-start"
+	acpClientCommandBackgroundStatus acpClientCommandKind = "background-status"
+	acpClientCommandBackgroundStop   acpClientCommandKind = "background-stop"
 )
 
 type acpClientCommand struct {
-	kind      acpClientCommandKind
-	exec      acpClientExecOptions
-	compare   acpClientCompareOptions
-	flow      acpClientFlowOptions
-	drain     acpClientDrainOptions
-	watch     acpClientWatchOptions
-	archive   acpClientArchiveOptions
-	profiles  acpClientProfilesCommand
-	sessionID string
-	json      bool
+	kind         acpClientCommandKind
+	exec         acpClientExecOptions
+	compare      acpClientCompareOptions
+	flow         acpClientFlowOptions
+	drain        acpClientDrainOptions
+	watch        acpClientWatchOptions
+	archive      acpClientArchiveOptions
+	profiles     acpClientProfilesCommand
+	sessionID    string
+	agent        string
+	acknowledged bool
+	json         bool
 }
 
 type acpClientExecOptions struct {
@@ -166,12 +178,8 @@ func (f *repeatedStringFlag) Set(value string) error {
 	return nil
 }
 
-func handleACPClient(args []string) error {
+func handleACPClient(args []string) (err error) {
 	cmd, err := parseACPClientCommandWithOutput(args, os.Stdout)
-	if err != nil {
-		return err
-	}
-	store, err := acpclient.NewDefaultStore()
 	if err != nil {
 		return err
 	}
@@ -181,6 +189,21 @@ func handleACPClient(args []string) error {
 	case acpClientCommandHelp:
 		printACPClientUsage(os.Stdout)
 		return nil
+	case acpClientCommandBackgroundHelp:
+		return executeACPClientBackground(context.Background(), nil, cmd, os.Stdout)
+	case acpClientCommandBackgroundStart, acpClientCommandBackgroundStatus, acpClientCommandBackgroundStop:
+		backgroundClient, connectErr := ensureACPClientBackground()
+		if connectErr != nil {
+			return fmt.Errorf("ACP background daemon unavailable; restart the daemon and retry: %w", connectErr)
+		}
+		defer func() { err = errors.Join(err, backgroundClient.Close()) }()
+		return executeACPClientBackground(context.Background(), backgroundClient, cmd, os.Stdout)
+	}
+	store, err := acpclient.NewDefaultStore()
+	if err != nil {
+		return err
+	}
+	switch cmd.kind {
 	case acpClientCommandExec:
 		return executeACPClientExecWithStore(context.Background(), cmd.exec, defaultACPClientExecRunner{}, store, os.Stdout)
 	case acpClientCommandCompare:
@@ -226,6 +249,209 @@ func handleACPClient(args []string) error {
 	}
 }
 
+type acpClientBackgroundRPC interface {
+	StartACPBackgroundDrain(context.Context, string, string, bool) (*pb.ACPBackgroundDrain, error)
+	StopACPBackgroundDrain(context.Context, string) (*pb.ACPBackgroundDrain, error)
+	GetACPBackgroundDrain(context.Context, string) (*pb.ACPBackgroundDrain, error)
+	ListACPBackgroundDrains(context.Context) (*pb.ACPBackgroundDrainList, error)
+}
+
+type acpClientBackgroundConnection interface {
+	acpClientBackgroundRPC
+	Close() error
+}
+
+var ensureACPClientBackground = func() (acpClientBackgroundConnection, error) {
+	return client.EnsureDaemon()
+}
+
+type acpClientBackgroundOutput struct {
+	SessionID      string `json:"session_id"`
+	Profile        string `json:"profile"`
+	PinnedHash     string `json:"pinned_hash"`
+	State          string `json:"state"`
+	AcknowledgedAt string `json:"acknowledged_at,omitzero"`
+	StartedAt      string `json:"started_at,omitzero"`
+	UpdatedAt      string `json:"updated_at,omitzero"`
+	LastOutcome    string `json:"last_outcome"`
+	Action         string `json:"action,omitzero"`
+}
+
+func executeACPClientBackground(ctx context.Context, rpc acpClientBackgroundRPC, cmd acpClientCommand, w io.Writer) error {
+	if cmd.kind == acpClientCommandBackgroundHelp {
+		printACPClientBackgroundUsage(w)
+		return nil
+	}
+	if rpc == nil {
+		return errors.New("ACP background daemon client is required")
+	}
+	var drains []*pb.ACPBackgroundDrain
+	switch cmd.kind {
+	case acpClientCommandBackgroundStart:
+		drain, err := rpc.StartACPBackgroundDrain(ctx, cmd.sessionID, cmd.agent, cmd.acknowledged)
+		if err != nil {
+			return actionableACPClientBackgroundError("start", err)
+		}
+		drains = []*pb.ACPBackgroundDrain{drain}
+	case acpClientCommandBackgroundStatus:
+		if cmd.sessionID != "" {
+			drain, err := rpc.GetACPBackgroundDrain(ctx, cmd.sessionID)
+			if err != nil {
+				return actionableACPClientBackgroundError("status", err)
+			}
+			drains = []*pb.ACPBackgroundDrain{drain}
+		} else {
+			listed, err := rpc.ListACPBackgroundDrains(ctx)
+			if err != nil {
+				return actionableACPClientBackgroundError("status", err)
+			}
+			drains = listed.GetDrains()
+		}
+	case acpClientCommandBackgroundStop:
+		drain, err := rpc.StopACPBackgroundDrain(ctx, cmd.sessionID)
+		if err != nil {
+			return actionableACPClientBackgroundError("stop", err)
+		}
+		drains = []*pb.ACPBackgroundDrain{drain}
+	default:
+		return fmt.Errorf("unknown ACP background command: %s", cmd.kind)
+	}
+	rows := make([]acpClientBackgroundOutput, 0, len(drains))
+	for _, drain := range drains {
+		if drain != nil {
+			row, err := mapACPClientBackgroundOutput(drain)
+			if err != nil {
+				return err
+			}
+			rows = append(rows, row)
+		}
+	}
+	if cmd.json {
+		if cmd.kind == acpClientCommandBackgroundStatus && cmd.sessionID == "" {
+			return json.NewEncoder(w).Encode(rows)
+		}
+		if len(rows) == 0 {
+			return json.NewEncoder(w).Encode(nil)
+		}
+		return json.NewEncoder(w).Encode(rows[0])
+	}
+	fmt.Fprintln(w, "SESSION\tPROFILE\tSTATE\tOUTCOME\tUPDATED\tACTION")
+	for _, row := range rows {
+		action := row.Action
+		if action == "" {
+			action = "-"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			formatACPClientBackgroundField(row.SessionID),
+			formatACPClientBackgroundField(row.Profile),
+			formatACPClientBackgroundField(row.State),
+			formatACPClientBackgroundField(row.LastOutcome),
+			formatACPClientBackgroundField(row.UpdatedAt),
+			formatACPClientBackgroundField(action),
+		)
+	}
+	return nil
+}
+
+func formatACPClientBackgroundField(value string) string {
+	quoted := strconv.QuoteToGraphic(value)
+	return quoted[1 : len(quoted)-1]
+}
+
+func mapACPClientBackgroundOutput(drain *pb.ACPBackgroundDrain) (acpClientBackgroundOutput, error) {
+	acknowledgedAt, err := formatACPClientBackgroundTimestamp(drain.GetAcknowledgedAt())
+	if err != nil {
+		return acpClientBackgroundOutput{}, fmt.Errorf("invalid acknowledged_at: %w", err)
+	}
+	startedAt, err := formatACPClientBackgroundTimestamp(drain.GetStartedAt())
+	if err != nil {
+		return acpClientBackgroundOutput{}, fmt.Errorf("invalid started_at: %w", err)
+	}
+	updatedAt, err := formatACPClientBackgroundTimestamp(drain.GetUpdatedAt())
+	if err != nil {
+		return acpClientBackgroundOutput{}, fmt.Errorf("invalid updated_at: %w", err)
+	}
+	return acpClientBackgroundOutput{
+		SessionID:      drain.GetSessionId(),
+		Profile:        drain.GetProfile(),
+		PinnedHash:     drain.GetPinnedHash(),
+		State:          drain.GetState(),
+		AcknowledgedAt: acknowledgedAt,
+		StartedAt:      startedAt,
+		UpdatedAt:      updatedAt,
+		LastOutcome:    drain.GetLastOutcome(),
+		Action:         acpClientBackgroundAction(drain.GetState(), drain.GetLastOutcome()),
+	}, nil
+}
+
+func formatACPClientBackgroundTimestamp(value *timestamppb.Timestamp) (string, error) {
+	if value == nil {
+		return "", nil
+	}
+	if err := value.CheckValid(); err != nil {
+		return "", fmt.Errorf("timestamp: %w", err)
+	}
+	return value.AsTime().UTC().Format(time.RFC3339), nil
+}
+
+func acpClientBackgroundAction(state, outcome string) string {
+	if state == acpclient.BackgroundStateError {
+		switch outcome {
+		case acpclient.BackgroundOutcomeWorkerError, acpclient.BackgroundOutcomeWorkerPanic:
+			return "review daemon logs, then start again"
+		case acpclient.BackgroundOutcomeStateWriteFailed, acpclient.BackgroundOutcomeAuditAppendFailed:
+			return "repair local state access, then start again"
+		case acpclient.BackgroundOutcomePolicyInvalid:
+			return "review the drain policy, then start again"
+		default:
+			return "review daemon logs and the drain policy, then start again"
+		}
+	}
+	if state != acpclient.BackgroundStateBlocked {
+		return ""
+	}
+	switch outcome {
+	case acpclient.BackgroundOutcomeProfileDrift, acpclient.BackgroundOutcomeProfileUntrusted:
+		return "review and retrust profile, then start again"
+	case acpclient.BackgroundOutcomeProfileMissing:
+		return "restore or recreate and trust the profile, then start again"
+	case acpclient.BackgroundOutcomeSessionMissing:
+		return "restore the session or stop this drain"
+	default:
+		return "review the drain policy, then start again"
+	}
+}
+
+func actionableACPClientBackgroundError(operation string, err error) error {
+	switch status.Code(err) {
+	case codes.FailedPrecondition:
+		return fmt.Errorf("%s background drain precondition failed; verify background drains are enabled and review or retrust the profile, then retry: %w", operation, err)
+	case codes.NotFound:
+		if operation != "start" {
+			return fmt.Errorf("%s background drain: no background policy exists for this session; verify the session ID: %w", operation, err)
+		}
+		return fmt.Errorf("%s background drain: verify the session and profile exist: %w", operation, err)
+	case codes.Unavailable:
+		return fmt.Errorf("%s background drain: daemon unavailable; restart the daemon and retry: %w", operation, err)
+	case codes.Canceled:
+		return fmt.Errorf("%s background drain canceled; inspect session cancellation and background status before starting again: %w", operation, err)
+	case codes.Aborted:
+		return fmt.Errorf("%s background drain transition is busy; check background status, wait for the active transition, and retry: %w", operation, err)
+	default:
+		return fmt.Errorf("%s background drain: %w", operation, err)
+	}
+}
+
+func printACPClientBackgroundUsage(w io.Writer) {
+	fmt.Fprint(w, `Usage: ratchet acp client background <command> [flags]
+
+Commands:
+  background start <session-id> --agent <profile> --acknowledge-unattended [--json]
+  background status [session-id] [--json]
+  background stop <session-id> [--json]
+`)
+}
+
 type acpClientExecRunner interface {
 	RunPrompt(ctx context.Context, spec acpclient.AgentSpec, opts acpclient.RunOptions, prompt string) (acpclient.Result, error)
 }
@@ -237,7 +463,16 @@ func (defaultACPClientExecRunner) RunPrompt(ctx context.Context, spec acpclient.
 	if err != nil {
 		return acpclient.Result{}, err
 	}
-	defer client.Close() //nolint:errcheck
+	return runACPClientPrompt(ctx, client, prompt)
+}
+
+type acpClientPromptClient interface {
+	RunPrompt(context.Context, string) (acpclient.Result, error)
+	Close() error
+}
+
+func runACPClientPrompt(ctx context.Context, client acpClientPromptClient, prompt string) (result acpclient.Result, err error) {
+	defer func() { err = errors.Join(err, client.Close()) }()
 	return client.RunPrompt(ctx, prompt)
 }
 
@@ -245,7 +480,7 @@ func executeACPClientExec(ctx context.Context, opts acpClientExecOptions, runner
 	return executeACPClientExecWithStore(ctx, opts, runner, nil, w)
 }
 
-func executeACPClientExecWithStore(ctx context.Context, opts acpClientExecOptions, runner acpClientExecRunner, store *acpclient.Store, w io.Writer) error {
+func executeACPClientExecWithStore(ctx context.Context, opts acpClientExecOptions, runner acpClientExecRunner, store *acpclient.Store, w io.Writer) (err error) {
 	prompt := opts.Prompt
 	if opts.File != "" {
 		b, err := os.ReadFile(opts.File)
@@ -322,10 +557,29 @@ func executeACPClientExecWithStore(ctx context.Context, opts acpClientExecOption
 		return nil
 	}
 	var activeSessionID string
+	var activeOwnerLease *acpclient.OwnerLease
 	if store != nil {
 		runOpts.SessionStarted = func(sessionID string) error {
-			activeSessionID = sessionID
+			if activeOwnerLease != nil && activeSessionID == sessionID {
+				return nil
+			}
+			if activeOwnerLease != nil {
+				if err := activeOwnerLease.Release(); err != nil {
+					return err
+				}
+				activeOwnerLease = nil
+				activeSessionID = ""
+			}
 			now := time.Now().UTC()
+			lease, err := store.AcquireOwnerLease(acpclient.OwnerLock{
+				SessionID:          sessionID,
+				PID:                os.Getpid(),
+				CommandFingerprint: spec.Fingerprint(),
+				StartedAt:          now,
+			})
+			if err != nil {
+				return err
+			}
 			rec := acpclient.SessionRecord{
 				ID:                 sessionID,
 				Agent:              spec.Name,
@@ -335,27 +589,19 @@ func executeACPClientExecWithStore(ctx context.Context, opts acpClientExecOption
 				CreatedAt:          now,
 				UpdatedAt:          now,
 			}
-			if existing, err := store.Get(sessionID); err == nil {
-				rec.CreatedAt = existing.CreatedAt
-				rec.Turns = existing.Turns
+			if err := store.MarkSessionStarted(rec); err != nil {
+				return errors.Join(err, lease.Release())
 			}
-			if err := store.Upsert(rec); err != nil {
-				return err
-			}
-			return store.WriteOwner(acpclient.OwnerLock{
-				SessionID:          sessionID,
-				PID:                os.Getpid(),
-				CommandFingerprint: spec.Fingerprint(),
-				StartedAt:          now,
-			})
+			activeSessionID = sessionID
+			activeOwnerLease = lease
+			return nil
 		}
-		runOpts.CancelRequested = func(sessionID string) bool {
-			_, err := store.CancelRequest(sessionID)
-			return err == nil
+		runOpts.CancelRequested = func(sessionID string) (bool, error) {
+			return store.CheckCancellation(sessionID)
 		}
 		defer func() {
-			if activeSessionID != "" {
-				_ = store.ClearOwner(activeSessionID)
+			if activeOwnerLease != nil {
+				err = errors.Join(err, activeOwnerLease.Release())
 			}
 		}()
 	}
@@ -375,24 +621,14 @@ func executeACPClientExecWithStore(ctx context.Context, opts acpClientExecOption
 			UpdatedAt:          now,
 			LastStopReason:     string(result.StopReason),
 			Summary:            summarizeACPClientText(result.Text),
-			Turns: []acpclient.TurnSummary{{
-				Prompt:     summarizeACPClientText(prompt),
-				Response:   summarizeACPClientText(result.Text),
-				StopReason: string(result.StopReason),
-				CreatedAt:  now,
-			}},
 		}
-		if existing, err := store.Get(rec.ID); err == nil {
-			rec.CreatedAt = existing.CreatedAt
-			rec.Turns = append(existing.Turns, rec.Turns...)
-		}
-		if err := store.Upsert(rec); err != nil {
+		if err := store.MarkSessionCompletedWithEvents(rec, acpclient.TurnSummary{
+			Prompt:     summarizeACPClientText(prompt),
+			Response:   summarizeACPClientText(result.Text),
+			StopReason: string(result.StopReason),
+			CreatedAt:  now,
+		}, result.Events); err != nil {
 			return err
-		}
-		if len(result.Events) > 0 {
-			if err := store.AppendEventLog(rec.ID, result.Events); err != nil {
-				return err
-			}
 		}
 	}
 	if opts.JSON {
@@ -502,10 +738,80 @@ func parseACPClientCommandWithOutput(args []string, output io.Writer) (acpClient
 			return acpClientCommand{}, err
 		}
 		return acpClientCommand{kind: acpClientCommandProfiles, profiles: profileCmd}, nil
+	case "background":
+		return parseACPClientBackground(args[1:], output)
 	case "help", "--help", "-h":
 		return acpClientCommand{kind: acpClientCommandHelp}, nil
 	default:
 		return acpClientCommand{}, fmt.Errorf("unknown acp client command: %s", args[0])
+	}
+}
+
+func parseACPClientBackground(args []string, output io.Writer) (acpClientCommand, error) {
+	if len(args) == 0 || isHelpArg(args[0]) {
+		return acpClientCommand{kind: acpClientCommandBackgroundHelp}, nil
+	}
+	if len(args) >= 2 && isHelpArg(args[1]) {
+		return acpClientCommand{kind: acpClientCommandBackgroundHelp}, nil
+	}
+	switch args[0] {
+	case "start":
+		if len(args) < 2 || strings.TrimSpace(args[1]) == "" {
+			return acpClientCommand{}, errors.New("usage: ratchet acp client background start <session-id> --agent <profile> --acknowledge-unattended [--json]")
+		}
+		cmd := acpClientCommand{kind: acpClientCommandBackgroundStart, sessionID: args[1]}
+		fs := flag.NewFlagSet("ratchet acp client background start", flag.ContinueOnError)
+		fs.SetOutput(output)
+		fs.StringVar(&cmd.agent, "agent", "", "built-in ACP agent or trusted profile")
+		fs.BoolVar(&cmd.acknowledged, "acknowledge-unattended", false, "acknowledge unattended execution")
+		fs.BoolVar(&cmd.json, "json", false, "emit JSON")
+		if err := fs.Parse(args[2:]); err != nil {
+			return acpClientCommand{}, err
+		}
+		if len(fs.Args()) > 0 || strings.TrimSpace(cmd.agent) == "" {
+			return acpClientCommand{}, errors.New("usage: ratchet acp client background start <session-id> --agent <profile> --acknowledge-unattended [--json]")
+		}
+		if !cmd.acknowledged {
+			return acpClientCommand{}, errors.New("--acknowledge-unattended is required for background execution")
+		}
+		return cmd, nil
+	case "status":
+		cmd := acpClientCommand{kind: acpClientCommandBackgroundStatus}
+		rest := args[1:]
+		if len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
+			if strings.TrimSpace(rest[0]) == "" {
+				return acpClientCommand{}, errors.New("usage: ratchet acp client background status [session-id] [--json]")
+			}
+			cmd.sessionID = rest[0]
+			rest = rest[1:]
+		}
+		fs := flag.NewFlagSet("ratchet acp client background status", flag.ContinueOnError)
+		fs.SetOutput(output)
+		fs.BoolVar(&cmd.json, "json", false, "emit JSON")
+		if err := fs.Parse(rest); err != nil {
+			return acpClientCommand{}, err
+		}
+		if len(fs.Args()) > 0 {
+			return acpClientCommand{}, errors.New("usage: ratchet acp client background status [session-id] [--json]")
+		}
+		return cmd, nil
+	case "stop":
+		if len(args) < 2 || strings.TrimSpace(args[1]) == "" {
+			return acpClientCommand{}, errors.New("usage: ratchet acp client background stop <session-id> [--json]")
+		}
+		cmd := acpClientCommand{kind: acpClientCommandBackgroundStop, sessionID: args[1]}
+		fs := flag.NewFlagSet("ratchet acp client background stop", flag.ContinueOnError)
+		fs.SetOutput(output)
+		fs.BoolVar(&cmd.json, "json", false, "emit JSON")
+		if err := fs.Parse(args[2:]); err != nil {
+			return acpClientCommand{}, err
+		}
+		if len(fs.Args()) > 0 {
+			return acpClientCommand{}, errors.New("usage: ratchet acp client background stop <session-id> [--json]")
+		}
+		return cmd, nil
+	default:
+		return acpClientCommand{}, fmt.Errorf("unknown acp client background command: %s", args[0])
 	}
 }
 
@@ -1081,6 +1387,8 @@ Commands:
   queue      List queued prompts for an ACP client session
   drain      Drain queued prompts through an external ACP agent
   watch      Explicitly watch and drain queued prompts through an external ACP agent
+  background Manage unattended daemon queue drains
+             Subcommands: start, status, stop
   status     Show ACP client session status
   cancel     Cancel an ACP client session
 
@@ -1842,11 +2150,8 @@ func executeACPClientStatus(store *acpclient.Store, id string, jsonOut bool, w i
 }
 
 func executeACPClientCancel(store *acpclient.Store, id string, jsonOut bool, w io.Writer) error {
-	_, ownerErr := store.Owner(id)
+	ownerErr := store.RequestCancelActiveExecution(id, time.Now().UTC())
 	if ownerErr == nil {
-		if err := store.RequestCancel(id, time.Now().UTC()); err != nil {
-			return err
-		}
 		if jsonOut {
 			return json.NewEncoder(w).Encode(struct {
 				SessionID string `json:"session_id"`

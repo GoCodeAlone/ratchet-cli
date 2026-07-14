@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -42,6 +43,149 @@ func TestShutdown_NoShutdownFn(t *testing.T) {
 	// Must not panic when shutdownFn is nil.
 	if _, err := svc.Shutdown(context.Background(), &pb.Empty{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestServiceCloseWaitsForActiveCronCallback(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	if err := EnsureDataDir(); err != nil {
+		t.Fatalf("EnsureDataDir: %v", err)
+	}
+
+	svc, err := NewService(t.Context())
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var startedOnce sync.Once
+	svc.cron.onTick = func(string, string) {
+		startedOnce.Do(func() { close(started) })
+		<-release
+	}
+	if _, err := svc.cron.Create(t.Context(), "session-1", time.Millisecond.String(), "tick"); err != nil {
+		svc.Close()
+		t.Fatalf("Create cron job: %v", err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		svc.Close()
+		t.Fatal("cron callback did not start")
+	}
+
+	closeDone := make(chan struct{})
+	go func() {
+		svc.Close()
+		close(closeDone)
+	}()
+	select {
+	case <-closeDone:
+		close(release)
+		t.Fatal("Service.Close returned before active cron callback completed")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-closeDone:
+	case <-time.After(time.Second):
+		t.Fatal("Service.Close did not return after active cron callback completed")
+	}
+}
+
+func TestServiceCloseCancelsLifecycleBeforeJoiningCron(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	if err := EnsureDataDir(); err != nil {
+		t.Fatalf("EnsureDataDir: %v", err)
+	}
+
+	svc, err := NewService(t.Context())
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	started := make(chan struct{})
+	canceled := make(chan struct{})
+	var startedOnce sync.Once
+	var canceledOnce sync.Once
+	svc.cron.onTick = func(string, string) {
+		startedOnce.Do(func() { close(started) })
+		<-svc.lifecycleCtx.Done()
+		canceledOnce.Do(func() { close(canceled) })
+	}
+	if _, err := svc.cron.Create(t.Context(), "session-1", time.Millisecond.String(), "tick"); err != nil {
+		svc.Close()
+		t.Fatalf("Create cron job: %v", err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		svc.Close()
+		t.Fatal("cron callback did not start")
+	}
+
+	closeDone := make(chan struct{})
+	go func() {
+		svc.Close()
+		close(closeDone)
+	}()
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("Service.Close did not cancel the cron callback context")
+	}
+	select {
+	case <-closeDone:
+	case <-time.After(time.Second):
+		t.Fatal("Service.Close did not join the canceled cron callback")
+	}
+}
+
+func TestServiceCloseCancelsAndJoinsAdmittedLifecycleWork(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	svc := &Service{lifecycleCtx: ctx, lifecycleCancel: cancel}
+	started := make(chan struct{})
+	canceled := make(chan struct{})
+	release := make(chan struct{})
+	if admitted := svc.startLifecycleWork(func(workCtx context.Context) {
+		close(started)
+		<-workCtx.Done()
+		close(canceled)
+		<-release
+	}); !admitted {
+		t.Fatal("lifecycle work was not admitted")
+	}
+	<-started
+
+	closeDone := make(chan struct{})
+	go func() {
+		svc.Close()
+		close(closeDone)
+	}()
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("Service.Close did not cancel admitted lifecycle work")
+	}
+	select {
+	case <-closeDone:
+		close(release)
+		t.Fatal("Service.Close returned before admitted lifecycle work completed")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-closeDone:
+	case <-time.After(time.Second):
+		t.Fatal("Service.Close did not join admitted lifecycle work")
+	}
+	if svc.startLifecycleWork(func(context.Context) {}) {
+		t.Fatal("Service admitted lifecycle work after close")
 	}
 }
 
@@ -114,6 +258,101 @@ func TestStartShutdownRPCStopsServerAndRemovesFiles(t *testing.T) {
 	}
 	waitForMissing(t, SocketPath(), 2*time.Second)
 	waitForMissing(t, PIDPath(), 2*time.Second)
+}
+
+func TestStartReloadWaitsForCheckpointBeforeClosingService(t *testing.T) {
+	if !reloadSignalsSupported() {
+		t.Skip("daemon reload signals are not supported")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	exportStarted := make(chan struct{})
+	releaseExport := make(chan struct{})
+	originalExport := exportReloadCheckpoint
+	originalSave := saveReloadCheckpoint
+	exportReloadCheckpoint = func(svc *Service) (*Checkpoint, error) {
+		close(exportStarted)
+		<-releaseExport
+		return originalExport(svc)
+	}
+	saveReloadCheckpoint = originalSave
+	t.Cleanup(func() {
+		exportReloadCheckpoint = originalExport
+		saveReloadCheckpoint = originalSave
+	})
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	errCh := make(chan error, 1)
+	var exited atomic.Bool
+	go func() { errCh <- Start(ctx, false) }()
+	t.Cleanup(func() {
+		cancel()
+		if !exited.Load() {
+			select {
+			case <-errCh:
+			case <-time.After(3 * time.Second):
+			}
+		}
+		CleanupSocket()
+		CleanupPID()
+	})
+
+	waitForPath(t, SocketPath(), 5*time.Second)
+	conn, err := grpc.NewClient(
+		"unix://"+SocketPath(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		close(releaseExport)
+		t.Fatalf("connect daemon: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	healthCtx, healthCancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer healthCancel()
+	if _, err := pb.NewRatchetDaemonClient(conn).Health(healthCtx, &pb.Empty{}); err != nil {
+		close(releaseExport)
+		t.Fatalf("daemon health: %v", err)
+	}
+
+	proc, err := os.FindProcess(os.Getpid())
+	if err != nil {
+		close(releaseExport)
+		t.Fatalf("find test process: %v", err)
+	}
+	if err := proc.Signal(reloadSignal); err != nil {
+		close(releaseExport)
+		t.Fatalf("signal reload: %v", err)
+	}
+	select {
+	case <-exportStarted:
+	case <-time.After(3 * time.Second):
+		close(releaseExport)
+		t.Fatal("reload checkpoint did not start")
+	}
+	select {
+	case err := <-errCh:
+		exited.Store(true)
+		close(releaseExport)
+		t.Fatalf("daemon exited before checkpoint completed: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseExport)
+	select {
+	case err := <-errCh:
+		exited.Store(true)
+		if err != nil && !errors.Is(err, grpc.ErrServerStopped) && !errors.Is(err, net.ErrClosed) {
+			t.Fatalf("Start returned unexpected error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("daemon did not exit after reload checkpoint completed")
+	}
+	if _, err := LoadCheckpoint(); err != nil {
+		t.Fatalf("LoadCheckpoint: %v", err)
+	}
 }
 
 func waitForPath(t *testing.T, path string, timeout time.Duration) {

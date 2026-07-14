@@ -869,6 +869,75 @@ git commit -m "feat(acp): manage trusted background drains"
 Expected: PASS; a watcher counter remains exactly one after an error and zero
 after drifted restart.
 
+**Authority-first execution backport (review cycles 5-12; same Task 6)**
+
+Additional files in Task 6:
+
+- Modify: `internal/acpclient/store.go`, `store_test.go`,
+  `store_concurrency_test.go`, `archive.go`, `archive_test.go`, `eventlog.go`,
+  and `eventlog_test.go`
+- Modify: `internal/acpclient/client.go`, `client_test.go`, `drain.go`,
+  `drain_test.go`, `watch.go`, `watch_test.go`, and `process_test.go`
+- Modify: `internal/acpclient/profiles.go`, `profiles_test.go`, `spec.go`, and
+  `spec_test.go`
+- Modify: `internal/acpclient/background.go`, `background_test.go`,
+  `background_audit.go`, `background_audit_test.go`,
+  `background_concurrency_unix_test.go`, and `background_process_lock_test.go`
+- Modify/create as required: `internal/acpclient/background_persist*.go`,
+  `background_persist*_test.go`, `store_lock*.go`, and `store_lock*_test.go`
+- Create: `internal/releaseguard/acp_background_guard_test.go`
+
+Add RED tests before the rewrite:
+
+- a `go/parser` writer inventory permits session mutation only through the one
+  guarded transition helper or the create-only collision-rejecting helper;
+- `Upsert`, lifecycle/event writeback, enqueue/recovery/claim/completion/failure,
+  cancellation, `InsertSession`, and archive import prove sticky cancellation or
+  create-only behavior under cross-process races;
+- `(true, nil)` cancellation yields `ErrCancelRequested`, `(false, err)` keeps
+  the authority error, ACP cancel uses an independent bounded context, and an
+  ignoring child is killed/reaped with every watcher/send goroutine joined;
+- transition-persisted random event IDs survive a restart harness: process A
+  receives `ErrStoreCommitUnconfirmed` and exits; process B acquires the audit
+  lock and appends another session's record; fresh process A2 reloads the durable
+  transition and retries; the test observes peer blocking while the lock is held
+  and exactly one committed record per `recordId`. Distinct same-metadata events
+  remain distinct; SIGKILL tails and every write/sync/close/parent-sync stage
+  recover;
+- the production `BackgroundManager -> WatchQueue -> StartRunner` path carries
+  a `ProfileStore.WithTrustedProfile` launch closure; a deterministic pre-start
+  barrier lets a second mutator process block while the closure calls a fixture
+  child's real `exec.Cmd.Start`, then proves release on success and failure;
+- native tests named `TestBackgroundWindowsAuditRejectsReparsePoint`,
+  `TestBackgroundWindowsAuditRejectsHardLink`,
+  `TestBackgroundWindowsAuditRejectsParentReplacement`, and
+  `TestBackgroundWindowsAuditRejectsWeakDACL` exercise the existing
+  `^TestBackgroundWindows` CI selector; releaseguard fails if any declaration or
+  the selector disappears; AIX injection fails before mutation.
+
+Implement the authority-first contract in
+`docs/plans/2026-07-10-ratchet-cli-provider-drain-managed-hooks-design.md`:
+guard all writers, make the sidecar a best-effort projection, pin transition
+reloads after the session lease, secure/repair audit appends, use durable event
+IDs, own profile trust through real child start, and make cancellation causal.
+
+Verification:
+
+```bash
+gofmt -w internal/acpclient/*.go internal/releaseguard/acp_background_guard_test.go
+go test ./internal/acpclient -run 'SessionWriterInventory|Cancel|Cancellation|Audit|Profile.*Trust|Profile.*Launch|Background|WatchQueue|DrainQueue|ImportSession' -count=1
+go test -race ./internal/acpclient -run 'Cancel|Audit|Profile.*Launch|Background|WatchQueue|DrainQueue' -count=1
+go test ./internal/acpclient -run 'Cancel|Audit|Profile.*Launch|Background' -count=20
+go test ./internal/releaseguard -run BackgroundWindows -count=1
+GOOS=windows GOARCH=amd64 go test -c ./internal/acpclient -o dist/acpclient.test.exe
+GOOS=aix GOARCH=ppc64 go test -c ./internal/acpclient -o dist/acpclient.test.aix
+rg -n "go test ./internal/acpclient -run '\^TestBackgroundWindows'" .github/workflows/ci.yml
+```
+
+Expected: local focused/race/stress tests and cross-builds exit 0; PR CI's
+Windows job executes every named native attack test. Released downgrade remains
+an explicit unsupported operator-risk boundary, not a compatibility feature.
+
 ### Task 7: Wire Background Drains Through Proto, Daemon, and Client
 
 **Files:**
@@ -1013,10 +1082,14 @@ GOOS=windows GOARCH=amd64 go test -c ./internal/acpclient -o dist/acpclient.test
 GOOS=windows GOARCH=amd64 go test -c ./internal/client -o dist/client.test.exe
 GOOS=windows GOARCH=amd64 go test -c ./cmd/ratchet -o dist/ratchet.test.exe
 GOOS=windows GOARCH=amd64 go build ./cmd/ratchet
+go test ./internal/releaseguard -run BackgroundWindows -count=1
+rg -n "go test ./internal/acpclient -run '\^TestBackgroundWindows'" .github/workflows/ci.yml
 ```
 
 Expected: all exit 0; fixture integration completes two prompts, drift starts
-zero agents, and Windows binaries compile.
+zero agents, and Windows binaries compile. During PR monitoring, the native
+Windows job must be green and must execute the named audit reparse, hard-link,
+parent-replacement, and DACL tests; cross-compilation is not a substitute.
 
 **Step 6: Commit and complete PR 3**
 
@@ -1029,8 +1102,11 @@ Follow Global Execution Rules 4-5. Runtime-launch the released binary against a
 temporary daemon and require background `status --json` to return within five
 seconds.
 
-Rollback: stop/disable all policies with the old binary before reverting PR 3;
-publish the next patch. Persisted metadata contains no content and may remain.
+Rollback: before release, stop workers and revert PR 3. After release,
+stop/disable policies with the current binary and publish an upgrade-forward
+patch that retains authority-aware state readers/writers; do not launch an
+older binary against the new state. Persisted metadata contains no content and
+may remain.
 
 ### Task 9: Securely Load and Apply Managed Hook Policy
 

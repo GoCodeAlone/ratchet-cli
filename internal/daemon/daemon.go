@@ -8,12 +8,41 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
 
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 )
+
+var (
+	exportReloadCheckpoint = ExportCheckpoint
+	saveReloadCheckpoint   = SaveCheckpoint
+)
+
+type daemonReloadBarrier struct {
+	mu         sync.Mutex
+	closing    bool
+	reloadDone chan struct{}
+}
+
+func (b *daemonReloadBarrier) beginReload() (func(), bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.closing || b.reloadDone != nil {
+		return nil, false
+	}
+	b.reloadDone = make(chan struct{})
+	return func() { close(b.reloadDone) }, true
+}
+
+func (b *daemonReloadBarrier) beginShutdown() <-chan struct{} {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.closing = true
+	return b.reloadDone
+}
 
 // Start runs the daemon in the foreground. It creates the Unix socket,
 // starts the gRPC server, and blocks until signal.
@@ -28,6 +57,7 @@ func Start(ctx context.Context, debug bool) error {
 	defer lock.Close()
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	reloadBarrier := &daemonReloadBarrier{}
 
 	if IsRunning() {
 		return fmt.Errorf("daemon already running (pid file: %s)", PIDPath())
@@ -53,20 +83,33 @@ func Start(ctx context.Context, debug bool) error {
 	}
 
 	srv := grpc.NewServer()
-	svc, err := NewService(runCtx)
+	svc, err := NewDaemonService(runCtx)
 	if err != nil {
 		return fmt.Errorf("create service: %w", err)
 	}
+	defer func() {
+		reloadDone := reloadBarrier.beginShutdown()
+		cancel()
+		if reloadDone != nil {
+			<-reloadDone
+		}
+		svc.Close()
+	}()
 	svc.engine.Debug = debug
 	svc.SetShutdownFunc(cancel)
 	pb.RegisterRatchetDaemonServer(srv, svc)
 
 	// Graceful shutdown on the platform's configured daemon shutdown signals.
-	runCtx, stop := signal.NotifyContext(runCtx, shutdownSignals()...)
+	signalCtx, stop := signal.NotifyContext(runCtx, shutdownSignals()...)
 	defer stop()
 
 	go func() {
-		<-runCtx.Done()
+		<-signalCtx.Done()
+		reloadDone := reloadBarrier.beginShutdown()
+		cancel()
+		if reloadDone != nil {
+			<-reloadDone
+		}
 		log.Println("shutting down daemon...")
 		srv.GracefulStop()
 	}()
@@ -76,22 +119,33 @@ func Start(ctx context.Context, debug bool) error {
 		// caller (CLI or new binary) can restart the daemon with the checkpoint.
 		sigReload := make(chan os.Signal, 1)
 		signal.Notify(sigReload, reloadSignal)
+		defer signal.Stop(sigReload)
 		go func() {
-			<-sigReload
-			log.Println("reload signal received, checkpointing...")
-			cp, err := ExportCheckpoint(svc)
-			if err != nil {
-				log.Printf("checkpoint failed: %v", err)
-				srv.GracefulStop()
+			select {
+			case <-sigReload:
+			case <-runCtx.Done():
 				return
 			}
-			if err := SaveCheckpoint(cp); err != nil {
+			finishReload, ok := reloadBarrier.beginReload()
+			if !ok {
+				return
+			}
+			defer func() {
+				finishReload()
+				cancel()
+			}()
+			log.Println("reload signal received, checkpointing...")
+			cp, err := exportReloadCheckpoint(svc)
+			if err != nil {
+				log.Printf("checkpoint failed: %v", err)
+				return
+			}
+			if err := saveReloadCheckpoint(cp); err != nil {
 				log.Printf("save checkpoint failed: %v", err)
 			} else {
 				log.Printf("checkpoint saved to %s", CheckpointPath())
 			}
 			log.Println("stopping daemon for reload...")
-			srv.GracefulStop()
 		}()
 	}
 

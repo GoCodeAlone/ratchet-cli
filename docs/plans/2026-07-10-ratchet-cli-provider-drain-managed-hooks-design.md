@@ -444,10 +444,13 @@ accepted; new writers call a dedicated RPC that old daemons reject before
 mutation. Downgrade requires stopping the new daemon and observing lock release;
 then process pending cleanup where possible. Old writers
 may leave inactive `provider-v2-` versions, which a later upgraded startup
-sweeps without touching referenced or legacy-prefix secrets. Background
-rollback stops workers before removing RPC/state handling. Managed-hook rollback
-must be coordinated with administrators because removing enforcement weakens
-policy; preserve audit records.
+sweeps without touching referenced or legacy-prefix secrets. Before release,
+background source changes may be reverted after stopping workers. After release,
+stop or disable policies with the current binary and publish an upgrade-forward
+patch that retains authority-aware state readers and writers; do not launch an
+older binary against released background state. Managed-hook rollback must be
+coordinated with administrators because removing enforcement weakens policy;
+preserve audit records.
 
 ### Backport 2026-07-10: CLI setup semantics and failed-test cleanup
 
@@ -586,3 +589,380 @@ making Task 5 failure evidence actionable.
 Evidence: a blocked alias crosses the real `AddProvider` boundary as `Aborted`;
 table coverage fixes all failure mappings, and malformed settings retain the
 JSON parser reason without echoing the settings body.
+
+### Backport 2026-07-11: Background drain durability boundaries
+
+Cause: primary policy and co-located side-journal writes can fail together;
+shutdown can race admitted persistence; Windows child creation can precede
+privacy enforcement and replacement durability. Change: treat the independently
+fsynced terminal audit as an authoritative recovery WAL, close lifecycle
+admission and await admitted persistence before shutdown returns, protect the
+Windows directory before child creation, and replace with
+`MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH`. Scope: manifest unchanged;
+this corrects Task 6. Evidence: co-failure restart, stop ownership, joined-error,
+blocked-persistence shutdown, native Windows DACL/replacement, and releaseguard
+tests.
+
+### Backport 2026-07-13: Authoritative background audit order
+
+Cause: wall-clock comparison, non-inheriting Windows ACEs, and file-only WAL
+sync weakened the recovery boundary. Change: JSONL append position is the sole
+recovery order; policy JSON is a projection and the transition journal remains
+supplemental partial-write recovery. Parent completion maps to lifecycle
+shutdown. New WAL creation requires file close plus supported parent-directory
+sync before success, and protected Windows directory ACEs inherit to raw child
+objects before creation. Scope: manifest unchanged; this hardens Task 6.
+
+### Backport 2026-07-13: Transactional ACP session projection
+
+Cause: atomic rename protected `sessions.json` parsing but did not serialize
+cross-handle or cross-process load/mutate/save transactions, so drain writeback
+could overwrite a concurrent enqueue. Change: guard every complete session-file
+transaction with an owner-only OS lock (`flock` or `LockFileEx`) and use private,
+crash-safe replacement on Windows; audit parent sync runs after every append,
+including retries; explicit start/resume durably removes any stale terminal
+transition before launch state/audit commit. Scope: manifest unchanged; this
+corrects Task 6.
+
+### Backport 2026-07-13: Transactional ACP session adjuncts
+
+Cause: caller-side session read/replace, owner JSON existence, and unlocked
+event-log sequencing remained stale cross-process snapshots. Change: lifecycle
+record updates and archive insert-if-absent checks transact under the complete
+sessions lock; a drain/direct run holds a per-session OS owner lease and treats
+JSON as metadata only; every event-log read/append/replace/metadata/copy uses a
+per-log OS transaction lock. Unsupported platforms return
+`ErrStoreProcessLockUnsupported`; no in-process fallback claims cross-process
+safety. Scope: manifest unchanged; this completes Task 6's transactional state
+boundary.
+
+### Backport 2026-07-13: Cross-process supervision and archive snapshots
+
+Cause: policy/transition/audit mutexes stopped at the process boundary,
+watchers released ownership between drain cycles, archive import committed its
+record before raw history, export checked ownership before taking its snapshot,
+and unsupported Unix targets had no lock implementation or explicit fallback.
+Change: use owner-only OS side locks for complete background file operations;
+hold one owner lease for a watch lifetime; commit imported session/history under
+the sessions and event-log transaction locks with retryable failure semantics;
+hold an export lease through snapshot creation; and make the unsupported build
+tag the exact complement of implemented OS locks. Scope: manifest unchanged;
+this closes Task 6's adversarial concurrency review.
+
+### Backport 2026-07-13: Completion and lease failure ownership
+
+Cause: projection cleanup could strand an OS lease, runner close errors were
+discarded, session/queue completion preceded event-history persistence, and an
+export snapshot looked like cancelable execution. Change: release always
+attempts projection cleanup and unlock; drain close failures terminate the
+watch; completion plus event append commits under the sessions-to-event lock
+order with rollback on session-save failure; and owner metadata distinguishes
+backward-compatible execution from non-cancelable snapshots. Scope: manifest
+unchanged; this closes Task 6's second adversarial review cycle.
+
+### Backport 2026-07-13: Cross-process lifecycle and commit-stage ownership
+
+Cause: paired session/event writes could mistake a post-replacement durability
+or ACL error for a pre-commit failure and remove the matching projection;
+background transition ownership ended at a manager process; and cancel checked
+owner kind before, rather than during, durable request creation. Change: mark
+post-commit filesystem errors and preserve logically committed session/event
+pairs; hold a per-session OS background lease from transition persistence
+through worker termination; and validate a live execution owner while holding
+its claim lock through cancellation commit. Scope: manifest unchanged; these
+are Task 6 durability and cross-process invariants from review cycle three.
+
+### Backport 2026-07-13: Ownership handoff and private lock namespace
+
+Cause: worker exit could reopen a transition without an OS lease, startup audit
+reconciliation could overwrite another process's owned start, cancel sidecars
+did not share commit classification with the session projection, lock setup
+rewrote caller-owned parent permissions, and release errors could trigger a
+write after ownership transferred. Change: every transition and terminal-audit
+reconciliation owns the per-session process lease; cancel/session updates form
+one private, rollback-aware transaction; physical locks live in a dedicated
+owner-only namespace without changing caller parents; and a process never
+persists state after releasing its lease. Scope: manifest unchanged; these are
+Task 6 lifecycle and filesystem invariants from review cycle four.
+An active worker is idempotent only when no local stop or transition is already
+reserved for that session.
+
+### Backport 2026-07-13: Authority-first side-state rewrite
+
+Cause: final review proved that normalized trust hashes, pre-lease transition
+snapshots, best-effort cancel rollback, torn JSONL tails, and link-following
+append opens left five Important correctness/security gaps. Change: hash exact
+persisted launch values; treat transition listings as hints and reload current
+state after the session lease; make session status cancellation authority and
+write the sidecar only as a compatibility projection; repair only an incomplete
+final JSONL record under lock; and reject final symlink/reparse append targets.
+See `decisions/0009-pin-acp-event-authority.md`. Scope: manifest
+unchanged; this is the required review-cycle-five rewrite of Task 6.
+
+### Backport 2026-07-13: Executable event and launch authority
+
+Cause: review cycle twelve found that metadata-derived audit IDs could collide,
+execution cancellation could self-cancel the ACP cancel send, copied profiles
+could not retain trust through child start, and the plan omitted native/process
+proof surfaces. Change: persist random transition event IDs; separate bounded
+cancel-send and execution contexts; add a profile-lock-owning launch callback;
+name all store/archive/client/platform files and Windows/process gates in Task 6;
+and record released downgrade as an explicit unsupported operator risk. Scope:
+manifest unchanged; Task 6 implementation details only.
+
+### Backport 2026-07-13: Release-shaped authority proofs
+
+Cause: review cycle thirteen found that standalone profile-lock and same-process
+audit tests could pass while the production manager launch path or cross-daemon
+retry remained unsafe. Change: carry a lease-owned launch closure from the
+profile store through `BackgroundManager` and `WatchQueue`, prove the closure
+holds through real `exec.Cmd.Start` with a second mutator process, prove audit
+retry/interleaving with cooperating subprocesses, and releaseguard all four
+native Windows attack tests. Scope: manifest unchanged; Task 6 proof wiring.
+
+### Backport 2026-07-13: Fresh-process audit replay
+
+Cause: live subprocess coordination could retain cached audit state and did not
+prove restart recovery after an unconfirmed commit. Change: require an A/B/A2
+process sequence driven by durable transition/audit files, explicit audit-lock
+blocking, and exactly one committed record per ID. Scope: manifest unchanged;
+Task 6 verification detail.
+
+### Backport 2026-07-13: Cross-platform Windows releaseguard
+
+Cause: Go excludes files ending `_windows_test.go` on non-Windows hosts, so the
+planned host releaseguard command reported no tests. Change: keep native attacks
+in ACP's Windows test file, but place declaration/skip/CI-selector checks in
+cross-platform `internal/releaseguard/acp_background_guard_test.go`. Scope:
+manifest unchanged; Task 6 verification filename only. Evidence:
+`go test ./internal/releaseguard -run BackgroundWindows -count=1` executes and
+passes on the host.
+
+Rewrite contract:
+
+- `CheckCancellation(id) (bool, error)` is authoritative and cancellation is
+  monotonic. One guarded store transition handles every session mutation:
+  `Store.Upsert`, lifecycle start/writeback, enqueue, stale recovery, claim,
+  completion/failure, cancellation, and event-backed variants. `Upsert`
+  preserves a latched cancellation. `InsertSession`, archive import insertion,
+  and any future whole-record creator are create-only and reject collisions.
+  A mechanical writer-inventory test fails when a session writer bypasses the
+  guard or the explicit create-only allowlist.
+  Post-latch enqueue/start/claim reject; recovery cancels; writeback preserves
+  the latch; terminalization is `cancel_requested -> canceled`. No independent
+  status assignment or check-then-claim path remains.
+- `RunOptions.CancelRequested` becomes error-bearing. `(true, nil)` records
+  `ErrCancelRequested` as the first cause; `(false, err)` records that authority
+  failure and fails closed without reporting a user cancellation. A true request
+  sends ACP cancel once on a separate bounded context derived with
+  `context.WithoutCancel`, while prompt and child-process contexts are canceled
+  independently. Send failure or deadline expiry cannot replace the first cause;
+  either forces kill/reap. Authority failure skips ACP cancel and kills/reaps.
+  All authority, ACP-send, and process watcher goroutines join before return,
+  and the captured cause deterministically wins over a racing prompt result.
+- Cancel commit order is sessions first, compatibility sidecar second. A
+  sidecar failure returns degraded/unconfirmed state without undoing the primary
+  commit. Reconciliation is one `sessions lock -> current reload -> sidecar
+  mutation` transaction. Mixed-version notification remains explicitly
+  best-effort. Released backward binary downgrade is unsupported; operators use
+  the current binary to stop/disable policies and publish an upgrade-forward
+  patch that retains authority-aware readers/writers. Pre-release branch
+  reversion remains supported. This is an explicit, unenforced operator-risk
+  boundary: accidental old-binary access may ignore authority state and is not a
+  supported or recoverable downgrade path. No compatibility barrier or migration
+  is introduced.
+- Transition recovery is `list IDs -> session lease -> lock-held reload`.
+  Missing means no-op; only the reloaded value may replay; no write follows
+  lease release.
+- Audit newline is the sole commit marker. Audit data and locks occupy a
+  dedicated owner-only directory. Both `Read` and `Append` use one pinned-parent,
+  handle-relative transaction, discard
+  a non-newline suffix, and sync repair before use. Newline-terminated malformed
+  records fail. `recordId`, `at`, `action`, `sessionId`, `profile`,
+  `descriptorHash`, and `outcome` are required. Allowed pairs are start:started;
+  resume:resumed;
+  block:profile_untrusted/profile_drift/profile_missing/session_missing/policy_invalid;
+  error:worker_error/worker_panic/state_write_failed/audit_append_failed; and
+  stop:stopped/completed. Unknown JSON fields are ignored; new actions/outcomes
+  require a format-version design. Raw event-log framing is unchanged and
+  shares only the secure final-target open primitive.
+- Secure audit mutation derives lock and data operations from one held parent
+  identity. Final links/reparse points, non-regular files, wrong owners/DACLs,
+  and multiple links are rechecked before mutation. The parent is owner-only, so
+  same-owner relinking is outside the adversarial boundary. Unix uses `openat`
+  from the held directory descriptor. Windows opens and holds the parent without
+  `FILE_SHARE_DELETE`, records its identity with
+  `GetFileInformationByHandleEx(FileIdInfo)`, acquires the path lock, revalidates
+  that identity, opens the final object with `FILE_FLAG_OPEN_REPARSE_POINT`, then
+  checks attributes, link count, owner SID, and protected DACL on the opened
+  handle.
+- Before first append, every audit-requiring transition persists a
+  cryptographically random `eventId`; the immutable audit record uses
+  `recordId = eventId`, and all retries/recovery reuse it. Distinct logical
+  events receive distinct IDs even when their timestamps and visible metadata
+  match. Append repairs then scans all committed record IDs under lock; a match
+  is a no-op even when another session appended later. Errors after writing the
+  complete newline are
+  `ErrStoreCommitUnconfirmed`; retry reconciles before append. Tests inject
+  write, sync, close, parent-sync, and repair failures.
+- Descriptor hash payload keeps the existing field order and nil/empty encoding,
+  preserves args order, sorts env keys, and hashes command/cwd exactly. Legacy
+  normalized mismatches fail closed and require explicit retrust. Profile
+  add/trust/remove/list are process-locked. `ProfileStore.WithTrustedProfile`
+  owns the process lease, revalidates name/trust/pinned hash, and invokes its
+  callback while locked. Initial manager resolution uses that callback through
+  durable start/audit commit. For execution, `BackgroundManager` carries a
+  lease-owning start closure through `WatchQueue`'s production `StartRunner`;
+  copied profile data cannot escape and launch outside that closure. The closure
+  builds the command, calls the real `exec.Cmd.Start` synchronously, and releases
+  only after child-start success/failure acknowledgement.
+- Tests cover every cancel commit stage and latch interleaving, an agent ignoring
+  cancel, SIGKILL-created audit tails read before append, a two-process transition
+  replacement race, Unix pre/post-validation link attacks, native Windows repair
+  reparse/hard-link/DACL attacks, executable legacy-reader projection behavior,
+  separate-process cancel-versus-claim/writeback; an audit restart harness where
+  process A receives `ErrStoreCommitUnconfirmed` and exits, process B acquires
+  the audit lock and appends another record, and fresh process A2 reloads the
+  durable transition and retries with exactly one record per `recordId`; and a
+  release-shaped `BackgroundManager -> WatchQueue -> StartRunner` test where a
+  second mutator process blocks across a fixture child's real `exec.Cmd.Start`
+  acknowledgement. A releaseguard asserts all named Windows attack tests remain
+  under the CI selector. A host-injected unsupported-lock no-write
+  proof covers AIX behavior; AIX remains cross-build-only and returns
+  `ErrStoreProcessLockUnsupported` before mutation.
+
+### Backport 2026-07-14: Cancellation launch admission
+
+Cause: cancellation could commit after a queue item became `running` but before
+`StartRunner`, and direct drain/watch callers did not repair the authoritative
+session-to-sidecar projection. Change: serialize cancellation commit and the
+authoritative pre-launch recheck plus synchronous runner start through a
+per-session process lock; reconcile cancellation projections before direct
+drain/watch ownership. Scope: no manifest change; this closes Task 6 review
+findings. Evidence: deterministic cancel-first/start-first tests pass under
+`-race` and 20 repetitions; projection repair/failure tests launch no worker or
+owner before reconciliation succeeds.
+
+### Backport 2026-07-14: Terminal test observation
+
+Cause: terminal policy state becomes visible before the terminal audit append
+and in-memory completion guard, but sibling tests treated that earlier state as
+completion. Change: terminal-record assertions wait for the manager's terminal
+guard; production persistence ordering is unchanged. Scope: no manifest change;
+Task 6 verification only. Evidence: the four worker terminal paths pass under
+`go test -race ... -count=20`.
+
+### Backport 2026-07-14: Final cancellation linearization
+
+Cause: a successful prompt could outrun the watcher's last authority poll;
+idle watches and persisted manager starts lacked a final cancellation check;
+session cancellation was recorded as `worker_error`; failed session setup
+dropped cleanup errors. Change: serialize and repeat authority checking at
+watcher shutdown; check every watch cycle; admit persisted start/resume through
+the per-session launch lock; persist cancellation-only worker exit as
+`stopped`; join startup cleanup failure. Joined independent failures remain
+errors. Scope: no manifest change; this closes Task 6 review cycle 3. Evidence:
+the four deterministic regressions pass 20 repetitions and under `-race`.
+
+### Backport 2026-07-14: Terminal cancellation authority
+
+Cause: final idle/maximum-cycle return and background completion persistence
+could outrun a committed session cancellation; manager shutdown could mask that
+session latch; initial cancellation still entered the prompt RPC; direct CLI
+execution discarded close errors. Change: recheck WatchQueue and worker terminal
+authority under per-session launch admission, persist cancellation-only or nil
+worker exit as `stopped` when the latch is authoritative, abort before prompt on
+initial authority failure, and join direct-client cleanup errors. Independent
+joined worker failures remain errors. Scope: no manifest change; this closes
+Task 6 review cycle 4. Evidence: four deterministic regressions fail without
+the correction and pass with it under focused tests.
+
+### Backport 2026-07-14: Terminal observability cleanup
+
+Cause: an admission-lock release error replaced an already durable terminal
+outcome in memory, and a prompt cancellation child context had no production
+observer. Change: preserve the recorded state/outcome while marking it degraded
+and joining the release error; remove the unused cause context. Watch cycle
+callbacks remain non-terminal observations and precede final authority so a
+callback-triggered cancellation is caught. Scope: no manifest change; Task 6
+review cycle 5 minors. Evidence: focused release/error/cancellation tests pass.
+
+### Backport 2026-07-14: Background RPC admission and integration
+
+Cause: initial handlers ignored already-canceled RPC contexts; split fake
+boundaries did not prove `internal/client.Client -> gRPC -> daemon.Service`;
+timestamp and nil-shutdown edges were unchecked. Change: reject cancellation
+before manager admission, then keep admitted work daemon-owned and idempotently
+queryable; expose narrow service injection; exercise the combined real boundary
+plus concrete missing/profile-drift paths; validate protobuf timestamps and nil
+shutdown. Scope: no manifest change; Task 7 review cycle 1. Evidence: focused
+daemon/client regressions fail before and pass after the correction.
+
+### Backport 2026-07-14: Admitted shutdown preservation
+
+Cause: shutdown racing an admitted start or resume could persist the enabled
+policy, reject worker launch, then rewrite that durable request as
+`disabled/stopped`. Change: manager closure after durable admission releases the
+transition and returns `ErrBackgroundManagerClosed` without disabling the
+policy; only explicit stop or authoritative session cancellation may do so.
+Constructor failure now closes injected managers, and typed-nil injection
+selects the disabled manager. Scope: no manifest change; Task 7 review cycle 2.
+Evidence: deterministic start/resume race and lifecycle regressions fail with
+the fixes reverted and pass with them restored.
+
+### Backport 2026-07-14: Daemon lifetime ownership
+
+Cause: signal/reload shutdown could close the engine before canceling the
+daemon lifetime, while cron scheduler loops and detached tick children were not
+joined. Change: daemon exit cancels one lifetime before service close;
+`Service` owns a child context and an admission-gated wait group; cron shutdown
+cancels and joins scheduler loops while preserving durable active jobs; admitted
+tick children retain asynchronous cadence but are canceled and joined before
+the engine closes. Scope: no manifest change; Task 7 review cycle 3. Evidence:
+active-callback, lifecycle-cancellation, and detached-work regressions fail with
+their ownership fixes reverted and pass restored, including `-race`.
+
+### Backport 2026-07-14: Reload and scheduler admission
+
+Cause: reload canceled the daemon before checkpoint completion, reload signal
+registration survived ordinary exit, and cron creation could persist an active
+job after scheduler close had won. Change: a reload barrier serializes
+checkpoint/save with generic teardown; signal registration is stopped and its
+goroutine selects daemon lifetime; cron create/resume admission, persistence,
+and worker registration are serialized against close. Rejected creation writes
+no row, while admitted active jobs remain durable for restart. Scope: no
+manifest change; Task 7 review cycle 4. Evidence: a blocked real SIGUSR1
+checkpoint and closed-create persistence tests fail before and pass after the
+corrections.
+
+### Backport 2026-07-14: Final lifecycle cleanup
+
+Cause: scheduler tests canceled entries without joining them, and closed
+scheduler errors used request-validation codes. Change: tests start and close
+real schedulers, restart persistence through `Close`, and map create/resume
+closure to `FailedPrecondition`. Scope: no manifest change; Task 7 review cycle
+5 minors. Evidence: cron lifecycle tests pass and the code-mapping regression
+fails with the helper bypassed.
+
+### Backport 2026-07-14: Background CLI platform and output boundary
+
+Cause: Task 8 docs could imply native Windows daemon execution although
+production IPC remains a Unix socket; shared gRPC/status rendering also blurred
+trust, lifecycle, missing-policy, and terminal-control cases. Change: define
+Windows parity as native policy/DACL safety plus command cross-builds; state the
+Unix-only IPC boundary; map closed/canceled lifecycle errors distinctly; render
+operation-specific guidance and graphic-escaped human fields; prove stop remains
+disabled across restart. Scope: no manifest change. Evidence: focused red/green
+error/output regressions and `TestCLI_ACPClientBackgroundDrainLifecycle` pass.
+
+### Backport 2026-07-14: Native Windows ACL identity
+
+Cause: an elevated Windows hosted runner assigns the Administrators group as
+owner for new files, and Windows may split one inheritable owner grant into
+multiple equivalent ACEs. Applied ACLs also expand generic rights into the
+concrete file full-control mask. Change: private ACL installation explicitly
+assigns the current process user as owner and validates every ACE by type,
+concrete rights, and principal instead of requiring one physical encoding.
+Scope: no manifest change; this closes Task 6's native Windows gate. Evidence: the native
+`TestBackgroundWindows` selector covers owner assignment, inherited privacy,
+equivalent ACEs, reparse points, hard links, parent replacement, and weak DACLs.

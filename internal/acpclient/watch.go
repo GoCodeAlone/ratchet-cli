@@ -45,7 +45,7 @@ type WatchResult struct {
 	Remaining    int
 }
 
-func WatchQueue(ctx context.Context, store *Store, spec AgentSpec, opts RunOptions, sessionID string, watchOpts WatchOptions, onCycle func(WatchCycle)) (WatchResult, error) {
+func WatchQueue(ctx context.Context, store *Store, spec AgentSpec, opts RunOptions, sessionID string, watchOpts WatchOptions, onCycle func(WatchCycle)) (result WatchResult, err error) {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return WatchResult{}, errors.New("acp client session id is required")
@@ -56,6 +56,14 @@ func WatchQueue(ctx context.Context, store *Store, spec AgentSpec, opts RunOptio
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := store.ReconcileCancellationRequests(); err != nil {
+		return WatchResult{}, err
+	}
+	lease, err := acquireDrainOwnerLease(store, spec, sessionID, watchOpts.now())
+	if err != nil {
+		return WatchResult{}, err
+	}
+	defer func() { err = errors.Join(err, lease.Release()) }()
 
 	interval := watchOpts.Interval
 	if interval <= 0 {
@@ -70,11 +78,24 @@ func WatchQueue(ctx context.Context, store *Store, spec AgentSpec, opts RunOptio
 		sleep = defaultWatchSleep
 	}
 
-	result := WatchResult{SessionID: sessionID}
+	result = WatchResult{SessionID: sessionID}
 	for {
 		if err := ctx.Err(); err != nil {
 			result.Remaining = countPendingQueue(store, sessionID)
 			return result, err
+		}
+		cancelRequested, err := store.CheckCancellation(sessionID)
+		if err != nil {
+			result.Remaining = countPendingQueue(store, sessionID)
+			return result, err
+		}
+		if cancelRequested {
+			recovered, canceled, recoverErr := store.recoverRunningQueueItems(sessionID, watchOpts.now())
+			if canceled {
+				result.Canceled += recovered
+			}
+			result.Remaining = countPendingQueue(store, sessionID)
+			return result, errors.Join(ErrCancelRequested, recoverErr)
 		}
 
 		cycleNumber := result.Cycles + 1
@@ -101,6 +122,9 @@ func WatchQueue(ctx context.Context, store *Store, spec AgentSpec, opts RunOptio
 				onCycle(cycle)
 			}
 			if watchOpts.StopWhenEmpty || reachedMaxWatchCycles(result.Cycles, watchOpts.MaxCycles) {
+				if err := finalizeWatchCancellation(store, sessionID, watchOpts.now(), &result); err != nil {
+					return result, err
+				}
 				return result, nil
 			}
 			if err := sleep(ctx, interval); err != nil {
@@ -109,7 +133,7 @@ func WatchQueue(ctx context.Context, store *Store, spec AgentSpec, opts RunOptio
 			continue
 		}
 
-		drainResult, err := DrainQueue(ctx, store, spec, opts, sessionID, DrainOptions{
+		drainResult, err := drainQueueOwned(ctx, store, spec, opts, sessionID, DrainOptions{
 			Max:         maxPerCycle,
 			Now:         watchOpts.Now,
 			StartRunner: watchOpts.StartRunner,
@@ -138,12 +162,30 @@ func WatchQueue(ctx context.Context, store *Store, spec AgentSpec, opts RunOptio
 			return result, err
 		}
 		if reachedMaxWatchCycles(result.Cycles, watchOpts.MaxCycles) {
+			if err := finalizeWatchCancellation(store, sessionID, watchOpts.now(), &result); err != nil {
+				return result, err
+			}
 			return result, nil
 		}
 		if err := sleep(ctx, interval); err != nil {
 			return result, err
 		}
 	}
+}
+
+func finalizeWatchCancellation(store *Store, sessionID string, now time.Time, result *WatchResult) error {
+	return store.withLaunchAdmission(sessionID, func() error {
+		requested, err := store.CheckCancellation(sessionID)
+		if err != nil || !requested {
+			return err
+		}
+		recovered, canceled, recoverErr := store.recoverRunningQueueItems(sessionID, now)
+		if canceled {
+			result.Canceled += recovered
+		}
+		result.Remaining = countPendingQueue(store, sessionID)
+		return errors.Join(ErrCancelRequested, recoverErr)
+	})
 }
 
 func watchQueueWork(store *Store, sessionID string) (int, error) {
