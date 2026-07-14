@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
+	"unicode"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/hooks"
 	"github.com/GoCodeAlone/ratchet-cli/internal/plugins"
@@ -25,7 +27,20 @@ type hookListRecord struct {
 	Glob          string `json:"glob,omitempty"`
 	PluginName    string `json:"plugin_name,omitempty"`
 	PluginVersion string `json:"plugin_version,omitempty"`
+	Managed       bool   `json:"managed"`
+	Suppressed    bool   `json:"suppressed"`
 }
+
+type hookPolicyRecord struct {
+	Mode             string `json:"mode"`
+	SourcePath       string `json:"source_path"`
+	ManagedHookCount int    `json:"managed_hook_count"`
+}
+
+var (
+	loadManagedHookPolicy        = hooks.LoadManagedPolicy
+	defaultManagedHookPolicyPath = hooks.DefaultManagedPolicyPath
+)
 
 func handleHooks(args []string) {
 	if len(args) == 0 {
@@ -35,6 +50,16 @@ func handleHooks(args []string) {
 	switch args[0] {
 	case "list":
 		if err := handleHooksList(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+	case "policy":
+		if err := handleHooksPolicy(args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+	case "audit":
+		if err := handleHooksAudit(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
@@ -84,7 +109,76 @@ func handleHooksList(args []string) error {
 	return nil
 }
 
+func handleHooksPolicy(args []string) error {
+	fs := flag.NewFlagSet("ratchet hooks policy", flag.ContinueOnError)
+	fs.SetOutput(os.Stdout)
+	jsonOut := fs.Bool("json", false, "print JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	path, err := defaultManagedHookPolicyPath()
+	if err != nil {
+		return err
+	}
+	policy, err := loadManagedHookPolicy(hooks.LoadOptions{ManagedPath: path})
+	if err != nil {
+		return err
+	}
+	record := hookPolicyRecord{Mode: "none", SourcePath: controlSafeText(path)}
+	if policy != nil {
+		record.Mode = string(policy.Mode)
+		for _, hookList := range policy.Hooks.Hooks {
+			record.ManagedHookCount += len(hookList)
+		}
+	}
+	if *jsonOut {
+		data, err := json.MarshalIndent(record, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+		return nil
+	}
+	fmt.Printf("Mode: %s\nSource: %s\nManaged hooks: %d\n", record.Mode, record.SourcePath, record.ManagedHookCount)
+	return nil
+}
+
+func handleHooksAudit(args []string) error {
+	fs := flag.NewFlagSet("ratchet hooks audit", flag.ContinueOnError)
+	fs.SetOutput(os.Stdout)
+	jsonOut := fs.Bool("json", false, "print JSON")
+	limit := fs.Int("limit", hooks.DefaultHookAuditReadLimit(), "maximum records")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	records, err := hooks.NewHookAudit(hooks.DefaultHookAuditPath()).Read(*limit)
+	if err != nil {
+		return err
+	}
+	if *jsonOut {
+		data, err := json.MarshalIndent(records, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+		return nil
+	}
+	printHookAuditRecords(records)
+	return nil
+}
+
 func mutateHookTrust(action, hash string) error {
+	policy, err := loadManagedHookPolicy(hooks.LoadOptions{})
+	if err != nil {
+		return err
+	}
+	if managedPolicyContainsHash(policy, hash) {
+		path, pathErr := defaultManagedHookPolicyPath()
+		if pathErr != nil {
+			return pathErr
+		}
+		return fmt.Errorf("managed policy hook %s is immutable; update %s as an administrator", hash, controlSafeText(path))
+	}
 	store, err := hooks.LoadTrustStore(hooks.DefaultTrustStorePath())
 	if err != nil {
 		return err
@@ -109,6 +203,22 @@ func mutateHookTrust(action, hash string) error {
 	return nil
 }
 
+func managedPolicyContainsHash(policy *hooks.ManagedPolicy, hash string) bool {
+	if policy == nil || strings.TrimSpace(hash) == "" {
+		return false
+	}
+	cfg := &hooks.HookConfig{Hooks: make(map[hooks.Event][]hooks.Hook)}
+	cfg.ApplyManagedPolicy(policy)
+	for _, hookList := range cfg.Hooks {
+		for _, hook := range hookList {
+			if hook.SourceKind == hooks.SourceManaged && hook.Hash == hash {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func discoverHooks(cwd string) ([]hookListRecord, error) {
 	store, err := hooks.LoadTrustStore(hooks.DefaultTrustStorePath())
 	if err != nil {
@@ -129,6 +239,11 @@ func discoverHooks(cwd string) ([]hookListRecord, error) {
 		}
 	}
 	cfg.ApplyTrust(store)
+	policy, err := loadManagedHookPolicy(hooks.LoadOptions{})
+	if err != nil {
+		return nil, err
+	}
+	cfg.ApplyManagedPolicy(policy)
 
 	var records []hookListRecord
 	for event, hookList := range cfg.Hooks {
@@ -143,6 +258,8 @@ func discoverHooks(cwd string) ([]hookListRecord, error) {
 				Glob:          h.Glob,
 				PluginName:    h.PluginName,
 				PluginVersion: h.PluginVersion,
+				Managed:       h.SourceKind == hooks.SourceManaged,
+				Suppressed:    h.Suppressed,
 			})
 		}
 	}
@@ -160,10 +277,14 @@ func discoverHooks(cwd string) ([]hookListRecord, error) {
 
 func hookStatus(h hooks.Hook) string {
 	switch {
+	case h.Suppressed:
+		return "suppressed"
 	case h.Disabled:
 		return "disabled"
 	case h.UnsupportedPlatform:
 		return "unsupported"
+	case h.SourceKind == hooks.SourceManaged:
+		return "managed"
 	case h.Trusted || h.SourceKind == "":
 		return "trusted"
 	default:
@@ -176,12 +297,22 @@ func summarizeHookCommand(h hooks.Hook) string {
 	if runtime.GOOS == "windows" && h.CommandWindows != "" {
 		command = h.CommandWindows
 	}
-	command = strings.Join(strings.Fields(command), " ")
-	const max = 80
-	if len(command) <= max {
+	command = strings.Join(strings.Fields(controlSafeText(command)), " ")
+	const maxRunes = 80
+	runes := []rune(command)
+	if len(runes) <= maxRunes {
 		return command
 	}
-	return command[:max-3] + "..."
+	return string(runes[:maxRunes-3]) + "..."
+}
+
+func controlSafeText(value string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, value)
 }
 
 func ratchetHomeDir() string {
@@ -204,11 +335,29 @@ func printHookRecords(records []hookListRecord) {
 	}
 }
 
+func printHookAuditRecords(records []hooks.HookAuditRecord) {
+	if len(records) == 0 {
+		fmt.Println("No managed hook audit records.")
+		return
+	}
+	fmt.Printf("%-30s %-18s %-8s %-15s %-8s %s\n", "TIMESTAMP", "EVENT", "SOURCE", "RESULT", "MS", "HASH")
+	for _, record := range records {
+		hash := record.Hash
+		if len(hash) > 12 {
+			hash = hash[:12]
+		}
+		fmt.Printf("%-30s %-18s %-8s %-15s %-8d %s\n",
+			record.Timestamp.UTC().Format(time.RFC3339Nano), record.Event, record.Source, record.Result, record.DurationMS, hash)
+	}
+}
+
 func printHooksUsage() {
 	fmt.Println(`Usage: ratchet hooks <command>
 
 Commands:
-  list [--json] [--cwd dir]  Review discovered user, project, and plugin hooks
+  list [--json] [--cwd dir]  Review discovered hooks and enforcement status
+  policy [--json]            Inspect administrator-managed hook policy
+  audit [--json] [--limit n] Inspect managed hook execution audit
   trust <hash>               Trust a hook descriptor hash
   untrust <hash>             Remove explicit trust for a hook hash
   disable <hash>             Disable a hook hash; disabled wins over trust`)

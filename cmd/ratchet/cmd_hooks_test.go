@@ -2,10 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/hooks"
 )
@@ -98,12 +100,139 @@ hooks:
 	}
 }
 
+func TestHooksPolicyReportsManagedAndAbsentPolicy(t *testing.T) {
+	policy := testManagedHookPolicy(hooks.ManagedModeAdditive)
+	restore := stubManagedHookPolicy(t, policy, "/secure/managed-hooks.yaml")
+	defer restore()
+
+	out := captureStdout(t, func() {
+		if err := handleHooksPolicy([]string{"--json"}); err != nil {
+			t.Fatalf("handleHooksPolicy: %v", err)
+		}
+	})
+	var got hookPolicyRecord
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("Unmarshal: %v\n%s", err, out)
+	}
+	if got.Mode != string(hooks.ManagedModeAdditive) || got.SourcePath != "/secure/managed-hooks.yaml" || got.ManagedHookCount != 1 {
+		t.Fatalf("policy record = %+v", got)
+	}
+
+	restore()
+	restore = stubManagedHookPolicy(t, nil, "/secure/managed-hooks.yaml")
+	defer restore()
+	out = captureStdout(t, func() {
+		if err := handleHooksPolicy([]string{"--json"}); err != nil {
+			t.Fatalf("handleHooksPolicy absent: %v", err)
+		}
+	})
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("Unmarshal absent: %v\n%s", err, out)
+	}
+	if got.Mode != "none" || got.SourcePath != "/secure/managed-hooks.yaml" || got.ManagedHookCount != 0 {
+		t.Fatalf("absent policy record = %+v", got)
+	}
+}
+
+func TestHooksAuditReportsNewestFirstJSONAndAbsentFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	audit := hooks.NewHookAudit(hooks.DefaultHookAuditPath())
+	now := time.Now().UTC()
+	for i, result := range []hooks.HookAuditResult{hooks.HookAuditStarted, hooks.HookAuditSuccess} {
+		if err := audit.Append(hooks.HookAuditRecord{
+			Timestamp:  now.Add(time.Duration(i) * time.Second),
+			Event:      hooks.PreCommand,
+			Hash:       strings.Repeat(string(rune('a'+i)), 64),
+			Source:     hooks.SourceManaged,
+			Result:     result,
+			DurationMS: int64(i),
+		}); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+	}
+
+	out := captureStdout(t, func() {
+		if err := handleHooksAudit([]string{"--json", "--limit", "1"}); err != nil {
+			t.Fatalf("handleHooksAudit: %v", err)
+		}
+	})
+	var records []hooks.HookAuditRecord
+	if err := json.Unmarshal([]byte(out), &records); err != nil {
+		t.Fatalf("Unmarshal: %v\n%s", err, out)
+	}
+	if len(records) != 1 || records[0].Result != hooks.HookAuditSuccess {
+		t.Fatalf("audit records = %+v", records)
+	}
+
+	t.Setenv("HOME", t.TempDir())
+	out = captureStdout(t, func() {
+		if err := handleHooksAudit([]string{"--json"}); err != nil {
+			t.Fatalf("handleHooksAudit absent: %v", err)
+		}
+	})
+	if strings.TrimSpace(out) != "[]" {
+		t.Fatalf("absent audit output = %q, want []", out)
+	}
+}
+
+func TestHooksListShowsManagedSourceAndSuppressionFields(t *testing.T) {
+	_, workDir := setupHookCLIWorkspace(t)
+	restore := stubManagedHookPolicy(t, testManagedHookPolicy(hooks.ManagedModeOnly), "/secure/managed-hooks.yaml")
+	defer restore()
+
+	items := decodeHookList(t, captureStdout(t, func() {
+		handleHooks([]string{"list", "--json", "--cwd", workDir})
+	}))
+	managed := assertHookSource(t, items, "managed", "managed")
+	if !managed.Managed || managed.Suppressed {
+		t.Fatalf("managed fields = %+v", managed)
+	}
+	for _, source := range []string{"user", "project", "plugin"} {
+		item := assertHookSource(t, items, source, "suppressed")
+		if item.Managed || !item.Suppressed {
+			t.Fatalf("%s suppression fields = %+v", source, item)
+		}
+	}
+}
+
+func TestHooksManagedMutationRejectsOnlyDiscoveredManagedHashes(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	policy := testManagedHookPolicy(hooks.ManagedModeAdditive)
+	configured := hooks.HookConfig{Hooks: make(map[hooks.Event][]hooks.Hook)}
+	configured.ApplyManagedPolicy(policy)
+	managedHash := configured.Hooks[hooks.PreCommand][0].Hash
+	restore := stubManagedHookPolicy(t, policy, "/secure/managed-hooks.yaml")
+	defer restore()
+
+	for _, action := range []string{"trust", "untrust", "disable"} {
+		err := mutateHookTrust(action, managedHash)
+		if err == nil || !strings.Contains(err.Error(), "managed policy") || !strings.Contains(err.Error(), "immutable") {
+			t.Fatalf("%s managed hash error = %v", action, err)
+		}
+	}
+	unknown := strings.Repeat("f", 64)
+	if err := mutateHookTrust("disable", unknown); err != nil {
+		t.Fatalf("disable unknown hash: %v", err)
+	}
+	store, err := hooks.LoadTrustStore(hooks.DefaultTrustStorePath())
+	if err != nil {
+		t.Fatalf("LoadTrustStore: %v", err)
+	}
+	if !store.IsDisabled(unknown) || store.IsDisabled(managedHash) || store.IsTrusted(managedHash) {
+		t.Fatalf("trust store mutated managed hash: %+v", store)
+	}
+}
+
 type hookCLIItem struct {
 	Event      string `json:"event"`
 	SourceKind string `json:"source_kind"`
 	Status     string `json:"status"`
 	Hash       string `json:"hash"`
 	Command    string `json:"command"`
+	Managed    bool   `json:"managed"`
+	Suppressed bool   `json:"suppressed"`
 }
 
 func decodeHookList(t *testing.T, out string) []hookCLIItem {
@@ -177,4 +306,61 @@ hooks:
 	}
 
 	return home, workDir
+}
+
+func testManagedHookPolicy(mode hooks.ManagedMode) *hooks.ManagedPolicy {
+	return &hooks.ManagedPolicy{
+		Mode: mode,
+		Hooks: hooks.HookConfig{Hooks: map[hooks.Event][]hooks.Hook{
+			hooks.PreCommand: {{Command: "echo managed", CommandWindows: "Write-Output managed"}},
+		}},
+	}
+}
+
+func stubManagedHookPolicy(t *testing.T, policy *hooks.ManagedPolicy, path string) func() {
+	t.Helper()
+	previousLoad := loadManagedHookPolicy
+	previousPath := defaultManagedHookPolicyPath
+	loadManagedHookPolicy = func(hooks.LoadOptions) (*hooks.ManagedPolicy, error) { return policy, nil }
+	defaultManagedHookPolicyPath = func() (string, error) { return path, nil }
+	restored := false
+	return func() {
+		if restored {
+			return
+		}
+		loadManagedHookPolicy = previousLoad
+		defaultManagedHookPolicyPath = previousPath
+		restored = true
+	}
+}
+
+func TestHooksPolicyPropagatesSecureLoaderFailure(t *testing.T) {
+	previous := loadManagedHookPolicy
+	loadManagedHookPolicy = func(hooks.LoadOptions) (*hooks.ManagedPolicy, error) {
+		return nil, errors.New("managed policy unavailable")
+	}
+	defer func() { loadManagedHookPolicy = previous }()
+	if err := handleHooksPolicy([]string{"--json"}); err == nil {
+		t.Fatal("handleHooksPolicy accepted loader failure")
+	}
+}
+
+func TestHooksPolicyLoadsTheResolvedSecurePath(t *testing.T) {
+	const path = "/secure/managed-hooks.yaml"
+	previousLoad := loadManagedHookPolicy
+	previousPath := defaultManagedHookPolicyPath
+	defaultManagedHookPolicyPath = func() (string, error) { return path, nil }
+	loadManagedHookPolicy = func(opts hooks.LoadOptions) (*hooks.ManagedPolicy, error) {
+		if opts.ManagedPath != path {
+			return nil, errors.New("secure policy path was not passed to loader")
+		}
+		return nil, nil
+	}
+	defer func() {
+		loadManagedHookPolicy = previousLoad
+		defaultManagedHookPolicyPath = previousPath
+	}()
+	if err := handleHooksPolicy([]string{"--json"}); err != nil {
+		t.Fatalf("handleHooksPolicy: %v", err)
+	}
 }

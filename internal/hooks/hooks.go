@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"text/template"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -134,6 +135,11 @@ type LoadOptions struct {
 	ManagedPath string
 
 	managedReadFile func(string) ([]byte, error)
+}
+
+// DefaultManagedPolicyPath returns the fixed platform administrator-policy path.
+func DefaultManagedPolicyPath() (string, error) {
+	return defaultManagedPolicyPath()
 }
 
 // Load reads hook configs from ~/.ratchet/hooks.yaml and .ratchet/hooks.yaml.
@@ -336,6 +342,16 @@ func (h Hook) runnable() bool {
 // "plan_id", "fleet_id", "agent_name", "agent_role", "cron_id",
 // "tokens_used", "tokens_limit"
 func (hc *HookConfig) Run(event Event, data map[string]string) error {
+	return hc.RunWithOptions(event, data, RunOptions{})
+}
+
+// RunOptions supplies execution boundaries for managed hooks.
+type RunOptions struct {
+	Audit HookAuditWriter
+}
+
+// RunWithOptions executes eligible hooks and durably audits managed hooks.
+func (hc *HookConfig) RunWithOptions(event Event, data map[string]string, opts RunOptions) error {
 	hooks := hc.Hooks[event]
 	for _, h := range hooks {
 		if !h.runnable() {
@@ -358,18 +374,93 @@ func (hc *HookConfig) Run(event Event, data map[string]string) error {
 			continue
 		}
 
-		// Expand command template with shell-escaped values to prevent injection.
-		cmd, err := expandTemplate(command, escapeDataForGOOS(data, runtime.GOOS))
-		if err != nil {
-			return fmt.Errorf("expand hook command: %w", err)
+		if h.SourceKind != SourceManaged {
+			// Expand command template with shell-escaped values to prevent injection.
+			cmd, err := expandTemplate(command, escapeDataForGOOS(data, runtime.GOOS))
+			if err != nil {
+				return fmt.Errorf("expand hook command: %w", err)
+			}
+			out, err := execHookCommand(cmd).CombinedOutput()
+			if err != nil {
+				return fmt.Errorf("hook %s failed: %v\noutput: %s", event, err, out)
+			}
+			continue
 		}
 
-		out, err := execHookCommand(cmd).CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("hook %s failed: %v\noutput: %s", event, err, out)
+		hash := h.Hash
+		if hash == "" {
+			hash = h.DescriptorHash()
+		}
+		started := time.Now().UTC()
+		startRecord := HookAuditRecord{
+			Timestamp: started,
+			Event:     event,
+			Hash:      hash,
+			Source:    SourceManaged,
+			Result:    HookAuditStarted,
+		}
+		if opts.Audit == nil || opts.Audit.Append(startRecord) != nil {
+			return newManagedHookExecutionError(event, hash, HookAuditDegraded, false, true)
+		}
+
+		cmd, commandErr := expandTemplate(command, escapeDataForGOOS(data, runtime.GOOS))
+		if commandErr == nil {
+			_, commandErr = execHookCommand(cmd).CombinedOutput()
+		}
+		result := HookAuditSuccess
+		if commandErr != nil {
+			result = HookAuditCommandFailed
+		}
+		terminal := HookAuditRecord{
+			Timestamp:  time.Now().UTC(),
+			Event:      event,
+			Hash:       hash,
+			Source:     SourceManaged,
+			Result:     result,
+			DurationMS: time.Since(started).Milliseconds(),
+		}
+		auditErr := opts.Audit.Append(terminal)
+		if commandErr != nil || auditErr != nil {
+			return newManagedHookExecutionError(event, hash, result, commandErr != nil, auditErr != nil)
 		}
 	}
 	return nil
+}
+
+type managedHookExecutionError struct {
+	event         Event
+	hash          string
+	result        HookAuditResult
+	commandFailed bool
+	auditDegraded bool
+}
+
+func newManagedHookExecutionError(event Event, hash string, result HookAuditResult, commandFailed, auditDegraded bool) error {
+	return &managedHookExecutionError{
+		event:         event,
+		hash:          hash,
+		result:        result,
+		commandFailed: commandFailed,
+		auditDegraded: auditDegraded,
+	}
+}
+
+func (e *managedHookExecutionError) Error() string {
+	if e.auditDegraded && e.result != HookAuditDegraded {
+		return fmt.Sprintf("managed hook event=%s hash=%s result=%s audit=%s", e.event, e.hash, e.result, HookAuditDegraded)
+	}
+	return fmt.Sprintf("managed hook event=%s hash=%s result=%s", e.event, e.hash, e.result)
+}
+
+func (e *managedHookExecutionError) Unwrap() []error {
+	errs := make([]error, 0, 2)
+	if e.commandFailed {
+		errs = append(errs, ErrManagedHookCommandFailed)
+	}
+	if e.auditDegraded {
+		errs = append(errs, ErrHookAuditDegraded)
+	}
+	return errs
 }
 
 func execHookCommand(command string) *exec.Cmd {

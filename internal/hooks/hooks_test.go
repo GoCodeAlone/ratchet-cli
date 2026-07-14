@@ -1,8 +1,10 @@
 package hooks
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -288,6 +290,30 @@ func TestManagedHookTrustIsImmutable(t *testing.T) {
 	}
 	if !got.runnable() {
 		t.Fatal("managed hook is not runnable")
+	}
+}
+
+func TestManagedHookRunCompatibilityWrapperRequiresAuditBeforeLaunch(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "launched")
+	hook := managedAuditTestHook(managedAuditMarkerCommand(marker))
+	cfg := &HookConfig{Hooks: map[Event][]Hook{PreCommand: {hook}}}
+
+	err := cfg.Run(PreCommand, map[string]string{})
+	if !errors.Is(err, ErrHookAuditDegraded) {
+		t.Fatalf("Run error = %v, want ErrHookAuditDegraded", err)
+	}
+	if _, statErr := os.Stat(marker); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("managed command launched without audit: %v", statErr)
+	}
+}
+
+func TestRunCompatibilityWrapperPreservesUnmanagedErrorOutput(t *testing.T) {
+	cfg := &HookConfig{Hooks: map[Event][]Hook{
+		PreCommand: {{Command: "printf 'compat-output' >&2; exit 9"}},
+	}}
+	err := cfg.Run(PreCommand, map[string]string{})
+	if err == nil || !strings.Contains(err.Error(), "compat-output") {
+		t.Fatalf("Run compatibility error = %v", err)
 	}
 }
 
