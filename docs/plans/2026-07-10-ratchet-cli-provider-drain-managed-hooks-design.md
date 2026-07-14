@@ -943,3 +943,14 @@ real schedulers, restart persistence through `Close`, and map create/resume
 closure to `FailedPrecondition`. Scope: no manifest change; Task 7 review cycle
 5 minors. Evidence: cron lifecycle tests pass and the code-mapping regression
 fails with the helper bypassed.
+
+### Backport 2026-07-14: Background CLI platform and output boundary
+
+Cause: Task 8 docs could imply native Windows daemon execution although
+production IPC remains a Unix socket; shared gRPC/status rendering also blurred
+trust, lifecycle, missing-policy, and terminal-control cases. Change: define
+Windows parity as native policy/DACL safety plus command cross-builds; state the
+Unix-only IPC boundary; map closed/canceled lifecycle errors distinctly; render
+operation-specific guidance and graphic-escaped human fields; prove stop remains
+disabled across restart. Scope: no manifest change. Evidence: focused red/green
+error/output regressions and `TestCLI_ACPClientBackgroundDrainLifecycle` pass.
