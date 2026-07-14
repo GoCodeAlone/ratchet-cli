@@ -309,7 +309,10 @@ func TestManagedHookRunCompatibilityWrapperRequiresAuditBeforeLaunch(t *testing.
 
 func TestRunCompatibilityWrapperPreservesUnmanagedErrorOutput(t *testing.T) {
 	cfg := &HookConfig{Hooks: map[Event][]Hook{
-		PreCommand: {{Command: "printf 'compat-output' >&2; exit 9"}},
+		PreCommand: {{
+			Command:        "printf 'compat-output' >&2; exit 9",
+			CommandWindows: "Write-Error 'compat-output'; exit 9",
+		}},
 	}}
 	err := cfg.Run(PreCommand, map[string]string{})
 	if err == nil || !strings.Contains(err.Error(), "compat-output") {

@@ -17,12 +17,13 @@ import (
 )
 
 const (
-	maxHookAuditBytes      = 4 << 20
-	defaultHookAuditLimit  = 100
-	maxHookAuditReadLimit  = 1000
-	hookAuditFileName      = "managed-hooks.jsonl"
-	hookAuditDirectoryName = "audit"
-	hookAuditArchiveSuffix = ".1"
+	maxHookAuditBytes       = 4 << 20
+	defaultHookAuditLimit   = 100
+	maxHookAuditReadLimit   = 1000
+	hookAuditFileName       = "managed-hooks.jsonl"
+	hookAuditDirectoryName  = "audit"
+	hookAuditArchiveSuffix  = ".1"
+	maxHookAuditMissingDirs = 2
 )
 
 var (
@@ -137,8 +138,8 @@ func (a *HookAudit) Path() string {
 // Append validates, appends, and syncs the requested record plus any pending
 // degradation marker.
 func (a *HookAudit) Append(record HookAuditRecord) (err error) {
-	if a == nil || strings.TrimSpace(a.path) == "" || a.path == "." {
-		return errors.New("managed hook audit path is required")
+	if err := validateHookAuditPath(a); err != nil {
+		return err
 	}
 	if err := validateHookAuditRecord(record); err != nil {
 		return err
@@ -235,8 +236,8 @@ func (a *HookAudit) Append(record HookAuditRecord) (err error) {
 // without a newline is treated as torn and ignored; malformed committed lines
 // fail the read.
 func (a *HookAudit) Read(limit int) (records []HookAuditRecord, err error) {
-	if a == nil || strings.TrimSpace(a.path) == "" || a.path == "." {
-		return nil, errors.New("managed hook audit path is required")
+	if err := validateHookAuditPath(a); err != nil {
+		return nil, err
 	}
 	if limit <= 0 || limit > maxHookAuditReadLimit {
 		return nil, fmt.Errorf("managed hook audit limit must be between 1 and %d", maxHookAuditReadLimit)
@@ -245,6 +246,20 @@ func (a *HookAudit) Read(limit int) (records []HookAuditRecord, err error) {
 	lock := hookAuditPathLock(a.path)
 	lock.Lock()
 	defer lock.Unlock()
+	hasGeneration, err := hookAuditHasGeneration(a.path)
+	if err != nil {
+		return nil, err
+	}
+	if !hasGeneration {
+		return []HookAuditRecord{}, nil
+	}
+	releaseProcessLock, err := acquireHookAuditProcessLock(a.path, a.beforeProcessLock, a.afterProcessLock)
+	if err != nil {
+		return nil, fmt.Errorf("lock managed hook audit: %w", err)
+	}
+	defer func() {
+		err = errors.Join(err, releaseProcessLock())
+	}()
 	records, activeInfo, err := readHookAuditGeneration(a.path, limit)
 	if err != nil || len(records) == limit {
 		return records, err
@@ -257,6 +272,27 @@ func (a *HookAudit) Read(limit int) (records []HookAuditRecord, err error) {
 		return records, nil
 	}
 	return append(records, archive...), nil
+}
+
+func validateHookAuditPath(a *HookAudit) error {
+	if a == nil || strings.TrimSpace(a.path) == "" || a.path == "." {
+		return errors.New("managed hook audit path is required")
+	}
+	if !filepath.IsAbs(a.path) {
+		return errors.New("managed hook audit requires an absolute path")
+	}
+	return nil
+}
+
+func hookAuditHasGeneration(path string) (bool, error) {
+	for _, candidate := range []string{path, path + hookAuditArchiveSuffix} {
+		if _, err := os.Lstat(candidate); err == nil {
+			return true, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return false, fmt.Errorf("inspect managed hook audit generation: %w", err)
+		}
+	}
+	return false, nil
 }
 
 func readHookAuditGeneration(path string, limit int) (records []HookAuditRecord, info os.FileInfo, err error) {

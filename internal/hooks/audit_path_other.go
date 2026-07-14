@@ -91,6 +91,9 @@ func ensureHookAuditPrivateDir(path string) error {
 			return fmt.Errorf("inspect managed hook audit namespace: %w", err)
 		}
 		missing = append(missing, current)
+		if len(missing) > maxHookAuditMissingDirs {
+			return errors.New("managed hook audit namespace requires an existing anchor within two parent levels")
+		}
 		parent := filepath.Dir(current)
 		if parent == current {
 			return errors.New("managed hook audit namespace has no existing ancestor")

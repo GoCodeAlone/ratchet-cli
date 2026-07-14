@@ -46,6 +46,26 @@ func TestDefaultHookAuditPathRejectsRelativeHome(t *testing.T) {
 	}
 }
 
+func TestManagedHookAuditRejectsRelativePath(t *testing.T) {
+	t.Chdir(t.TempDir())
+	err := NewHookAudit(filepath.Join(".ratchet", "audit", "hooks.jsonl")).Append(managedAuditRecord(HookAuditStarted))
+	if err == nil || !strings.Contains(err.Error(), "absolute path") {
+		t.Fatalf("Append error = %v, want absolute-path requirement", err)
+	}
+}
+
+func TestManagedHookAuditRejectsDeepMissingNamespace(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "one", "two", "three", "hooks.jsonl")
+	err := NewHookAudit(path).Append(managedAuditRecord(HookAuditStarted))
+	if err == nil || !strings.Contains(err.Error(), "existing anchor") {
+		t.Fatalf("Append error = %v, want existing-anchor requirement", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "one")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("deep namespace was partially created: %v", statErr)
+	}
+}
+
 func TestManagedHookAuditRecordsMetadataOnly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
 	audit := NewHookAudit(path)
@@ -525,6 +545,41 @@ func TestManagedHookAuditReadIsBoundedStrictAndNewestFirst(t *testing.T) {
 	records, err = audit.Read(10)
 	if err != nil || len(records) != 3 {
 		t.Fatalf("Read torn tail = %d, %v, want 3 records", len(records), err)
+	}
+}
+
+func TestManagedHookAuditReadLocksExistingGenerations(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
+	audit := NewHookAudit(path)
+	if err := audit.Append(managedAuditRecord(HookAuditStarted)); err != nil {
+		t.Fatalf("seed Append: %v", err)
+	}
+	before := false
+	after := false
+	audit.beforeProcessLock = func() error {
+		before = true
+		return nil
+	}
+	audit.afterProcessLock = func() error {
+		after = true
+		return nil
+	}
+	if _, err := audit.Read(1); err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if !before || !after {
+		t.Fatalf("read process-lock observations = before %v, after %v; want both", before, after)
+	}
+}
+
+func TestManagedHookAuditReadDoesNotCreateAbsentNamespace(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "private", "hooks.jsonl")
+	if records, err := NewHookAudit(path).Read(1); err != nil || len(records) != 0 {
+		t.Fatalf("Read absent = %+v, %v", records, err)
+	}
+	if _, err := os.Stat(filepath.Dir(path)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("absent Read created namespace: %v", err)
 	}
 }
 

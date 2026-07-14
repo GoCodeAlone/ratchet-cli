@@ -985,8 +985,12 @@ after a post-persistence path-to-handle identity check, so file or parent
 replacement cannot admit a managed launch whose canonical audit record is
 missing. Every append also holds an owner-private OS sidecar lock across the
 complete repair/rotate/write/sync/revalidate transaction; Unix creation reopens
-and validates a concurrent winner. Audit identity is recomputed from the event
-descriptor immediately before launch rather than trusting cached metadata.
+and validates a concurrent winner. Paths are absolute and may create at most
+two namespace directories beneath an existing anchor (the production names are
+`.ratchet/` and `audit/`), matching the fixed three-directory sync chain;
+existing active/archive reads take the same sidecar
+lock without creating an absent namespace. Audit identity is recomputed from
+the event descriptor immediately before launch rather than trusting cached metadata.
 Scope: no manifest change; Task 10 rewrite after quality loop 5. Evidence:
 forced replacement failure preserves the archive; pre/post-syscall subprocess
 contention, barriered concurrent first-create, current-hash, root-home, restrictive-umask,
