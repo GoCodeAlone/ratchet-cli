@@ -53,10 +53,11 @@ func Start(ctx context.Context, debug bool) error {
 	}
 
 	srv := grpc.NewServer()
-	svc, err := NewService(runCtx)
+	svc, err := NewDaemonService(runCtx)
 	if err != nil {
 		return fmt.Errorf("create service: %w", err)
 	}
+	defer svc.Close()
 	svc.engine.Debug = debug
 	svc.SetShutdownFunc(cancel)
 	pb.RegisterRatchetDaemonServer(srv, svc)

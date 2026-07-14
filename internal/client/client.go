@@ -298,6 +298,26 @@ func (c *Client) RemoveProvider(ctx context.Context, alias string) error {
 	return err
 }
 
+func (c *Client) StartACPBackgroundDrain(ctx context.Context, sessionID, profile string, acknowledged bool) (*pb.ACPBackgroundDrain, error) {
+	return c.daemon.StartACPBackgroundDrain(ctx, &pb.StartACPBackgroundDrainReq{
+		SessionId:    sessionID,
+		Profile:      profile,
+		Acknowledged: acknowledged,
+	})
+}
+
+func (c *Client) StopACPBackgroundDrain(ctx context.Context, sessionID string) (*pb.ACPBackgroundDrain, error) {
+	return c.daemon.StopACPBackgroundDrain(ctx, &pb.ACPBackgroundDrainReq{SessionId: sessionID})
+}
+
+func (c *Client) GetACPBackgroundDrain(ctx context.Context, sessionID string) (*pb.ACPBackgroundDrain, error) {
+	return c.daemon.GetACPBackgroundDrain(ctx, &pb.ACPBackgroundDrainReq{SessionId: sessionID})
+}
+
+func (c *Client) ListACPBackgroundDrains(ctx context.Context) (*pb.ACPBackgroundDrainList, error) {
+	return c.daemon.ListACPBackgroundDrains(ctx, &pb.Empty{})
+}
+
 func (c *Client) SetDefaultProvider(ctx context.Context, alias string) error {
 	_, err := c.daemon.SetDefaultProvider(ctx, &pb.SetDefaultProviderReq{Alias: alias})
 	return err

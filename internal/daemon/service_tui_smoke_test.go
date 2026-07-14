@@ -16,13 +16,25 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 	"github.com/GoCodeAlone/workflow/secrets"
 	"github.com/google/uuid"
 )
+
+func TestTUISmokeServiceBackgroundDrainIsDisabled(t *testing.T) {
+	svc := newTUISmokeServiceForTest(t, t.TempDir())
+	_, err := svc.StartACPBackgroundDrain(t.Context(), &pb.StartACPBackgroundDrainReq{
+		SessionId: "session-1", Profile: "codex", Acknowledged: true,
+	})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("code = %s, want disabled %s: %v", status.Code(err), codes.FailedPrecondition, err)
+	}
+}
 
 func TestTUISmokeProviderSavePersistsSecretBoundary(t *testing.T) {
 	const (

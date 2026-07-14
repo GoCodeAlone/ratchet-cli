@@ -113,17 +113,18 @@ func newE2EHarness(t *testing.T) *E2EHarness {
 	// Assemble Service with all required fields — mirrors NewService but uses
 	// the in-memory engine instead of loading from disk.
 	svc := &Service{
-		startedAt:    time.Now(),
-		engine:       engine,
-		sessions:     NewSessionManager(db),
-		permGate:     newPermissionGate(),
-		approvalGate: NewApprovalGate(),
-		plans:        NewPlanManager(hks),
-		tokens:       NewTokenTracker(),
-		jobs:         NewJobRegistry(),
-		broadcaster:  NewSessionBroadcaster(),
-		meshBB:       mesh.NewBlackboard(),
-		meshRouter:   mesh.NewRouter(),
+		startedAt:     time.Now(),
+		engine:        engine,
+		sessions:      NewSessionManager(db),
+		permGate:      newPermissionGate(),
+		approvalGate:  NewApprovalGate(),
+		plans:         NewPlanManager(hks),
+		tokens:        NewTokenTracker(),
+		jobs:          NewJobRegistry(),
+		broadcaster:   NewSessionBroadcaster(),
+		meshBB:        mesh.NewBlackboard(),
+		meshRouter:    mesh.NewRouter(),
+		acpBackground: disabledACPBackgroundDrainManager{},
 	}
 	svc.fleet = NewFleetManager(config.ModelRouting{}, engine, hks)
 	svc.teams = NewTeamManager(engine, hks)

@@ -85,6 +85,7 @@ func newTUISmokeService(ctx context.Context, tempRoot string) (*Service, error) 
 		trustDefaultMode: "conservative",
 		trustEngine:      policy.NewTrustEngine("conservative", nil, nil),
 		providerOps:      providerOps,
+		acpBackground:    disabledACPBackgroundDrainManager{},
 	}
 	trustStore, err := policy.NewPermissionStore(engine.DB)
 	if err != nil {
@@ -118,12 +119,7 @@ func newTUISmokeServiceForTest(t interface {
 }
 
 func (s *Service) close() {
-	if s.providerOps != nil {
-		s.providerOps.Stop()
-	}
-	if s.engine != nil {
-		s.engine.Close()
-	}
+	s.Close()
 }
 
 type smokeJobProvider struct {
