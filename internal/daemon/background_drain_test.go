@@ -110,6 +110,8 @@ func TestACPBackgroundDrainRPCMapsStableErrorCodes(t *testing.T) {
 		{name: "session", err: acpclient.ErrSessionNotFound, code: codes.NotFound},
 		{name: "profile", err: acpclient.ErrProfileNotFound, code: codes.NotFound},
 		{name: "untrusted", err: acpclient.ErrBackgroundProfileUntrusted, code: codes.FailedPrecondition},
+		{name: "manager closed", err: acpclient.ErrBackgroundManagerClosed, code: codes.Unavailable},
+		{name: "canceled", err: acpclient.ErrCancelRequested, code: codes.Canceled},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			svc := &Service{acpBackground: &fakeACPBackgroundDrainManager{

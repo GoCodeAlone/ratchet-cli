@@ -997,10 +997,12 @@ func mapACPBackgroundDrainError(err error) error {
 		return status.Error(codes.NotFound, "ACP background drain resource not found")
 	case errors.Is(err, errACPBackgroundDrainsDisabled),
 		errors.Is(err, acpclient.ErrBackgroundProfileUntrusted),
-		errors.Is(err, acpclient.ErrBackgroundProfileIneligible),
-		errors.Is(err, acpclient.ErrBackgroundManagerClosed),
-		errors.Is(err, acpclient.ErrCancelRequested):
+		errors.Is(err, acpclient.ErrBackgroundProfileIneligible):
 		return status.Error(codes.FailedPrecondition, "ACP background drain precondition failed")
+	case errors.Is(err, acpclient.ErrBackgroundManagerClosed):
+		return status.Error(codes.Unavailable, "ACP background drain manager is unavailable")
+	case errors.Is(err, acpclient.ErrCancelRequested):
+		return status.Error(codes.Canceled, "ACP background drain operation was canceled")
 	case errors.Is(err, acpclient.ErrBackgroundPolicyConflict),
 		errors.Is(err, acpclient.ErrBackgroundTransitionBusy):
 		return status.Error(codes.Aborted, "ACP background drain transition is busy")

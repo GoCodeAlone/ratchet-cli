@@ -10,10 +10,16 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/GoCodeAlone/ratchet-cli/internal/acpclient"
 )
 
 // ratchetBin builds the binary once and returns its path.
@@ -172,4 +178,192 @@ func TestCLI_ModelList(t *testing.T) {
 		t.Fatal("expected non-empty output from model list")
 	}
 	t.Logf("Model list output: %s", out)
+}
+
+func TestCLI_ACPClientBackgroundDrainLifecycle(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("foreground daemon runtime proof uses the Unix socket transport")
+	}
+	repoRoot := filepath.Clean(filepath.Join("..", ".."))
+	tempRoot := t.TempDir()
+	binDir := filepath.Join(tempRoot, "bin")
+	home := filepath.Join(tempRoot, "home")
+	stateRoot := filepath.Join(tempRoot, "state")
+	work := filepath.Join(tempRoot, "work")
+	for _, dir := range []string{binDir, home, stateRoot, work} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	ratchet := filepath.Join(binDir, "ratchet")
+	fixture := filepath.Join(binDir, "fixture-agent")
+	fixtureV2 := filepath.Join(binDir, "fixture-agent-v2")
+	for output, pkg := range map[string]string{
+		ratchet: "./cmd/ratchet", fixture: "./internal/acpclient/testdata/fixture-agent", fixtureV2: "./internal/acpclient/testdata/fixture-agent",
+	} {
+		cmd := exec.CommandContext(t.Context(), "go", "build", "-o", output, pkg)
+		cmd.Dir = repoRoot
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("build %s: %v\n%s", pkg, err, out)
+		}
+	}
+	env := append(os.Environ(), "HOME="+home, "USERPROFILE="+home, "XDG_STATE_HOME="+stateRoot)
+	var captured bytes.Buffer
+	runCLI := func(args ...string) ([]byte, error) {
+		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, ratchet, args...)
+		cmd.Dir = work
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		captured.Write(out)
+		return out, err
+	}
+
+	if out, err := runCLI("acp", "client", "profiles", "add", "fixture-background", "--command", fixture, "--arg", "--echo-session", "--arg", "--load-session", "--trust"); err != nil {
+		t.Fatalf("add profile: %v\n%s", err, out)
+	}
+	prompts := []string{"background secret alpha", "background secret beta"}
+	for _, prompt := range prompts {
+		if out, err := runCLI("acp", "client", "exec", "--agent", "fixture-background", "--session", "background-session", "--no-wait", prompt); err != nil {
+			t.Fatalf("queue prompt: %v\n%s", err, out)
+		}
+	}
+
+	type daemonProcess struct {
+		cmd *exec.Cmd
+		log bytes.Buffer
+	}
+	var active *daemonProcess
+	startDaemon := func() {
+		t.Helper()
+		active = &daemonProcess{}
+		active.cmd = exec.CommandContext(t.Context(), ratchet, "daemon", "start")
+		active.cmd.Dir = work
+		active.cmd.Env = env
+		active.cmd.Stdout = &active.log
+		active.cmd.Stderr = &active.log
+		if err := active.cmd.Start(); err != nil {
+			t.Fatalf("start daemon: %v", err)
+		}
+		socket := filepath.Join(home, ".ratchet", "daemon.sock")
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			if _, err := os.Stat(socket); err == nil {
+				return
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+		process := active
+		active = nil
+		_ = process.cmd.Process.Kill()
+		_ = process.cmd.Wait()
+		t.Fatalf("daemon socket did not appear:\n%s", process.log.String())
+	}
+	stopDaemon := func() {
+		t.Helper()
+		if active == nil {
+			return
+		}
+		process := active
+		active = nil
+		if out, err := runCLI("daemon", "stop"); err != nil {
+			_ = process.cmd.Process.Kill()
+			_ = process.cmd.Wait()
+			t.Fatalf("stop daemon: %v\n%s\n%s", err, out, process.log.String())
+		}
+		done := make(chan error, 1)
+		go func() { done <- process.cmd.Wait() }()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("daemon exit: %v\n%s", err, process.log.String())
+			}
+		case <-time.After(10 * time.Second):
+			_ = process.cmd.Process.Kill()
+			<-done
+			t.Fatalf("daemon did not exit:\n%s", process.log.String())
+		}
+		captured.WriteString(process.log.String())
+	}
+	t.Cleanup(func() {
+		if active != nil && active.cmd.Process != nil {
+			_ = active.cmd.Process.Kill()
+			_ = active.cmd.Wait()
+		}
+	})
+
+	decodeDrain := func(out []byte) map[string]any {
+		t.Helper()
+		var result map[string]any
+		if err := json.Unmarshal(out, &result); err != nil {
+			t.Fatalf("decode background JSON: %v\n%s", err, out)
+		}
+		return result
+	}
+	waitDrain := func(state, outcome string) map[string]any {
+		t.Helper()
+		deadline := time.Now().Add(30 * time.Second)
+		for time.Now().Before(deadline) {
+			out, err := runCLI("acp", "client", "background", "status", "background-session", "--json")
+			if err == nil {
+				result := decodeDrain(out)
+				if result["state"] == state && result["last_outcome"] == outcome {
+					return result
+				}
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		t.Fatalf("background drain did not reach %s/%s", state, outcome)
+		return nil
+	}
+
+	startDaemon()
+	if out, err := runCLI("acp", "client", "background", "start", "background-session", "--agent", "fixture-background", "--acknowledge-unattended", "--json"); err != nil {
+		t.Fatalf("start background drain: %v\n%s", err, out)
+	}
+	store := acpclient.NewStore(filepath.Join(stateRoot, "ratchet", "acp-client", "sessions.json"))
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		record, err := store.Get("background-session")
+		if err == nil && len(record.PromptQueue) == 2 && record.PromptQueue[0].Status == acpclient.QueuePromptStatusCompleted && record.PromptQueue[1].Status == acpclient.QueuePromptStatusCompleted {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	record, err := store.Get("background-session")
+	if err != nil || len(record.PromptQueue) != 2 || record.PromptQueue[1].Status != acpclient.QueuePromptStatusCompleted {
+		t.Fatalf("background queue did not complete: record=%#v err=%v", record, err)
+	}
+	stopDaemon()
+
+	startDaemon()
+	waitDrain(acpclient.BackgroundStateRunning, acpclient.BackgroundOutcomeResumed)
+	stopDaemon()
+	if out, err := runCLI("acp", "client", "profiles", "remove", "fixture-background"); err != nil {
+		t.Fatalf("remove profile: %v\n%s", err, out)
+	}
+	if out, err := runCLI("acp", "client", "profiles", "add", "fixture-background", "--command", fixtureV2, "--arg", "--echo-session", "--arg", "--load-session", "--trust"); err != nil {
+		t.Fatalf("replace profile: %v\n%s", err, out)
+	}
+
+	startDaemon()
+	waitDrain(acpclient.BackgroundStateBlocked, acpclient.BackgroundOutcomeProfileDrift)
+	stopOut, err := runCLI("acp", "client", "background", "stop", "background-session", "--json")
+	if err != nil {
+		t.Fatalf("stop background drain: %v\n%s", err, stopOut)
+	}
+	stopped := decodeDrain(stopOut)
+	if stopped["state"] != acpclient.BackgroundStateDisabled || stopped["last_outcome"] != acpclient.BackgroundOutcomeStopped {
+		t.Fatalf("stop background drain = %#v, want disabled/stopped", stopped)
+	}
+	stopDaemon()
+	startDaemon()
+	waitDrain(acpclient.BackgroundStateDisabled, acpclient.BackgroundOutcomeStopped)
+	stopDaemon()
+	for _, prompt := range prompts {
+		if strings.Contains(captured.String(), prompt) {
+			t.Fatalf("daemon or background CLI output leaked prompt %q", prompt)
+		}
+	}
 }
