@@ -55,6 +55,31 @@ func TestManagedHookAuditWindowsReaderAllowsRotation(t *testing.T) {
 	}
 }
 
+func TestManagedHookAuditWindowsRotationWritesThrough(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "active.jsonl")
+	destination := source + ".1"
+	if err := os.WriteFile(source, []byte("durable"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	original := hookAuditWindowsMoveFileEx
+	t.Cleanup(func() { hookAuditWindowsMoveFileEx = original })
+	var gotFlags uint32
+	hookAuditWindowsMoveFileEx = func(from, to *uint16, flags uint32) error {
+		gotFlags = flags
+		return original(from, to, flags)
+	}
+	if err := rotateHookAuditPath(source, destination); err != nil {
+		t.Fatalf("rotateHookAuditPath: %v", err)
+	}
+	wantFlags := uint32(windows.MOVEFILE_REPLACE_EXISTING | windows.MOVEFILE_WRITE_THROUGH)
+	if gotFlags != wantFlags {
+		t.Fatalf("MoveFileEx flags = %#x, want %#x", gotFlags, wantFlags)
+	}
+	if data, err := os.ReadFile(destination); err != nil || string(data) != "durable" {
+		t.Fatalf("destination = %q, %v", data, err)
+	}
+}
+
 func TestManagedHookAuditWindowsRejectsWeakDACL(t *testing.T) {
 	t.Run("namespace", func(t *testing.T) {
 		parent := filepath.Join(t.TempDir(), "private")
@@ -92,6 +117,23 @@ func TestManagedHookAuditWindowsRejectsWeakDACL(t *testing.T) {
 		setManagedHookAuditWindowsProtectedExtraPrincipalDACL(t, path)
 		if err := audit.Append(managedAuditRecord(HookAuditSuccess)); err == nil {
 			t.Fatal("Append accepted protected file DACL with extra principal")
+		}
+	})
+
+	t.Run("protected file with inherit-only owner", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
+		audit := NewHookAudit(path)
+		if err := audit.Append(managedAuditRecord(HookAuditStarted)); err != nil {
+			t.Fatalf("seed Append: %v", err)
+		}
+		opened, _, err := hookAuditWindowsOpenFile(path, false)
+		if err != nil {
+			t.Fatalf("open validated handle: %v", err)
+		}
+		defer opened.Close() //nolint:errcheck
+		setManagedHookAuditWindowsInheritOnlyOwnerDACL(t, path)
+		if err := hookAuditWindowsValidateHandle(windows.Handle(opened.Fd()), false); err == nil {
+			t.Fatal("validator accepted inherit-only owner ACE")
 		}
 	})
 }
@@ -190,6 +232,29 @@ func setManagedHookAuditWindowsProtectedExtraPrincipalDACL(t *testing.T, path st
 				TrusteeValue: windows.TrusteeValueFromSID(everyone)},
 		},
 	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, acl, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func setManagedHookAuditWindowsInheritOnlyOwnerDACL(t *testing.T, path string) {
+	t.Helper()
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{{
+		AccessPermissions: hookAuditWindowsFileAllAccess,
+		AccessMode:        windows.GRANT_ACCESS,
+		Inheritance:       windows.INHERIT_ONLY,
+		Trustee: windows.TRUSTEE{TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeType: windows.TRUSTEE_IS_USER,
+			TrusteeValue: windows.TrusteeValueFromSID(user.User.Sid)},
+	}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

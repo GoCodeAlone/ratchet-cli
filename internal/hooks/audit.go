@@ -48,6 +48,7 @@ type hookAuditWindowsAccessEntry struct {
 	allowed     bool
 	owner       bool
 	fullControl bool
+	inheritOnly bool
 }
 
 func validateHookAuditWindowsAccess(ownerMatches, protected bool, entries []hookAuditWindowsAccessEntry) error {
@@ -61,7 +62,7 @@ func validateHookAuditWindowsAccess(ownerMatches, protected bool, entries []hook
 		return errors.New("managed hook audit DACL is empty")
 	}
 	for _, entry := range entries {
-		if !entry.allowed || !entry.owner || !entry.fullControl {
+		if !entry.allowed || !entry.owner || !entry.fullControl || entry.inheritOnly {
 			return errors.New("managed hook audit DACL is not owner-only full control")
 		}
 	}
@@ -130,7 +131,8 @@ func (a *HookAudit) Path() string {
 	return a.path
 }
 
-// Append validates, appends, and syncs one complete JSONL record.
+// Append validates, appends, and syncs the requested record plus any pending
+// degradation marker.
 func (a *HookAudit) Append(record HookAuditRecord) (err error) {
 	if a == nil || strings.TrimSpace(a.path) == "" || a.path == "." {
 		return errors.New("managed hook audit path is required")
@@ -361,7 +363,7 @@ func (a *HookAudit) rotate(current *os.File) (_ *os.File, err error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("inspect managed hook audit archive: %w", err)
 	}
-	if err := os.Rename(a.path, archivePath); err != nil {
+	if err := rotateHookAuditPath(a.path, archivePath); err != nil {
 		return nil, fmt.Errorf("rotate managed hook audit: %w", err)
 	}
 	if err := a.syncDirectory(filepath.Dir(a.path)); err != nil {

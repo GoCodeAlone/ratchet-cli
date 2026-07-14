@@ -12,6 +12,10 @@ import (
 
 var hookAuditEffectiveUID = os.Geteuid
 
+func rotateHookAuditPath(source, destination string) error {
+	return os.Rename(source, destination)
+}
+
 func openHookAuditFile(path string, create bool) (*os.File, bool, error) {
 	parent := filepath.Dir(path)
 	parentInfo, err := os.Lstat(parent)

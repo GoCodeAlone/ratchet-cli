@@ -23,6 +23,24 @@ type hookAuditWindowsFileID struct {
 	FileID             [16]byte
 }
 
+var hookAuditWindowsMoveFileEx = windows.MoveFileEx
+
+func rotateHookAuditPath(source, destination string) error {
+	from, err := windows.UTF16PtrFromString(source)
+	if err != nil {
+		return err
+	}
+	to, err := windows.UTF16PtrFromString(destination)
+	if err != nil {
+		return err
+	}
+	return hookAuditWindowsMoveFileEx(
+		from,
+		to,
+		windows.MOVEFILE_REPLACE_EXISTING|windows.MOVEFILE_WRITE_THROUGH,
+	)
+}
+
 func openHookAuditFile(path string, create bool) (*os.File, bool, error) {
 	parent := filepath.Dir(path)
 	if create {
@@ -202,7 +220,10 @@ func hookAuditWindowsValidateHandle(handle windows.Handle, directory bool) error
 			if err := windows.GetAce(dacl, i, &ace); err != nil {
 				return err
 			}
-			entry := hookAuditWindowsAccessEntry{allowed: ace.Header.AceType == windows.ACCESS_ALLOWED_ACE_TYPE}
+			entry := hookAuditWindowsAccessEntry{
+				allowed:     ace.Header.AceType == windows.ACCESS_ALLOWED_ACE_TYPE,
+				inheritOnly: ace.Header.AceFlags&windows.INHERIT_ONLY_ACE != 0,
+			}
 			if entry.allowed {
 				sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
 				entry.owner = sid.Equals(current.User.Sid)

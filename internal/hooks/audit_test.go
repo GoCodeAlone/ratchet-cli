@@ -500,6 +500,7 @@ func TestManagedHookAuditWindowsAccessRequiresProtectedOwnerOnlyFullControl(t *t
 		{name: "other principal", ownerMatches: true, protected: true, entries: []hookAuditWindowsAccessEntry{{allowed: true, fullControl: true}}, wantErr: true},
 		{name: "partial access", ownerMatches: true, protected: true, entries: []hookAuditWindowsAccessEntry{{allowed: true, owner: true}}, wantErr: true},
 		{name: "deny ACE", ownerMatches: true, protected: true, entries: []hookAuditWindowsAccessEntry{{owner: true, fullControl: true}}, wantErr: true},
+		{name: "inherit-only owner ACE", ownerMatches: true, protected: true, entries: []hookAuditWindowsAccessEntry{{allowed: true, owner: true, fullControl: true, inheritOnly: true}}, wantErr: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -116,6 +117,9 @@ func handleHooksPolicy(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if fs.NArg() != 0 {
+		return errors.New("ratchet hooks policy does not accept positional arguments")
+	}
 	path, err := defaultManagedHookPolicyPath()
 	if err != nil {
 		return err
@@ -150,6 +154,9 @@ func handleHooksAudit(args []string) error {
 	limit := fs.Int("limit", hooks.DefaultHookAuditReadLimit(), "maximum records")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("ratchet hooks audit does not accept positional arguments")
 	}
 	path, err := hooks.DefaultHookAuditPath()
 	if err != nil {

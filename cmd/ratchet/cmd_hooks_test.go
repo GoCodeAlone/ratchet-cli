@@ -134,6 +134,25 @@ func TestHooksPolicyReportsManagedAndAbsentPolicy(t *testing.T) {
 	}
 }
 
+func TestHooksInspectionRejectsPositionalArguments(t *testing.T) {
+	restore := stubManagedHookPolicy(t, nil, "/secure/managed-hooks.yaml")
+	defer restore()
+	t.Setenv("HOME", t.TempDir())
+	for _, test := range []struct {
+		name string
+		run  func([]string) error
+	}{
+		{name: "policy", run: handleHooksPolicy},
+		{name: "audit", run: handleHooksAudit},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := test.run([]string{"stray", "--json"}); err == nil {
+				t.Fatal("inspection command accepted positional arguments")
+			}
+		})
+	}
+}
+
 func TestHooksAuditReportsNewestFirstJSONAndAbsentFile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
