@@ -4,18 +4,34 @@ import (
 	"context"
 	"net"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
 
+	"github.com/GoCodeAlone/ratchet-cli/internal/acpclient"
+	"github.com/GoCodeAlone/ratchet-cli/internal/daemon"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 )
 
 func TestBackgroundDrainClientWrappers(t *testing.T) {
-	serverImpl := &backgroundDrainClientServer{}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	if err := daemon.EnsureDataDir(); err != nil {
+		t.Fatalf("EnsureDataDir: %v", err)
+	}
+	now := time.Date(2026, 7, 14, 10, 0, 0, 0, time.UTC)
+	manager := &clientBackgroundDrainManager{now: now}
+	service, err := daemon.NewService(t.Context(), daemon.WithACPBackgroundDrainManager(manager))
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	t.Cleanup(service.Close)
 	server := grpc.NewServer()
-	pb.RegisterRatchetDaemonServer(server, serverImpl)
+	pb.RegisterRatchetDaemonServer(server, service)
 	listener := bufconn.Listen(1024 * 1024)
 	t.Cleanup(func() {
 		server.Stop()
@@ -52,33 +68,52 @@ func TestBackgroundDrainClientWrappers(t *testing.T) {
 	if err != nil || len(listed.GetDrains()) != 1 {
 		t.Fatalf("list = %#v, %v", listed, err)
 	}
-	if serverImpl.sessionID != "session-1" || serverImpl.profile != "codex" || !serverImpl.acknowledged {
-		t.Fatalf("server args = %q/%q/%t", serverImpl.sessionID, serverImpl.profile, serverImpl.acknowledged)
+	if manager.sessionID != "session-1" || manager.profile != "codex" || !manager.acknowledged {
+		t.Fatalf("manager args = %q/%q/%t", manager.sessionID, manager.profile, manager.acknowledged)
 	}
 }
 
-type backgroundDrainClientServer struct {
-	pb.UnimplementedRatchetDaemonServer
+type clientBackgroundDrainManager struct {
+	now          time.Time
 	sessionID    string
 	profile      string
 	acknowledged bool
 }
 
-func (s *backgroundDrainClientServer) StartACPBackgroundDrain(_ context.Context, req *pb.StartACPBackgroundDrainReq) (*pb.ACPBackgroundDrain, error) {
-	s.sessionID = req.GetSessionId()
-	s.profile = req.GetProfile()
-	s.acknowledged = req.GetAcknowledged()
-	return &pb.ACPBackgroundDrain{SessionId: req.GetSessionId(), Profile: req.GetProfile(), State: "running"}, nil
+func (m *clientBackgroundDrainManager) Start(sessionID, profile string, acknowledged bool) (acpclient.BackgroundStatus, error) {
+	m.sessionID = sessionID
+	m.profile = profile
+	m.acknowledged = acknowledged
+	return m.status("running", "started"), nil
 }
 
-func (s *backgroundDrainClientServer) StopACPBackgroundDrain(_ context.Context, req *pb.ACPBackgroundDrainReq) (*pb.ACPBackgroundDrain, error) {
-	return &pb.ACPBackgroundDrain{SessionId: req.GetSessionId(), State: "disabled"}, nil
+func (m *clientBackgroundDrainManager) Stop(sessionID string) (acpclient.BackgroundStatus, error) {
+	m.sessionID = sessionID
+	return m.status("disabled", "stopped"), nil
 }
 
-func (s *backgroundDrainClientServer) GetACPBackgroundDrain(_ context.Context, req *pb.ACPBackgroundDrainReq) (*pb.ACPBackgroundDrain, error) {
-	return &pb.ACPBackgroundDrain{SessionId: req.GetSessionId(), State: "running"}, nil
+func (m *clientBackgroundDrainManager) Get(sessionID string) (acpclient.BackgroundStatus, error) {
+	m.sessionID = sessionID
+	return m.status("running", "started"), nil
 }
 
-func (s *backgroundDrainClientServer) ListACPBackgroundDrains(context.Context, *pb.Empty) (*pb.ACPBackgroundDrainList, error) {
-	return &pb.ACPBackgroundDrainList{Drains: []*pb.ACPBackgroundDrain{{SessionId: "session-1", State: "running"}}}, nil
+func (m *clientBackgroundDrainManager) List() ([]acpclient.BackgroundStatus, error) {
+	return []acpclient.BackgroundStatus{m.status("running", "started")}, nil
 }
+
+func (*clientBackgroundDrainManager) Shutdown() {}
+
+func (m *clientBackgroundDrainManager) status(state, outcome string) acpclient.BackgroundStatus {
+	if m.sessionID == "" {
+		m.sessionID = "session-1"
+	}
+	if m.profile == "" {
+		m.profile = "codex"
+	}
+	return acpclient.BackgroundStatus{
+		SessionID: m.sessionID, Profile: m.profile, DescriptorHash: "pinned-hash",
+		State: state, Outcome: outcome, AcknowledgedAt: m.now, StartedAt: m.now, UpdatedAt: m.now,
+	}
+}
+
+var _ daemon.ACPBackgroundDrainManager = (*clientBackgroundDrainManager)(nil)

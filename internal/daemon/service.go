@@ -64,16 +64,28 @@ type Service struct {
 	trustStore       *policy.PermissionStore
 	retroRecorder    *retro.Recorder
 	providerOps      *providerOperationManager
-	acpBackground    acpBackgroundDrainManager
+	acpBackground    ACPBackgroundDrainManager
 	closeOnce        sync.Once
 }
 
-type acpBackgroundDrainManager interface {
+type ACPBackgroundDrainManager interface {
 	Start(string, string, bool) (acpclient.BackgroundStatus, error)
 	Stop(string) (acpclient.BackgroundStatus, error)
 	Get(string) (acpclient.BackgroundStatus, error)
 	List() ([]acpclient.BackgroundStatus, error)
 	Shutdown()
+}
+
+type ServiceOption func(*Service)
+
+func WithACPBackgroundDrainManager(manager ACPBackgroundDrainManager) ServiceOption {
+	return func(svc *Service) {
+		if manager == nil {
+			svc.acpBackground = disabledACPBackgroundDrainManager{}
+			return
+		}
+		svc.acpBackground = manager
+	}
 }
 
 var errACPBackgroundDrainsDisabled = errors.New("acp background drains are disabled for this service")
@@ -98,7 +110,7 @@ func (disabledACPBackgroundDrainManager) List() ([]acpclient.BackgroundStatus, e
 
 func (disabledACPBackgroundDrainManager) Shutdown() {}
 
-func NewService(ctx context.Context) (*Service, error) {
+func NewService(ctx context.Context, options ...ServiceOption) (*Service, error) {
 	// Publish version so checkpoint and health can reference it.
 	daemonVersion = version.Version
 
@@ -128,6 +140,11 @@ func NewService(ctx context.Context) (*Service, error) {
 		plans:         NewPlanManagerWithEngine(engine, engine.Hooks),
 		providerOps:   providerOps,
 		acpBackground: disabledACPBackgroundDrainManager{},
+	}
+	for _, option := range options {
+		if option != nil {
+			option(svc)
+		}
 	}
 	cfg, _ := config.Load()
 	routing := config.ModelRouting{}
@@ -346,6 +363,9 @@ func (s *Service) SetShutdownFunc(fn func()) {
 }
 
 func (s *Service) Shutdown(ctx context.Context, _ *pb.Empty) (*pb.Empty, error) {
+	if s == nil {
+		return &pb.Empty{}, nil
+	}
 	s.backgroundDrainManager().Shutdown()
 	if s.shutdownFn != nil {
 		go func() {
@@ -825,7 +845,7 @@ func (s *Service) UpdateProviderModel(ctx context.Context, req *pb.UpdateProvide
 	return &pb.Empty{}, nil
 }
 
-func (s *Service) StartACPBackgroundDrain(_ context.Context, req *pb.StartACPBackgroundDrainReq) (*pb.ACPBackgroundDrain, error) {
+func (s *Service) StartACPBackgroundDrain(ctx context.Context, req *pb.StartACPBackgroundDrainReq) (*pb.ACPBackgroundDrain, error) {
 	if req == nil || strings.TrimSpace(req.GetSessionId()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
 	}
@@ -835,53 +855,76 @@ func (s *Service) StartACPBackgroundDrain(_ context.Context, req *pb.StartACPBac
 	if !req.GetAcknowledged() {
 		return nil, status.Error(codes.InvalidArgument, "unattended execution acknowledgement is required")
 	}
+	if err := acpBackgroundRequestContextError(ctx); err != nil {
+		return nil, err
+	}
 	manager := s.backgroundDrainManager()
 	result, err := manager.Start(req.GetSessionId(), req.GetProfile(), req.GetAcknowledged())
 	if err != nil {
 		return nil, mapACPBackgroundDrainError(err)
 	}
-	return acpBackgroundDrainProto(result), nil
+	return mapACPBackgroundDrainProto(result)
 }
 
-func (s *Service) StopACPBackgroundDrain(_ context.Context, req *pb.ACPBackgroundDrainReq) (*pb.ACPBackgroundDrain, error) {
+func (s *Service) StopACPBackgroundDrain(ctx context.Context, req *pb.ACPBackgroundDrainReq) (*pb.ACPBackgroundDrain, error) {
 	if req == nil || strings.TrimSpace(req.GetSessionId()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
+	}
+	if err := acpBackgroundRequestContextError(ctx); err != nil {
+		return nil, err
 	}
 	result, err := s.backgroundDrainManager().Stop(req.GetSessionId())
 	if err != nil {
 		return nil, mapACPBackgroundDrainError(err)
 	}
-	return acpBackgroundDrainProto(result), nil
+	return mapACPBackgroundDrainProto(result)
 }
 
-func (s *Service) GetACPBackgroundDrain(_ context.Context, req *pb.ACPBackgroundDrainReq) (*pb.ACPBackgroundDrain, error) {
+func (s *Service) GetACPBackgroundDrain(ctx context.Context, req *pb.ACPBackgroundDrainReq) (*pb.ACPBackgroundDrain, error) {
 	if req == nil || strings.TrimSpace(req.GetSessionId()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "session_id is required")
+	}
+	if err := acpBackgroundRequestContextError(ctx); err != nil {
+		return nil, err
 	}
 	result, err := s.backgroundDrainManager().Get(req.GetSessionId())
 	if err != nil {
 		return nil, mapACPBackgroundDrainError(err)
 	}
-	return acpBackgroundDrainProto(result), nil
+	return mapACPBackgroundDrainProto(result)
 }
 
-func (s *Service) ListACPBackgroundDrains(context.Context, *pb.Empty) (*pb.ACPBackgroundDrainList, error) {
+func (s *Service) ListACPBackgroundDrains(ctx context.Context, _ *pb.Empty) (*pb.ACPBackgroundDrainList, error) {
+	if err := acpBackgroundRequestContextError(ctx); err != nil {
+		return nil, err
+	}
 	statuses, err := s.backgroundDrainManager().List()
 	if err != nil {
 		return nil, mapACPBackgroundDrainError(err)
 	}
 	drains := make([]*pb.ACPBackgroundDrain, 0, len(statuses))
 	for _, backgroundStatus := range statuses {
-		drains = append(drains, acpBackgroundDrainProto(backgroundStatus))
+		drain, err := mapACPBackgroundDrainProto(backgroundStatus)
+		if err != nil {
+			return nil, err
+		}
+		drains = append(drains, drain)
 	}
 	return &pb.ACPBackgroundDrainList{Drains: drains}, nil
 }
 
-func (s *Service) backgroundDrainManager() acpBackgroundDrainManager {
+func (s *Service) backgroundDrainManager() ACPBackgroundDrainManager {
 	if s == nil || s.acpBackground == nil {
 		return disabledACPBackgroundDrainManager{}
 	}
 	return s.acpBackground
+}
+
+func acpBackgroundRequestContextError(ctx context.Context) error {
+	if ctx == nil || ctx.Err() == nil {
+		return nil
+	}
+	return status.FromContextError(ctx.Err()).Err()
 }
 
 func mapACPBackgroundDrainError(err error) error {
@@ -907,24 +950,40 @@ func mapACPBackgroundDrainError(err error) error {
 	}
 }
 
-func acpBackgroundDrainProto(backgroundStatus acpclient.BackgroundStatus) *pb.ACPBackgroundDrain {
+func mapACPBackgroundDrainProto(backgroundStatus acpclient.BackgroundStatus) (*pb.ACPBackgroundDrain, error) {
+	acknowledgedAt, err := optionalTimestamp(backgroundStatus.AcknowledgedAt)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "ACP background drain contains an invalid acknowledgement timestamp")
+	}
+	startedAt, err := optionalTimestamp(backgroundStatus.StartedAt)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "ACP background drain contains an invalid start timestamp")
+	}
+	updatedAt, err := optionalTimestamp(backgroundStatus.UpdatedAt)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "ACP background drain contains an invalid update timestamp")
+	}
 	return &pb.ACPBackgroundDrain{
 		SessionId:      backgroundStatus.SessionID,
 		Profile:        backgroundStatus.Profile,
 		PinnedHash:     backgroundStatus.DescriptorHash,
 		State:          backgroundStatus.State,
-		AcknowledgedAt: optionalTimestamp(backgroundStatus.AcknowledgedAt),
-		StartedAt:      optionalTimestamp(backgroundStatus.StartedAt),
-		UpdatedAt:      optionalTimestamp(backgroundStatus.UpdatedAt),
+		AcknowledgedAt: acknowledgedAt,
+		StartedAt:      startedAt,
+		UpdatedAt:      updatedAt,
 		LastOutcome:    backgroundStatus.Outcome,
-	}
+	}, nil
 }
 
-func optionalTimestamp(value time.Time) *timestamppb.Timestamp {
+func optionalTimestamp(value time.Time) (*timestamppb.Timestamp, error) {
 	if value.IsZero() {
-		return nil
+		return nil, nil
 	}
-	return timestamppb.New(value)
+	timestamp := timestamppb.New(value)
+	if err := timestamp.CheckValid(); err != nil {
+		return nil, err
+	}
+	return timestamp, nil
 }
 
 func (s *Service) StartTeam(req *pb.StartTeamReq, stream pb.RatchetDaemon_StartTeamServer) error {

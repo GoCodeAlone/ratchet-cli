@@ -886,3 +886,14 @@ and joining the release error; remove the unused cause context. Watch cycle
 callbacks remain non-terminal observations and precede final authority so a
 callback-triggered cancellation is caught. Scope: no manifest change; Task 6
 review cycle 5 minors. Evidence: focused release/error/cancellation tests pass.
+
+### Backport 2026-07-14: Background RPC admission and integration
+
+Cause: initial handlers ignored already-canceled RPC contexts; split fake
+boundaries did not prove `internal/client.Client -> gRPC -> daemon.Service`;
+timestamp and nil-shutdown edges were unchecked. Change: reject cancellation
+before manager admission, then keep admitted work daemon-owned and idempotently
+queryable; expose narrow service injection; exercise the combined real boundary
+plus concrete missing/profile-drift paths; validate protobuf timestamps and nil
+shutdown. Scope: no manifest change; Task 7 review cycle 1. Evidence: focused
+daemon/client regressions fail before and pass after the correction.

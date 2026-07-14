@@ -125,6 +125,151 @@ func TestACPBackgroundDrainRPCMapsStableErrorCodes(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("canceled_context", func(t *testing.T) {
+		var called atomic.Bool
+		svc := &Service{acpBackground: &fakeACPBackgroundDrainManager{
+			start: func(string, string, bool) (acpclient.BackgroundStatus, error) {
+				called.Store(true)
+				return backgroundDrainTestStatus("session-1", "codex", acpclient.BackgroundStateRunning, acpclient.BackgroundOutcomeStarted, time.Now()), nil
+			},
+		}}
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		_, err := svc.StartACPBackgroundDrain(ctx, &pb.StartACPBackgroundDrainReq{
+			SessionId: "session-1", Profile: "codex", Acknowledged: true,
+		})
+		if status.Code(err) != codes.Canceled {
+			t.Fatalf("code = %s, want %s: %v", status.Code(err), codes.Canceled, err)
+		}
+		if called.Load() {
+			t.Fatal("manager called for canceled RPC")
+		}
+	})
+
+	t.Run("invalid_timestamp", func(t *testing.T) {
+		svc := &Service{acpBackground: &fakeACPBackgroundDrainManager{
+			start: func(string, string, bool) (acpclient.BackgroundStatus, error) {
+				return acpclient.BackgroundStatus{
+					SessionID: "session-1", Profile: "codex", UpdatedAt: time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC),
+				}, nil
+			},
+		}}
+		_, err := svc.StartACPBackgroundDrain(t.Context(), &pb.StartACPBackgroundDrainReq{
+			SessionId: "session-1", Profile: "codex", Acknowledged: true,
+		})
+		if status.Code(err) != codes.Internal {
+			t.Fatalf("code = %s, want %s: %v", status.Code(err), codes.Internal, err)
+		}
+	})
+}
+
+func TestACPBackgroundDrainRealManagerMapsMissingResources(t *testing.T) {
+	t.Run("session", func(t *testing.T) {
+		dir := t.TempDir()
+		manager := acpclient.NewBackgroundManager(
+			acpclient.NewStore(filepath.Join(dir, "sessions.json")),
+			acpclient.NewBackgroundStore(filepath.Join(dir, "background.json")),
+			acpclient.NewBackgroundAudit(filepath.Join(dir, "background-audit.jsonl")),
+			acpclient.BackgroundManagerOptions{Context: t.Context(), Resolver: trustedBackgroundDrainTestResolver},
+		)
+		t.Cleanup(manager.Shutdown)
+		svc := &Service{acpBackground: manager}
+		_, err := svc.StartACPBackgroundDrain(t.Context(), &pb.StartACPBackgroundDrainReq{
+			SessionId: "missing", Profile: "fixture", Acknowledged: true,
+		})
+		if status.Code(err) != codes.NotFound {
+			t.Fatalf("code = %s, want %s: %v", status.Code(err), codes.NotFound, err)
+		}
+	})
+
+	t.Run("profile", func(t *testing.T) {
+		dir := t.TempDir()
+		sessions := acpclient.NewStore(filepath.Join(dir, "sessions.json"))
+		now := time.Now().UTC()
+		if err := sessions.Upsert(acpclient.SessionRecord{ID: "session-1", Status: acpclient.SessionStatusQueued, CreatedAt: now, UpdatedAt: now}); err != nil {
+			t.Fatalf("seed session: %v", err)
+		}
+		manager := acpclient.NewBackgroundManager(
+			sessions,
+			acpclient.NewBackgroundStore(filepath.Join(dir, "background.json")),
+			acpclient.NewBackgroundAudit(filepath.Join(dir, "background-audit.jsonl")),
+			acpclient.BackgroundManagerOptions{
+				Context: t.Context(),
+				Resolver: func(name string) (acpclient.ResolvedBackgroundProfile, error) {
+					return acpclient.ResolvedBackgroundProfile{}, errors.Join(acpclient.ErrProfileNotFound, errors.New(name))
+				},
+			},
+		)
+		t.Cleanup(manager.Shutdown)
+		svc := &Service{acpBackground: manager}
+		_, err := svc.StartACPBackgroundDrain(t.Context(), &pb.StartACPBackgroundDrainReq{
+			SessionId: "session-1", Profile: "missing", Acknowledged: true,
+		})
+		if status.Code(err) != codes.NotFound {
+			t.Fatalf("code = %s, want %s: %v", status.Code(err), codes.NotFound, err)
+		}
+	})
+}
+
+func TestACPBackgroundDrainDescriptorDriftLaunchesNoWatcher(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now().UTC()
+	sessions := acpclient.NewStore(filepath.Join(dir, "sessions.json"))
+	if err := sessions.Upsert(acpclient.SessionRecord{ID: "session-1", Status: acpclient.SessionStatusQueued, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	profiles := acpclient.NewProfileStore(filepath.Join(dir, "profiles.json"))
+	if err := profiles.Add(acpclient.Profile{Name: "fixture", Spec: acpclient.AgentSpec{Name: "fixture", Command: "fixture-v1"}}); err != nil {
+		t.Fatalf("add profile: %v", err)
+	}
+	if err := profiles.Trust("fixture"); err != nil {
+		t.Fatalf("trust profile: %v", err)
+	}
+	baseResolver := acpclient.NewBackgroundProfileResolver(acpclient.NewRegistry(nil), profiles)
+	var watchers atomic.Int32
+	manager := acpclient.NewBackgroundManager(
+		sessions,
+		acpclient.NewBackgroundStore(filepath.Join(dir, "background.json")),
+		acpclient.NewBackgroundAudit(filepath.Join(dir, "background-audit.jsonl")),
+		acpclient.BackgroundManagerOptions{
+			Context: t.Context(),
+			Resolver: func(name string) (acpclient.ResolvedBackgroundProfile, error) {
+				resolved, err := baseResolver(name)
+				if err != nil {
+					return acpclient.ResolvedBackgroundProfile{}, err
+				}
+				if err := profiles.Add(acpclient.Profile{
+					Name: name, Spec: acpclient.AgentSpec{Name: name, Command: "fixture-v2"}, Trusted: true,
+				}); err != nil {
+					return acpclient.ResolvedBackgroundProfile{}, err
+				}
+				return resolved, nil
+			},
+			Watcher: func(context.Context, *acpclient.Store, acpclient.AgentSpec, acpclient.RunOptions, string, acpclient.WatchOptions, func(acpclient.WatchCycle)) (acpclient.WatchResult, error) {
+				watchers.Add(1)
+				return acpclient.WatchResult{}, nil
+			},
+		},
+	)
+	t.Cleanup(manager.Shutdown)
+	svc := &Service{acpBackground: manager}
+	_, err := svc.StartACPBackgroundDrain(t.Context(), &pb.StartACPBackgroundDrainReq{
+		SessionId: "session-1", Profile: "fixture", Acknowledged: true,
+	})
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("code = %s, want %s: %v", status.Code(err), codes.FailedPrecondition, err)
+	}
+	if got := watchers.Load(); got != 0 {
+		t.Fatalf("watchers = %d, want 0", got)
+	}
+}
+
+func TestACPBackgroundDrainNilServiceShutdownIsSafe(t *testing.T) {
+	var svc *Service
+	if _, err := svc.Shutdown(t.Context(), &pb.Empty{}); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
 }
 
 func TestACPBackgroundDrainUntrustedProfileLaunchesNoWatcher(t *testing.T) {
@@ -311,6 +456,14 @@ func backgroundDrainTestStatus(sessionID, profile, state, outcome string, now ti
 		StartedAt:      now.Add(time.Second),
 		UpdatedAt:      now.Add(2 * time.Second),
 	}
+}
+
+func trustedBackgroundDrainTestResolver(string) (acpclient.ResolvedBackgroundProfile, error) {
+	return acpclient.ResolvedBackgroundProfile{
+		Spec:           acpclient.AgentSpec{Name: "fixture", Command: "fixture"},
+		DescriptorHash: "descriptor-hash",
+		TrustValid:     true,
+	}, nil
 }
 
 func assertBackgroundDrainProto(t *testing.T, got *pb.ACPBackgroundDrain, sessionID, profile, state, outcome string, now time.Time) {
