@@ -260,6 +260,101 @@ func TestStartShutdownRPCStopsServerAndRemovesFiles(t *testing.T) {
 	waitForMissing(t, PIDPath(), 2*time.Second)
 }
 
+func TestStartReloadWaitsForCheckpointBeforeClosingService(t *testing.T) {
+	if !reloadSignalsSupported() {
+		t.Skip("daemon reload signals are not supported")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	exportStarted := make(chan struct{})
+	releaseExport := make(chan struct{})
+	originalExport := exportReloadCheckpoint
+	originalSave := saveReloadCheckpoint
+	exportReloadCheckpoint = func(svc *Service) (*Checkpoint, error) {
+		close(exportStarted)
+		<-releaseExport
+		return originalExport(svc)
+	}
+	saveReloadCheckpoint = originalSave
+	t.Cleanup(func() {
+		exportReloadCheckpoint = originalExport
+		saveReloadCheckpoint = originalSave
+	})
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	errCh := make(chan error, 1)
+	var exited atomic.Bool
+	go func() { errCh <- Start(ctx, false) }()
+	t.Cleanup(func() {
+		cancel()
+		if !exited.Load() {
+			select {
+			case <-errCh:
+			case <-time.After(3 * time.Second):
+			}
+		}
+		CleanupSocket()
+		CleanupPID()
+	})
+
+	waitForPath(t, SocketPath(), 5*time.Second)
+	conn, err := grpc.NewClient(
+		"unix://"+SocketPath(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		close(releaseExport)
+		t.Fatalf("connect daemon: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	healthCtx, healthCancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer healthCancel()
+	if _, err := pb.NewRatchetDaemonClient(conn).Health(healthCtx, &pb.Empty{}); err != nil {
+		close(releaseExport)
+		t.Fatalf("daemon health: %v", err)
+	}
+
+	proc, err := os.FindProcess(os.Getpid())
+	if err != nil {
+		close(releaseExport)
+		t.Fatalf("find test process: %v", err)
+	}
+	if err := proc.Signal(reloadSignal); err != nil {
+		close(releaseExport)
+		t.Fatalf("signal reload: %v", err)
+	}
+	select {
+	case <-exportStarted:
+	case <-time.After(3 * time.Second):
+		close(releaseExport)
+		t.Fatal("reload checkpoint did not start")
+	}
+	select {
+	case err := <-errCh:
+		exited.Store(true)
+		close(releaseExport)
+		t.Fatalf("daemon exited before checkpoint completed: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseExport)
+	select {
+	case err := <-errCh:
+		exited.Store(true)
+		if err != nil && !errors.Is(err, grpc.ErrServerStopped) && !errors.Is(err, net.ErrClosed) {
+			t.Fatalf("Start returned unexpected error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("daemon did not exit after reload checkpoint completed")
+	}
+	if _, err := LoadCheckpoint(); err != nil {
+		t.Fatalf("LoadCheckpoint: %v", err)
+	}
+}
+
 func waitForPath(t *testing.T, path string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)

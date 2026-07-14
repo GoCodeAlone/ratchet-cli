@@ -106,14 +106,19 @@ func (cs *CronScheduler) Create(ctx context.Context, sessionID, schedule, comman
 	nextRun := time.Now().Add(mustParseScheduleDuration(schedule))
 	j.NextRun = nextRun.UTC().Format(time.RFC3339)
 
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	if cs.closed {
+		return CronJob{}, errCronSchedulerClosed
+	}
 	if _, err := cs.db.ExecContext(ctx,
 		`INSERT INTO cron_jobs (id, session_id, schedule, command, status, next_run, run_count) VALUES (?,?,?,?,?,?,?)`,
 		j.ID, j.SessionID, j.Schedule, j.Command, j.Status, j.NextRun, j.RunCount,
 	); err != nil {
 		return CronJob{}, fmt.Errorf("persist cron job: %w", err)
 	}
-
-	return j, cs.startEntry(j)
+	cs.startEntryLocked(j)
+	return j, nil
 }
 
 // List returns all cron jobs from the database.
@@ -161,15 +166,12 @@ func (cs *CronScheduler) Pause(ctx context.Context, jobID string) error {
 
 // Resume restarts a paused job.
 func (cs *CronScheduler) Resume(ctx context.Context, jobID string) error {
-	// Extract parentCtx before acquiring entry.mu to avoid lock-order inversion
-	// (cs.mu must always be acquired before entry.mu).
 	cs.mu.Lock()
-	entry, ok := cs.entries[jobID]
-	closed := cs.closed
-	cs.mu.Unlock()
-	if closed {
+	defer cs.mu.Unlock()
+	if cs.closed {
 		return errCronSchedulerClosed
 	}
+	entry, ok := cs.entries[jobID]
 	if !ok {
 		return fmt.Errorf("cron job %s not found", jobID)
 	}
@@ -189,7 +191,8 @@ func (cs *CronScheduler) Resume(ctx context.Context, jobID string) error {
 		return err
 	}
 
-	return cs.restartEntry(entry)
+	cs.restartEntryLocked(entry)
+	return nil
 }
 
 // Stop permanently stops a job.
@@ -218,6 +221,11 @@ func (cs *CronScheduler) startEntry(j CronJob) error {
 	if cs.closed {
 		return errCronSchedulerClosed
 	}
+	cs.startEntryLocked(j)
+	return nil
+}
+
+func (cs *CronScheduler) startEntryLocked(j CronJob) {
 	runCtx, cancel := context.WithCancel(cs.parentCtx)
 	entry := &cronEntry{job: j, cancel: cancel}
 	cs.entries[j.ID] = entry
@@ -226,15 +234,9 @@ func (cs *CronScheduler) startEntry(j CronJob) error {
 		defer cs.wg.Done()
 		cs.run(runCtx, entry)
 	}()
-	return nil
 }
 
-func (cs *CronScheduler) restartEntry(entry *cronEntry) error {
-	cs.mu.Lock()
-	defer cs.mu.Unlock()
-	if cs.closed {
-		return errCronSchedulerClosed
-	}
+func (cs *CronScheduler) restartEntryLocked(entry *cronEntry) {
 	runCtx, cancel := context.WithCancel(cs.parentCtx)
 	entry.mu.Lock()
 	entry.cancel = cancel
@@ -244,7 +246,6 @@ func (cs *CronScheduler) restartEntry(entry *cronEntry) error {
 		defer cs.wg.Done()
 		cs.run(runCtx, entry)
 	}()
-	return nil
 }
 
 // Close stops in-memory scheduling and waits for admitted callbacks. Durable

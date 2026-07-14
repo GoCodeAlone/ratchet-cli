@@ -921,3 +921,16 @@ tick children retain asynchronous cadence but are canceled and joined before
 the engine closes. Scope: no manifest change; Task 7 review cycle 3. Evidence:
 active-callback, lifecycle-cancellation, and detached-work regressions fail with
 their ownership fixes reverted and pass restored, including `-race`.
+
+### Backport 2026-07-14: Reload and scheduler admission
+
+Cause: reload canceled the daemon before checkpoint completion, reload signal
+registration survived ordinary exit, and cron creation could persist an active
+job after scheduler close had won. Change: a reload barrier serializes
+checkpoint/save with generic teardown; signal registration is stopped and its
+goroutine selects daemon lifetime; cron create/resume admission, persistence,
+and worker registration are serialized against close. Rejected creation writes
+no row, while admitted active jobs remain durable for restart. Scope: no
+manifest change; Task 7 review cycle 4. Evidence: a blocked real SIGUSR1
+checkpoint and closed-create persistence tests fail before and pass after the
+corrections.

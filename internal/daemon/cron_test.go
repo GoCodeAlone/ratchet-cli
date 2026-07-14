@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
@@ -224,6 +225,26 @@ func TestCronScheduler_PersistReload(t *testing.T) {
 		e.cancel()
 	}
 	cs2.mu.Unlock()
+}
+
+func TestCronScheduler_CreateAfterCloseDoesNotPersist(t *testing.T) {
+	db := newTestCronDB(t)
+	cs := NewCronScheduler(db, nil)
+	if err := cs.Start(t.Context()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	cs.Close()
+
+	if _, err := cs.Create(t.Context(), "session-1", time.Hour.String(), "tick"); !errors.Is(err, errCronSchedulerClosed) {
+		t.Fatalf("Create error = %v, want errCronSchedulerClosed", err)
+	}
+	var count int
+	if err := db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM cron_jobs`).Scan(&count); err != nil {
+		t.Fatalf("count cron jobs: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("persisted cron jobs = %d, want 0", count)
+	}
 }
 
 func TestParseSchedule(t *testing.T) {
