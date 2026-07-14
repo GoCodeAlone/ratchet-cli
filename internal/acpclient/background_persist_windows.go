@@ -183,7 +183,7 @@ func backgroundOpenWindowsAuditFile(path string, create bool) (*os.File, bool, e
 	if err != nil && backgroundWindowsPathNotExist(err) && create {
 		handle, err = windows.CreateFile(
 			pathPtr,
-			existingAccess|windows.WRITE_DAC,
+			existingAccess|windows.WRITE_DAC|windows.WRITE_OWNER,
 			windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
 			nil,
 			windows.CREATE_NEW,
@@ -278,18 +278,20 @@ func backgroundValidateWindowsPrivateHandle(handle windows.Handle, path string, 
 	if err != nil {
 		return storeLockUnsafePathError(path, err)
 	}
-	if dacl == nil || dacl.AceCount != 1 {
+	if dacl == nil || dacl.AceCount == 0 {
 		return storeLockUnsafePathError(path, errors.New("target DACL is not owner-only"))
 	}
-	var ace *windows.ACCESS_ALLOWED_ACE
-	if err := windows.GetAce(dacl, 0, &ace); err != nil {
-		return storeLockUnsafePathError(path, err)
-	}
-	aceSID := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
-	if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE ||
-		ace.Mask != windows.GENERIC_ALL ||
-		!aceSID.Equals(user.User.Sid) {
-		return storeLockUnsafePathError(path, errors.New("target DACL is not owner-only full control"))
+	for i := uint32(0); i < uint32(dacl.AceCount); i++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(dacl, i, &ace); err != nil {
+			return storeLockUnsafePathError(path, err)
+		}
+		aceSID := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE ||
+			ace.Mask != windows.GENERIC_ALL ||
+			!aceSID.Equals(user.User.Sid) {
+			return storeLockUnsafePathError(path, errors.New("target DACL is not owner-only full control"))
+		}
 	}
 	return nil
 }
@@ -457,15 +459,15 @@ func backgroundSyncParentDir(string) error {
 }
 
 func backgroundSetPrivateACL(path string) error {
-	acl, err := backgroundPrivateACL()
+	owner, acl, err := backgroundPrivateSecurity()
 	if err != nil {
 		return err
 	}
 	return windows.SetNamedSecurityInfo(
 		path,
 		windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		nil,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		owner,
 		nil,
 		acl,
 		nil,
@@ -473,25 +475,25 @@ func backgroundSetPrivateACL(path string) error {
 }
 
 func backgroundSetPrivateHandleACL(handle windows.Handle) error {
-	acl, err := backgroundPrivateACL()
+	owner, acl, err := backgroundPrivateSecurity()
 	if err != nil {
 		return err
 	}
 	return windows.SetSecurityInfo(
 		handle,
 		windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		nil,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		owner,
 		nil,
 		acl,
 		nil,
 	)
 }
 
-func backgroundPrivateACL() (*windows.ACL, error) {
+func backgroundPrivateSecurity() (*windows.SID, *windows.ACL, error) {
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{{
 		AccessPermissions: windows.GENERIC_ALL,
@@ -504,7 +506,7 @@ func backgroundPrivateACL() (*windows.ACL, error) {
 		},
 	}}, nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return acl, nil
+	return user.User.Sid, acl, nil
 }

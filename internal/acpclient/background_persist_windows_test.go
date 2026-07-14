@@ -382,31 +382,73 @@ func TestBackgroundWindowsPrivateDirectoryACLIsInheritedByRawChild(t *testing.T)
 	if err != nil {
 		t.Fatalf("DACL child: %v", err)
 	}
-	if dacl == nil || dacl.AceCount != 1 {
-		t.Fatalf("child ACE count = %v, want inherited owner-only ACE", dacl)
-	}
-	var ace *windows.ACCESS_ALLOWED_ACE
-	if err := windows.GetAce(dacl, 0, &ace); err != nil {
-		t.Fatalf("GetAce child: %v", err)
-	}
-	if ace.Header.AceFlags&windows.INHERITED_ACE == 0 {
-		t.Fatalf("child ACE flags = %#x, want INHERITED_ACE", ace.Header.AceFlags)
-	}
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {
 		t.Fatalf("GetTokenUser: %v", err)
 	}
-	aceSID := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
-	if !aceSID.Equals(user.User.Sid) {
-		t.Fatalf("child ACE SID = %s, want current user %s", aceSID, user.User.Sid)
+	assertBackgroundWindowsOwnerOnlyACL(t, dacl, user.User.Sid, true)
+}
+
+func TestBackgroundWindowsPrivateValidationAcceptsEquivalentOwnerACEs(t *testing.T) {
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatalf("GetTokenUser: %v", err)
+	}
+	sid := user.User.Sid.String()
+	descriptor, err := windows.SecurityDescriptorFromString(
+		"O:" + sid + "D:P(A;;GA;;;" + sid + ")(A;OICIIO;GA;;;" + sid + ")",
+	)
+	if err != nil {
+		t.Fatalf("SecurityDescriptorFromString: %v", err)
+	}
+	dacl, _, err := descriptor.DACL()
+	if err != nil {
+		t.Fatalf("DACL: %v", err)
+	}
+	dir := filepath.Join(t.TempDir(), "split-owner-aces")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+	if err := windows.SetNamedSecurityInfo(
+		dir,
+		windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		user.User.Sid,
+		nil,
+		dacl,
+		nil,
+	); err != nil {
+		t.Fatalf("SetNamedSecurityInfo: %v", err)
+	}
+	parent, _, err := backgroundOpenWindowsAuditParent(dir)
+	if err != nil {
+		t.Fatalf("backgroundOpenWindowsAuditParent: %v", err)
+	}
+	if err := parent.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
 	}
 }
 
 func assertBackgroundWindowsPrivateDACL(t *testing.T, path string) {
 	t.Helper()
-	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	descriptor, err := windows.GetNamedSecurityInfo(
+		path,
+		windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION,
+	)
 	if err != nil {
 		t.Fatalf("GetNamedSecurityInfo: %v", err)
+	}
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatalf("GetTokenUser: %v", err)
+	}
+	owner, _, err := descriptor.Owner()
+	if err != nil {
+		t.Fatalf("Owner: %v", err)
+	}
+	if owner == nil || !owner.Equals(user.User.Sid) {
+		t.Fatalf("owner = %v, want current user %s", owner, user.User.Sid)
 	}
 	control, _, err := descriptor.Control()
 	if err != nil {
@@ -419,20 +461,28 @@ func assertBackgroundWindowsPrivateDACL(t *testing.T, path string) {
 	if err != nil {
 		t.Fatalf("DACL: %v", err)
 	}
-	if dacl == nil || dacl.AceCount != 1 {
-		t.Fatalf("ACE count = %v, want owner-only ACE", dacl)
+	assertBackgroundWindowsOwnerOnlyACL(t, dacl, user.User.Sid, false)
+}
+
+func assertBackgroundWindowsOwnerOnlyACL(t *testing.T, dacl *windows.ACL, user *windows.SID, inherited bool) {
+	t.Helper()
+	if dacl == nil || dacl.AceCount == 0 {
+		t.Fatalf("DACL = %v, want owner-only ACEs", dacl)
 	}
-	var ace *windows.ACCESS_ALLOWED_ACE
-	if err := windows.GetAce(dacl, 0, &ace); err != nil {
-		t.Fatalf("GetAce: %v", err)
-	}
-	user, err := windows.GetCurrentProcessToken().GetTokenUser()
-	if err != nil {
-		t.Fatalf("GetTokenUser: %v", err)
-	}
-	aceSID := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
-	if !aceSID.Equals(user.User.Sid) {
-		t.Fatalf("private ACE SID = %s, want current user %s", aceSID, user.User.Sid)
+	for i := uint32(0); i < uint32(dacl.AceCount); i++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(dacl, i, &ace); err != nil {
+			t.Fatalf("GetAce %d: %v", i, err)
+		}
+		aceSID := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE ||
+			ace.Mask != windows.GENERIC_ALL ||
+			!aceSID.Equals(user) {
+			t.Fatalf("ACE %d = type %#x mask %#x sid %s, want current-user full control", i, ace.Header.AceType, ace.Mask, aceSID)
+		}
+		if inherited && ace.Header.AceFlags&windows.INHERITED_ACE == 0 {
+			t.Fatalf("ACE %d flags = %#x, want INHERITED_ACE", i, ace.Header.AceFlags)
+		}
 	}
 }
 
