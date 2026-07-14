@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -133,6 +134,59 @@ func TestManagedHookAuditTerminalFailureJoinsCommandClassificationPrivately(t *t
 				t.Fatalf("audit record leaked %q: %s", forbidden, data)
 			}
 		}
+	}
+}
+
+func TestManagedHookCommandDiscardsOutput(t *testing.T) {
+	command, windowsCommand := managedAuditFailureCommand()
+	if runtime.GOOS == "windows" {
+		command = windowsCommand
+	}
+	cmd := execHookCommand(command)
+	if err := runManagedHookCommand(cmd); err == nil {
+		t.Fatal("runManagedHookCommand succeeded for failing command")
+	}
+	if cmd.Stdout != io.Discard || cmd.Stderr != io.Discard {
+		t.Fatalf("managed command output writers = %T/%T, want io.Discard", cmd.Stdout, cmd.Stderr)
+	}
+}
+
+func TestManagedHookDurationKeepsTheOriginalClockReading(t *testing.T) {
+	originalNow, originalSince := managedHookNow, managedHookSince
+	t.Cleanup(func() {
+		managedHookNow = originalNow
+		managedHookSince = originalSince
+	})
+	start := time.Date(2026, time.July, 14, 12, 0, 0, 0, time.FixedZone("test", -4*60*60))
+	nowCalls := 0
+	managedHookNow = func() time.Time {
+		nowCalls++
+		if nowCalls == 1 {
+			return start
+		}
+		return start.Add(time.Second)
+	}
+	var elapsedFrom time.Time
+	managedHookSince = func(got time.Time) time.Duration {
+		elapsedFrom = got
+		return 17 * time.Millisecond
+	}
+
+	var records []HookAuditRecord
+	audit := hookAuditWriterFunc(func(record HookAuditRecord) error {
+		records = append(records, record)
+		return nil
+	})
+	hook := managedAuditTestHook(managedAuditSuccessCommand())
+	cfg := &HookConfig{Hooks: map[Event][]Hook{PreCommand: {hook}}}
+	if err := cfg.RunWithOptions(PreCommand, nil, RunOptions{Audit: audit}); err != nil {
+		t.Fatalf("RunWithOptions: %v", err)
+	}
+	if elapsedFrom != start {
+		t.Fatalf("duration start = %v, want original %v", elapsedFrom, start)
+	}
+	if len(records) != 2 || records[0].Timestamp.Location() != time.UTC || records[1].Timestamp.Location() != time.UTC || records[1].DurationMS != 17 {
+		t.Fatalf("audit timing records = %+v", records)
 	}
 }
 
@@ -295,6 +349,47 @@ func TestManagedHookAuditDecodeRetainsOnlyTheRequestedLimit(t *testing.T) {
 	if records[0].DurationMS != 1_999 || records[1].DurationMS != 1_998 || records[2].DurationMS != 1_997 {
 		t.Fatalf("newest durations = %d, %d, %d", records[0].DurationMS, records[1].DurationMS, records[2].DurationMS)
 	}
+}
+
+func TestManagedHookAuditRotatesBeforeCapacityDisablesExecution(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	seed := managedAuditRecord(HookAuditSuccess)
+	encoded, err := json.Marshal(seed)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	line := append(encoded, '\n')
+	data := bytes.Repeat(line, maxHookAuditBytes/len(line))
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	next := managedAuditRecord(HookAuditStarted)
+	next.Hash = strings.Repeat("b", 64)
+	audit := NewHookAudit(path)
+	if err := audit.Append(next); err != nil {
+		t.Fatalf("Append at capacity: %v", err)
+	}
+	records, err := audit.Read(10)
+	if err != nil {
+		t.Fatalf("Read active audit: %v", err)
+	}
+	if len(records) != 1 || records[0].Hash != next.Hash {
+		t.Fatalf("active records = %+v, want only post-rotation record", records)
+	}
+	archivePath := path + ".1"
+	archiveRecords, err := NewHookAudit(archivePath).Read(1)
+	if err != nil {
+		t.Fatalf("Read archive: %v", err)
+	}
+	if len(archiveRecords) != 1 || archiveRecords[0].Hash != seed.Hash {
+		t.Fatalf("archive records = %+v, want prior audit", archiveRecords)
+	}
+	assertManagedAuditFilePrivate(t, path)
+	assertManagedAuditFilePrivate(t, archivePath)
 }
 
 func TestManagedHookAuditRejectsMalformedCommittedAndOversizedData(t *testing.T) {

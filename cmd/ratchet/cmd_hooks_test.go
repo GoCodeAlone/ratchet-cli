@@ -339,13 +339,19 @@ func stubManagedHookPolicy(t *testing.T, policy *hooks.ManagedPolicy, path strin
 }
 
 func TestHooksPolicyPropagatesSecureLoaderFailure(t *testing.T) {
-	previous := loadManagedHookPolicy
+	previousLoad := loadManagedHookPolicy
+	previousPath := defaultManagedHookPolicyPath
+	sentinel := errors.New("managed policy unavailable")
 	loadManagedHookPolicy = func(hooks.LoadOptions) (*hooks.ManagedPolicy, error) {
-		return nil, errors.New("managed policy unavailable")
+		return nil, sentinel
 	}
-	defer func() { loadManagedHookPolicy = previous }()
-	if err := handleHooksPolicy([]string{"--json"}); err == nil {
-		t.Fatal("handleHooksPolicy accepted loader failure")
+	defaultManagedHookPolicyPath = func() (string, error) { return "/secure/managed-hooks.yaml", nil }
+	defer func() {
+		loadManagedHookPolicy = previousLoad
+		defaultManagedHookPolicyPath = previousPath
+	}()
+	if err := handleHooksPolicy([]string{"--json"}); !errors.Is(err, sentinel) {
+		t.Fatalf("handleHooksPolicy error = %v, want loader sentinel", err)
 	}
 }
 

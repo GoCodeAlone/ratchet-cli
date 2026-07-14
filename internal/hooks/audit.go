@@ -22,6 +22,7 @@ const (
 	maxHookAuditReadLimit  = 1000
 	hookAuditFileName      = "managed-hooks.jsonl"
 	hookAuditDirectoryName = "audit"
+	hookAuditArchiveSuffix = ".1"
 )
 
 var (
@@ -168,7 +169,11 @@ func (a *HookAudit) Append(record HookAuditRecord) (err error) {
 	if err != nil {
 		return err
 	}
-	defer func() { err = errors.Join(err, f.Close()) }()
+	defer func() {
+		if f != nil {
+			err = errors.Join(err, f.Close())
+		}
+	}()
 	if err := repairHookAuditTail(f, a.path, a.sync); err != nil {
 		return err
 	}
@@ -176,8 +181,17 @@ func (a *HookAudit) Append(record HookAuditRecord) (err error) {
 	if err != nil {
 		return fmt.Errorf("stat managed hook audit: %w", err)
 	}
+	if len(line) > maxHookAuditBytes {
+		return errors.New("managed hook audit record exceeds maximum size")
+	}
 	if info.Size() > maxHookAuditBytes-int64(len(line)) {
-		return errors.New("managed hook audit exceeds maximum size")
+		current := f
+		f = nil
+		f, err = a.rotate(current)
+		if err != nil {
+			return err
+		}
+		created = true
 	}
 	if err := validateHookAuditIdentity(a.path, f); err != nil {
 		return err
@@ -299,6 +313,52 @@ func (a *HookAudit) syncDirectory(path string) error {
 		return a.syncDir(path)
 	}
 	return syncHookAuditDirectory(path)
+}
+
+func (a *HookAudit) rotate(current *os.File) (_ *os.File, err error) {
+	closed := false
+	defer func() {
+		if !closed {
+			err = errors.Join(err, current.Close())
+		}
+	}()
+	if err := validateHookAuditIdentity(a.path, current); err != nil {
+		return nil, err
+	}
+	if err := a.sync(current); err != nil {
+		return nil, fmt.Errorf("sync managed hook audit before rotation: %w", err)
+	}
+	if err := current.Close(); err != nil {
+		return nil, fmt.Errorf("close managed hook audit before rotation: %w", err)
+	}
+	closed = true
+
+	archivePath := a.path + hookAuditArchiveSuffix
+	archive, _, err := openHookAuditFile(archivePath, false)
+	if err == nil {
+		if err := archive.Close(); err != nil {
+			return nil, fmt.Errorf("close managed hook audit archive: %w", err)
+		}
+		if err := os.Remove(archivePath); err != nil {
+			return nil, fmt.Errorf("replace managed hook audit archive: %w", err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("inspect managed hook audit archive: %w", err)
+	}
+	if err := os.Rename(a.path, archivePath); err != nil {
+		return nil, fmt.Errorf("rotate managed hook audit: %w", err)
+	}
+	if err := a.syncDirectory(filepath.Dir(a.path)); err != nil {
+		return nil, fmt.Errorf("sync managed hook audit rotation: %w", err)
+	}
+	next, created, err := openHookAuditFile(a.path, true)
+	if err != nil {
+		return nil, err
+	}
+	if !created {
+		return nil, errors.Join(errors.New("managed hook audit rotation did not create a new file"), next.Close())
+	}
+	return next, nil
 }
 
 func hookAuditPathLock(path string) *hookAuditPathState {

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +16,11 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+)
+
+var (
+	managedHookNow   = time.Now
+	managedHookSince = time.Since
 )
 
 // Event is a lifecycle event that can trigger hooks.
@@ -391,9 +397,9 @@ func (hc *HookConfig) RunWithOptions(event Event, data map[string]string, opts R
 		if hash == "" {
 			hash = h.DescriptorHash()
 		}
-		started := time.Now().UTC()
+		started := managedHookNow()
 		startRecord := HookAuditRecord{
-			Timestamp: started,
+			Timestamp: started.UTC(),
 			Event:     event,
 			Hash:      hash,
 			Source:    SourceManaged,
@@ -405,19 +411,19 @@ func (hc *HookConfig) RunWithOptions(event Event, data map[string]string, opts R
 
 		cmd, commandErr := expandTemplate(command, escapeDataForGOOS(data, runtime.GOOS))
 		if commandErr == nil {
-			_, commandErr = execHookCommand(cmd).CombinedOutput()
+			commandErr = runManagedHookCommand(execHookCommand(cmd))
 		}
 		result := HookAuditSuccess
 		if commandErr != nil {
 			result = HookAuditCommandFailed
 		}
 		terminal := HookAuditRecord{
-			Timestamp:  time.Now().UTC(),
+			Timestamp:  managedHookNow().UTC(),
 			Event:      event,
 			Hash:       hash,
 			Source:     SourceManaged,
 			Result:     result,
-			DurationMS: time.Since(started).Milliseconds(),
+			DurationMS: managedHookSince(started).Milliseconds(),
 		}
 		auditErr := opts.Audit.Append(terminal)
 		if commandErr != nil || auditErr != nil {
@@ -425,6 +431,12 @@ func (hc *HookConfig) RunWithOptions(event Event, data map[string]string, opts R
 		}
 	}
 	return nil
+}
+
+func runManagedHookCommand(cmd *exec.Cmd) error {
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	return cmd.Run()
 }
 
 type managedHookExecutionError struct {
