@@ -856,6 +856,31 @@ func TestBackgroundManagerShutdownPreservesCommittedSessionCancellation(t *testi
 	assertBackgroundAuditActions(t, audit, BackgroundAuditStart, BackgroundAuditStop)
 }
 
+func TestBackgroundAdmissionReleaseFailurePreservesDurableOutcome(t *testing.T) {
+	releaseErr := errors.New("release admission lock")
+	policy := BackgroundPolicy{
+		SessionID: "session-1",
+		State:     BackgroundStateDisabled,
+		Outcome:   BackgroundOutcomeCompleted,
+	}
+	recorded := backgroundRecordingResult{
+		policy:        policy,
+		stateRecorded: true,
+		auditRecorded: true,
+	}
+
+	result := backgroundAdmissionFailureResult(BackgroundPolicy{SessionID: "session-1"}, recorded, releaseErr, backgroundTestNow())
+	if result.policy.State != BackgroundStateDisabled || result.policy.Outcome != BackgroundOutcomeCompleted {
+		t.Fatalf("policy = %#v, want durable completed outcome", result.policy)
+	}
+	if !result.stateRecorded || !result.auditRecorded {
+		t.Fatalf("recording flags = state:%t audit:%t, want both true", result.stateRecorded, result.auditRecorded)
+	}
+	if !errors.Is(result.err, releaseErr) {
+		t.Fatalf("error = %v, want release error", result.err)
+	}
+}
+
 func TestBackgroundManagerCanceledSessionRecoveryFailureFailsClosed(t *testing.T) {
 	for _, action := range []string{"start", "resume"} {
 		t.Run(action, func(t *testing.T) {

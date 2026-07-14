@@ -197,14 +197,12 @@ func (r *SessionRunner) Prompt(ctx context.Context, prompt string) (Result, erro
 	c := r.client
 	callCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
-	_, cancelExecution := context.WithCancelCause(callCtx)
-	defer cancelExecution(nil)
 	c.callbacks.Reset()
 	requestID := fmt.Sprintf("ratchet-prompt-%d", started.UnixNano())
 	if err := c.callbacks.RecordEvent(EventDirectionOutbound, promptRequestEventMessage(requestID, r.sessionID, prompt)); err != nil {
 		return Result{}, err
 	}
-	stopCancelWatcher, err := c.startCancelWatcher(callCtx, r.sessionID, cancelExecution)
+	stopCancelWatcher, err := c.startCancelWatcher(callCtx, r.sessionID)
 	if err != nil {
 		return Result{}, err
 	}
@@ -334,7 +332,7 @@ func (c *Client) stderrString() string {
 	return c.stderr.String()
 }
 
-func (c *Client) startCancelWatcher(ctx context.Context, sessionID acpsdk.SessionId, cancelExecution context.CancelCauseFunc) (func() error, error) {
+func (c *Client) startCancelWatcher(ctx context.Context, sessionID acpsdk.SessionId) (func() error, error) {
 	if c == nil || c.cancelReq == nil {
 		return func() error { return nil }, nil
 	}
@@ -350,14 +348,12 @@ func (c *Client) startCancelWatcher(ctx context.Context, sessionID acpsdk.Sessio
 		}
 		requested, err := c.cancelReq(string(sessionID))
 		if err != nil {
-			cancelExecution(err)
 			latchedErr = errors.Join(err, c.terminateCancellation())
 			return latchedErr
 		}
 		if !requested {
 			return nil
 		}
-		cancelExecution(ErrCancelRequested)
 		latchedErr = errors.Join(ErrCancelRequested, c.sendCancelAndTerminate(ctx, sessionID))
 		return latchedErr
 	}

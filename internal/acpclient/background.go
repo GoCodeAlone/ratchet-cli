@@ -1078,15 +1078,7 @@ func (m *BackgroundManager) workerDone(sessionID string, worker *backgroundWorke
 			workerErr = errors.Join(workerErr, admissionErr)
 			outcome = BackgroundOutcomeWorkerError
 			managerCancellation = false
-			result.policy = worker.policy
-			result.policy.Enabled = false
-			result.policy.State = BackgroundStateError
-			result.policy.Outcome = outcome
-			result.policy.PersistenceDegraded = true
-			result.policy.UpdatedAt = m.currentTime()
-			result.stateRecorded = false
-			result.auditRecorded = false
-			result.err = errors.Join(result.err, admissionErr)
+			result = backgroundAdmissionFailureResult(worker.policy, result, admissionErr, m.currentTime())
 		}
 	}
 	if stopOwns && !workerOwnsPersistence && worker.releaseLease != nil {
@@ -1228,6 +1220,23 @@ type backgroundRecordingResult struct {
 	stateRecorded bool
 	auditRecorded bool
 	err           error
+}
+
+func backgroundAdmissionFailureResult(fallback BackgroundPolicy, recorded backgroundRecordingResult, err error, now time.Time) backgroundRecordingResult {
+	recorded.err = errors.Join(recorded.err, err)
+	if recorded.policy.SessionID != "" {
+		recorded.policy.PersistenceDegraded = true
+		return recorded
+	}
+	fallback.Enabled = false
+	fallback.State = BackgroundStateError
+	fallback.Outcome = BackgroundOutcomeWorkerError
+	fallback.PersistenceDegraded = true
+	fallback.UpdatedAt = now
+	recorded.policy = fallback
+	recorded.stateRecorded = false
+	recorded.auditRecorded = false
+	return recorded
 }
 
 func (m *BackgroundManager) persistTerminal(policy BackgroundPolicy, action string) backgroundRecordingResult {

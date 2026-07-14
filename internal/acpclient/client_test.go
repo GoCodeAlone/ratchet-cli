@@ -248,17 +248,12 @@ func TestClientCancellationAuthorityErrorIncludesTeardownFailure(t *testing.T) {
 			return teardownErr
 		})},
 	}
-	executionCtx, cancelExecution := context.WithCancelCause(t.Context())
-
-	stopWatcher, err := client.startCancelWatcher(t.Context(), "authority-session", cancelExecution)
+	stopWatcher, err := client.startCancelWatcher(t.Context(), "authority-session")
 	if !errors.Is(err, authorityErr) {
 		t.Fatalf("cancel watcher start error = %v, want authority error", err)
 	}
 	if !errors.Is(err, teardownErr) {
 		t.Fatalf("cancel watcher error = %v, want teardown error", err)
-	}
-	if got := context.Cause(executionCtx); !errors.Is(got, authorityErr) {
-		t.Fatalf("execution cause = %v, want authority error", got)
 	}
 	if strings.Index(err.Error(), authorityErr.Error()) > strings.Index(err.Error(), teardownErr.Error()) {
 		t.Fatalf("cancel watcher error = %q, want authority error first", err)
@@ -541,10 +536,9 @@ func TestClientCancellationClosesAndJoinsBlockedSend(t *testing.T) {
 			return true, nil
 		},
 	})
-	executionCtx, cancelExecution := context.WithCancelCause(t.Context())
 	watcherReady := make(chan error, 1)
 	go func() {
-		_, err := client.startCancelWatcher(t.Context(), "blocked-send-session", cancelExecution)
+		_, err := client.startCancelWatcher(t.Context(), "blocked-send-session")
 		watcherReady <- err
 	}()
 
@@ -565,9 +559,6 @@ func TestClientCancellationClosesAndJoinsBlockedSend(t *testing.T) {
 		}
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("cancel watcher error = %v, want bounded join deadline", err)
-		}
-		if got := context.Cause(executionCtx); !errors.Is(got, ErrCancelRequested) {
-			t.Fatalf("execution cause = %v, want ErrCancelRequested", got)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("cancel watcher did not close and join the blocked send")

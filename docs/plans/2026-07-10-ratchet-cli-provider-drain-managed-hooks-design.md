@@ -876,3 +876,13 @@ initial authority failure, and join direct-client cleanup errors. Independent
 joined worker failures remain errors. Scope: no manifest change; this closes
 Task 6 review cycle 4. Evidence: four deterministic regressions fail without
 the correction and pass with it under focused tests.
+
+### Backport 2026-07-14: Terminal observability cleanup
+
+Cause: an admission-lock release error replaced an already durable terminal
+outcome in memory, and a prompt cancellation child context had no production
+observer. Change: preserve the recorded state/outcome while marking it degraded
+and joining the release error; remove the unused cause context. Watch cycle
+callbacks remain non-terminal observations and precede final authority so a
+callback-triggered cancellation is caught. Scope: no manifest change; Task 6
+review cycle 5 minors. Evidence: focused release/error/cancellation tests pass.
