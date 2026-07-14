@@ -32,3 +32,17 @@ func TestManagedHookAuditOwnerUsesEffectiveUID(t *testing.T) {
 		t.Fatal("mismatching effective UID was accepted")
 	}
 }
+
+func TestManagedHookAuditRejectsHardLink(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
+	audit := NewHookAudit(path)
+	if err := audit.Append(managedAuditRecord(HookAuditStarted)); err != nil {
+		t.Fatalf("seed Append: %v", err)
+	}
+	if err := os.Link(path, path+".link"); err != nil {
+		t.Fatalf("Link: %v", err)
+	}
+	if err := audit.Append(managedAuditRecord(HookAuditSuccess)); err == nil {
+		t.Fatal("Append accepted hard-linked audit target")
+	}
+}

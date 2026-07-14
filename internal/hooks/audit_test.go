@@ -315,6 +315,42 @@ func TestManagedHookAuditSyncsFixedNamespaceChain(t *testing.T) {
 	}
 }
 
+func TestManagedHookAuditRejectsParentReplacementDuringAppend(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "private", "audit", "hooks.jsonl")
+	audit := NewHookAudit(path)
+	if err := audit.Append(managedAuditRecord(HookAuditStarted)); err != nil {
+		t.Fatalf("seed Append: %v", err)
+	}
+
+	parent := filepath.Dir(path)
+	displaced := parent + ".displaced"
+	audit.syncFile = func(file *os.File) error {
+		if err := file.Sync(); err != nil {
+			return err
+		}
+		if err := os.Rename(parent, displaced); err != nil {
+			return fmt.Errorf("replace audit parent: %w", err)
+		}
+		replacement, _, err := openHookAuditFile(path, true)
+		if err != nil {
+			return fmt.Errorf("create replacement audit: %w", err)
+		}
+		return replacement.Close()
+	}
+
+	err := audit.Append(managedAuditRecord(HookAuditSuccess))
+	if err == nil || !strings.Contains(err.Error(), "target changed during open") {
+		t.Fatalf("Append error = %v, want parent-replacement identity failure", err)
+	}
+	info, statErr := os.Stat(path)
+	if statErr != nil {
+		t.Fatalf("Stat replacement: %v", statErr)
+	}
+	if info.Size() != 0 {
+		t.Fatalf("replacement audit size = %d, want no committed record", info.Size())
+	}
+}
+
 func TestHookAuditNamespaceSyncDirectoriesIncludesRootHome(t *testing.T) {
 	path := filepath.Join(string(filepath.Separator), ".ratchet", "audit", "hooks.jsonl")
 	want := []string{

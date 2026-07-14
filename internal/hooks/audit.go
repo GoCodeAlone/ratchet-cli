@@ -216,6 +216,9 @@ func (a *HookAudit) Append(record HookAuditRecord) (err error) {
 			return fmt.Errorf("sync managed hook audit namespace: %w", err)
 		}
 	}
+	if err := validateHookAuditIdentity(a.path, f); err != nil {
+		return err
+	}
 	lock.degraded = nil
 	return nil
 }
