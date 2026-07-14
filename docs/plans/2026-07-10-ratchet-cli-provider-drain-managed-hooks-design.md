@@ -909,3 +909,15 @@ Constructor failure now closes injected managers, and typed-nil injection
 selects the disabled manager. Scope: no manifest change; Task 7 review cycle 2.
 Evidence: deterministic start/resume race and lifecycle regressions fail with
 the fixes reverted and pass with them restored.
+
+### Backport 2026-07-14: Daemon lifetime ownership
+
+Cause: signal/reload shutdown could close the engine before canceling the
+daemon lifetime, while cron scheduler loops and detached tick children were not
+joined. Change: daemon exit cancels one lifetime before service close;
+`Service` owns a child context and an admission-gated wait group; cron shutdown
+cancels and joins scheduler loops while preserving durable active jobs; admitted
+tick children retain asynchronous cadence but are canceled and joined before
+the engine closes. Scope: no manifest change; Task 7 review cycle 3. Evidence:
+active-callback, lifecycle-cancellation, and detached-work regressions fail with
+their ownership fixes reverted and pass restored, including `-race`.

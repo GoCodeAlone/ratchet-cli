@@ -66,6 +66,11 @@ type Service struct {
 	retroRecorder    *retro.Recorder
 	providerOps      *providerOperationManager
 	acpBackground    ACPBackgroundDrainManager
+	lifecycleCtx     context.Context
+	lifecycleCancel  context.CancelFunc
+	lifecycleMu      sync.Mutex
+	lifecycleClosed  bool
+	lifecycleWG      sync.WaitGroup
 	closeOnce        sync.Once
 }
 
@@ -127,13 +132,19 @@ func (disabledACPBackgroundDrainManager) Shutdown() {}
 func NewService(ctx context.Context, options ...ServiceOption) (*Service, error) {
 	// Publish version so checkpoint and health can reference it.
 	daemonVersion = version.Version
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	lifecycleCtx, lifecycleCancel := context.WithCancel(ctx)
 
-	engine, err := NewEngineContext(ctx, DBPath())
+	engine, err := NewEngineContext(lifecycleCtx, DBPath())
 	if err != nil {
+		lifecycleCancel()
 		return nil, err
 	}
 	providerOps := newProviderOperationManager(engine)
-	if err := providerOps.Start(ctx); err != nil {
+	if err := providerOps.Start(lifecycleCtx); err != nil {
+		lifecycleCancel()
 		engine.Close()
 		return nil, fmt.Errorf("start provider operations: %w", err)
 	}
@@ -146,14 +157,16 @@ func NewService(ctx context.Context, options ...ServiceOption) (*Service, error)
 	}
 
 	svc := &Service{
-		startedAt:     time.Now(),
-		engine:        engine,
-		sessions:      sm,
-		permGate:      newPermissionGate(),
-		approvalGate:  NewApprovalGate(),
-		plans:         NewPlanManagerWithEngine(engine, engine.Hooks),
-		providerOps:   providerOps,
-		acpBackground: disabledACPBackgroundDrainManager{},
+		startedAt:       time.Now(),
+		engine:          engine,
+		sessions:        sm,
+		permGate:        newPermissionGate(),
+		approvalGate:    NewApprovalGate(),
+		plans:           NewPlanManagerWithEngine(engine, engine.Hooks),
+		providerOps:     providerOps,
+		acpBackground:   disabledACPBackgroundDrainManager{},
+		lifecycleCtx:    lifecycleCtx,
+		lifecycleCancel: lifecycleCancel,
 	}
 	for _, option := range options {
 		if option != nil {
@@ -210,17 +223,17 @@ func NewService(ctx context.Context, options ...ServiceOption) (*Service, error)
 	// Create and start cron scheduler AFTER all Service fields are initialized,
 	// since tick callbacks invoke svc.handleChat which depends on svc.tokens etc.
 	svc.cron = NewCronScheduler(engine.DB, func(sessionID, command string) {
-		go func() {
-			tickCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		svc.startLifecycleWork(func(ctx context.Context) {
+			tickCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 			defer cancel()
 			runHooksAndLog(tickCtx, engine, hooks.OnCronTick, map[string]string{"session_id": sessionID, "command": command}, "cron tick")
 			ns := &noopSendServer{ctx: tickCtx}
 			if err := svc.handleChat(tickCtx, sessionID, command, ns); err != nil {
 				log.Printf("cron tick session=%s command=%q: %v", sessionID, command, err)
 			}
-		}()
+		})
 	})
-	if err := svc.cron.Start(ctx); err != nil {
+	if err := svc.cron.Start(lifecycleCtx); err != nil {
 		svc.Close()
 		return nil, fmt.Errorf("start cron scheduler: %w", err)
 	}
@@ -253,7 +266,7 @@ func NewDaemonService(ctx context.Context) (*Service, error) {
 		svc.Close()
 		return nil, fmt.Errorf("initialize ACP client profiles: %w", err)
 	}
-	manager, err := acpclient.NewDefaultBackgroundManager(ctx, sessions, profiles, acpclient.DefaultRegistry())
+	manager, err := acpclient.NewDefaultBackgroundManager(svc.lifecycleCtx, sessions, profiles, acpclient.DefaultRegistry())
 	if err != nil {
 		svc.Close()
 		return nil, fmt.Errorf("initialize ACP background drains: %w", err)
@@ -271,9 +284,20 @@ func (s *Service) Close() {
 		return
 	}
 	s.closeOnce.Do(func() {
+		s.lifecycleMu.Lock()
+		s.lifecycleClosed = true
+		lifecycleCancel := s.lifecycleCancel
+		s.lifecycleMu.Unlock()
+		if lifecycleCancel != nil {
+			lifecycleCancel()
+		}
+		if s.cron != nil {
+			s.cron.Close()
+		}
 		if s.acpBackground != nil {
 			s.acpBackground.Shutdown()
 		}
+		s.lifecycleWG.Wait()
 		if s.providerOps != nil {
 			s.providerOps.Stop()
 		}
@@ -281,6 +305,28 @@ func (s *Service) Close() {
 			s.engine.Close()
 		}
 	})
+}
+
+func (s *Service) startLifecycleWork(work func(context.Context)) bool {
+	if s == nil || work == nil {
+		return false
+	}
+	s.lifecycleMu.Lock()
+	if s.lifecycleClosed {
+		s.lifecycleMu.Unlock()
+		return false
+	}
+	ctx := s.lifecycleCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s.lifecycleWG.Add(1)
+	s.lifecycleMu.Unlock()
+	go func() {
+		defer s.lifecycleWG.Done()
+		work(ctx)
+	}()
+	return true
 }
 
 func (s *Service) Health(ctx context.Context, _ *pb.Empty) (*pb.HealthResponse, error) {

@@ -57,17 +57,21 @@ func Start(ctx context.Context, debug bool) error {
 	if err != nil {
 		return fmt.Errorf("create service: %w", err)
 	}
-	defer svc.Close()
+	defer func() {
+		cancel()
+		svc.Close()
+	}()
 	svc.engine.Debug = debug
 	svc.SetShutdownFunc(cancel)
 	pb.RegisterRatchetDaemonServer(srv, svc)
 
 	// Graceful shutdown on the platform's configured daemon shutdown signals.
-	runCtx, stop := signal.NotifyContext(runCtx, shutdownSignals()...)
+	signalCtx, stop := signal.NotifyContext(runCtx, shutdownSignals()...)
 	defer stop()
 
 	go func() {
-		<-runCtx.Done()
+		<-signalCtx.Done()
+		cancel()
 		log.Println("shutting down daemon...")
 		srv.GracefulStop()
 	}()
@@ -79,6 +83,7 @@ func Start(ctx context.Context, debug bool) error {
 		signal.Notify(sigReload, reloadSignal)
 		go func() {
 			<-sigReload
+			cancel()
 			log.Println("reload signal received, checkpointing...")
 			cp, err := ExportCheckpoint(svc)
 			if err != nil {
