@@ -3,9 +3,11 @@
 package hooks
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -49,31 +51,58 @@ func TestManagedHookAuditRejectsHardLink(t *testing.T) {
 }
 
 func TestManagedHookAuditConcurrentFirstCreationReopensWinner(t *testing.T) {
-	for attempt := range 20 {
-		path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
-		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-			t.Fatalf("attempt %d: MkdirAll: %v", attempt, err)
+	const workers = 32
+	path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	originalOpenFile := hookAuditOpenFile
+	t.Cleanup(func() { hookAuditOpenFile = originalOpenFile })
+	releaseCreates := make(chan struct{})
+	var exclusiveCalls atomic.Int32
+	var winners atomic.Int32
+	var existing atomic.Int32
+	hookAuditOpenFile = func(name string, flag int, perm os.FileMode) (*os.File, error) {
+		if flag&os.O_EXCL == 0 {
+			return originalOpenFile(name, flag, perm)
 		}
-		start := make(chan struct{})
-		errs := make(chan error, 32)
-		var group sync.WaitGroup
-		for range 32 {
-			group.Go(func() {
-				<-start
-				file, _, err := openHookAuditFile(path, true)
-				if err == nil {
-					err = file.Close()
-				}
-				errs <- err
-			})
+		if exclusiveCalls.Add(1) == workers {
+			close(releaseCreates)
 		}
-		close(start)
-		group.Wait()
-		close(errs)
-		for err := range errs {
-			if err != nil {
-				t.Fatalf("attempt %d: concurrent create: %v", attempt, err)
+		<-releaseCreates
+		file, err := originalOpenFile(name, flag, perm)
+		if err == nil {
+			winners.Add(1)
+		} else if errors.Is(err, os.ErrExist) {
+			existing.Add(1)
+		}
+		return file, err
+	}
+
+	errs := make(chan error, workers)
+	var createdResults atomic.Int32
+	var group sync.WaitGroup
+	for range workers {
+		group.Go(func() {
+			file, created, err := openHookAuditFile(path, true)
+			if created {
+				createdResults.Add(1)
 			}
+			if err == nil {
+				err = file.Close()
+			}
+			errs <- err
+		})
+	}
+	group.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent create: %v", err)
 		}
+	}
+	if exclusiveCalls.Load() != workers || winners.Load() != 1 || existing.Load() != workers-1 || createdResults.Load() != 1 {
+		t.Fatalf("creation paths = calls %d, winners %d, EEXIST %d, created results %d; want %d/1/%d/1",
+			exclusiveCalls.Load(), winners.Load(), existing.Load(), createdResults.Load(), workers, workers-1)
 	}
 }

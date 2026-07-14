@@ -88,10 +88,12 @@ type HookAuditWriter interface {
 
 // HookAudit stores managed hook metadata as owner-only JSONL.
 type HookAudit struct {
-	path       string
-	syncFile   func(*os.File) error
-	syncDir    func(string) error
-	rotateFile func(string, string) error
+	path              string
+	syncFile          func(*os.File) error
+	syncDir           func(string) error
+	rotateFile        func(string, string) error
+	beforeProcessLock func() error
+	afterProcessLock  func() error
 }
 
 type hookAuditPathState struct {
@@ -152,7 +154,7 @@ func (a *HookAudit) Append(record HookAuditRecord) (err error) {
 			lock.degraded = &degraded
 		}
 	}()
-	releaseProcessLock, err := acquireHookAuditProcessLock(a.path)
+	releaseProcessLock, err := acquireHookAuditProcessLock(a.path, a.beforeProcessLock, a.afterProcessLock)
 	if err != nil {
 		return fmt.Errorf("lock managed hook audit: %w", err)
 	}

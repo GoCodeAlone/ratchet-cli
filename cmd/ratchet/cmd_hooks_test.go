@@ -70,9 +70,8 @@ func TestHandleHooksTrustAndDisableMutateTrustStore(t *testing.T) {
 }
 
 func TestHandleHooksListTruncatesLongCommands(t *testing.T) {
-	home := t.TempDir()
+	home := setHooksTestHome(t)
 	workDir := t.TempDir()
-	t.Setenv("HOME", home)
 	if err := os.MkdirAll(filepath.Join(home, ".ratchet"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +136,7 @@ func TestHooksPolicyReportsManagedAndAbsentPolicy(t *testing.T) {
 func TestHooksInspectionRejectsPositionalArguments(t *testing.T) {
 	restore := stubManagedHookPolicy(t, nil, "/secure/managed-hooks.yaml")
 	defer restore()
-	t.Setenv("HOME", t.TempDir())
+	setHooksTestHome(t)
 	for _, test := range []struct {
 		name string
 		run  func([]string) error
@@ -155,9 +154,7 @@ func TestHooksInspectionRejectsPositionalArguments(t *testing.T) {
 }
 
 func TestHooksAuditReportsNewestFirstJSONAndAbsentFile(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
+	setHooksTestHome(t)
 	auditPath, err := hooks.DefaultHookAuditPath()
 	if err != nil {
 		t.Fatalf("DefaultHookAuditPath: %v", err)
@@ -212,9 +209,7 @@ func TestHooksAuditReportsNewestFirstJSONAndAbsentFile(t *testing.T) {
 		t.Fatalf("multi-generation audit records = %+v", records)
 	}
 
-	absentHome := t.TempDir()
-	t.Setenv("HOME", absentHome)
-	t.Setenv("USERPROFILE", absentHome)
+	setHooksTestHome(t)
 	out = captureStdout(t, func() {
 		if err := handleHooksAudit([]string{"--json"}); err != nil {
 			t.Fatalf("handleHooksAudit absent: %v", err)
@@ -246,8 +241,7 @@ func TestHooksListShowsManagedSourceAndSuppressionFields(t *testing.T) {
 }
 
 func TestHooksManagedMutationRejectsOnlyDiscoveredManagedHashes(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setHooksTestHome(t)
 	policy := testManagedHookPolicy(hooks.ManagedModeAdditive)
 	configured := hooks.HookConfig{Hooks: make(map[hooks.Event][]hooks.Hook)}
 	configured.ApplyManagedPolicy(policy)
@@ -312,9 +306,8 @@ func assertHookSource(t *testing.T, items []hookCLIItem, sourceKind, status stri
 
 func setupHookCLIWorkspace(t *testing.T) (home, workDir string) {
 	t.Helper()
-	home = t.TempDir()
+	home = setHooksTestHome(t)
 	workDir = t.TempDir()
-	t.Setenv("HOME", home)
 
 	if err := os.MkdirAll(filepath.Join(home, ".ratchet"), 0o700); err != nil {
 		t.Fatal(err)
@@ -355,6 +348,14 @@ hooks:
 	}
 
 	return home, workDir
+}
+
+func setHooksTestHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	return home
 }
 
 func testManagedHookPolicy(mode hooks.ManagedMode) *hooks.ManagedPolicy {

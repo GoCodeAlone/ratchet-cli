@@ -354,10 +354,14 @@ func TestManagedHookAuditRejectsParentReplacementDuringAppend(t *testing.T) {
 
 func TestManagedHookAuditSerializesAcrossProcesses(t *testing.T) {
 	if os.Getenv("RATCHET_AUDIT_PROCESS_CHILD") == "1" {
-		if err := os.WriteFile(os.Getenv("RATCHET_AUDIT_PROCESS_READY"), nil, 0o600); err != nil {
-			t.Fatalf("write child ready marker: %v", err)
+		audit := NewHookAudit(os.Getenv("RATCHET_AUDIT_PROCESS_PATH"))
+		audit.beforeProcessLock = func() error {
+			return os.WriteFile(os.Getenv("RATCHET_AUDIT_PROCESS_ATTEMPTED"), nil, 0o600)
 		}
-		if err := NewHookAudit(os.Getenv("RATCHET_AUDIT_PROCESS_PATH")).Append(managedAuditRecord(HookAuditSuccess)); err != nil {
+		audit.afterProcessLock = func() error {
+			return os.WriteFile(os.Getenv("RATCHET_AUDIT_PROCESS_ACQUIRED"), nil, 0o600)
+		}
+		if err := audit.Append(managedAuditRecord(HookAuditSuccess)); err != nil {
 			t.Fatalf("child Append: %v", err)
 		}
 		return
@@ -365,7 +369,8 @@ func TestManagedHookAuditSerializesAcrossProcesses(t *testing.T) {
 
 	root := t.TempDir()
 	path := filepath.Join(root, "private", "hooks.jsonl")
-	ready := filepath.Join(root, "child-ready")
+	attempted := filepath.Join(root, "child-attempted")
+	acquired := filepath.Join(root, "child-acquired")
 	audit := NewHookAudit(path)
 	entered := make(chan struct{})
 	release := make(chan struct{})
@@ -385,7 +390,8 @@ func TestManagedHookAuditSerializesAcrossProcesses(t *testing.T) {
 	command.Env = append(os.Environ(),
 		"RATCHET_AUDIT_PROCESS_CHILD=1",
 		"RATCHET_AUDIT_PROCESS_PATH="+path,
-		"RATCHET_AUDIT_PROCESS_READY="+ready,
+		"RATCHET_AUDIT_PROCESS_ATTEMPTED="+attempted,
+		"RATCHET_AUDIT_PROCESS_ACQUIRED="+acquired,
 	)
 	if err := command.Start(); err != nil {
 		close(release)
@@ -395,35 +401,45 @@ func TestManagedHookAuditSerializesAcrossProcesses(t *testing.T) {
 	go func() { childDone <- command.Wait() }()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		if _, err := os.Stat(ready); err == nil {
+		if _, err := os.Stat(attempted); err == nil {
 			break
 		}
 		if time.Now().After(deadline) {
 			close(release)
-			t.Fatal("timed out waiting for audit child")
+			t.Fatal("timed out waiting for child to reach the OS lock syscall")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	var earlyChildErr error
+	var childErr error
 	childFinishedEarly := false
 	select {
-	case earlyChildErr = <-childDone:
+	case childErr = <-childDone:
 		childFinishedEarly = true
 	case <-time.After(200 * time.Millisecond):
+	}
+	if _, err := os.Stat(acquired); err == nil {
+		close(release)
+		t.Fatal("child acquired the process lock while parent transaction was held")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		close(release)
+		t.Fatalf("inspect child acquired marker: %v", err)
 	}
 	close(release)
 	if err := <-parentDone; err != nil {
 		t.Fatalf("parent Append: %v", err)
 	}
 	if !childFinishedEarly {
-		earlyChildErr = <-childDone
+		childErr = <-childDone
 	}
-	if earlyChildErr != nil {
-		t.Fatalf("child process: %v", earlyChildErr)
+	if childErr != nil {
+		t.Fatalf("child process: %v", childErr)
 	}
 	if childFinishedEarly {
 		t.Fatal("child audit transaction completed while parent transaction was held")
+	}
+	if _, err := os.Stat(acquired); err != nil {
+		t.Fatalf("child never acquired process lock after release: %v", err)
 	}
 }
 

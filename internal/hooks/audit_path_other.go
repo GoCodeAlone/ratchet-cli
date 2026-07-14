@@ -10,7 +10,10 @@ import (
 	"reflect"
 )
 
-var hookAuditEffectiveUID = os.Geteuid
+var (
+	hookAuditEffectiveUID = os.Geteuid
+	hookAuditOpenFile     = os.OpenFile
+)
 
 func rotateHookAuditPath(source, destination string) error {
 	return os.Rename(source, destination)
@@ -40,7 +43,7 @@ func openHookAuditFile(path string, create bool) (*os.File, bool, error) {
 		if !create {
 			return nil, false, os.ErrNotExist
 		}
-		f, openErr := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR|os.O_APPEND, 0o600)
+		f, openErr := hookAuditOpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR|os.O_APPEND, 0o600)
 		if openErr != nil && !errors.Is(openErr, os.ErrExist) {
 			return nil, false, fmt.Errorf("create managed hook audit: %w", openErr)
 		}
@@ -67,7 +70,7 @@ func openHookAuditFile(path string, create bool) (*os.File, bool, error) {
 	if create {
 		flags = os.O_RDWR | os.O_APPEND
 	}
-	f, err := os.OpenFile(path, flags, 0)
+	f, err := hookAuditOpenFile(path, flags, 0)
 	if err != nil {
 		return nil, false, fmt.Errorf("open managed hook audit: %w", err)
 	}

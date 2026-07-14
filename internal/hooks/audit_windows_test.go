@@ -34,6 +34,7 @@ func TestManagedHookAuditWindowsCreationIsAtomicallyPrivate(t *testing.T) {
 	directoryCreates := 0
 	directoryMoves := 0
 	fileCreates := 0
+	fileCreatePaths := make(map[string]int)
 	hookAuditWindowsCreateDirectory = func(path *uint16, security *windows.SecurityAttributes) error {
 		directoryCreates++
 		assertManagedHookAuditWindowsCreationSecurity(t, security)
@@ -42,6 +43,7 @@ func TestManagedHookAuditWindowsCreationIsAtomicallyPrivate(t *testing.T) {
 	hookAuditWindowsCreateFile = func(name *uint16, access, mode uint32, security *windows.SecurityAttributes, createMode, attrs uint32, template windows.Handle) (windows.Handle, error) {
 		if createMode == windows.CREATE_NEW {
 			fileCreates++
+			fileCreatePaths[filepath.Base(windows.UTF16PtrToString(name))]++
 			assertManagedHookAuditWindowsCreationSecurity(t, security)
 			if attrs&windows.FILE_FLAG_WRITE_THROUGH == 0 {
 				t.Fatalf("created file attributes = %#x, want FILE_FLAG_WRITE_THROUGH", attrs)
@@ -61,8 +63,9 @@ func TestManagedHookAuditWindowsCreationIsAtomicallyPrivate(t *testing.T) {
 	if err := NewHookAudit(path).Append(managedAuditRecord(HookAuditStarted)); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
-	if directoryCreates != 2 || directoryMoves != 2 || fileCreates != 1 {
-		t.Fatalf("private creation calls = directories %d, moves %d, files %d; want 2/2/1", directoryCreates, directoryMoves, fileCreates)
+	base := filepath.Base(path)
+	if directoryCreates != 2 || directoryMoves != 2 || fileCreates != 2 || fileCreatePaths[base] != 1 || fileCreatePaths[base+hookAuditProcessLockSuffix] != 1 {
+		t.Fatalf("private creation calls = directories %d, moves %d, files %d %v; want 2/2/2 with audit and lock", directoryCreates, directoryMoves, fileCreates, fileCreatePaths)
 	}
 }
 
