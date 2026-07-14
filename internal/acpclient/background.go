@@ -572,21 +572,31 @@ func (m *BackgroundManager) Start(sessionID, profile string, acknowledged bool) 
 		}
 		return backgroundStatus(persisted), err
 	}
-	m.mu.Lock()
-	if m.closed || m.ctx.Err() != nil {
-		m.mu.Unlock()
+	launched, canceled, launchErr := m.launchPersistedPolicy(persisted, resolved)
+	if launched {
+		transitionReserved = false
+		return backgroundStatus(persisted), launchErr
+	}
+	if canceled {
+		_, cancelErr := m.recoverCanceledSession(sessionID)
 		persisted.Enabled = false
 		persisted.State = BackgroundStateDisabled
 		persisted.Outcome = BackgroundOutcomeStopped
+		persisted.UpdatedAt = m.currentTime()
 		result := m.persistTerminal(persisted, BackgroundAuditStop)
 		m.rememberTerminal(result)
-		return backgroundStatus(result.policy), errors.Join(ErrBackgroundManagerClosed, result.err)
+		return backgroundStatus(result.policy), errors.Join(ErrCancelRequested, launchErr, cancelErr, result.err)
 	}
-	transitionReserved = false
-	delete(m.terminal, sessionID)
-	m.launchLocked(persisted, resolved)
-	m.mu.Unlock()
-	return backgroundStatus(persisted), nil
+	if errors.Is(launchErr, ErrBackgroundManagerClosed) {
+		persisted.Enabled = false
+		persisted.State = BackgroundStateDisabled
+		persisted.Outcome = BackgroundOutcomeStopped
+		persisted.UpdatedAt = m.currentTime()
+		result := m.persistTerminal(persisted, BackgroundAuditStop)
+		m.rememberTerminal(result)
+		return backgroundStatus(result.policy), errors.Join(launchErr, result.err)
+	}
+	return backgroundStatus(persisted), launchErr
 }
 
 func (m *BackgroundManager) Stop(sessionID string) (status BackgroundStatus, err error) {
@@ -835,20 +845,37 @@ func (m *BackgroundManager) Resume() error {
 			}
 			return errors.Join(err, m.releaseTransition(policy.SessionID))
 		}
-		m.mu.Lock()
-		if m.closed || m.ctx.Err() != nil {
-			m.mu.Unlock()
+		launched, canceled, launchErr := m.launchPersistedPolicy(persisted, resolved)
+		if launched {
+			if launchErr != nil {
+				return launchErr
+			}
+			continue
+		}
+		if canceled {
+			_, cancelErr := m.recoverCanceledSession(policy.SessionID)
 			persisted.Enabled = false
 			persisted.State = BackgroundStateDisabled
 			persisted.Outcome = BackgroundOutcomeStopped
 			persisted.UpdatedAt = m.currentTime()
 			result := m.persistTerminal(persisted, BackgroundAuditStop)
 			m.rememberTerminal(result)
-			return errors.Join(ErrBackgroundManagerClosed, result.err, m.releaseTransition(policy.SessionID))
+			releaseErr := m.releaseTransition(policy.SessionID)
+			if launchErr != nil || cancelErr != nil || result.err != nil || releaseErr != nil {
+				return errors.Join(launchErr, cancelErr, result.err, releaseErr)
+			}
+			continue
 		}
-		delete(m.terminal, policy.SessionID)
-		m.launchLocked(persisted, resolved)
-		m.mu.Unlock()
+		if errors.Is(launchErr, ErrBackgroundManagerClosed) {
+			persisted.Enabled = false
+			persisted.State = BackgroundStateDisabled
+			persisted.Outcome = BackgroundOutcomeStopped
+			persisted.UpdatedAt = m.currentTime()
+			result := m.persistTerminal(persisted, BackgroundAuditStop)
+			m.rememberTerminal(result)
+			return errors.Join(launchErr, result.err, m.releaseTransition(policy.SessionID))
+		}
+		return errors.Join(launchErr, m.releaseTransition(policy.SessionID))
 	}
 	return nil
 }
@@ -932,6 +959,29 @@ func (m *BackgroundManager) launchLocked(policy BackgroundPolicy, resolved Resol
 	})
 }
 
+func (m *BackgroundManager) launchPersistedPolicy(policy BackgroundPolicy, resolved ResolvedBackgroundProfile) (launched, canceled bool, err error) {
+	err = m.sessions.withLaunchAdmission(policy.SessionID, func() error {
+		session, getErr := m.sessions.Get(policy.SessionID)
+		if getErr != nil {
+			return getErr
+		}
+		if cancellationLatched(session.Status) {
+			canceled = true
+			return nil
+		}
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if m.closed || m.ctx.Err() != nil {
+			return ErrBackgroundManagerClosed
+		}
+		delete(m.terminal, policy.SessionID)
+		m.launchLocked(policy, resolved)
+		launched = true
+		return nil
+	})
+	return launched, canceled, err
+}
+
 func (m *BackgroundManager) watchWorker(ctx context.Context, resolved ResolvedBackgroundProfile, sessionID string) (outcome string, err error) {
 	defer func() {
 		if recover() != nil {
@@ -981,21 +1031,26 @@ func (m *BackgroundManager) workerDone(sessionID string, worker *backgroundWorke
 	worker.err = workerErr
 	m.mu.Unlock()
 
-	ignoreCancellation := isExplicitCancellation(ctx, workerErr)
+	managerCancellation := isManagerCancellation(ctx, workerErr)
+	sessionCancellation := isSessionCancellation(workerErr)
 	var result backgroundRecordingResult
 	workerOwnsPersistence := true
 	if stopOwns {
 		workerOwnsPersistence = <-stopOwner.handoff
 	}
-	if workerOwnsPersistence && !ignoreCancellation {
+	if workerOwnsPersistence && !managerCancellation {
 		policy := worker.policy
 		policy.Enabled = false
 		policy.UpdatedAt = m.currentTime()
 		action := BackgroundAuditError
-		switch workerErr {
-		case nil:
+		switch {
+		case workerErr == nil:
 			policy.State = BackgroundStateDisabled
 			policy.Outcome = BackgroundOutcomeCompleted
+			action = BackgroundAuditStop
+		case sessionCancellation:
+			policy.State = BackgroundStateDisabled
+			policy.Outcome = BackgroundOutcomeStopped
 			action = BackgroundAuditStop
 		default:
 			policy.State = BackgroundStateError
@@ -1013,7 +1068,7 @@ func (m *BackgroundManager) workerDone(sessionID string, worker *backgroundWorke
 		if releaseErr := worker.releaseLease(); releaseErr != nil {
 			workerErr = errors.Join(workerErr, releaseErr)
 			outcome = BackgroundOutcomeWorkerError
-			ignoreCancellation = false
+			managerCancellation = false
 			result.policy = worker.policy
 			result.policy.Enabled = false
 			result.policy.State = BackgroundStateError
@@ -1034,7 +1089,7 @@ func (m *BackgroundManager) workerDone(sessionID string, worker *backgroundWorke
 	if workerOwnsTransition {
 		delete(m.transitions, sessionID)
 	}
-	if workerOwnsPersistence && !ignoreCancellation {
+	if workerOwnsPersistence && !managerCancellation {
 		m.terminal[sessionID] = backgroundTerminalGuard{
 			status:        backgroundStatus(result.policy),
 			stateRecorded: result.stateRecorded,
@@ -1429,11 +1484,19 @@ func (m *BackgroundManager) managerDone() bool {
 }
 
 func isExplicitCancellation(ctx context.Context, workerErr error) bool {
+	return isManagerCancellation(ctx, workerErr) || isSessionCancellation(workerErr)
+}
+
+func isManagerCancellation(ctx context.Context, workerErr error) bool {
 	if !backgroundCancellationOnly(workerErr) {
 		return false
 	}
 	cause := context.Cause(ctx)
 	return errors.Is(cause, errBackgroundStop) || errors.Is(cause, errBackgroundShutdown)
+}
+
+func isSessionCancellation(workerErr error) bool {
+	return backgroundCancellationOnly(workerErr) && errors.Is(workerErr, ErrCancelRequested)
 }
 
 func backgroundCancellationOnly(err error) bool {
@@ -1455,7 +1518,7 @@ func backgroundCancellationOnly(err error) bool {
 	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
 		return backgroundCancellationOnly(wrapped.Unwrap())
 	}
-	return errors.Is(err, context.Canceled)
+	return errors.Is(err, context.Canceled) || errors.Is(err, ErrCancelRequested)
 }
 
 func (m *BackgroundManager) appendAudit(transition backgroundTransition) error {

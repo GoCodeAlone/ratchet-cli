@@ -373,6 +373,23 @@ func TestDrainQueuePassesCancelRequestsToRunner(t *testing.T) {
 	}
 }
 
+func TestStartDrainSessionPreservesCleanupError(t *testing.T) {
+	startErr := errors.New("start session failed")
+	cleanupErr := errors.New("cleanup failed")
+	client := &fakeDrainSessionClient{startErr: startErr, closeErr: cleanupErr}
+
+	runner, closeRunner, err := startDrainSession(t.Context(), client, "")
+	if runner != nil || closeRunner != nil {
+		t.Fatalf("runner/close = %v/%p, want nil/nil", runner, closeRunner)
+	}
+	if !errors.Is(err, startErr) || !errors.Is(err, cleanupErr) {
+		t.Fatalf("startDrainSession error = %v, want start and cleanup errors", err)
+	}
+	if !client.closed {
+		t.Fatal("failed session client was not closed")
+	}
+}
+
 func TestDrainQueueCancellationBetweenClaimAndLaunchPreventsStart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sessions.json")
 	drainStore := NewStore(path)
@@ -619,6 +636,21 @@ type fakeDrainRunner struct {
 type callbackDrainRunner struct {
 	sessionID acpsdk.SessionId
 	prompt    func(context.Context, string) (Result, error)
+}
+
+type fakeDrainSessionClient struct {
+	startErr error
+	closeErr error
+	closed   bool
+}
+
+func (c *fakeDrainSessionClient) StartSession(context.Context, string) (*SessionRunner, error) {
+	return nil, c.startErr
+}
+
+func (c *fakeDrainSessionClient) Close() error {
+	c.closed = true
+	return c.closeErr
 }
 
 func (r *callbackDrainRunner) SessionID() acpsdk.SessionId {

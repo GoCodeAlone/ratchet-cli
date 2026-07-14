@@ -84,6 +84,19 @@ func WatchQueue(ctx context.Context, store *Store, spec AgentSpec, opts RunOptio
 			result.Remaining = countPendingQueue(store, sessionID)
 			return result, err
 		}
+		cancelRequested, err := store.CheckCancellation(sessionID)
+		if err != nil {
+			result.Remaining = countPendingQueue(store, sessionID)
+			return result, err
+		}
+		if cancelRequested {
+			recovered, canceled, recoverErr := store.recoverRunningQueueItems(sessionID, watchOpts.now())
+			if canceled {
+				result.Canceled += recovered
+			}
+			result.Remaining = countPendingQueue(store, sessionID)
+			return result, errors.Join(ErrCancelRequested, recoverErr)
+		}
 
 		cycleNumber := result.Cycles + 1
 		startedAt := watchOpts.now()

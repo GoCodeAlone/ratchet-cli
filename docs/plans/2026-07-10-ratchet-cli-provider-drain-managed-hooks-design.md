@@ -851,3 +851,15 @@ completion. Change: terminal-record assertions wait for the manager's terminal
 guard; production persistence ordering is unchanged. Scope: no manifest change;
 Task 6 verification only. Evidence: the four worker terminal paths pass under
 `go test -race ... -count=20`.
+
+### Backport 2026-07-14: Final cancellation linearization
+
+Cause: a successful prompt could outrun the watcher's last authority poll;
+idle watches and persisted manager starts lacked a final cancellation check;
+session cancellation was recorded as `worker_error`; failed session setup
+dropped cleanup errors. Change: serialize and repeat authority checking at
+watcher shutdown; check every watch cycle; admit persisted start/resume through
+the per-session launch lock; persist cancellation-only worker exit as
+`stopped`; join startup cleanup failure. Joined independent failures remain
+errors. Scope: no manifest change; this closes Task 6 review cycle 3. Evidence:
+the four deterministic regressions pass 20 repetitions and under `-race`.

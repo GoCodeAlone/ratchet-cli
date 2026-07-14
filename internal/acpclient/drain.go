@@ -18,6 +18,11 @@ type DrainPromptRunner interface {
 	Prompt(context.Context, string) (Result, error)
 }
 
+type drainSessionClient interface {
+	StartSession(context.Context, string) (*SessionRunner, error)
+	Close() error
+}
+
 type DrainOptions struct {
 	Max         int
 	Now         func() time.Time
@@ -195,10 +200,13 @@ func defaultDrainStartRunner(ctx context.Context, spec AgentSpec, opts RunOption
 	if err != nil {
 		return nil, nil, err
 	}
+	return startDrainSession(ctx, client, existingID)
+}
+
+func startDrainSession(ctx context.Context, client drainSessionClient, existingID string) (DrainPromptRunner, func() error, error) {
 	runner, err := client.StartSession(ctx, existingID)
 	if err != nil {
-		_ = client.Close()
-		return nil, nil, err
+		return nil, nil, errors.Join(err, client.Close())
 	}
 	return runner, client.Close, nil
 }

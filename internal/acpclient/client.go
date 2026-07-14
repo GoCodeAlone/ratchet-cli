@@ -21,21 +21,22 @@ const defaultTimeout = 30 * time.Second
 var ErrCancellationTransportUnsupported = errors.New("acp client cancellation requires closable in-process transports")
 
 type Client struct {
-	conn           *acpsdk.ClientSideConnection
-	callbacks      *Callbacks
-	timeout        time.Duration
-	setupErr       error
-	cmd            *exec.Cmd
-	killProcess    func() error
-	stderr         *lockedBuffer
-	wait           chan error
-	onSession      func(string) error
-	cancelReq      func(string) (bool, error)
-	transports     []io.Closer
-	closeOnce      sync.Once
-	closeErr       error
-	transportOnce  sync.Once
-	transportError error
+	conn               *acpsdk.ClientSideConnection
+	callbacks          *Callbacks
+	timeout            time.Duration
+	setupErr           error
+	cmd                *exec.Cmd
+	killProcess        func() error
+	stderr             *lockedBuffer
+	wait               chan error
+	onSession          func(string) error
+	cancelReq          func(string) (bool, error)
+	cancelPollInterval time.Duration
+	transports         []io.Closer
+	closeOnce          sync.Once
+	closeErr           error
+	transportOnce      sync.Once
+	transportError     error
 }
 
 type Result struct {
@@ -336,23 +337,36 @@ func (c *Client) startCancelWatcher(ctx context.Context, sessionID acpsdk.Sessio
 	}
 	done := make(chan struct{})
 	finished := make(chan error, 1)
+	var checkMu sync.Mutex
+	var latchedErr error
 	check := func() error {
+		checkMu.Lock()
+		defer checkMu.Unlock()
+		if latchedErr != nil {
+			return latchedErr
+		}
 		requested, err := c.cancelReq(string(sessionID))
 		if err != nil {
 			cancelExecution(err)
-			return errors.Join(err, c.terminateCancellation())
+			latchedErr = errors.Join(err, c.terminateCancellation())
+			return latchedErr
 		}
 		if !requested {
 			return nil
 		}
 		cancelExecution(ErrCancelRequested)
-		return errors.Join(ErrCancelRequested, c.sendCancelAndTerminate(ctx, sessionID))
+		latchedErr = errors.Join(ErrCancelRequested, c.sendCancelAndTerminate(ctx, sessionID))
+		return latchedErr
 	}
 	if err := check(); err != nil {
 		return func() error { return err }
 	}
 	go func() {
-		ticker := time.NewTicker(100 * time.Millisecond)
+		interval := c.cancelPollInterval
+		if interval <= 0 {
+			interval = 100 * time.Millisecond
+		}
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			select {
@@ -372,7 +386,10 @@ func (c *Client) startCancelWatcher(ctx context.Context, sessionID acpsdk.Sessio
 	}()
 	return func() error {
 		close(done)
-		return <-finished
+		if err := <-finished; err != nil {
+			return err
+		}
+		return check()
 	}
 }
 

@@ -315,6 +315,37 @@ func TestClientCancellationCauseWinsRacingPromptResponse(t *testing.T) {
 	}
 }
 
+func TestClientCancellationCommittedWithPromptResponseWins(t *testing.T) {
+	clientToAgentR, clientToAgentW := io.Pipe()
+	agentToClientR, agentToClientW := io.Pipe()
+	t.Cleanup(func() {
+		_ = clientToAgentR.Close()
+		_ = clientToAgentW.Close()
+		_ = agentToClientR.Close()
+		_ = agentToClientW.Close()
+	})
+
+	requested := &atomic.Bool{}
+	agent := &cancelOnPromptResponseAgent{requested: requested}
+	agentConn := acpsdk.NewAgentSideConnection(agent, agentToClientW, clientToAgentR)
+	agent.conn = agentConn
+	client := NewInProcessClient(clientToAgentW, agentToClientR, RunOptions{
+		Cwd:     t.TempDir(),
+		Timeout: 2 * time.Second,
+		CancelRequested: func(string) (bool, error) {
+			return requested.Load(), nil
+		},
+	})
+	client.cancelPollInterval = time.Hour
+
+	if _, err := client.RunPrompt(t.Context(), "response race"); !errors.Is(err, ErrCancelRequested) {
+		t.Fatalf("RunPrompt error = %v, want ErrCancelRequested", err)
+	}
+	if got := agent.cancelCount.Load(); got != 1 {
+		t.Fatalf("ACP cancel count = %d, want 1", got)
+	}
+}
+
 func TestClientCancellationIgnoringAgentReturnsAndReapsProcess(t *testing.T) {
 	requested := &atomic.Bool{}
 	client, cancelMarker, promptMarker := startCancellationProcessClient(t, requested, nil)
@@ -1006,6 +1037,22 @@ type cancellationRaceAgent struct {
 	cancelCalled  chan struct{}
 	cancelOnce    sync.Once
 	cancelCount   atomic.Int64
+}
+
+type cancelOnPromptResponseAgent struct {
+	echoAgent
+	requested   *atomic.Bool
+	cancelCount atomic.Int64
+}
+
+func (a *cancelOnPromptResponseAgent) Cancel(context.Context, acpsdk.CancelNotification) error {
+	a.cancelCount.Add(1)
+	return nil
+}
+
+func (a *cancelOnPromptResponseAgent) Prompt(context.Context, acpsdk.PromptRequest) (acpsdk.PromptResponse, error) {
+	a.requested.Store(true)
+	return acpsdk.PromptResponse{StopReason: acpsdk.StopReasonEndTurn}, nil
 }
 
 var _ acpsdk.Agent = (*cancellationRaceAgent)(nil)
