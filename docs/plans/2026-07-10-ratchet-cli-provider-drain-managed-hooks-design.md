@@ -971,11 +971,17 @@ equivalent ACEs, reparse points, hard links, parent replacement, and weak DACLs.
 
 Cause: post-creation Windows ACL replacement exposed a weak-permission window;
 pre-deleting `.1` could destroy retained audit history when replacement failed;
-syncing only `audit/` did not persist the `.ratchet/audit` namespace entries.
-Change: create Windows audit directories/files with protected current-owner
-security descriptors in the creation syscall; atomically replace `.1` without
-pre-delete; sync `audit/`, `.ratchet/`, and its parent before every successful
-append, with degraded retry semantics. Scope: no manifest change; Task 10
+syncing only `audit/` did not persist the `.ratchet/audit` namespace entries;
+and restrictive Unix umasks could make recursively created parents unusable.
+Change: Windows creates owner-private temporary directories and publishes them
+with `MOVEFILE_WRITE_THROUGH`, creates files with protected current-owner
+security descriptors and `FILE_FLAG_WRITE_THROUGH`, and atomically replaces
+`.1` without pre-delete. Unix creates and normalizes one parent at a time. The
+fixed persistence chain includes `audit/`, `.ratchet/`, and its parent (including
+a root home) before every successful append, with degraded retry semantics. A
+lone `started` record denotes an attempted launch with no terminal confirmation;
+it never claims command execution or success. Scope: no manifest change; Task 10
 rewrite after quality loop 5. Evidence: forced replacement failure preserves
-the archive; namespace-chain regressions and focused/race gates pass; the native
-creation-descriptor regression and Windows binaries cross-compile.
+the archive; root-home, restrictive-umask, namespace-chain, and diagnostic
+regressions plus focused/race gates pass; native Windows syscall interception
+checks private write-through creation and Windows binaries cross-compile.

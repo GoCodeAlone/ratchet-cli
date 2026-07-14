@@ -25,11 +25,14 @@ func TestManagedHookAuditWindowsCreatesOwnerOnlyDACL(t *testing.T) {
 func TestManagedHookAuditWindowsCreationIsAtomicallyPrivate(t *testing.T) {
 	originalDirectory := hookAuditWindowsCreateDirectory
 	originalFile := hookAuditWindowsCreateFile
+	originalMove := hookAuditWindowsMoveFileEx
 	t.Cleanup(func() {
 		hookAuditWindowsCreateDirectory = originalDirectory
 		hookAuditWindowsCreateFile = originalFile
+		hookAuditWindowsMoveFileEx = originalMove
 	})
 	directoryCreates := 0
+	directoryMoves := 0
 	fileCreates := 0
 	hookAuditWindowsCreateDirectory = func(path *uint16, security *windows.SecurityAttributes) error {
 		directoryCreates++
@@ -40,16 +43,35 @@ func TestManagedHookAuditWindowsCreationIsAtomicallyPrivate(t *testing.T) {
 		if createMode == windows.CREATE_NEW {
 			fileCreates++
 			assertManagedHookAuditWindowsCreationSecurity(t, security)
+			if attrs&windows.FILE_FLAG_WRITE_THROUGH == 0 {
+				t.Fatalf("created file attributes = %#x, want FILE_FLAG_WRITE_THROUGH", attrs)
+			}
 		}
 		return originalFile(name, access, mode, security, createMode, attrs, template)
+	}
+	hookAuditWindowsMoveFileEx = func(from, to *uint16, flags uint32) error {
+		directoryMoves++
+		if flags != windows.MOVEFILE_WRITE_THROUGH {
+			t.Fatalf("directory MoveFileEx flags = %#x, want %#x", flags, windows.MOVEFILE_WRITE_THROUGH)
+		}
+		return originalMove(from, to, flags)
 	}
 
 	path := filepath.Join(t.TempDir(), "private", "nested", "hooks.jsonl")
 	if err := NewHookAudit(path).Append(managedAuditRecord(HookAuditStarted)); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
-	if directoryCreates != 2 || fileCreates != 1 {
-		t.Fatalf("private creation calls = directories %d, files %d; want 2/1", directoryCreates, fileCreates)
+	if directoryCreates != 2 || directoryMoves != 2 || fileCreates != 1 {
+		t.Fatalf("private creation calls = directories %d, moves %d, files %d; want 2/2/1", directoryCreates, directoryMoves, fileCreates)
+	}
+}
+
+func TestManagedHookAuditWindowsWriterAttributesAreWriteThrough(t *testing.T) {
+	if attrs := hookAuditWindowsOpenAttributes(true); attrs&windows.FILE_FLAG_WRITE_THROUGH == 0 {
+		t.Fatalf("writer attributes = %#x, want FILE_FLAG_WRITE_THROUGH", attrs)
+	}
+	if attrs := hookAuditWindowsOpenAttributes(false); attrs&windows.FILE_FLAG_WRITE_THROUGH != 0 {
+		t.Fatalf("reader attributes = %#x, do not want FILE_FLAG_WRITE_THROUGH", attrs)
 	}
 }
 

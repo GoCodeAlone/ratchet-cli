@@ -315,6 +315,28 @@ func TestManagedHookAuditSyncsFixedNamespaceChain(t *testing.T) {
 	}
 }
 
+func TestHookAuditNamespaceSyncDirectoriesIncludesRootHome(t *testing.T) {
+	path := filepath.Join(string(filepath.Separator), ".ratchet", "audit", "hooks.jsonl")
+	want := []string{
+		filepath.Join(string(filepath.Separator), ".ratchet", "audit"),
+		filepath.Join(string(filepath.Separator), ".ratchet"),
+		string(filepath.Separator),
+	}
+	if got := hookAuditNamespaceSyncDirectories(path); !slices.Equal(got, want) {
+		t.Fatalf("sync directories = %v, want %v", got, want)
+	}
+}
+
+func TestManagedHookAuditStartedDurationDiagnostic(t *testing.T) {
+	record := managedAuditRecord(HookAuditStarted)
+	record.DurationMS = 1
+
+	err := validateHookAuditRecord(record)
+	if err == nil || !strings.Contains(err.Error(), "started duration must be zero") {
+		t.Fatalf("validateHookAuditRecord error = %v, want started-duration diagnostic", err)
+	}
+}
+
 func TestManagedHookAuditReadIsBoundedStrictAndNewestFirst(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
 	audit := NewHookAudit(path)

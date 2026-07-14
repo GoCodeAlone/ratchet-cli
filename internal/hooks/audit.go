@@ -344,10 +344,13 @@ func hookAuditNamespaceSyncDirectories(path string) []string {
 	directories := make([]string, 0, 3)
 	directory := filepath.Dir(path)
 	for range 3 {
-		if directory == "." || directory == string(filepath.Separator) {
+		if directory == "." {
 			break
 		}
 		directories = append(directories, directory)
+		if directory == string(filepath.Separator) {
+			break
+		}
 		next := filepath.Dir(directory)
 		if next == directory {
 			break
@@ -469,8 +472,11 @@ func validateHookAuditRecord(record HookAuditRecord) error {
 	default:
 		return errors.New("managed hook audit result is invalid")
 	}
-	if record.DurationMS < 0 || record.Result == HookAuditStarted && record.DurationMS != 0 {
+	if record.DurationMS < 0 {
 		return errors.New("managed hook audit duration must not be negative")
+	}
+	if record.Result == HookAuditStarted && record.DurationMS != 0 {
+		return errors.New("managed hook audit started duration must be zero")
 	}
 	return nil
 }

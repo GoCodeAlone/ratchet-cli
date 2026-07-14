@@ -20,8 +20,8 @@ func openHookAuditFile(path string, create bool) (*os.File, bool, error) {
 	parent := filepath.Dir(path)
 	parentInfo, err := os.Lstat(parent)
 	if errors.Is(err, os.ErrNotExist) && create {
-		if err := os.MkdirAll(parent, 0o700); err != nil {
-			return nil, false, fmt.Errorf("create managed hook audit namespace: %w", err)
+		if err := ensureHookAuditPrivateDir(parent); err != nil {
+			return nil, false, err
 		}
 		parentInfo, err = os.Lstat(parent)
 	}
@@ -73,6 +73,45 @@ func openHookAuditFile(path string, create bool) (*os.File, bool, error) {
 		return nil, false, err
 	}
 	return f, false, nil
+}
+
+func ensureHookAuditPrivateDir(path string) error {
+	missing := make([]string, 0, 2)
+	current := path
+	for {
+		if _, err := os.Lstat(current); err == nil {
+			break
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("inspect managed hook audit namespace: %w", err)
+		}
+		missing = append(missing, current)
+		parent := filepath.Dir(current)
+		if parent == current {
+			return errors.New("managed hook audit namespace has no existing ancestor")
+		}
+		current = parent
+	}
+	for i := len(missing) - 1; i >= 0; i-- {
+		created := false
+		if err := os.Mkdir(missing[i], 0o700); err == nil {
+			created = true
+		} else if !errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("create managed hook audit namespace: %w", err)
+		}
+		if created {
+			if err := os.Chmod(missing[i], 0o700); err != nil {
+				return fmt.Errorf("secure managed hook audit namespace: %w", err)
+			}
+		}
+		info, err := os.Lstat(missing[i])
+		if err != nil {
+			return fmt.Errorf("inspect managed hook audit namespace: %w", err)
+		}
+		if err := validateHookAuditParent(missing[i], info); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func validateHookAuditParent(path string, info os.FileInfo) error {

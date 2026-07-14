@@ -3,6 +3,8 @@
 package hooks
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -83,7 +85,7 @@ func hookAuditWindowsOpenFile(path string, create bool) (*os.File, bool, error) 
 		hookAuditWindowsFileShare,
 		nil,
 		windows.OPEN_EXISTING,
-		windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT,
+		hookAuditWindowsOpenAttributes(create),
 		0,
 	)
 	created := false
@@ -98,7 +100,7 @@ func hookAuditWindowsOpenFile(path string, create bool) (*os.File, bool, error) 
 			hookAuditWindowsFileShare,
 			security,
 			windows.CREATE_NEW,
-			windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT,
+			hookAuditWindowsOpenAttributes(true),
 			0,
 		)
 		created = err == nil
@@ -109,7 +111,7 @@ func hookAuditWindowsOpenFile(path string, create bool) (*os.File, bool, error) 
 				hookAuditWindowsFileShare,
 				nil,
 				windows.OPEN_EXISTING,
-				windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT,
+				hookAuditWindowsOpenAttributes(true),
 				0,
 			)
 			created = false
@@ -175,15 +177,49 @@ func hookAuditWindowsEnsurePrivateDir(path string) error {
 }
 
 func hookAuditWindowsCreatePrivateDir(path string) error {
-	pathPtr, err := windows.UTF16PtrFromString(path)
-	if err != nil {
-		return err
-	}
 	security, err := hookAuditWindowsPrivateSecurityAttributes()
 	if err != nil {
 		return err
 	}
-	return hookAuditWindowsCreateDirectory(pathPtr, security)
+	to, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return err
+	}
+	for range 8 {
+		var nonce [16]byte
+		if _, err := rand.Read(nonce[:]); err != nil {
+			return fmt.Errorf("name managed hook audit namespace: %w", err)
+		}
+		temporary := path + ".tmp-" + hex.EncodeToString(nonce[:])
+		from, err := windows.UTF16PtrFromString(temporary)
+		if err != nil {
+			return err
+		}
+		if err := hookAuditWindowsCreateDirectory(from, security); err != nil {
+			if errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+				continue
+			}
+			return err
+		}
+		moveErr := hookAuditWindowsMoveFileEx(from, to, windows.MOVEFILE_WRITE_THROUGH)
+		removeErr := error(nil)
+		if moveErr != nil {
+			removeErr = os.Remove(temporary)
+		}
+		if _, statErr := os.Lstat(path); statErr == nil && moveErr != nil {
+			return errors.Join(windows.ERROR_ALREADY_EXISTS, removeErr)
+		}
+		return errors.Join(moveErr, removeErr)
+	}
+	return errors.New("create managed hook audit namespace: temporary name collisions")
+}
+
+func hookAuditWindowsOpenAttributes(write bool) uint32 {
+	attributes := uint32(windows.FILE_ATTRIBUTE_NORMAL | windows.FILE_FLAG_OPEN_REPARSE_POINT)
+	if write {
+		attributes |= windows.FILE_FLAG_WRITE_THROUGH
+	}
+	return attributes
 }
 
 func hookAuditWindowsValidatePrivatePath(path string, directory bool) error {
@@ -377,4 +413,7 @@ func hookAuditWindowsPathNotExist(err error) bool {
 	return errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || errors.Is(err, windows.ERROR_PATH_NOT_FOUND)
 }
 
+// Windows has no supported directory-handle equivalent of fsync. Namespace
+// creation and replacement use MOVEFILE_WRITE_THROUGH, while writer handles
+// use FILE_FLAG_WRITE_THROUGH and FlushFileBuffers before this hook is called.
 func syncHookAuditDirectory(string) error { return nil }
