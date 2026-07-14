@@ -22,6 +22,37 @@ func TestManagedHookAuditWindowsCreatesOwnerOnlyDACL(t *testing.T) {
 	assertManagedHookAuditWindowsPrivate(t, path)
 }
 
+func TestManagedHookAuditWindowsCreationIsAtomicallyPrivate(t *testing.T) {
+	originalDirectory := hookAuditWindowsCreateDirectory
+	originalFile := hookAuditWindowsCreateFile
+	t.Cleanup(func() {
+		hookAuditWindowsCreateDirectory = originalDirectory
+		hookAuditWindowsCreateFile = originalFile
+	})
+	directoryCreates := 0
+	fileCreates := 0
+	hookAuditWindowsCreateDirectory = func(path *uint16, security *windows.SecurityAttributes) error {
+		directoryCreates++
+		assertManagedHookAuditWindowsCreationSecurity(t, security)
+		return originalDirectory(path, security)
+	}
+	hookAuditWindowsCreateFile = func(name *uint16, access, mode uint32, security *windows.SecurityAttributes, createMode, attrs uint32, template windows.Handle) (windows.Handle, error) {
+		if createMode == windows.CREATE_NEW {
+			fileCreates++
+			assertManagedHookAuditWindowsCreationSecurity(t, security)
+		}
+		return originalFile(name, access, mode, security, createMode, attrs, template)
+	}
+
+	path := filepath.Join(t.TempDir(), "private", "nested", "hooks.jsonl")
+	if err := NewHookAudit(path).Append(managedAuditRecord(HookAuditStarted)); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	if directoryCreates != 2 || fileCreates != 1 {
+		t.Fatalf("private creation calls = directories %d, files %d; want 2/1", directoryCreates, fileCreates)
+	}
+}
+
 func TestManagedHookAuditWindowsReaderAllowsRotation(t *testing.T) {
 	if hookAuditWindowsFileShare&windows.FILE_SHARE_DELETE == 0 {
 		t.Fatal("audit file share mask does not permit rotation")
@@ -298,5 +329,46 @@ func assertManagedHookAuditWindowsPrivate(t *testing.T, path string) {
 			ace.Mask != hookAuditWindowsFileAllAccess || !sid.Equals(user.User.Sid) {
 			t.Fatalf("ACE %d = type %#x mask %#x sid %s", i, ace.Header.AceType, ace.Mask, sid)
 		}
+	}
+}
+
+func assertManagedHookAuditWindowsCreationSecurity(t *testing.T, security *windows.SecurityAttributes) {
+	t.Helper()
+	if security == nil || security.SecurityDescriptor == nil || security.Length != uint32(unsafe.Sizeof(windows.SecurityAttributes{})) {
+		t.Fatalf("creation security attributes = %+v", security)
+	}
+	descriptor := security.SecurityDescriptor
+	owner, _, err := descriptor.Owner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, _, err := descriptor.Control()
+	if err != nil || control&windows.SE_DACL_PROTECTED == 0 {
+		t.Fatalf("creation DACL control = %#x, %v", control, err)
+	}
+	dacl, _, err := descriptor.DACL()
+	if err != nil || dacl == nil {
+		t.Fatalf("creation DACL = %v, %v", dacl, err)
+	}
+	entries := make([]hookAuditWindowsAccessEntry, 0, dacl.AceCount)
+	for i := uint32(0); i < uint32(dacl.AceCount); i++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(dacl, i, &ace); err != nil {
+			t.Fatal(err)
+		}
+		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		entries = append(entries, hookAuditWindowsAccessEntry{
+			allowed:     ace.Header.AceType == windows.ACCESS_ALLOWED_ACE_TYPE,
+			owner:       sid.Equals(current.User.Sid),
+			fullControl: ace.Mask == hookAuditWindowsFileAllAccess,
+			inheritOnly: ace.Header.AceFlags&windows.INHERIT_ONLY_ACE != 0,
+		})
+	}
+	if err := validateHookAuditWindowsAccess(owner != nil && owner.Equals(current.User.Sid), true, entries); err != nil {
+		t.Fatalf("creation security descriptor: %v", err)
 	}
 }

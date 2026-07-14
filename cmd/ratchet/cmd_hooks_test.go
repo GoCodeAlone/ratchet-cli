@@ -142,6 +142,7 @@ func TestHooksInspectionRejectsPositionalArguments(t *testing.T) {
 		name string
 		run  func([]string) error
 	}{
+		{name: "list", run: handleHooksList},
 		{name: "policy", run: handleHooksPolicy},
 		{name: "audit", run: handleHooksAudit},
 	} {

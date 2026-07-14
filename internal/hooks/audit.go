@@ -88,9 +88,10 @@ type HookAuditWriter interface {
 
 // HookAudit stores managed hook metadata as owner-only JSONL.
 type HookAudit struct {
-	path     string
-	syncFile func(*os.File) error
-	syncDir  func(string) error
+	path       string
+	syncFile   func(*os.File) error
+	syncDir    func(string) error
+	rotateFile func(string, string) error
 }
 
 type hookAuditPathState struct {
@@ -167,7 +168,7 @@ func (a *HookAudit) Append(record HookAuditRecord) (err error) {
 		line = append(line, '\n')
 	}
 
-	f, created, err := openHookAuditFile(a.path, true)
+	f, _, err := openHookAuditFile(a.path, true)
 	if err != nil {
 		return err
 	}
@@ -193,7 +194,6 @@ func (a *HookAudit) Append(record HookAuditRecord) (err error) {
 		if err != nil {
 			return err
 		}
-		created = true
 	}
 	if err := validateHookAuditIdentity(a.path, f); err != nil {
 		return err
@@ -211,8 +211,8 @@ func (a *HookAudit) Append(record HookAuditRecord) (err error) {
 	if err := a.sync(f); err != nil {
 		return fmt.Errorf("sync managed hook audit: %w", err)
 	}
-	if created || lock.degraded != nil {
-		if err := a.syncDirectory(filepath.Dir(a.path)); err != nil {
+	for _, directory := range hookAuditNamespaceSyncDirectories(a.path) {
+		if err := a.syncDirectory(directory); err != nil {
 			return fmt.Errorf("sync managed hook audit namespace: %w", err)
 		}
 	}
@@ -333,6 +333,30 @@ func (a *HookAudit) syncDirectory(path string) error {
 	return syncHookAuditDirectory(path)
 }
 
+func (a *HookAudit) rotatePath(source, destination string) error {
+	if a.rotateFile != nil {
+		return a.rotateFile(source, destination)
+	}
+	return rotateHookAuditPath(source, destination)
+}
+
+func hookAuditNamespaceSyncDirectories(path string) []string {
+	directories := make([]string, 0, 3)
+	directory := filepath.Dir(path)
+	for range 3 {
+		if directory == "." || directory == string(filepath.Separator) {
+			break
+		}
+		directories = append(directories, directory)
+		next := filepath.Dir(directory)
+		if next == directory {
+			break
+		}
+		directory = next
+	}
+	return directories
+}
+
 func (a *HookAudit) rotate(current *os.File) (_ *os.File, err error) {
 	closed := false
 	defer func() {
@@ -357,13 +381,10 @@ func (a *HookAudit) rotate(current *os.File) (_ *os.File, err error) {
 		if err := archive.Close(); err != nil {
 			return nil, fmt.Errorf("close managed hook audit archive: %w", err)
 		}
-		if err := os.Remove(archivePath); err != nil {
-			return nil, fmt.Errorf("replace managed hook audit archive: %w", err)
-		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("inspect managed hook audit archive: %w", err)
 	}
-	if err := rotateHookAuditPath(a.path, archivePath); err != nil {
+	if err := a.rotatePath(a.path, archivePath); err != nil {
 		return nil, fmt.Errorf("rotate managed hook audit: %w", err)
 	}
 	if err := a.syncDirectory(filepath.Dir(a.path)); err != nil {

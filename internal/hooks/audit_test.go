@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -285,8 +286,8 @@ func TestManagedHookAuditRetriesNamespaceSyncBeforeClearingDegraded(t *testing.T
 	if err := audit.Append(recovered); err != nil {
 		t.Fatalf("recovery Append: %v", err)
 	}
-	if syncCalls != 2 {
-		t.Fatalf("namespace sync calls = %d, want 2", syncCalls)
+	if syncCalls != 4 {
+		t.Fatalf("namespace sync calls = %d, want 4", syncCalls)
 	}
 	records, err := audit.Read(10)
 	if err != nil {
@@ -294,6 +295,23 @@ func TestManagedHookAuditRetriesNamespaceSyncBeforeClearingDegraded(t *testing.T
 	}
 	if len(records) != 3 || records[0].Result != HookAuditSuccess || records[1].Result != HookAuditDegraded {
 		t.Fatalf("recovery records = %+v, want success then degraded marker", records)
+	}
+}
+
+func TestManagedHookAuditSyncsFixedNamespaceChain(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".ratchet", "audit", "hooks.jsonl")
+	audit := NewHookAudit(path)
+	var synced []string
+	audit.syncDir = func(path string) error {
+		synced = append(synced, path)
+		return nil
+	}
+	if err := audit.Append(managedAuditRecord(HookAuditStarted)); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	want := []string{filepath.Dir(path), filepath.Dir(filepath.Dir(path)), filepath.Dir(filepath.Dir(filepath.Dir(path)))}
+	if !slices.Equal(synced, want) {
+		t.Fatalf("synced directories = %v, want %v", synced, want)
 	}
 }
 
@@ -401,6 +419,34 @@ func TestManagedHookAuditRotatesBeforeCapacityDisablesExecution(t *testing.T) {
 	}
 	assertManagedAuditFilePrivate(t, path)
 	assertManagedAuditFilePrivate(t, archivePath)
+}
+
+func TestManagedHookAuditFailedRotationPreservesPriorArchive(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
+	audit := NewHookAudit(path)
+	if err := audit.Append(managedAuditRecord(HookAuditStarted)); err != nil {
+		t.Fatalf("seed Append: %v", err)
+	}
+	archivePath := path + hookAuditArchiveSuffix
+	wantArchive := []byte("prior archive\n")
+	if err := os.WriteFile(archivePath, wantArchive, 0o600); err != nil {
+		t.Fatalf("WriteFile archive: %v", err)
+	}
+	audit.rotateFile = func(string, string) error { return errors.New("forced rotation failure") }
+	current, _, err := openHookAuditFile(path, true)
+	if err != nil {
+		t.Fatalf("open current audit: %v", err)
+	}
+	if _, err := audit.rotate(current); err == nil {
+		t.Fatal("rotation succeeded despite forced replacement failure")
+	}
+	gotArchive, err := os.ReadFile(archivePath)
+	if err != nil {
+		t.Fatalf("ReadFile archive: %v", err)
+	}
+	if !bytes.Equal(gotArchive, wantArchive) {
+		t.Fatalf("archive = %q, want %q", gotArchive, wantArchive)
+	}
 }
 
 func TestManagedHookAuditRejectsMalformedCommittedAndOversizedData(t *testing.T) {

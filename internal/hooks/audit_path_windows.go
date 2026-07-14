@@ -23,7 +23,11 @@ type hookAuditWindowsFileID struct {
 	FileID             [16]byte
 }
 
-var hookAuditWindowsMoveFileEx = windows.MoveFileEx
+var (
+	hookAuditWindowsCreateDirectory = windows.CreateDirectory
+	hookAuditWindowsCreateFile      = windows.CreateFile
+	hookAuditWindowsMoveFileEx      = windows.MoveFileEx
+)
 
 func rotateHookAuditPath(source, destination string) error {
 	from, err := windows.UTF16PtrFromString(source)
@@ -73,7 +77,7 @@ func hookAuditWindowsOpenFile(path string, create bool) (*os.File, bool, error) 
 	if create {
 		access |= windows.GENERIC_WRITE
 	}
-	handle, err := windows.CreateFile(
+	handle, err := hookAuditWindowsCreateFile(
 		pathPtr,
 		access,
 		hookAuditWindowsFileShare,
@@ -84,18 +88,22 @@ func hookAuditWindowsOpenFile(path string, create bool) (*os.File, bool, error) 
 	)
 	created := false
 	if hookAuditWindowsPathNotExist(err) && create {
-		handle, err = windows.CreateFile(
+		security, securityErr := hookAuditWindowsPrivateSecurityAttributes()
+		if securityErr != nil {
+			return nil, false, securityErr
+		}
+		handle, err = hookAuditWindowsCreateFile(
 			pathPtr,
 			access|windows.WRITE_DAC|windows.WRITE_OWNER,
 			hookAuditWindowsFileShare,
-			nil,
+			security,
 			windows.CREATE_NEW,
 			windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT,
 			0,
 		)
 		created = err == nil
 		if errors.Is(err, windows.ERROR_FILE_EXISTS) || errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
-			handle, err = windows.CreateFile(
+			handle, err = hookAuditWindowsCreateFile(
 				pathPtr,
 				access,
 				hookAuditWindowsFileShare,
@@ -139,13 +147,43 @@ func hookAuditWindowsEnsurePrivateDir(path string) error {
 	} else if !hookAuditWindowsPathNotExist(err) && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if err := os.MkdirAll(path, 0o700); err != nil {
-		return fmt.Errorf("create managed hook audit namespace: %w", err)
+
+	missing := make([]string, 0, 2)
+	current := path
+	for {
+		if _, err := os.Lstat(current); err == nil {
+			break
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("inspect managed hook audit namespace: %w", err)
+		}
+		missing = append(missing, current)
+		parent := filepath.Dir(current)
+		if parent == current {
+			return errors.New("managed hook audit namespace has no existing ancestor")
+		}
+		current = parent
 	}
-	if err := hookAuditWindowsSetPrivatePath(path); err != nil {
-		return fmt.Errorf("secure managed hook audit namespace: %w", err)
+	for i := len(missing) - 1; i >= 0; i-- {
+		if err := hookAuditWindowsCreatePrivateDir(missing[i]); err != nil && !errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+			return fmt.Errorf("create managed hook audit namespace: %w", err)
+		}
+		if err := hookAuditWindowsValidatePrivatePath(missing[i], true); err != nil {
+			return err
+		}
 	}
 	return hookAuditWindowsValidatePrivatePath(path, true)
+}
+
+func hookAuditWindowsCreatePrivateDir(path string) error {
+	pathPtr, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return err
+	}
+	security, err := hookAuditWindowsPrivateSecurityAttributes()
+	if err != nil {
+		return err
+	}
+	return hookAuditWindowsCreateDirectory(pathPtr, security)
 }
 
 func hookAuditWindowsValidatePrivatePath(path string, directory bool) error {
@@ -157,7 +195,7 @@ func hookAuditWindowsValidatePrivatePath(path string, directory bool) error {
 	if directory {
 		flags |= windows.FILE_FLAG_BACKUP_SEMANTICS
 	}
-	handle, err := windows.CreateFile(
+	handle, err := hookAuditWindowsCreateFile(
 		pathPtr,
 		windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL,
 		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
@@ -270,22 +308,6 @@ func hookAuditWindowsHandleIdentity(handle windows.Handle) (hookAuditWindowsFile
 	return identity, err
 }
 
-func hookAuditWindowsSetPrivatePath(path string) error {
-	owner, acl, err := hookAuditWindowsPrivateSecurity()
-	if err != nil {
-		return err
-	}
-	return windows.SetNamedSecurityInfo(
-		path,
-		windows.SE_FILE_OBJECT,
-		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		owner,
-		nil,
-		acl,
-		nil,
-	)
-}
-
 func hookAuditWindowsSetPrivateHandle(handle windows.Handle) error {
 	owner, acl, err := hookAuditWindowsPrivateSecurity()
 	if err != nil {
@@ -321,6 +343,34 @@ func hookAuditWindowsPrivateSecurity() (*windows.SID, *windows.ACL, error) {
 		return nil, nil, err
 	}
 	return current.User.Sid, acl, nil
+}
+
+func hookAuditWindowsPrivateSecurityAttributes() (*windows.SecurityAttributes, error) {
+	owner, acl, err := hookAuditWindowsPrivateSecurity()
+	if err != nil {
+		return nil, err
+	}
+	descriptor, err := windows.NewSecurityDescriptor()
+	if err != nil {
+		return nil, err
+	}
+	if err := descriptor.SetOwner(owner, false); err != nil {
+		return nil, err
+	}
+	if err := descriptor.SetDACL(acl, true, false); err != nil {
+		return nil, err
+	}
+	if err := descriptor.SetControl(windows.SE_DACL_PROTECTED, windows.SE_DACL_PROTECTED); err != nil {
+		return nil, err
+	}
+	descriptor, err = descriptor.ToSelfRelative()
+	if err != nil {
+		return nil, err
+	}
+	return &windows.SecurityAttributes{
+		Length:             uint32(unsafe.Sizeof(windows.SecurityAttributes{})),
+		SecurityDescriptor: descriptor,
+	}, nil
 }
 
 func hookAuditWindowsPathNotExist(err error) bool {

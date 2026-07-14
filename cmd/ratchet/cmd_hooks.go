@@ -87,6 +87,9 @@ func handleHooksList(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if fs.NArg() != 0 {
+		return errors.New("ratchet hooks list does not accept positional arguments")
+	}
 	if *cwd == "" {
 		wd, err := os.Getwd()
 		if err != nil {
