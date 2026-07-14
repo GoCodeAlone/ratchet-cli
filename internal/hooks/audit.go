@@ -1,6 +1,7 @@
 package hooks
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
@@ -29,6 +30,7 @@ var (
 	ErrManagedHookCommandFailed = errors.New("managed hook command failed")
 	// ErrHookAuditDegraded classifies a required managed-hook audit failure.
 	ErrHookAuditDegraded = errors.New("managed hook audit degraded")
+	hookAuditUserHomeDir = os.UserHomeDir
 )
 
 // HookAuditResult is a metadata-only managed hook execution classification.
@@ -86,6 +88,7 @@ type HookAuditWriter interface {
 type HookAudit struct {
 	path     string
 	syncFile func(*os.File) error
+	syncDir  func(string) error
 }
 
 type hookAuditPathState struct {
@@ -101,9 +104,15 @@ func NewHookAudit(path string) *HookAudit {
 }
 
 // DefaultHookAuditPath returns the user-scoped managed hook audit path.
-func DefaultHookAuditPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".ratchet", hookAuditDirectoryName, hookAuditFileName)
+func DefaultHookAuditPath() (string, error) {
+	home, err := hookAuditUserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve managed hook audit home: %w", err)
+	}
+	if strings.TrimSpace(home) == "" {
+		return "", errors.New("resolve managed hook audit home: empty path")
+	}
+	return filepath.Join(home, ".ratchet", hookAuditDirectoryName, hookAuditFileName), nil
 }
 
 // DefaultHookAuditReadLimit returns the operator CLI's default record limit.
@@ -186,8 +195,8 @@ func (a *HookAudit) Append(record HookAuditRecord) (err error) {
 	if err := a.sync(f); err != nil {
 		return fmt.Errorf("sync managed hook audit: %w", err)
 	}
-	if created {
-		if err := syncHookAuditDirectory(filepath.Dir(a.path)); err != nil {
+	if created || lock.degraded != nil {
+		if err := a.syncDirectory(filepath.Dir(a.path)); err != nil {
 			return fmt.Errorf("sync managed hook audit namespace: %w", err)
 		}
 	}
@@ -238,29 +247,42 @@ func (a *HookAudit) Read(limit int) (records []HookAuditRecord, err error) {
 	if len(data) == 0 {
 		return []HookAuditRecord{}, nil
 	}
-	lines := bytes.Split(data, []byte{'\n'})
-	records = make([]HookAuditRecord, 0, len(lines)-1)
-	for lineIndex, line := range lines[:len(lines)-1] {
+	return decodeHookAuditRecords(data, limit)
+}
+
+func decodeHookAuditRecords(data []byte, limit int) ([]HookAuditRecord, error) {
+	ring := make([]HookAuditRecord, limit)
+	total := 0
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	scanner.Buffer(make([]byte, 4<<10), maxHookAuditBytes+1)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		lineIndex := total + 1
 		if len(bytes.TrimSpace(line)) == 0 {
-			return nil, fmt.Errorf("read managed hook audit committed record %d: empty record", lineIndex+1)
+			return nil, fmt.Errorf("read managed hook audit committed record %d: empty record", lineIndex)
 		}
 		var record HookAuditRecord
 		decoder := json.NewDecoder(bytes.NewReader(line))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&record); err != nil {
-			return nil, fmt.Errorf("read managed hook audit committed record %d: %w", lineIndex+1, err)
+			return nil, fmt.Errorf("read managed hook audit committed record %d: %w", lineIndex, err)
 		}
 		if err := requireJSONEOF(decoder); err != nil {
-			return nil, fmt.Errorf("read managed hook audit committed record %d: %w", lineIndex+1, err)
+			return nil, fmt.Errorf("read managed hook audit committed record %d: %w", lineIndex, err)
 		}
 		if err := validateHookAuditRecord(record); err != nil {
-			return nil, fmt.Errorf("read managed hook audit committed record %d: %w", lineIndex+1, err)
+			return nil, fmt.Errorf("read managed hook audit committed record %d: %w", lineIndex, err)
 		}
-		records = append(records, record)
+		ring[total%limit] = record
+		total++
 	}
-	slices.Reverse(records)
-	if len(records) > limit {
-		records = records[:limit]
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read managed hook audit: %w", err)
+	}
+	retained := min(total, limit)
+	records := make([]HookAuditRecord, retained)
+	for i := range retained {
+		records[i] = ring[(total-1-i)%limit]
 	}
 	return records, nil
 }
@@ -270,6 +292,13 @@ func (a *HookAudit) sync(f *os.File) error {
 		return a.syncFile(f)
 	}
 	return f.Sync()
+}
+
+func (a *HookAudit) syncDirectory(path string) error {
+	if a.syncDir != nil {
+		return a.syncDir(path)
+	}
+	return syncHookAuditDirectory(path)
 }
 
 func hookAuditPathLock(path string) *hookAuditPathState {

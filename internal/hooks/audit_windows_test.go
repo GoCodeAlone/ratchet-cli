@@ -48,6 +48,18 @@ func TestManagedHookAuditWindowsRejectsWeakDACL(t *testing.T) {
 			t.Fatal("Append accepted weak file DACL")
 		}
 	})
+
+	t.Run("protected file with extra principal", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
+		audit := NewHookAudit(path)
+		if err := audit.Append(managedAuditRecord(HookAuditStarted)); err != nil {
+			t.Fatalf("seed Append: %v", err)
+		}
+		setManagedHookAuditWindowsProtectedExtraPrincipalDACL(t, path)
+		if err := audit.Append(managedAuditRecord(HookAuditSuccess)); err == nil {
+			t.Fatal("Append accepted protected file DACL with extra principal")
+		}
+	})
 }
 
 func TestManagedHookAuditWindowsRejectsReparseAndNonRegularTargets(t *testing.T) {
@@ -115,6 +127,40 @@ func setManagedHookAuditWindowsWeakDACL(t *testing.T, path string) {
 	}
 	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
 		windows.DACL_SECURITY_INFORMATION|windows.UNPROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, acl, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func setManagedHookAuditWindowsProtectedExtraPrincipalDACL(t *testing.T, path string) {
+	t.Helper()
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	everyone, err := windows.StringToSid("S-1-1-0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{
+		{
+			AccessPermissions: hookAuditWindowsFileAllAccess,
+			AccessMode:        windows.GRANT_ACCESS,
+			Trustee: windows.TRUSTEE{TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeType: windows.TRUSTEE_IS_USER,
+				TrusteeValue: windows.TrusteeValueFromSID(user.User.Sid)},
+		},
+		{
+			AccessPermissions: windows.GENERIC_READ,
+			AccessMode:        windows.GRANT_ACCESS,
+			Trustee: windows.TRUSTEE{TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeType: windows.TRUSTEE_IS_WELL_KNOWN_GROUP,
+				TrusteeValue: windows.TrusteeValueFromSID(everyone)},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
 		nil, nil, acl, nil); err != nil {
 		t.Fatal(err)
 	}

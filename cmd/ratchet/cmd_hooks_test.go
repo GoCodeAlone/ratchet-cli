@@ -137,7 +137,11 @@ func TestHooksPolicyReportsManagedAndAbsentPolicy(t *testing.T) {
 func TestHooksAuditReportsNewestFirstJSONAndAbsentFile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	audit := hooks.NewHookAudit(hooks.DefaultHookAuditPath())
+	auditPath, err := hooks.DefaultHookAuditPath()
+	if err != nil {
+		t.Fatalf("DefaultHookAuditPath: %v", err)
+	}
+	audit := hooks.NewHookAudit(auditPath)
 	now := time.Now().UTC()
 	for i, result := range []hooks.HookAuditResult{hooks.HookAuditStarted, hooks.HookAuditSuccess} {
 		if err := audit.Append(hooks.HookAuditRecord{

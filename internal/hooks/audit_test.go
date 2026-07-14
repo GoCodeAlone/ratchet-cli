@@ -1,8 +1,10 @@
 package hooks
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,6 +18,19 @@ const (
 	managedAuditPayloadSentinel = "managed-payload-sentinel"
 	managedAuditSecretSentinel  = "managed-secret-sentinel"
 )
+
+func TestDefaultHookAuditPathFailsClosedWhenHomeUnavailable(t *testing.T) {
+	original := hookAuditUserHomeDir
+	t.Cleanup(func() { hookAuditUserHomeDir = original })
+	hookAuditUserHomeDir = func() (string, error) {
+		return "", errors.New("home unavailable")
+	}
+
+	path, err := DefaultHookAuditPath()
+	if err == nil || path != "" {
+		t.Fatalf("DefaultHookAuditPath = %q, %v; want empty path and error", path, err)
+	}
+}
 
 func TestManagedHookAuditRecordsMetadataOnly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
@@ -185,6 +200,38 @@ func TestManagedHookAuditPersistsDegradedResultOnRecovery(t *testing.T) {
 	assertManagedAuditExcludes(t, path, managedAuditSecretSentinel)
 }
 
+func TestManagedHookAuditRetriesNamespaceSyncBeforeClearingDegraded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
+	audit := NewHookAudit(path)
+	syncCalls := 0
+	audit.syncDir = func(string) error {
+		syncCalls++
+		if syncCalls == 1 {
+			return errors.New("namespace sync failed")
+		}
+		return nil
+	}
+
+	if err := audit.Append(managedAuditRecord(HookAuditStarted)); err == nil {
+		t.Fatal("initial Append succeeded despite namespace sync failure")
+	}
+	recovered := managedAuditRecord(HookAuditSuccess)
+	recovered.Hash = strings.Repeat("b", 64)
+	if err := audit.Append(recovered); err != nil {
+		t.Fatalf("recovery Append: %v", err)
+	}
+	if syncCalls != 2 {
+		t.Fatalf("namespace sync calls = %d, want 2", syncCalls)
+	}
+	records, err := audit.Read(10)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(records) != 3 || records[0].Result != HookAuditSuccess || records[1].Result != HookAuditDegraded {
+		t.Fatalf("recovery records = %+v, want success then degraded marker", records)
+	}
+}
+
 func TestManagedHookAuditReadIsBoundedStrictAndNewestFirst(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
 	audit := NewHookAudit(path)
@@ -223,6 +270,30 @@ func TestManagedHookAuditReadIsBoundedStrictAndNewestFirst(t *testing.T) {
 	records, err = audit.Read(10)
 	if err != nil || len(records) != 3 {
 		t.Fatalf("Read torn tail = %d, %v, want 3 records", len(records), err)
+	}
+}
+
+func TestManagedHookAuditDecodeRetainsOnlyTheRequestedLimit(t *testing.T) {
+	var data bytes.Buffer
+	encoder := json.NewEncoder(&data)
+	for i := range 2_000 {
+		record := managedAuditRecord(HookAuditSuccess)
+		record.Hash = fmt.Sprintf("%064x", i)
+		record.DurationMS = int64(i)
+		if err := encoder.Encode(record); err != nil {
+			t.Fatalf("Encode %d: %v", i, err)
+		}
+	}
+
+	records, err := decodeHookAuditRecords(data.Bytes(), 3)
+	if err != nil {
+		t.Fatalf("decodeHookAuditRecords: %v", err)
+	}
+	if len(records) != 3 || cap(records) > 3 {
+		t.Fatalf("records len/cap = %d/%d, want 3/<=3", len(records), cap(records))
+	}
+	if records[0].DurationMS != 1_999 || records[1].DurationMS != 1_998 || records[2].DurationMS != 1_997 {
+		t.Fatalf("newest durations = %d, %d, %d", records[0].DurationMS, records[1].DurationMS, records[2].DurationMS)
 	}
 }
 

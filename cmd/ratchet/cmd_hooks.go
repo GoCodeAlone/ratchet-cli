@@ -151,7 +151,11 @@ func handleHooksAudit(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	records, err := hooks.NewHookAudit(hooks.DefaultHookAuditPath()).Read(*limit)
+	path, err := hooks.DefaultHookAuditPath()
+	if err != nil {
+		return err
+	}
+	records, err := hooks.NewHookAudit(path).Read(*limit)
 	if err != nil {
 		return err
 	}
