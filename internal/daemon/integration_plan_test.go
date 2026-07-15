@@ -27,18 +27,19 @@ func startTestServerWithService(t *testing.T) (pb.RatchetDaemonClient, *Service)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = lis.Close() })
 
 	svc, err := NewService(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(svc.Close)
 
 	srv := grpc.NewServer()
 	pb.RegisterRatchetDaemonServer(srv, svc)
 	go srv.Serve(lis)
 	t.Cleanup(func() {
 		srv.Stop()
-		lis.Close()
 	})
 
 	conn, err := grpc.NewClient(

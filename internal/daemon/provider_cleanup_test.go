@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/GoCodeAlone/workflow/secrets"
@@ -78,4 +79,33 @@ func TestProviderCleanupDispatcherFairness(t *testing.T) {
 	if _, err := provider.Get(t.Context(), "provider-v2-poison"); err != nil && !errors.Is(err, secrets.ErrNotFound) {
 		t.Fatal(err)
 	}
+}
+
+func TestProviderOperationStopWaitsForCleanupWorker(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const secretName = "provider-v2-stop-cleanup"
+		provider := newOperationSecrets()
+		provider.values[secretName] = "secret"
+		started := make(chan struct{})
+		release := make(chan struct{})
+		releaseWork := sync.OnceFunc(func() { close(release) })
+		defer releaseWork()
+		provider.deleteHook = func(context.Context, string) error {
+			close(started)
+			<-release
+			return nil
+		}
+		svc, _ := newProviderOperationTestService(t, provider)
+		svc.providerOps.WakeCleanup()
+		waitProviderOperationValue(t, started, "provider cleanup worker")
+
+		stopDone := make(chan struct{})
+		go func() {
+			svc.providerOps.Stop()
+			close(stopDone)
+		}()
+		assertProviderOperationStopBlocked(t, stopDone)
+		releaseWork()
+		waitProviderOperationValue(t, stopDone, "provider operation stop")
+	})
 }
