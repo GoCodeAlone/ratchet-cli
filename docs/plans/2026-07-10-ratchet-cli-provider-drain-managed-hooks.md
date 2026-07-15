@@ -1274,6 +1274,9 @@ payload, output, error, or secret sentinels.
 - Modify: `internal/hooks/audit_acl_other.go`
 - Modify: `internal/hooks/audit_path_other.go`
 - Modify: `internal/hooks/audit_test.go`
+- Modify: `internal/hooks/audit_windows_test.go`
+- Modify: `internal/hooks/audit_umask_unix_test.go`
+- Modify: `internal/acpclient/background_test.go`
 - Modify: `internal/daemon/engine.go`
 - Modify: `internal/daemon/engine_hooks.go`
 - Modify: `internal/daemon/hooks_wiring_test.go`
@@ -1290,6 +1293,7 @@ payload, output, error, or secret sentinels.
 - Modify: `cmd/ratchet/cmd_hooks.go`
 - Modify: `cmd/ratchet/cmd_hooks_test.go`
 - Modify: `cmd/ratchet/harness_docs_test.go`
+- Modify: `.github/workflows/ci.yml`
 
 **Step 1: Add failing all-source enforcement tests**
 

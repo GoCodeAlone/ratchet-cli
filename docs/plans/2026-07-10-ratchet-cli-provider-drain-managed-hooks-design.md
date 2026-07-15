@@ -1086,3 +1086,21 @@ security or parse failure remain fail closed. Scope: no manifest change; this
 corrects Task 11 portability during PR review. Evidence: command regressions
 cover list plus trust/untrust/disable and preserve arbitrary loader failures;
 the unsupported hooks backend production package cross-compiles for AIX.
+
+### Backport 2026-07-15: Native Windows and race-gate correction
+
+Cause: Windows ancestry admission treated create-only directory rights as path
+replacement, rejecting standard runner ancestry; the failed parent append then
+left a subprocess test waiting indefinitely. The restrictive-umask child did
+not restore process state before coverage teardown, and the all-package race
+pass nested a real binary build that exceeded its five-minute limit under
+contention. One finite-watch assertion also missed Task 6's terminal-guard
+observation rule. Change: Windows rejects only delete/delete-child,
+DACL/owner mutation, and generic-all rights while retaining reparse, identity,
+owner, and handle-lease checks; subprocess synchronization is bounded. Restore
+umask before test teardown, wait for the terminal guard, and execute the real
+ACP binary smoke separately before excluding only that test from the race
+pass. Scope: no manifest change; these corrections close Task 11's required
+native Windows and full-race gates. Evidence: PR CI runs `29384160443` and
+`29384973263` reproduce the failures; focused coverage/race tests, Windows test
+cross-compilation, and the next named CI gates must pass.

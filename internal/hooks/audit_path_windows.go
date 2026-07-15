@@ -15,12 +15,12 @@ import (
 )
 
 const (
-	hookAuditWindowsFileAllAccess windows.ACCESS_MASK = windows.STANDARD_RIGHTS_REQUIRED | windows.SYNCHRONIZE | 0x1ff
-	hookAuditWindowsInheritance                       = windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT
-	hookAuditWindowsFileShare                         = windows.FILE_SHARE_READ | windows.FILE_SHARE_WRITE | windows.FILE_SHARE_DELETE
-	hookAuditWindowsMutationMask  uint32              = windows.DELETE | windows.WRITE_DAC | windows.WRITE_OWNER |
-		windows.FILE_WRITE_DATA | windows.FILE_APPEND_DATA | windows.FILE_WRITE_ATTRIBUTES | windows.FILE_WRITE_EA |
-		windows.GENERIC_WRITE | windows.GENERIC_ALL | 0x40 // FILE_DELETE_CHILD
+	hookAuditWindowsFileAllAccess   windows.ACCESS_MASK = windows.STANDARD_RIGHTS_REQUIRED | windows.SYNCHRONIZE | 0x1ff
+	hookAuditWindowsInheritance                         = windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT
+	hookAuditWindowsFileShare                           = windows.FILE_SHARE_READ | windows.FILE_SHARE_WRITE | windows.FILE_SHARE_DELETE
+	hookAuditWindowsFileDeleteChild uint32              = 0x40
+	hookAuditWindowsMutationMask    uint32              = windows.DELETE | windows.WRITE_DAC | windows.WRITE_OWNER |
+		windows.GENERIC_ALL | hookAuditWindowsFileDeleteChild
 )
 
 type hookAuditWindowsFileID struct {

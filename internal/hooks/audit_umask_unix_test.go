@@ -12,7 +12,8 @@ import (
 
 func TestManagedHookAuditNamespaceNormalizesRestrictiveUmask(t *testing.T) {
 	if os.Getenv("RATCHET_AUDIT_UMASK_CHILD") == "1" {
-		syscall.Umask(0o777)
+		previous := syscall.Umask(0o777)
+		defer syscall.Umask(previous)
 		if err := NewHookAudit(os.Getenv("RATCHET_AUDIT_UMASK_PATH")).Append(managedAuditRecord(HookAuditStarted)); err != nil {
 			t.Fatalf("Append under restrictive umask: %v", err)
 		}

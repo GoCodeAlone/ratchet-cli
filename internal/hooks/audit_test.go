@@ -489,7 +489,13 @@ func TestManagedHookAuditSerializesAcrossProcesses(t *testing.T) {
 	}
 	parentDone := make(chan error, 1)
 	go func() { parentDone <- audit.Append(managedAuditRecord(HookAuditStarted)) }()
-	<-entered
+	select {
+	case <-entered:
+	case err := <-parentDone:
+		t.Fatalf("parent Append before synchronization point: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for parent audit synchronization point")
+	}
 
 	command := exec.Command(os.Args[0], "-test.run=^TestManagedHookAuditSerializesAcrossProcesses$")
 	command.Env = append(os.Environ(),
@@ -690,7 +696,13 @@ func TestManagedHookAuditReadHoldsProcessLockThroughGenerationRead(t *testing.T)
 		_, err := audit.Read(1)
 		readDone <- err
 	}()
-	<-readParsed
+	select {
+	case <-readParsed:
+	case err := <-readDone:
+		t.Fatalf("Read before process-unlock point: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for audit read process-unlock point")
+	}
 
 	attempted := filepath.Join(root, "writer-attempted")
 	acquired := filepath.Join(root, "writer-acquired")

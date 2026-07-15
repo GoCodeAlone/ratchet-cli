@@ -79,6 +79,35 @@ func TestManagedHookAuditWindowsWriterAttributesAreWriteThrough(t *testing.T) {
 	}
 }
 
+func TestManagedHookAuditWindowsMutationMaskMatchesReplacementRights(t *testing.T) {
+	for name, right := range map[string]windows.ACCESS_MASK{
+		"add file":         windows.FILE_WRITE_DATA,
+		"add subdirectory": windows.FILE_APPEND_DATA,
+		"write attributes": windows.FILE_WRITE_ATTRIBUTES,
+		"write EA":         windows.FILE_WRITE_EA,
+		"generic write":    windows.GENERIC_WRITE,
+	} {
+		t.Run("allows "+name, func(t *testing.T) {
+			if uint32(right)&hookAuditWindowsMutationMask != 0 {
+				t.Fatalf("right %#x classified as path replacement", right)
+			}
+		})
+	}
+	for name, right := range map[string]windows.ACCESS_MASK{
+		"delete object": windows.DELETE,
+		"delete child":  windows.ACCESS_MASK(hookAuditWindowsFileDeleteChild),
+		"write DACL":    windows.WRITE_DAC,
+		"write owner":   windows.WRITE_OWNER,
+		"generic all":   windows.GENERIC_ALL,
+	} {
+		t.Run("rejects "+name, func(t *testing.T) {
+			if uint32(right)&hookAuditWindowsMutationMask == 0 {
+				t.Fatalf("right %#x not classified as path replacement", right)
+			}
+		})
+	}
+}
+
 func TestManagedHookAuditWindowsReaderAllowsRotation(t *testing.T) {
 	if hookAuditWindowsFileShare&windows.FILE_SHARE_DELETE == 0 {
 		t.Fatal("audit file share mask does not permit rotation")

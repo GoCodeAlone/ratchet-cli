@@ -186,8 +186,10 @@ jobs:
           cache: true
       - name: Configure Git for private modules
         run: git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
+      - name: Run ACP client binary smoke
+        run: go test ./cmd/ratchet -run '^TestACPClientExecBinarySmoke$' -count=1 -timeout=10m
       - name: Test with race detector
-        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+        run: go test -race -coverprofile=coverage.out -covermode=atomic -skip '^TestACPClientExecBinarySmoke$' ./...
       - name: Upload coverage
         uses: codecov/codecov-action@v4
         with:

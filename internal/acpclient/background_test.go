@@ -2065,10 +2065,7 @@ func TestBackgroundManagerClassifiesFiniteWatchQueueCompletion(t *testing.T) {
 	if _, err := manager.Start("session-1", "fixture", true); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	eventuallyBackground(t, func() bool {
-		status, err := manager.Get("session-1")
-		return err == nil && status.Outcome == BackgroundOutcomeCompleted
-	})
+	eventuallyBackgroundTerminal(t, manager, "session-1")
 	status, err := manager.Get("session-1")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
