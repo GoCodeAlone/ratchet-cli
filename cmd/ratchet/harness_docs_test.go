@@ -175,6 +175,7 @@ func TestHarnessDocsDescribeUnifiedProviderSetup(t *testing.T) {
 		"`COMMITTED`: the save and finalization completed successfully",
 		"`FAILED`: the save reached a terminal classified failure",
 		"Run `ratchet provider operation <id> --json` again to retry finalization",
+		"the operation remains queryable without resubmitting the credential",
 		"the daemon still starts and serves the operation as `APPLIED`",
 	} {
 		if !containsWords(readme, required) {

@@ -146,6 +146,6 @@ with `finalize provider operation: startup finalization unavailable` before the
 fix and passes after it;
 `TestProviderOperationStartupFinalizationDatabaseFailureStopsStartup` failed
 under broad suppression and passes with typed classification;
-`TestProviderOperationStartupFinalizationContextFailureStopsStartup` failed
+`TestProviderOperationStartupFinalizationContextFailuresStopStartup` failed
 when cancellation was wrapped as secret unavailability and passes when context
 errors remain fail-stop.
