@@ -13,6 +13,8 @@ Close three review gaps from the durable provider-save work:
 3. make duplicate canonical provider-type diagnostics accurate and stable.
 
 No new operation state, storage format, or provider integration is introduced.
+The README documents the reachable lifecycle so human and automation users can
+interpret status output without reading protobuf source.
 
 ## Global Design Guidance
 
@@ -40,6 +42,8 @@ Source: `docs/design-guidance.md`
 still attempts finalization for `applied`; success re-reads the row as
 `COMMITTED`, while failure returns the originally queried `APPLIED` response.
 The response retains its non-secret result. A later query retries finalization.
+An `APPLIED` response has `failure=UNSPECIFIED`; finalization details remain
+internal. The durable row must still be `applied` after a failed attempt.
 
 The catalog validator reports a duplicate canonical type as `duplicate provider
 type <type>`. Ownership remains in alias/name collision errors, where it carries
@@ -49,7 +53,7 @@ distinct information; it is removed from the same-type diagnostic.
 
 | Failure | Public behavior | Durable behavior |
 |---|---|---|
-| Secret unavailable during finalization | `APPLIED` + result; no raw error | row remains `applied`; next query retries |
+| Secret unavailable during finalization | `APPLIED` + result, unspecified failure, no raw error | row remains `applied`; next query retries |
 | Later finalization succeeds | `COMMITTED` + result | row becomes `committed` |
 | Unknown persisted state | `UNSPECIFIED` | unchanged |
 | Duplicate canonical type | deterministic validation error | no mutation |
@@ -77,8 +81,9 @@ is not required.
 |---|---|---|
 | Catalog validator | runtime-integrated | focused exact-error unit regression |
 | Journal to protobuf projection | runtime-integrated | focused daemon state mapping test |
-| gRPC client to daemon to file secret provider | runtime-integrated | seed an `applied` row with an unavailable secret; observe `APPLIED`, add secret, observe `COMMITTED` |
+| Built CLI to daemon to file secret provider | runtime-integrated | run `ratchet provider operation --json` against an `applied` row with an unavailable secret; assert row remains `applied`, add secret, rerun, observe `COMMITTED` |
 | CLI and TUI reconciliation | runtime-integrated, unchanged | existing tests prove both poll `APPLIED`; rerun focused packages and full suite |
+| README lifecycle | config-only | docs guard plus exact state/recovery wording review |
 | Release archives/Homebrew | runtime-integrated | post-merge tag, checksums, six archives, installed time-bounded commands |
 
 ## Assumptions
@@ -96,6 +101,14 @@ is not required.
 2. A2 is most fragile; the design therefore proves failure then successful
    retry through the real service boundary.
 3. No new status, retry setting, migration, UI, or provider behavior is added.
+
+## Out Of Scope
+
+- Changing the advisory cancellation semantics of existing secret providers.
+- Returning raw or newly classified finalization errors to clients.
+- Adding database columns, RPCs, operation states, or retry settings.
+- Claiming a Windows daemon runtime while production daemon IPC remains
+  Unix-only; portable mapping tests and native Windows build/check gates remain.
 
 ## Rollback
 
