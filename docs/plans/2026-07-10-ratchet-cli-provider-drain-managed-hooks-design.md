@@ -1025,3 +1025,12 @@ mutation-capable allow ACEs on the anchor or ancestry, and accepts deny-only
 ACLs. Full Append/Read replacement attempts fail on Unix and Windows. Audit
 reads require all six exact keys once. Revert proofs make the ACL, Read-release,
 and exact-key regressions fail; focused and full hooks tests pass restored.
+
+Quality review clarified the Unix ACL support matrix. Linux POSIX ACL access is
+bounded by the group-class mask exposed in `st_mode`; recognized NFSv4, rich,
+or Samba ACL xattrs fail closed. Darwin retains native ACE parsing. Remaining
+Unix targets support only the portable POSIX mode/ACL contract. Empty Read
+linearizes before lock creation when no generation exists; any observed
+generation is parsed under the process lock. Native Windows runs a named Read
+anchor-pinning regression in addition to the shared transaction test. ADR 0010
+records these proof boundaries.

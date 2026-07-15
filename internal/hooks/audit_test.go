@@ -755,6 +755,19 @@ func TestManagedHookAuditReadDoesNotCreateAbsentNamespace(t *testing.T) {
 	}
 }
 
+func TestManagedHookAuditReadDoesNotCreateLockForEmptyNamespace(t *testing.T) {
+	path := managedAuditTestPath(t)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if records, err := NewHookAudit(path).Read(1); err != nil || len(records) != 0 {
+		t.Fatalf("Read empty namespace = %+v, %v", records, err)
+	}
+	if _, err := os.Stat(path + hookAuditProcessLockSuffix); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("empty Read created process lock: %v", err)
+	}
+}
+
 func TestManagedHookAuditDecodeRetainsOnlyTheRequestedLimit(t *testing.T) {
 	var data bytes.Buffer
 	encoder := json.NewEncoder(&data)
@@ -1006,6 +1019,27 @@ func TestManagedHookAuditWindowsAnchorAccessRejectsUntrustedMutation(t *testing.
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			err := validateHookAuditWindowsAnchorAccess(test.ownerTrusted, test.daclPresent, test.entries)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("error = %v, wantErr %v", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestManagedHookAuditLinuxACLNamesRejectUnsupportedModels(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		xattrs  []string
+		wantErr bool
+	}{
+		{name: "no ACL", xattrs: []string{"user.comment"}},
+		{name: "POSIX access and default", xattrs: []string{"system.posix_acl_access", "system.posix_acl_default"}},
+		{name: "NFSv4 ACL", xattrs: []string{"system.nfs4_acl"}, wantErr: true},
+		{name: "rich ACL", xattrs: []string{"system.richacl"}, wantErr: true},
+		{name: "Samba ACL", xattrs: []string{"security.NTACL"}, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateHookAuditLinuxACLNames(test.xattrs)
 			if (err != nil) != test.wantErr {
 				t.Fatalf("error = %v, wantErr %v", err, test.wantErr)
 			}

@@ -17,9 +17,12 @@ Managed audit paths have exactly two private namespace levels beneath an
 existing trusted anchor. Every read or append pins that anchor for the complete
 transaction, validates the anchor and its ancestry against untrusted
 rename/delete rights, and revalidates identity before release. Unix accepts
-only current-user/root-owned ancestry without untrusted mode or native ACL
-mutation rights, with trusted-owner sticky directories supported. Darwin
-rejects effective mutation-capable allow ACEs; deny-only ACLs remain valid.
+only current-user/root-owned ancestry without untrusted mode or supported
+native ACL mutation rights, with trusted-owner sticky directories supported.
+Darwin rejects effective mutation-capable allow ACEs; deny-only ACLs remain
+valid. Linux accepts POSIX access/default ACLs because their effective access
+mask is reflected in `st_mode`, and rejects recognized non-POSIX ACL xattrs.
+Other Unix targets support the portable POSIX mode/ACL contract only.
 Windows evaluates owner and DACL mutation rights and holds directory handles
 without delete sharing.
 
@@ -33,3 +36,14 @@ arbitrary-depth traversal because it expands race and durability surfaces.
 - Audit reads require each of the six schema keys exactly once.
 - Privileged owners remain trusted and can administratively alter the tree.
 - Relaxing the layout later requires a new ancestry and persistence proof.
+
+## Proof
+
+`TestManagedHookAuditRejectsMutationACLOnTrustedAnchor` covers Darwin anchor
+and ancestor allow ACLs; its deny-only sibling protects normal macOS homes.
+`TestManagedHookAuditRejectsAnchorReplacementDuringAppend` and
+`TestManagedHookAuditRejectsAnchorReplacementBeforeReadUnlock` exercise full
+transactions. Windows additionally runs
+`TestManagedHookAuditWindowsReadPinsTrustedAnchor`. Process-lock scope,
+relative paths, empty reads, exact JSON keys, and Linux ACL model detection have
+focused regressions. Each security fix has a recorded revert-and-restore proof.

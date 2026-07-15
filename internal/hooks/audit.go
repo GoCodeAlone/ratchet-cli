@@ -288,6 +288,8 @@ func (a *HookAudit) Read(limit int) (records []HookAuditRecord, err error) {
 	if !ready {
 		return []HookAuditRecord{}, nil
 	}
+	// An empty result linearizes at this probe and must not create a sidecar
+	// lock. Any observed generation is parsed only after the process lock.
 	hasGeneration, err := hookAuditHasGeneration(a.path)
 	if err != nil {
 		return nil, err

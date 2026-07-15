@@ -293,6 +293,30 @@ func TestManagedHookAuditWindowsRejectsHardLink(t *testing.T) {
 	}
 }
 
+func TestManagedHookAuditWindowsReadPinsTrustedAnchor(t *testing.T) {
+	base := t.TempDir()
+	anchor := filepath.Join(base, "home")
+	if err := os.Mkdir(anchor, 0o700); err != nil {
+		t.Fatalf("Mkdir anchor: %v", err)
+	}
+	path := filepath.Join(anchor, ".ratchet", "audit", "hooks.jsonl")
+	audit := NewHookAudit(path)
+	if err := audit.Append(managedAuditRecord(HookAuditStarted)); err != nil {
+		t.Fatalf("seed Append: %v", err)
+	}
+	var renameErr error
+	audit.beforeProcessUnlock = func() error {
+		renameErr = os.Rename(anchor, anchor+".displaced")
+		return renameErr
+	}
+	if _, err := audit.Read(1); err == nil {
+		t.Fatal("Read succeeded after trusted-anchor replacement attempt")
+	}
+	if renameErr == nil {
+		t.Fatal("Windows allowed trusted-anchor rename while Read held its lease")
+	}
+}
+
 func setManagedHookAuditWindowsWeakDACL(t *testing.T, path string) {
 	t.Helper()
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
