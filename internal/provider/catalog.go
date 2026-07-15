@@ -338,8 +338,8 @@ func validateCatalog(entries []SetupEntry, runtimeTypes []string) error {
 		if entry.Type == "" || entry.DisplayName == "" {
 			return fmt.Errorf("provider type and display name are required")
 		}
-		if prior, exists := seenNames[entry.Type]; exists {
-			return fmt.Errorf("duplicate provider type %q (already owned by %q)", entry.Type, prior)
+		if _, exists := seenNames[entry.Type]; exists {
+			return fmt.Errorf("duplicate provider type %q", entry.Type)
 		}
 		seenNames[entry.Type] = entry.Type
 		if !validCategory(entry.Category) {
