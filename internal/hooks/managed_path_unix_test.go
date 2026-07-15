@@ -5,6 +5,7 @@ package hooks
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -79,6 +80,60 @@ func TestManagedUnixSnapshotRevalidatesAfterRead(t *testing.T) {
 				t.Fatalf("changed snapshot error = %v, want errManagedPolicyChanged", err)
 			}
 		})
+	}
+}
+
+func TestManagedUnixSnapshotChecksPlatformMutationACL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "managed-hooks.yaml")
+	if err := os.WriteFile(path, []byte("mode: additive\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer file.Close()
+
+	wantErr := errors.New("mutation ACL")
+	original := managedPolicyValidatePlatformACL
+	t.Cleanup(func() { managedPolicyValidatePlatformACL = original })
+	managedPolicyValidatePlatformACL = func(gotPath string, gotFD int) error {
+		if gotPath != path {
+			t.Fatalf("ACL path = %q, want %q", gotPath, path)
+		}
+		if gotFD != int(file.Fd()) {
+			t.Fatalf("ACL fd = %d, want %d", gotFD, file.Fd())
+		}
+		return wantErr
+	}
+
+	_, err = inspectManagedUnixSnapshot(file, int(file.Fd()))
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("inspectManagedUnixSnapshot error = %v, want mutation ACL", err)
+	}
+}
+
+func TestManagedDarwinPolicyRejectsMutationACL(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("Darwin ACL contract")
+	}
+	path := filepath.Join(t.TempDir(), "managed-hooks.yaml")
+	if err := os.WriteFile(path, []byte("mode: additive\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	command := exec.Command("/bin/chmod", "+a", "everyone allow write", path)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("install mutation ACL: %v\n%s", err, output)
+	}
+	t.Cleanup(func() { _ = exec.Command("/bin/chmod", "-N", path).Run() })
+
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer file.Close()
+	if err := validateOpenedPlatformMutationACL(path, int(file.Fd())); err == nil || !strings.Contains(err.Error(), "ACL") {
+		t.Fatalf("mutation ACL error = %v, want rejection", err)
 	}
 }
 

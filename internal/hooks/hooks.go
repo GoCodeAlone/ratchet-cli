@@ -140,7 +140,9 @@ type LoadOptions struct {
 	SkipProject bool
 	ManagedPath string
 
-	managedReadFile func(string) ([]byte, error)
+	// ManagedReadFile is a test seam. Production callers must leave it nil so
+	// administrator policy always passes through the platform secure reader.
+	ManagedReadFile func(string) ([]byte, error)
 }
 
 // DefaultManagedPolicyPath returns the fixed platform administrator-policy path.

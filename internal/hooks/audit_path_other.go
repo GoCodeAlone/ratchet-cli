@@ -201,7 +201,7 @@ func validateHookAuditTrustedDirectory(path string, info os.FileInfo, anchor boo
 	if err := validateHookAuditTrustedOwner(path, info); err != nil {
 		return err
 	}
-	if err := validateHookAuditPlatformACL(path); err != nil {
+	if err := validatePlatformMutationACL(path); err != nil {
 		return err
 	}
 	if info.Mode().Perm()&0o022 != 0 && info.Mode()&os.ModeSticky == 0 {
@@ -251,7 +251,7 @@ func validateHookAuditParent(path string, info os.FileInfo) error {
 	if err := validateHookAuditOwner(path, info); err != nil {
 		return err
 	}
-	return validateHookAuditPlatformACL(path)
+	return validatePlatformMutationACL(path)
 }
 
 func validateHookAuditFile(path string, info os.FileInfo) error {
@@ -267,7 +267,7 @@ func validateHookAuditFile(path string, info os.FileInfo) error {
 	if err := validateHookAuditOwner(path, info); err != nil {
 		return err
 	}
-	return validateHookAuditPlatformACL(path)
+	return validatePlatformMutationACL(path)
 }
 
 func validateHookAuditIdentity(path string, f *os.File) error {

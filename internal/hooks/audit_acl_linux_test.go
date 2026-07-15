@@ -18,7 +18,7 @@ func TestManagedHookAuditLinuxACLInspectionUsesListxattr(t *testing.T) {
 		}
 		t.Fatalf("Setxattr: %v", err)
 	}
-	if err := validateHookAuditPlatformACL(path); err != nil {
+	if err := validatePlatformMutationACL(path); err != nil {
 		t.Fatalf("unrelated native xattr: %v", err)
 	}
 
@@ -34,7 +34,7 @@ func TestManagedHookAuditLinuxACLInspectionUsesListxattr(t *testing.T) {
 		}
 		return copy(destination, data), nil
 	}
-	if err := validateHookAuditPlatformACL(path); err == nil {
+	if err := validatePlatformMutationACL(path); err == nil {
 		t.Fatal("syscall-backed ACL inspection accepted NFSv4 ACL xattr")
 	}
 }
@@ -45,7 +45,7 @@ func TestManagedHookAuditLinuxACLInspectionFailsClosed(t *testing.T) {
 	hookAuditLinuxListxattr = func(string, []byte) (int, error) {
 		return 0, os.ErrPermission
 	}
-	if err := validateHookAuditPlatformACL(t.TempDir()); err == nil {
+	if err := validatePlatformMutationACL(t.TempDir()); err == nil {
 		t.Fatal("ACL inspection accepted Listxattr permission failure")
 	}
 }

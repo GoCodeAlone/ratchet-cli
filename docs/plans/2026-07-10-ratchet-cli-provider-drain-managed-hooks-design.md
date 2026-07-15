@@ -1043,3 +1043,33 @@ private namespace directory and file. Named constants mirror Darwin
 inheritance, existing-object, and deny-only regressions prevent bit drift.
 Linux tests exercise real unrelated xattr enumeration plus injected NUL-packed
 unsupported ACL names and fail-closed enumeration errors.
+
+### Backport 2026-07-15: Executable policy-matrix transition
+
+Cause: Task 11 originally named only Markdown status surfaces, but
+`ratchet policy matrix` carries a separate hard-coded row and would continue to
+report managed hooks as deferred after runtime enforcement shipped. Change:
+Task 11 also updates and regression-tests the executable matrix so the supported
+fixed-path, policy-last, immutable-control, and metadata-only audit contract is
+consistent with public docs; only remote distribution and the broader SDK stay
+deferred. Scope: no manifest change; this is the existing Task 11 transition,
+not a new feature or PR. Evidence: the managed row and deferred-filter tests
+fail against the stale matrix and pass after the transition.
+
+### Backport 2026-07-15: Managed-policy platform ACL admission
+
+Cause: root ownership and Unix mode bits do not reveal mutation rights granted
+by a Darwin ACL; documenting the policy as administrator-controlled while
+checking only mode bits overclaimed the security boundary. Change: the managed
+policy snapshot reader now reuses the audit namespace's platform mutation-ACL
+parser against the already-open policy handle before every read and post-read
+inspection (`fgetattrlist` on Darwin, `flistxattr` on Linux). Darwin rejects
+mutation-capable allow ACEs; Linux keeps POSIX access ACLs bounded by the mode
+mask and rejects recognized non-POSIX ACL models. The reader seam is exported
+only inside the Go `internal/hooks` package boundary so Task 11 can drive the
+real parser through engine startup/reload without weakening production reads.
+Scope: no manifest change; this closes Task 9's secure-reader requirement in PR
+4 and strengthens Task 11's malformed-policy boundary proof. Evidence: native
+Darwin ACL and file-descriptor snapshot-invocation regressions fail when the
+shared validator is removed or changed back to pathname inspection and pass
+when restored.

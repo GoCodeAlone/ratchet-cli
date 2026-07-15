@@ -11,7 +11,7 @@ import (
 func TestLoadManagedPolicyMissingFile(t *testing.T) {
 	policy, err := LoadManagedPolicy(LoadOptions{
 		ManagedPath: "/managed/hooks.yaml",
-		managedReadFile: func(string) ([]byte, error) {
+		ManagedReadFile: func(string) ([]byte, error) {
 			return nil, os.ErrNotExist
 		},
 	})
@@ -28,7 +28,7 @@ func TestLoadManagedPolicyEnforcesMaximumSizeAfterReaderSeam(t *testing.T) {
 	atLimit := managedPolicyDocumentAtSize(t, maxManagedPolicyBytes)
 	policy, err := LoadManagedPolicy(LoadOptions{
 		ManagedPath: path,
-		managedReadFile: func(string) ([]byte, error) {
+		ManagedReadFile: func(string) ([]byte, error) {
 			return []byte(atLimit), nil
 		},
 	})
@@ -42,7 +42,7 @@ func TestLoadManagedPolicyEnforcesMaximumSizeAfterReaderSeam(t *testing.T) {
 	oversize := atLimit + "x"
 	_, err = LoadManagedPolicy(LoadOptions{
 		ManagedPath: path,
-		managedReadFile: func(string) ([]byte, error) {
+		ManagedReadFile: func(string) ([]byte, error) {
 			return []byte(oversize), nil
 		},
 	})
@@ -75,7 +75,7 @@ func TestLoadManagedPolicyOversizedDocumentsHaveStaticPrivateDiagnostics(t *test
 			const path = "/managed/oversized.yaml"
 			_, err := LoadManagedPolicy(LoadOptions{
 				ManagedPath: path,
-				managedReadFile: func(string) ([]byte, error) {
+				ManagedReadFile: func(string) ([]byte, error) {
 					return []byte(test.document), nil
 				},
 			})
@@ -246,7 +246,7 @@ func TestLoadManagedPolicyFailsClosed(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			_, err := LoadManagedPolicy(LoadOptions{
 				ManagedPath: "/managed/hooks.yaml",
-				managedReadFile: func(string) ([]byte, error) {
+				ManagedReadFile: func(string) ([]byte, error) {
 					return []byte(test.yaml), nil
 				},
 			})
@@ -261,7 +261,7 @@ func TestLoadManagedPolicyErrorDoesNotExposeCommand(t *testing.T) {
 	const secretCommand = "echo DO-NOT-EXPOSE"
 	_, err := LoadManagedPolicy(LoadOptions{
 		ManagedPath: "/managed/hooks.yaml",
-		managedReadFile: func(string) ([]byte, error) {
+		ManagedReadFile: func(string) ([]byte, error) {
 			return []byte("mode: additive\nhooks:\n  pre-command:\n    - command: " + secretCommand + "\n      invalid: true\n"), nil
 		},
 	})
@@ -317,7 +317,7 @@ hooks:
 			const path = "/managed/safe-diagnostic.yaml"
 			_, err := LoadManagedPolicy(LoadOptions{
 				ManagedPath: path,
-				managedReadFile: func(string) ([]byte, error) {
+				ManagedReadFile: func(string) ([]byte, error) {
 					return []byte(test.document), nil
 				},
 			})
@@ -331,7 +331,7 @@ func TestLoadManagedPolicySanitizesSyntaxDiagnostic(t *testing.T) {
 	const path = "/managed/syntax-diagnostic.yaml"
 	_, err := LoadManagedPolicy(LoadOptions{
 		ManagedPath: path,
-		managedReadFile: func(string) ([]byte, error) {
+		ManagedReadFile: func(string) ([]byte, error) {
 			return []byte("mode: additive\nhooks: [\n  SECRET-SYNTAX-SENTINEL\n"), nil
 		},
 	})
@@ -389,7 +389,7 @@ hooks:
 			const path = "/managed/complex.yaml"
 			_, err := LoadManagedPolicy(LoadOptions{
 				ManagedPath: path,
-				managedReadFile: func(string) ([]byte, error) {
+				ManagedReadFile: func(string) ([]byte, error) {
 					return []byte(test.document), nil
 				},
 			})
@@ -441,7 +441,7 @@ hooks:
 			const path = "/managed/tagged-keys.yaml"
 			_, err := LoadManagedPolicy(LoadOptions{
 				ManagedPath: path,
-				managedReadFile: func(string) ([]byte, error) {
+				ManagedReadFile: func(string) ([]byte, error) {
 					return []byte(test.document), nil
 				},
 			})
@@ -505,7 +505,7 @@ hooks:
 			const path = "/managed/tagged-collections.yaml"
 			_, err := LoadManagedPolicy(LoadOptions{
 				ManagedPath: path,
-				managedReadFile: func(string) ([]byte, error) {
+				ManagedReadFile: func(string) ([]byte, error) {
 					return []byte(test.document), nil
 				},
 			})
@@ -528,7 +528,7 @@ func TestLoadManagedPolicyUnknownEventDiagnosticIsDeterministicAndPrivate(t *tes
 	for range 20 {
 		_, err := LoadManagedPolicy(LoadOptions{
 			ManagedPath: path,
-			managedReadFile: func(string) ([]byte, error) {
+			ManagedReadFile: func(string) ([]byte, error) {
 				return []byte(document), nil
 			},
 		})
@@ -586,7 +586,7 @@ SECRET-TRAILING-KEY: SECRET-TRAILING-VALUE
 			for range 10 {
 				_, err := LoadManagedPolicy(LoadOptions{
 					ManagedPath: path,
-					managedReadFile: func(string) ([]byte, error) {
+					ManagedReadFile: func(string) ([]byte, error) {
 						return []byte(test.document), nil
 					},
 				})
@@ -605,7 +605,7 @@ SECRET-TRAILING-KEY: SECRET-TRAILING-VALUE
 func TestLoadManagedPolicyRejectsDuplicateHookHash(t *testing.T) {
 	_, err := LoadManagedPolicy(LoadOptions{
 		ManagedPath: "/managed/hooks.yaml",
-		managedReadFile: func(string) ([]byte, error) {
+		ManagedReadFile: func(string) ([]byte, error) {
 			return []byte(`
 mode: additive
 hooks:
@@ -858,7 +858,7 @@ func loadManagedPolicyFixture(t *testing.T, path, document string) *ManagedPolic
 	t.Helper()
 	policy, err := LoadManagedPolicy(LoadOptions{
 		ManagedPath: path,
-		managedReadFile: func(string) ([]byte, error) {
+		ManagedReadFile: func(string) ([]byte, error) {
 			return []byte(document), nil
 		},
 	})

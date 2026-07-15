@@ -12,6 +12,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+var managedPolicyValidatePlatformACL = validateOpenedPlatformMutationACL
+
 func defaultManagedPolicyPath() (string, error) {
 	if runtime.GOOS == "darwin" {
 		return "/Library/Application Support/ratchet/managed-hooks.yaml", nil
@@ -64,6 +66,9 @@ func inspectManagedUnixSnapshot(file *os.File, fd int) (managedUnixSnapshot, err
 		return managedUnixSnapshot{}, errManagedPolicyChanged
 	}
 	if err := validateManagedPolicySize(uint64(stat.Size)); err != nil {
+		return managedUnixSnapshot{}, err
+	}
+	if err := managedPolicyValidatePlatformACL(file.Name(), fd); err != nil {
 		return managedUnixSnapshot{}, err
 	}
 	if err := validateManagedUnixMetadata(stat.Uid, uint32(stat.Mode)); err != nil {

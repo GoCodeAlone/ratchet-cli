@@ -68,8 +68,8 @@ func LoadManagedPolicy(opts LoadOptions) (*ManagedPolicy, error) {
 	}
 
 	readFile := secureReadManagedFile
-	if opts.managedReadFile != nil {
-		readFile = opts.managedReadFile
+	if opts.ManagedReadFile != nil {
+		readFile = opts.ManagedReadFile
 	}
 	data, err := readFile(path)
 	if errors.Is(err, os.ErrNotExist) {

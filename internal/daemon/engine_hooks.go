@@ -15,6 +15,11 @@ func (ec *EngineContext) RunHooks(ctx context.Context, event hooks.Event, data m
 	if ec == nil {
 		return nil
 	}
+	cfg, audit := ec.effectiveHooks(ctx, event, data)
+	return cfg.RunWithOptions(event, data, hooks.RunOptions{Audit: audit})
+}
+
+func (ec *EngineContext) effectiveHooks(ctx context.Context, event hooks.Event, data map[string]string) (*hooks.HookConfig, hooks.HookAuditWriter) {
 	store, err := hooks.LoadTrustStore(hooks.DefaultTrustStorePath())
 	if err != nil {
 		log.Printf("hooks: load trust store: %v", err)
@@ -26,6 +31,8 @@ func (ec *EngineContext) RunHooks(ctx context.Context, event hooks.Event, data m
 	if ec.Hooks != nil {
 		cfg.Hooks[event] = append(cfg.Hooks[event], ec.Hooks.Hooks[event]...)
 	}
+	managedPolicy := ec.ManagedHookPolicy
+	audit := ec.ManagedHookAudit
 	ec.ExtensionMu.RUnlock()
 	if workDir := ec.hookWorkingDir(ctx, data); workDir != "" {
 		projectCfg, err := hooks.LoadWithOptions(hooks.LoadOptions{
@@ -40,7 +47,8 @@ func (ec *EngineContext) RunHooks(ctx context.Context, event hooks.Event, data m
 		}
 	}
 	cfg.ApplyTrust(store)
-	return cfg.Run(event, data)
+	cfg.ApplyManagedPolicy(managedPolicy)
+	return cfg, audit
 }
 
 func runHooksAndLog(ctx context.Context, engine *EngineContext, event hooks.Event, data map[string]string, label string) {

@@ -21,6 +21,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 
+	"github.com/GoCodeAlone/ratchet-cli/internal/hooks"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 	"github.com/GoCodeAlone/workflow/secrets"
 	"github.com/google/uuid"
@@ -33,6 +34,17 @@ func TestTUISmokeServiceBackgroundDrainIsDisabled(t *testing.T) {
 	})
 	if status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("code = %s, want disabled %s: %v", status.Code(err), codes.FailedPrecondition, err)
+	}
+}
+
+func TestTUISmokeServiceNeverLoadsHostManagedPolicy(t *testing.T) {
+	svc := newTUISmokeServiceForTest(t, t.TempDir())
+	svc.engine.managedHooks.loadPolicy = func(hooks.LoadOptions) (*hooks.ManagedPolicy, error) {
+		panic("TUI smoke read host managed policy")
+	}
+	policy, err := svc.engine.loadManagedHookPolicy()
+	if err != nil || policy != nil {
+		t.Fatalf("disabled managed policy = %#v, %v", policy, err)
 	}
 }
 

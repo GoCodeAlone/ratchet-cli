@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -36,7 +37,7 @@ const (
 		hookAuditDarwinWriteSecurity | hookAuditDarwinTakeOwnership | hookAuditDarwinGenericAll | hookAuditDarwinGenericWrite
 )
 
-func validateHookAuditPlatformACL(path string) error {
+func validatePlatformMutationACL(path string) error {
 	pathPointer, err := unix.BytePtrFromString(path)
 	if err != nil {
 		return err
@@ -57,15 +58,38 @@ func validateHookAuditPlatformACL(path string) error {
 	)
 	runtime.KeepAlive(pathPointer)
 	runtime.KeepAlive(&attributes)
+	return validateDarwinMutationACLBuffer(buffer, errno)
+}
+
+func validateOpenedPlatformMutationACL(_ string, fd int) error {
+	attributes := unix.Attrlist{
+		Bitmapcount: unix.ATTR_BIT_MAP_COUNT,
+		Commonattr:  unix.ATTR_CMN_EXTENDED_SECURITY,
+	}
+	buffer := make([]byte, 4<<10)
+	_, _, errno := unix.Syscall6(
+		unix.SYS_FGETATTRLIST, //nolint:staticcheck // x/sys has no pure-Go fgetattrlist wrapper; releases disable cgo.
+		uintptr(fd),
+		uintptr(unsafe.Pointer(&attributes)),
+		uintptr(unsafe.Pointer(&buffer[0])),
+		uintptr(len(buffer)),
+		0,
+		0,
+	)
+	runtime.KeepAlive(&attributes)
+	return validateDarwinMutationACLBuffer(buffer, errno)
+}
+
+func validateDarwinMutationACLBuffer(buffer []byte, errno syscall.Errno) error {
 	if errno != 0 {
-		return fmt.Errorf("inspect managed hook audit trusted anchor ACL: %w", errno)
+		return fmt.Errorf("inspect filesystem ACL: %w", errno)
 	}
 	if len(buffer) < hookAuditDarwinAttributeHeaderSize+hookAuditDarwinAttributeRefSize {
-		return errors.New("inspect managed hook audit trusted anchor ACL: truncated attributes")
+		return errors.New("inspect filesystem ACL: truncated attributes")
 	}
 	returned := int(binary.LittleEndian.Uint32(buffer[:hookAuditDarwinAttributeHeaderSize]))
 	if returned > len(buffer) || returned < hookAuditDarwinAttributeHeaderSize+hookAuditDarwinAttributeRefSize {
-		return errors.New("inspect managed hook audit trusted anchor ACL: invalid attribute length")
+		return errors.New("inspect filesystem ACL: invalid attribute length")
 	}
 	referenceStart := hookAuditDarwinAttributeHeaderSize
 	dataOffset := int(int32(binary.LittleEndian.Uint32(buffer[referenceStart : referenceStart+4])))
@@ -76,14 +100,14 @@ func validateHookAuditPlatformACL(path string) error {
 	dataStart := referenceStart + dataOffset
 	dataEnd := dataStart + dataLength
 	if dataStart < referenceStart+hookAuditDarwinAttributeRefSize || dataEnd < dataStart || dataEnd > returned || dataLength < hookAuditDarwinFileSecuritySize {
-		return errors.New("inspect managed hook audit trusted anchor ACL: invalid extended-security attribute")
+		return errors.New("inspect filesystem ACL: invalid extended-security attribute")
 	}
 	entryCount := binary.LittleEndian.Uint32(buffer[dataStart+36 : dataStart+40])
 	if entryCount == hookAuditDarwinNoACL {
 		return nil
 	}
 	if entryCount > hookAuditDarwinMaxACLEntries || hookAuditDarwinFileSecuritySize+int(entryCount)*hookAuditDarwinACEBytes > dataLength {
-		return errors.New("inspect managed hook audit trusted anchor ACL: invalid entry count")
+		return errors.New("inspect filesystem ACL: invalid entry count")
 	}
 	for i := range int(entryCount) {
 		entryStart := dataStart + hookAuditDarwinFileSecuritySize + i*hookAuditDarwinACEBytes
@@ -92,7 +116,7 @@ func validateHookAuditPlatformACL(path string) error {
 		if flags&hookAuditDarwinACEKindMask != hookAuditDarwinACEPermit || rights&hookAuditDarwinMutationRights == 0 {
 			continue
 		}
-		return errors.New("managed hook audit trusted anchor ACL grants mutation rights")
+		return errors.New("filesystem ACL grants mutation rights")
 	}
 	return nil
 }

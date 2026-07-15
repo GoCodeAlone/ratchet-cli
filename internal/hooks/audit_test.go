@@ -1039,7 +1039,7 @@ func TestManagedHookAuditLinuxACLNamesRejectUnsupportedModels(t *testing.T) {
 		{name: "Samba ACL", xattrs: []string{"security.NTACL"}, wantErr: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			err := validateHookAuditLinuxACLNames(test.xattrs)
+			err := validateLinuxMutationACLNames(test.xattrs)
 			if (err != nil) != test.wantErr {
 				t.Fatalf("error = %v, wantErr %v", err, test.wantErr)
 			}

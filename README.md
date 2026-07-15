@@ -307,7 +307,14 @@ ratchet retro bundle --evidence ~/.ratchet/retro/evidence.jsonl --session ID --o
 Project and plugin hooks are skipped until their descriptor hash is trusted.
 Changed hook commands produce a new hash. Hook template data prefers IDs, paths,
 counts, and hashes; raw prompt text is not passed to hooks by default. This hook
-trust model is local and hash-based; managed hooks remain deferred.
+trust model is local and hash-based. Administrator-managed hooks are supported:
+`ratchet hooks policy --json` inspects the effective fixed-path policy and
+`ratchet hooks audit --json` reads its private metadata-only execution audit.
+In `additive` mode, eligible local and managed hooks run; in `managed-only`
+mode, local hooks remain visible as suppressed diagnostics and only managed
+hooks run. Managed hook commands are immutable through local trust/disable
+commands. See [Managed hook policy](docs/harness-emulation.md#managed-hook-policy)
+for platform ownership, audit, failure, and rollback requirements.
 
 Plugin marketplaces are metadata, not trust. Installing or enabling a plugin can
 add skills, hooks, commands, tools, MCP declarations, ACP launch profiles, and
@@ -364,9 +371,9 @@ mock provider recipes, [docs/competitor-parity.md](docs/competitor-parity.md)
 for the dated source-backed parity matrix, and
 [docs/policy-matrix.md](docs/policy-matrix.md) for Policy Matrix details on
 static config trust rules, runtime trust rules, persistent trust grants,
-permission prompts, ACP client queue/drain, hook trust, extension hooks,
-sandbox/path/network controls, retro evidence, action nodes, background drain,
-managed hooks, workflow source execution, and extension SDK work. Run
+permission prompts, ACP client queue/drain, hook trust, managed hooks,
+extension hooks, sandbox/path/network controls, retro evidence, action nodes,
+background drain, workflow source execution, and extension SDK work. Run
 `ratchet policy matrix`, `ratchet policy matrix --json`, or
 `ratchet policy matrix --status deferred --json` for a read-only CLI view of
 the same supported, partial, explicit-operator, and deferred layers.
