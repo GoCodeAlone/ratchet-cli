@@ -329,6 +329,7 @@ func ValidateCatalog(runtimeTypes []string) error {
 
 func validateCatalog(entries []SetupEntry, runtimeTypes []string) error {
 	seenNames := make(map[string]string)
+	seenTypes := make(map[string]struct{})
 	runtimeSet := make(map[string]struct{}, len(runtimeTypes))
 	for _, providerType := range runtimeTypes {
 		runtimeSet[providerType] = struct{}{}
@@ -338,9 +339,13 @@ func validateCatalog(entries []SetupEntry, runtimeTypes []string) error {
 		if entry.Type == "" || entry.DisplayName == "" {
 			return fmt.Errorf("provider type and display name are required")
 		}
-		if _, exists := seenNames[entry.Type]; exists {
+		if _, exists := seenTypes[entry.Type]; exists {
 			return fmt.Errorf("duplicate provider type %q", entry.Type)
 		}
+		if prior, exists := seenNames[entry.Type]; exists {
+			return fmt.Errorf("duplicate provider name %q (owned by %q and %q)", entry.Type, prior, entry.Type)
+		}
+		seenTypes[entry.Type] = struct{}{}
 		seenNames[entry.Type] = entry.Type
 		if !validCategory(entry.Category) {
 			return fmt.Errorf("provider %q has unknown category %q", entry.Type, entry.Category)
