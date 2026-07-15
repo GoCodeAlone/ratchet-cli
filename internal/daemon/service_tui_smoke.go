@@ -56,6 +56,8 @@ func newTUISmokeService(ctx context.Context, tempRoot string) (*Service, error) 
 		SecretsRedactor:  redactor,
 		SecretRedactor:   newEngineSecretRedactor(redactor),
 		Hooks:            &hooks.HookConfig{Hooks: map[hooks.Event][]hooks.Hook{}},
+		// Smoke services are hermetic and never inspect administrator-owned host policy.
+		managedHooks: engineManagedHooksRuntime{disabled: true},
 	}
 	engine.MemoryStore = ratchetplugin.NewMemoryStore(db)
 	if err := engine.MemoryStore.InitTables(); err != nil {

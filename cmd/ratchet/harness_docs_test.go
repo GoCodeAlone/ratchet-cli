@@ -117,7 +117,7 @@ func TestHarnessEmulationDocsCoverPolicyMatrixLayers(t *testing.T) {
 		"extension hooks",
 		"action nodes",
 		"--allow shell",
-		"managed hooks remain deferred",
+		"managed hooks are supported",
 		"TypeScript extension SDK remains deferred",
 		"ACPX TypeScript flow runtime compatibility remains deferred",
 	} {
@@ -183,6 +183,52 @@ func TestHarnessDocsDescribeUnifiedProviderSetup(t *testing.T) {
 	for _, forbidden := range []string{"only five providers", "five providers"} {
 		if strings.Contains(lower, forbidden) {
 			t.Fatalf("unified provider docs retain stale claim %q", forbidden)
+		}
+	}
+}
+
+func TestHarnessDocsDescribeManagedHookOperations(t *testing.T) {
+	readme := readHarnessDoc(t, "../../README.md")
+	harness := readHarnessDoc(t, "../../docs/harness-emulation.md")
+	parity := readHarnessDoc(t, "../../docs/competitor-parity.md")
+	matrix := readHarnessDoc(t, "../../docs/policy-matrix.md")
+	publicDocs := strings.Join([]string{readme, harness, parity, matrix}, "\n")
+
+	for _, required := range []string{
+		"managed hooks are supported",
+		"ratchet hooks policy --json",
+		"ratchet hooks audit --json",
+		"additive",
+		"managed-only",
+		"/etc/ratchet/managed-hooks.yaml",
+		"/Library/Application Support/ratchet/managed-hooks.yaml",
+		"%ProgramData%\\ratchet\\managed-hooks.yaml",
+		"root-owned",
+		"Administrators or SYSTEM",
+		"protected DACL",
+		"~/.ratchet/audit/managed-hooks.jsonl",
+		"0700",
+		"0600",
+		"owner-only DACL",
+		"command, arguments, environment, payload, stdout, stderr, or error text",
+		"fails closed",
+		"started record without a terminal record",
+		"managed-hooks.jsonl.1",
+		"remove or migrate the administrator policy before stopping the daemon",
+		"remote policy distribution remains deferred",
+		"TypeScript extension SDK remains deferred",
+	} {
+		if !containsWords(publicDocs, required) {
+			t.Fatalf("managed hook docs missing %q", required)
+		}
+	}
+	for _, stale := range []string{
+		"managed hooks remain deferred",
+		"Managed hooks remain deferred",
+		"Managed hooks | Deferred",
+	} {
+		if strings.Contains(publicDocs, stale) {
+			t.Fatalf("managed hook docs retain stale claim %q", stale)
 		}
 	}
 }

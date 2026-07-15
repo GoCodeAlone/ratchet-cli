@@ -1,0 +1,515 @@
+//go:build windows
+
+package hooks
+
+import (
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"testing"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
+)
+
+func TestManagedHookAuditWindowsCreatesOwnerOnlyDACL(t *testing.T) {
+	path := managedAuditTestPath(t)
+	if err := NewHookAudit(path).Append(managedAuditRecord(HookAuditStarted)); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	assertManagedHookAuditWindowsPrivate(t, filepath.Dir(filepath.Dir(path)))
+	assertManagedHookAuditWindowsPrivate(t, filepath.Dir(path))
+	assertManagedHookAuditWindowsPrivate(t, path)
+}
+
+func TestManagedHookAuditWindowsCreationIsAtomicallyPrivate(t *testing.T) {
+	originalDirectory := hookAuditWindowsCreateDirectory
+	originalFile := hookAuditWindowsCreateFile
+	originalMove := hookAuditWindowsMoveFileEx
+	t.Cleanup(func() {
+		hookAuditWindowsCreateDirectory = originalDirectory
+		hookAuditWindowsCreateFile = originalFile
+		hookAuditWindowsMoveFileEx = originalMove
+	})
+	directoryCreates := 0
+	directoryMoves := 0
+	fileCreates := 0
+	fileCreatePaths := make(map[string]int)
+	hookAuditWindowsCreateDirectory = func(path *uint16, security *windows.SecurityAttributes) error {
+		directoryCreates++
+		assertManagedHookAuditWindowsCreationSecurity(t, security)
+		return originalDirectory(path, security)
+	}
+	hookAuditWindowsCreateFile = func(name *uint16, access, mode uint32, security *windows.SecurityAttributes, createMode, attrs uint32, template windows.Handle) (windows.Handle, error) {
+		if createMode == windows.CREATE_NEW {
+			fileCreates++
+			fileCreatePaths[filepath.Base(windows.UTF16PtrToString(name))]++
+			assertManagedHookAuditWindowsCreationSecurity(t, security)
+			if attrs&windows.FILE_FLAG_WRITE_THROUGH == 0 {
+				t.Fatalf("created file attributes = %#x, want FILE_FLAG_WRITE_THROUGH", attrs)
+			}
+		}
+		return originalFile(name, access, mode, security, createMode, attrs, template)
+	}
+	hookAuditWindowsMoveFileEx = func(from, to *uint16, flags uint32) error {
+		directoryMoves++
+		if flags != windows.MOVEFILE_WRITE_THROUGH {
+			t.Fatalf("directory MoveFileEx flags = %#x, want %#x", flags, windows.MOVEFILE_WRITE_THROUGH)
+		}
+		return originalMove(from, to, flags)
+	}
+
+	path := managedAuditTestPath(t)
+	if err := NewHookAudit(path).Append(managedAuditRecord(HookAuditStarted)); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	base := filepath.Base(path)
+	if directoryCreates != 2 || directoryMoves != 2 || fileCreates != 2 || fileCreatePaths[base] != 1 || fileCreatePaths[base+hookAuditProcessLockSuffix] != 1 {
+		t.Fatalf("private creation calls = directories %d, moves %d, files %d %v; want 2/2/2 with audit and lock", directoryCreates, directoryMoves, fileCreates, fileCreatePaths)
+	}
+}
+
+func TestManagedHookAuditWindowsWriterAttributesAreWriteThrough(t *testing.T) {
+	if attrs := hookAuditWindowsOpenAttributes(true); attrs&windows.FILE_FLAG_WRITE_THROUGH == 0 {
+		t.Fatalf("writer attributes = %#x, want FILE_FLAG_WRITE_THROUGH", attrs)
+	}
+	if attrs := hookAuditWindowsOpenAttributes(false); attrs&windows.FILE_FLAG_WRITE_THROUGH != 0 {
+		t.Fatalf("reader attributes = %#x, do not want FILE_FLAG_WRITE_THROUGH", attrs)
+	}
+}
+
+func TestManagedHookAuditWindowsMutationMaskMatchesReplacementRights(t *testing.T) {
+	for name, right := range map[string]windows.ACCESS_MASK{
+		"add file":         windows.FILE_WRITE_DATA,
+		"add subdirectory": windows.FILE_APPEND_DATA,
+		"write attributes": windows.FILE_WRITE_ATTRIBUTES,
+		"write EA":         windows.FILE_WRITE_EA,
+		"generic write":    windows.GENERIC_WRITE,
+	} {
+		t.Run("allows "+name, func(t *testing.T) {
+			if uint32(right)&hookAuditWindowsMutationMask != 0 {
+				t.Fatalf("right %#x classified as path replacement", right)
+			}
+		})
+	}
+	for name, right := range map[string]windows.ACCESS_MASK{
+		"delete object": windows.DELETE,
+		"delete child":  windows.ACCESS_MASK(hookAuditWindowsFileDeleteChild),
+		"write DACL":    windows.WRITE_DAC,
+		"write owner":   windows.WRITE_OWNER,
+		"generic all":   windows.GENERIC_ALL,
+	} {
+		t.Run("rejects "+name, func(t *testing.T) {
+			if uint32(right)&hookAuditWindowsMutationMask == 0 {
+				t.Fatalf("right %#x not classified as path replacement", right)
+			}
+		})
+	}
+}
+
+func TestManagedHookAuditWindowsReaderAllowsRotation(t *testing.T) {
+	if hookAuditWindowsFileShare&windows.FILE_SHARE_DELETE == 0 {
+		t.Fatal("audit file share mask does not permit rotation")
+	}
+	path := managedAuditTestPath(t)
+	audit := NewHookAudit(path)
+	if err := audit.Append(managedAuditRecord(HookAuditStarted)); err != nil {
+		t.Fatalf("seed Append: %v", err)
+	}
+	reader, _, err := openHookAuditFile(path, false)
+	if err != nil {
+		t.Fatalf("open reader: %v", err)
+	}
+	defer reader.Close() //nolint:errcheck
+	writer, _, err := openHookAuditFile(path, true)
+	if err != nil {
+		t.Fatalf("open writer: %v", err)
+	}
+	next, err := audit.rotate(writer)
+	if err != nil {
+		t.Fatalf("rotate with open reader: %v", err)
+	}
+	if err := next.Close(); err != nil {
+		t.Fatalf("close rotated active audit: %v", err)
+	}
+	if _, err := reader.Seek(0, io.SeekStart); err != nil {
+		t.Fatalf("seek retained reader: %v", err)
+	}
+	if data, err := io.ReadAll(reader); err != nil || len(data) == 0 {
+		t.Fatalf("retained reader data = %d bytes, %v", len(data), err)
+	}
+}
+
+func TestManagedHookAuditWindowsRotationWritesThrough(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "active.jsonl")
+	destination := source + ".1"
+	if err := os.WriteFile(source, []byte("durable"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	original := hookAuditWindowsMoveFileEx
+	t.Cleanup(func() { hookAuditWindowsMoveFileEx = original })
+	var gotFlags uint32
+	hookAuditWindowsMoveFileEx = func(from, to *uint16, flags uint32) error {
+		gotFlags = flags
+		return original(from, to, flags)
+	}
+	if err := rotateHookAuditPath(source, destination); err != nil {
+		t.Fatalf("rotateHookAuditPath: %v", err)
+	}
+	wantFlags := uint32(windows.MOVEFILE_REPLACE_EXISTING | windows.MOVEFILE_WRITE_THROUGH)
+	if gotFlags != wantFlags {
+		t.Fatalf("MoveFileEx flags = %#x, want %#x", gotFlags, wantFlags)
+	}
+	if data, err := os.ReadFile(destination); err != nil || string(data) != "durable" {
+		t.Fatalf("destination = %q, %v", data, err)
+	}
+}
+
+func TestManagedHookAuditWindowsRejectsWeakDACL(t *testing.T) {
+	t.Run("trusted anchor", func(t *testing.T) {
+		anchor := t.TempDir()
+		setManagedHookAuditWindowsMutableDACL(t, anchor)
+		path := filepath.Join(anchor, ".ratchet", "audit", "hooks.jsonl")
+		if err := NewHookAudit(path).Append(managedAuditRecord(HookAuditStarted)); err == nil {
+			t.Fatal("Append accepted an anchor mutable by Everyone")
+		}
+		if _, err := os.Stat(filepath.Join(anchor, ".ratchet")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("audit namespace created beneath weak anchor: %v", err)
+		}
+	})
+
+	t.Run("namespace", func(t *testing.T) {
+		parent := filepath.Dir(managedAuditTestPath(t))
+		if err := hookAuditWindowsEnsurePrivateDir(filepath.Dir(parent)); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(parent, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		setManagedHookAuditWindowsWeakDACL(t, parent)
+		path := filepath.Join(parent, "hooks.jsonl")
+		if err := NewHookAudit(path).Append(managedAuditRecord(HookAuditStarted)); err == nil {
+			t.Fatal("Append accepted weak namespace DACL")
+		}
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("audit created in weak namespace: %v", err)
+		}
+	})
+
+	t.Run("file", func(t *testing.T) {
+		path := managedAuditTestPath(t)
+		audit := NewHookAudit(path)
+		if err := audit.Append(managedAuditRecord(HookAuditStarted)); err != nil {
+			t.Fatalf("seed Append: %v", err)
+		}
+		setManagedHookAuditWindowsWeakDACL(t, path)
+		if err := audit.Append(managedAuditRecord(HookAuditSuccess)); err == nil {
+			t.Fatal("Append accepted weak file DACL")
+		}
+	})
+
+	t.Run("protected file with extra principal", func(t *testing.T) {
+		path := managedAuditTestPath(t)
+		audit := NewHookAudit(path)
+		if err := audit.Append(managedAuditRecord(HookAuditStarted)); err != nil {
+			t.Fatalf("seed Append: %v", err)
+		}
+		setManagedHookAuditWindowsProtectedExtraPrincipalDACL(t, path)
+		if err := audit.Append(managedAuditRecord(HookAuditSuccess)); err == nil {
+			t.Fatal("Append accepted protected file DACL with extra principal")
+		}
+	})
+
+	t.Run("protected file with inherit-only owner", func(t *testing.T) {
+		path := managedAuditTestPath(t)
+		audit := NewHookAudit(path)
+		if err := audit.Append(managedAuditRecord(HookAuditStarted)); err != nil {
+			t.Fatalf("seed Append: %v", err)
+		}
+		opened, _, err := hookAuditWindowsOpenFile(path, false)
+		if err != nil {
+			t.Fatalf("open validated handle: %v", err)
+		}
+		defer opened.Close() //nolint:errcheck
+		setManagedHookAuditWindowsInheritOnlyOwnerDACL(t, path)
+		if err := hookAuditWindowsValidateHandle(windows.Handle(opened.Fd()), false); err == nil {
+			t.Fatal("validator accepted inherit-only owner ACE")
+		}
+	})
+}
+
+func setManagedHookAuditWindowsMutableDACL(t *testing.T, path string) {
+	t.Helper()
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	everyone, err := windows.StringToSid("S-1-1-0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{
+		{
+			AccessPermissions: windows.GENERIC_ALL,
+			AccessMode:        windows.GRANT_ACCESS,
+			Trustee: windows.TRUSTEE{TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeType: windows.TRUSTEE_IS_USER,
+				TrusteeValue: windows.TrusteeValueFromSID(user.User.Sid)},
+		},
+		{
+			AccessPermissions: windows.GENERIC_ALL,
+			AccessMode:        windows.GRANT_ACCESS,
+			Trustee: windows.TRUSTEE{TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeType: windows.TRUSTEE_IS_WELL_KNOWN_GROUP,
+				TrusteeValue: windows.TrusteeValueFromSID(everyone)},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, acl, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestManagedHookAuditWindowsRejectsReparseAndNonRegularTargets(t *testing.T) {
+	t.Run("reparse", func(t *testing.T) {
+		path := managedAuditTestPath(t)
+		if ready, err := prepareHookAuditPrivateNamespace(path, true); err != nil || !ready {
+			t.Fatal(err)
+		}
+		target := filepath.Join(t.TempDir(), "target.jsonl")
+		if err := os.WriteFile(target, []byte("unchanged"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, path); err != nil {
+			t.Skipf("create Windows symlink: %v", err)
+		}
+		if err := NewHookAudit(path).Append(managedAuditRecord(HookAuditStarted)); err == nil {
+			t.Fatal("Append accepted reparse target")
+		}
+		if got, err := os.ReadFile(target); err != nil || string(got) != "unchanged" {
+			t.Fatalf("reparse target = %q, %v", got, err)
+		}
+	})
+
+	t.Run("directory", func(t *testing.T) {
+		path := managedAuditTestPath(t)
+		if ready, err := prepareHookAuditPrivateNamespace(path, true); err != nil || !ready {
+			t.Fatal(err)
+		}
+		if err := hookAuditWindowsEnsurePrivateDir(path); err != nil {
+			t.Fatal(err)
+		}
+		if err := NewHookAudit(path).Append(managedAuditRecord(HookAuditStarted)); err == nil {
+			t.Fatal("Append accepted directory target")
+		}
+	})
+}
+
+func TestManagedHookAuditWindowsRejectsHardLink(t *testing.T) {
+	path := managedAuditTestPath(t)
+	audit := NewHookAudit(path)
+	if err := audit.Append(managedAuditRecord(HookAuditStarted)); err != nil {
+		t.Fatalf("seed Append: %v", err)
+	}
+	if err := os.Link(path, path+".link"); err != nil {
+		t.Fatalf("Link: %v", err)
+	}
+	if err := audit.Append(managedAuditRecord(HookAuditSuccess)); err == nil {
+		t.Fatal("Append accepted hard-linked audit target")
+	}
+}
+
+func TestManagedHookAuditWindowsReadPinsTrustedAnchor(t *testing.T) {
+	base := t.TempDir()
+	anchor := filepath.Join(base, "home")
+	if err := os.Mkdir(anchor, 0o700); err != nil {
+		t.Fatalf("Mkdir anchor: %v", err)
+	}
+	path := filepath.Join(anchor, ".ratchet", "audit", "hooks.jsonl")
+	audit := NewHookAudit(path)
+	if err := audit.Append(managedAuditRecord(HookAuditStarted)); err != nil {
+		t.Fatalf("seed Append: %v", err)
+	}
+	var renameErr error
+	audit.beforeProcessUnlock = func() error {
+		renameErr = os.Rename(anchor, anchor+".displaced")
+		return renameErr
+	}
+	if _, err := audit.Read(1); err == nil {
+		t.Fatal("Read succeeded after trusted-anchor replacement attempt")
+	}
+	if renameErr == nil {
+		t.Fatal("Windows allowed trusted-anchor rename while Read held its lease")
+	}
+}
+
+func setManagedHookAuditWindowsWeakDACL(t *testing.T, path string) {
+	t.Helper()
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	everyone, err := windows.StringToSid("S-1-1-0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{
+		{
+			AccessPermissions: windows.GENERIC_ALL,
+			AccessMode:        windows.GRANT_ACCESS,
+			Trustee: windows.TRUSTEE{TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeType: windows.TRUSTEE_IS_USER,
+				TrusteeValue: windows.TrusteeValueFromSID(user.User.Sid)},
+		},
+		{
+			AccessPermissions: windows.GENERIC_READ,
+			AccessMode:        windows.GRANT_ACCESS,
+			Trustee: windows.TRUSTEE{TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeType: windows.TRUSTEE_IS_WELL_KNOWN_GROUP,
+				TrusteeValue: windows.TrusteeValueFromSID(everyone)},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.UNPROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, acl, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func setManagedHookAuditWindowsProtectedExtraPrincipalDACL(t *testing.T, path string) {
+	t.Helper()
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	everyone, err := windows.StringToSid("S-1-1-0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{
+		{
+			AccessPermissions: hookAuditWindowsFileAllAccess,
+			AccessMode:        windows.GRANT_ACCESS,
+			Trustee: windows.TRUSTEE{TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeType: windows.TRUSTEE_IS_USER,
+				TrusteeValue: windows.TrusteeValueFromSID(user.User.Sid)},
+		},
+		{
+			AccessPermissions: windows.GENERIC_READ,
+			AccessMode:        windows.GRANT_ACCESS,
+			Trustee: windows.TRUSTEE{TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeType: windows.TRUSTEE_IS_WELL_KNOWN_GROUP,
+				TrusteeValue: windows.TrusteeValueFromSID(everyone)},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, acl, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func setManagedHookAuditWindowsInheritOnlyOwnerDACL(t *testing.T, path string) {
+	t.Helper()
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{{
+		AccessPermissions: hookAuditWindowsFileAllAccess,
+		AccessMode:        windows.GRANT_ACCESS,
+		Inheritance:       windows.INHERIT_ONLY,
+		Trustee: windows.TRUSTEE{TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeType: windows.TRUSTEE_IS_USER,
+			TrusteeValue: windows.TrusteeValueFromSID(user.User.Sid)},
+	}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, acl, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertManagedHookAuditWindowsPrivate(t *testing.T, path string) {
+	t.Helper()
+	descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, _, err := descriptor.Owner()
+	if err != nil || owner == nil || !owner.Equals(user.User.Sid) {
+		t.Fatalf("owner = %v, err %v; want current user", owner, err)
+	}
+	control, _, err := descriptor.Control()
+	if err != nil || control&windows.SE_DACL_PROTECTED == 0 {
+		t.Fatalf("DACL control = %#x, err %v; want protected", control, err)
+	}
+	dacl, _, err := descriptor.DACL()
+	if err != nil || dacl == nil || dacl.AceCount == 0 {
+		t.Fatalf("DACL = %v, err %v", dacl, err)
+	}
+	for i := uint32(0); i < uint32(dacl.AceCount); i++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(dacl, i, &ace); err != nil {
+			t.Fatal(err)
+		}
+		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE ||
+			ace.Mask != hookAuditWindowsFileAllAccess || !sid.Equals(user.User.Sid) {
+			t.Fatalf("ACE %d = type %#x mask %#x sid %s", i, ace.Header.AceType, ace.Mask, sid)
+		}
+	}
+}
+
+func assertManagedHookAuditWindowsCreationSecurity(t *testing.T, security *windows.SecurityAttributes) {
+	t.Helper()
+	if security == nil || security.SecurityDescriptor == nil || security.Length != uint32(unsafe.Sizeof(windows.SecurityAttributes{})) {
+		t.Fatalf("creation security attributes = %+v", security)
+	}
+	descriptor := security.SecurityDescriptor
+	owner, _, err := descriptor.Owner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, _, err := descriptor.Control()
+	if err != nil || control&windows.SE_DACL_PROTECTED == 0 {
+		t.Fatalf("creation DACL control = %#x, %v", control, err)
+	}
+	dacl, _, err := descriptor.DACL()
+	if err != nil || dacl == nil {
+		t.Fatalf("creation DACL = %v, %v", dacl, err)
+	}
+	entries := make([]hookAuditWindowsAccessEntry, 0, dacl.AceCount)
+	for i := uint32(0); i < uint32(dacl.AceCount); i++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(dacl, i, &ace); err != nil {
+			t.Fatal(err)
+		}
+		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		entries = append(entries, hookAuditWindowsAccessEntry{
+			allowed:     ace.Header.AceType == windows.ACCESS_ALLOWED_ACE_TYPE,
+			owner:       sid.Equals(current.User.Sid),
+			fullControl: ace.Mask == hookAuditWindowsFileAllAccess,
+			inheritOnly: ace.Header.AceFlags&windows.INHERIT_ONLY_ACE != 0,
+		})
+	}
+	if err := validateHookAuditWindowsAccess(owner != nil && owner.Equals(current.User.Sid), true, entries); err != nil {
+		t.Fatalf("creation security descriptor: %v", err)
+	}
+}

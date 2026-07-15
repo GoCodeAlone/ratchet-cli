@@ -77,7 +77,7 @@ var policyMatrixRows = []policyMatrixRow{
 		Layer:  "Hooks/extensions",
 		Owner:  "internal/hooks, plugin manifests, plugin marketplaces, plugin reload, and future extension work",
 		Status: "partial",
-		Rule:   "Reviewable command hooks and plugin reload are supported; managed hooks, hidden autonomy, and SDK execution remain deferred.",
+		Rule:   "Reviewable command hooks, managed hook enforcement, and plugin reload are supported; hidden autonomy and SDK execution remain deferred.",
 	},
 	{
 		Layer:  "Flow action nodes",
@@ -117,9 +117,9 @@ var policyMatrixRows = []policyMatrixRow{
 	},
 	{
 		Layer:  "Managed hooks",
-		Owner:  "future design",
-		Status: "deferred",
-		Rule:   "Managed hook distribution and local override behavior need a future policy decision.",
+		Owner:  "internal/hooks and daemon final hook composition",
+		Status: "supported",
+		Rule:   "Fixed-path administrator policy supports additive and managed-only enforcement with immutable local controls and metadata-only audit; remote distribution remains deferred.",
 	},
 	{
 		Layer:  "Extension SDK",

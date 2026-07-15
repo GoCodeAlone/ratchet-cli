@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log"
 	"os"
 	"path/filepath"
@@ -354,4 +355,150 @@ func TestHooks_RunHooksAndLogReportsTrustedHookFailure(t *testing.T) {
 	if !strings.Contains(buf.String(), "test hook") || !strings.Contains(buf.String(), "exit status 7") {
 		t.Fatalf("log output missing hook failure details:\n%s", buf.String())
 	}
+}
+
+func TestManagedHooksApplyPolicyAfterAllSources(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workDir := t.TempDir()
+	markers := managedHookMarkers(t)
+	event := hooks.SessionStart
+
+	daemonHooks := &hooks.HookConfig{Hooks: map[hooks.Event][]hooks.Hook{
+		event: {managedHookMarker(markers.user), managedHookMarker(markers.plugin)},
+	}}
+	daemonHooks.Hooks[event][0].Event = event
+	daemonHooks.Hooks[event][0].SourceKind = hooks.SourceUser
+	daemonHooks.Hooks[event][0].SourceID = "user:hooks.yaml"
+	daemonHooks.Hooks[event][0].Hash = daemonHooks.Hooks[event][0].DescriptorHash()
+	daemonHooks.Hooks[event][1].Event = event
+	daemonHooks.Hooks[event][1].SourceKind = hooks.SourcePlugin
+	daemonHooks.Hooks[event][1].SourceID = "plugin:runtime@1.0.0:hooks.yaml"
+	daemonHooks.Hooks[event][1].Hash = daemonHooks.Hooks[event][1].DescriptorHash()
+
+	writeProjectHook(t, workDir, event, managedHookMarker(markers.project))
+	store, err := hooks.LoadTrustStore(hooks.DefaultTrustStorePath())
+	if err != nil {
+		t.Fatalf("LoadTrustStore: %v", err)
+	}
+	if err := store.Trust(daemonHooks.Hooks[event][1].Hash); err != nil {
+		t.Fatalf("trust plugin hook: %v", err)
+	}
+	projectConfig, err := hooks.LoadWithOptions(hooks.LoadOptions{
+		WorkingDir: workDir,
+		TrustStore: store,
+		SkipUser:   true,
+	})
+	if err != nil {
+		t.Fatalf("load project hook: %v", err)
+	}
+	if err := store.Trust(projectConfig.Hooks[event][0].Hash); err != nil {
+		t.Fatalf("trust project hook: %v", err)
+	}
+
+	engine := newTestEngine(t)
+	engine.Hooks = daemonHooks
+	engine.ManagedHookAudit = hooks.NewHookAudit(managedHookAuditPath(t))
+	data := map[string]string{"working_dir": workDir, "session_id": "managed-all-sources"}
+
+	for _, test := range []struct {
+		name       string
+		mode       hooks.ManagedMode
+		wantSource map[hooks.SourceKind]bool
+	}{
+		{
+			name: "additive",
+			mode: hooks.ManagedModeAdditive,
+			wantSource: map[hooks.SourceKind]bool{
+				hooks.SourceUser: true, hooks.SourcePlugin: true,
+				hooks.SourceProject: true, hooks.SourceManaged: true,
+			},
+		},
+		{
+			name: "managed-only",
+			mode: hooks.ManagedModeOnly,
+			wantSource: map[hooks.SourceKind]bool{
+				hooks.SourceManaged: true,
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			removeManagedHookMarkers(t, markers)
+			engine.ManagedHookPolicy = managedHookPolicy(test.mode, event, managedHookMarker(markers.managed), "injected-managed-hooks.yaml")
+
+			effective, _ := engine.effectiveHooks(t.Context(), event, data)
+			assertManagedHookDiagnostics(t, effective.Hooks[event], test.mode)
+			if err := engine.RunHooks(t.Context(), event, data); err != nil {
+				t.Fatalf("RunHooks: %v", err)
+			}
+			for source, marker := range markers.bySource() {
+				assertManagedHookMarker(t, marker, test.wantSource[source])
+			}
+		})
+	}
+}
+
+func TestManagedHooksAuditFailureLogIsPrivate(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	marker := filepath.Join(t.TempDir(), "must-not-launch")
+	const commandSecret = "MANAGED_COMMAND_SECRET"
+	const promptSecret = "MANAGED_PROMPT_SECRET"
+	const auditSecret = "MANAGED_AUDIT_SECRET"
+
+	engine := newTestEngine(t)
+	engine.ManagedHookPolicy = managedHookPolicy(
+		hooks.ManagedModeOnly,
+		hooks.SessionStart,
+		managedHookMarkerWithPrefix(marker, commandSecret),
+		"injected-managed-hooks.yaml",
+	)
+	appends := 0
+	engine.ManagedHookAudit = daemonHookAuditWriterFunc(func(hooks.HookAuditRecord) error {
+		appends++
+		return errors.New(auditSecret)
+	})
+
+	var buf bytes.Buffer
+	oldOutput := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(oldOutput) })
+
+	runHooksAndLog(t.Context(), engine, hooks.SessionStart, map[string]string{"prompt": promptSecret}, "managed runtime")
+	if appends != 1 {
+		t.Fatalf("audit appends = %d, want 1", appends)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("managed hook launched after audit failure: %v", err)
+	}
+	for _, secret := range []string{commandSecret, promptSecret, auditSecret} {
+		if strings.Contains(buf.String(), secret) {
+			t.Fatalf("daemon log contains private managed-hook data %q: %s", secret, buf.String())
+		}
+	}
+}
+
+func assertManagedHookDiagnostics(t *testing.T, hookList []hooks.Hook, mode hooks.ManagedMode) {
+	t.Helper()
+	if len(hookList) != 4 {
+		t.Fatalf("effective hooks = %d, want all four sources: %#v", len(hookList), hookList)
+	}
+	seen := make(map[hooks.SourceKind]bool, 4)
+	for _, hook := range hookList {
+		seen[hook.SourceKind] = true
+		wantSuppressed := mode == hooks.ManagedModeOnly && hook.SourceKind != hooks.SourceManaged
+		if hook.Suppressed != wantSuppressed {
+			t.Fatalf("source %q suppressed = %v, want %v", hook.SourceKind, hook.Suppressed, wantSuppressed)
+		}
+	}
+	for _, source := range []hooks.SourceKind{hooks.SourceUser, hooks.SourcePlugin, hooks.SourceProject, hooks.SourceManaged} {
+		if !seen[source] {
+			t.Fatalf("effective diagnostics missing source %q: %#v", source, hookList)
+		}
+	}
+}
+
+type daemonHookAuditWriterFunc func(hooks.HookAuditRecord) error
+
+func (fn daemonHookAuditWriterFunc) Append(record hooks.HookAuditRecord) error {
+	return fn(record)
 }

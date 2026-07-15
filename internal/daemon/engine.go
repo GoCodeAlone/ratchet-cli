@@ -3,13 +3,13 @@ package daemon
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
-
-	"path/filepath"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/agent"
 	"github.com/GoCodeAlone/ratchet-cli/internal/config"
@@ -25,20 +25,23 @@ import (
 
 // EngineContext holds the daemon's runtime services.
 type EngineContext struct {
-	DB               *sql.DB
-	ProviderRegistry *ratchetplugin.ProviderRegistry
-	ToolRegistry     *ratchetplugin.ToolRegistry
-	MemoryStore      *ratchetplugin.MemoryStore
-	SecretsProvider  secrets.Provider
-	SecretsRedactor  *secrets.Redactor
-	SecretRedactor   executor.SecretRedactor
-	MCPDiscoverer    *mcp.Discoverer
-	ModelRouting     config.ModelRouting
-	Actors           *ActorManager
-	Hooks            *hooks.HookConfig
-	Debug            bool // enable request/response debug logging to ~/.ratchet/debug.log
-	ExtensionMu      sync.RWMutex
-	ProviderRowsMu   sync.Mutex
+	DB                *sql.DB
+	ProviderRegistry  *ratchetplugin.ProviderRegistry
+	ToolRegistry      *ratchetplugin.ToolRegistry
+	MemoryStore       *ratchetplugin.MemoryStore
+	SecretsProvider   secrets.Provider
+	SecretsRedactor   *secrets.Redactor
+	SecretRedactor    executor.SecretRedactor
+	MCPDiscoverer     *mcp.Discoverer
+	ModelRouting      config.ModelRouting
+	Actors            *ActorManager
+	Hooks             *hooks.HookConfig
+	ManagedHookPolicy *hooks.ManagedPolicy
+	ManagedHookAudit  hooks.HookAuditWriter
+	Debug             bool // enable request/response debug logging to ~/.ratchet/debug.log
+	ExtensionMu       sync.RWMutex
+	ProviderRowsMu    sync.Mutex
+	managedHooks      engineManagedHooksRuntime
 	// Plugin-contributed capabilities
 	PluginSkills   []skills.Skill
 	PluginAgents   []agent.AgentDefinition
@@ -46,8 +49,27 @@ type EngineContext struct {
 	PluginDaemons  []*plugins.DaemonTool // stopped on Close()
 }
 
-func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error) { //nolint:unparam
+type engineManagedHooksRuntime struct {
+	policyPath string
+	audit      hooks.HookAuditWriter
+	newAudit   func() (hooks.HookAuditWriter, error)
+	loadPolicy func(hooks.LoadOptions) (*hooks.ManagedPolicy, error)
+	enabled    bool
+	disabled   bool
+}
 
+func (runtime engineManagedHooksRuntime) active() bool {
+	if runtime.disabled {
+		return false
+	}
+	return runtime.enabled || runtime.policyPath != "" || runtime.audit != nil || runtime.newAudit != nil || runtime.loadPolicy != nil
+}
+
+func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error) { //nolint:unparam
+	return newEngineContext(ctx, dbPath, engineManagedHooksRuntime{enabled: true})
+}
+
+func newEngineContext(ctx context.Context, dbPath string, managedHooks engineManagedHooksRuntime) (*EngineContext, error) {
 	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
@@ -66,7 +88,10 @@ func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error
 
 	// Load config for model routing settings (non-fatal on error).
 	cfg, _ := config.Load()
-	ec := &EngineContext{DB: db}
+	ec := &EngineContext{
+		DB:           db,
+		managedHooks: managedHooks,
+	}
 	if cfg != nil {
 		ec.ModelRouting = cfg.ModelRouting
 	}
@@ -111,6 +136,14 @@ func NewEngineContext(ctx context.Context, dbPath string) (*EngineContext, error
 	}
 
 	if summary, err := ec.ReloadPlugins(ctx); err != nil {
+		if errors.Is(err, hooks.ErrManagedPolicy) {
+			ec.Close()
+			return nil, err
+		}
+		if hookErr := ec.reloadHooksWithoutPlugins(); hookErr != nil {
+			ec.Close()
+			return nil, hookErr
+		}
 		log.Printf("warning: plugin loading: %v", err)
 	} else {
 		log.Printf("plugins: %d skills, %d agents, %d commands, %d tools loaded",
@@ -131,6 +164,15 @@ type PluginReloadSummary struct {
 }
 
 func (ec *EngineContext) ReloadPlugins(ctx context.Context) (*PluginReloadSummary, error) {
+	managedPolicy, err := ec.loadManagedHookPolicy()
+	if err != nil {
+		return nil, err
+	}
+	managedAudit, err := ec.resolveManagedHookAudit(managedPolicy)
+	if err != nil {
+		return nil, err
+	}
+
 	pluginLoader := plugins.NewLoader(filepath.Join(DataDir(), "plugins"))
 	pluginResult, err := pluginLoader.LoadAll(ctx)
 	if err != nil {
@@ -153,6 +195,7 @@ func (ec *EngineContext) ReloadPlugins(ctx context.Context) (*PluginReloadSummar
 			hookConfig.Hooks[event] = append(hookConfig.Hooks[event], hookList...)
 		}
 	}
+	hookConfig.ApplyManagedPolicy(managedPolicy)
 
 	hookCount := 0
 	for _, hookList := range hookConfig.Hooks {
@@ -168,6 +211,8 @@ func (ec *EngineContext) ReloadPlugins(ctx context.Context) (*PluginReloadSummar
 	ec.PluginCommands = pluginResult.Commands
 	ec.PluginDaemons = pluginResult.Daemons
 	ec.Hooks = hookConfig
+	ec.ManagedHookPolicy = managedPolicy
+	ec.ManagedHookAudit = managedAudit
 	ec.ExtensionMu.Unlock()
 
 	for _, d := range oldDaemons {
@@ -184,6 +229,61 @@ func (ec *EngineContext) ReloadPlugins(ctx context.Context) (*PluginReloadSummar
 		Hooks:    hookCount,
 		Daemons:  len(pluginResult.Daemons),
 	}, nil
+}
+
+func (ec *EngineContext) loadManagedHookPolicy() (*hooks.ManagedPolicy, error) {
+	if ec == nil || !ec.managedHooks.active() {
+		return nil, nil
+	}
+	loadPolicy := ec.managedHooks.loadPolicy
+	if loadPolicy == nil {
+		loadPolicy = hooks.LoadManagedPolicy
+	}
+	policy, err := loadPolicy(hooks.LoadOptions{ManagedPath: ec.managedHooks.policyPath})
+	if err != nil {
+		return nil, err
+	}
+	return policy, nil
+}
+
+func (ec *EngineContext) resolveManagedHookAudit(policy *hooks.ManagedPolicy) (hooks.HookAuditWriter, error) {
+	if policy == nil || ec == nil || !ec.managedHooks.active() {
+		return nil, nil
+	}
+	if ec.managedHooks.audit != nil {
+		return ec.managedHooks.audit, nil
+	}
+	if ec.managedHooks.newAudit != nil {
+		return ec.managedHooks.newAudit()
+	}
+	auditPath, err := hooks.DefaultHookAuditPath()
+	if err != nil {
+		return nil, fmt.Errorf("resolve managed hook audit path: %w", err)
+	}
+	return hooks.NewHookAudit(auditPath), nil
+}
+
+func (ec *EngineContext) reloadHooksWithoutPlugins() error {
+	managedPolicy, err := ec.loadManagedHookPolicy()
+	if err != nil {
+		return err
+	}
+	managedAudit, err := ec.resolveManagedHookAudit(managedPolicy)
+	if err != nil {
+		return err
+	}
+	hookConfig, _ := hooks.LoadWithOptions(hooks.LoadOptions{SkipProject: true})
+	if hookConfig == nil {
+		hookConfig = &hooks.HookConfig{Hooks: make(map[hooks.Event][]hooks.Hook)}
+	}
+	hookConfig.ApplyManagedPolicy(managedPolicy)
+
+	ec.ExtensionMu.Lock()
+	ec.Hooks = hookConfig
+	ec.ManagedHookPolicy = managedPolicy
+	ec.ManagedHookAudit = managedAudit
+	ec.ExtensionMu.Unlock()
+	return nil
 }
 
 func discoverMCP(discoverer *mcp.Discoverer) {

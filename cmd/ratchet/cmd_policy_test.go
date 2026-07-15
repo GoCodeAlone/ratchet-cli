@@ -86,14 +86,42 @@ func TestRunPolicyMatrixStatusFilterText(t *testing.T) {
 		t.Fatalf("runPolicy matrix --status deferred: %v", err)
 	}
 	out := stdout.String()
-	for _, want := range []string{"Arbitrary ACP scheduling", "Managed hooks", "deferred"} {
+	for _, want := range []string{"Arbitrary ACP scheduling", "Extension SDK", "deferred"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("filtered policy matrix missing %q:\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "Static config trust rules") || strings.Contains(out, "supported") {
+	if strings.Contains(out, "Static config trust rules") || strings.Contains(out, "Managed hooks") || strings.Contains(out, "supported") {
 		t.Fatalf("filtered policy matrix included non-deferred rows:\n%s", out)
 	}
+}
+
+func TestRunPolicyMatrixReportsManagedHooksSupported(t *testing.T) {
+	var stdout bytes.Buffer
+	if err := runPolicy([]string{"matrix", "--json"}, &stdout); err != nil {
+		t.Fatalf("runPolicy matrix --json: %v", err)
+	}
+	var payload struct {
+		Rows []policyMatrixRow `json:"rows"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("decode policy matrix json %q: %v", stdout.String(), err)
+	}
+	for _, row := range payload.Rows {
+		if row.Layer != "Managed hooks" {
+			continue
+		}
+		for _, required := range []string{"Fixed-path", "additive", "managed-only", "immutable", "audit", "remote distribution remains deferred"} {
+			if !strings.Contains(row.Rule, required) {
+				t.Fatalf("managed hooks row = %#v, missing %q", row, required)
+			}
+		}
+		if row.Status != "supported" {
+			t.Fatalf("managed hooks row = %#v, want supported enforcement and audit", row)
+		}
+		return
+	}
+	t.Fatal("policy matrix omits Managed hooks row")
 }
 
 func TestRunPolicyMatrixStatusFilterJSON(t *testing.T) {

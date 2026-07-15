@@ -1262,17 +1262,38 @@ payload, output, error, or secret sentinels.
 ### Task 11: Enforce Policy at Final Hook Composition, Prove Runtime, Document, Merge, and Release
 
 **Files:**
+- Modify: `internal/hooks/hooks.go`
+- Modify: `internal/hooks/managed.go`
+- Modify: `internal/hooks/managed_test.go`
+- Modify: `internal/hooks/managed_path_unix.go`
+- Modify: `internal/hooks/managed_path_unix_test.go`
+- Modify: `internal/hooks/audit_acl.go`
+- Modify: `internal/hooks/audit_acl_darwin.go`
+- Modify: `internal/hooks/audit_acl_linux.go`
+- Modify: `internal/hooks/audit_acl_linux_test.go`
+- Modify: `internal/hooks/audit_acl_other.go`
+- Modify: `internal/hooks/audit_path_other.go`
+- Modify: `internal/hooks/audit_test.go`
+- Modify: `internal/hooks/audit_windows_test.go`
+- Modify: `internal/hooks/audit_umask_unix_test.go`
+- Modify: `internal/acpclient/background_test.go`
 - Modify: `internal/daemon/engine.go`
 - Modify: `internal/daemon/engine_hooks.go`
 - Modify: `internal/daemon/hooks_wiring_test.go`
 - Modify: `internal/daemon/plugin_reload_test.go`
 - Modify: `internal/daemon/service_tui_smoke.go`
+- Modify: `internal/daemon/service_tui_smoke_test.go`
 - Create: `internal/daemon/managed_hooks_runtime_test.go`
 - Modify: `README.md`
 - Modify: `docs/harness-emulation.md`
 - Modify: `docs/competitor-parity.md`
 - Modify: `docs/policy-matrix.md`
+- Modify: `cmd/ratchet/cmd_policy.go`
+- Modify: `cmd/ratchet/cmd_policy_test.go`
+- Modify: `cmd/ratchet/cmd_hooks.go`
+- Modify: `cmd/ratchet/cmd_hooks_test.go`
 - Modify: `cmd/ratchet/harness_docs_test.go`
+- Modify: `.github/workflows/ci.yml`
 
 **Step 1: Add failing all-source enforcement tests**
 
@@ -1325,6 +1346,7 @@ management/SDK remains deferred.
 
 ```bash
 go test ./internal/hooks ./internal/daemon ./cmd/ratchet -run 'Hook|Managed|Audit|PluginReload' -count=1
+go test -tags tui_smoke ./internal/daemon -run TUISmokeServiceNeverLoadsHostManagedPolicy -count=1
 go test ./...
 go vet ./...
 golangci-lint run --new-from-rev=origin/master
@@ -1342,7 +1364,7 @@ build/test compilation succeeds.
 **Step 7: Commit and complete PR 4**
 
 ```bash
-git add internal/daemon README.md docs/harness-emulation.md docs/competitor-parity.md docs/policy-matrix.md cmd/ratchet/harness_docs_test.go
+git add internal/hooks internal/daemon README.md docs/harness-emulation.md docs/competitor-parity.md docs/policy-matrix.md cmd/ratchet/cmd_policy.go cmd/ratchet/cmd_policy_test.go cmd/ratchet/harness_docs_test.go
 git commit -m "docs: explain managed hook policy"
 ```
 

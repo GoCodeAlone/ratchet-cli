@@ -6,14 +6,21 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"text/template"
+	"time"
 
 	"gopkg.in/yaml.v3"
+)
+
+var (
+	managedHookNow   = time.Now
+	managedHookSince = time.Since
 )
 
 // Event is a lifecycle event that can trigger hooks.
@@ -98,6 +105,7 @@ const (
 	SourceUser    SourceKind = "user"
 	SourceProject SourceKind = "project"
 	SourcePlugin  SourceKind = "plugin"
+	SourceManaged SourceKind = "managed"
 )
 
 // Hook defines a single hook command with an optional glob pattern.
@@ -115,6 +123,7 @@ type Hook struct {
 	Hash                string     `yaml:"-"`
 	Trusted             bool       `yaml:"-"`
 	Disabled            bool       `yaml:"-"`
+	Suppressed          bool       `yaml:"-"`
 	UnsupportedPlatform bool       `yaml:"-"`
 }
 
@@ -129,6 +138,16 @@ type LoadOptions struct {
 	TrustStore  *TrustStore
 	SkipUser    bool
 	SkipProject bool
+	ManagedPath string
+
+	// ManagedReadFile is a test seam. Production callers must leave it nil so
+	// administrator policy always passes through the platform secure reader.
+	ManagedReadFile func(string) ([]byte, error)
+}
+
+// DefaultManagedPolicyPath returns the fixed platform administrator-policy path.
+func DefaultManagedPolicyPath() (string, error) {
+	return defaultManagedPolicyPath()
 }
 
 // Load reads hook configs from ~/.ratchet/hooks.yaml and .ratchet/hooks.yaml.
@@ -232,8 +251,9 @@ func (hc *HookConfig) AnnotateSource(meta SourceMetadata) {
 			h.PluginName = meta.PluginName
 			h.PluginVersion = meta.PluginVersion
 			h.Hash = h.DescriptorHash()
-			h.Trusted = meta.TrustByDefault
-			if meta.TrustStore != nil {
+			h.Trusted = meta.TrustByDefault || meta.Kind == SourceManaged
+			h.Disabled = false
+			if meta.TrustStore != nil && meta.Kind != SourceManaged {
 				h.Disabled = meta.TrustStore.IsDisabled(h.Hash)
 				h.Trusted = h.Trusted || meta.TrustStore.IsTrusted(h.Hash)
 				if h.Disabled {
@@ -261,9 +281,9 @@ func (hc *HookConfig) ApplyTrust(store *TrustStore) {
 				h.Event = event
 			}
 			h.Hash = h.DescriptorHash()
-			h.Trusted = h.SourceKind == "" || h.SourceKind == SourceUser
+			h.Trusted = h.SourceKind == "" || h.SourceKind == SourceUser || h.SourceKind == SourceManaged
 			h.Disabled = false
-			if store != nil {
+			if store != nil && h.SourceKind != SourceManaged {
 				h.Disabled = store.IsDisabled(h.Hash)
 				h.Trusted = h.Trusted || store.IsTrusted(h.Hash)
 				if h.Disabled {
@@ -319,7 +339,7 @@ func (h Hook) commandForGOOS(goos string) (string, bool) {
 }
 
 func (h Hook) runnable() bool {
-	if h.Disabled || h.UnsupportedPlatform {
+	if h.Disabled || h.Suppressed || h.UnsupportedPlatform {
 		return false
 	}
 	return h.SourceKind == "" || h.Trusted
@@ -330,6 +350,16 @@ func (h Hook) runnable() bool {
 // "plan_id", "fleet_id", "agent_name", "agent_role", "cron_id",
 // "tokens_used", "tokens_limit"
 func (hc *HookConfig) Run(event Event, data map[string]string) error {
+	return hc.RunWithOptions(event, data, RunOptions{})
+}
+
+// RunOptions supplies execution boundaries for managed hooks.
+type RunOptions struct {
+	Audit HookAuditWriter
+}
+
+// RunWithOptions executes eligible hooks and durably audits managed hooks.
+func (hc *HookConfig) RunWithOptions(event Event, data map[string]string, opts RunOptions) error {
 	hooks := hc.Hooks[event]
 	for _, h := range hooks {
 		if !h.runnable() {
@@ -352,18 +382,99 @@ func (hc *HookConfig) Run(event Event, data map[string]string) error {
 			continue
 		}
 
-		// Expand command template with shell-escaped values to prevent injection.
-		cmd, err := expandTemplate(command, escapeDataForGOOS(data, runtime.GOOS))
-		if err != nil {
-			return fmt.Errorf("expand hook command: %w", err)
+		if h.SourceKind != SourceManaged {
+			// Expand command template with shell-escaped values to prevent injection.
+			cmd, err := expandTemplate(command, escapeDataForGOOS(data, runtime.GOOS))
+			if err != nil {
+				return fmt.Errorf("expand hook command: %w", err)
+			}
+			out, err := execHookCommand(cmd).CombinedOutput()
+			if err != nil {
+				return fmt.Errorf("hook %s failed: %v\noutput: %s", event, err, out)
+			}
+			continue
 		}
 
-		out, err := execHookCommand(cmd).CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("hook %s failed: %v\noutput: %s", event, err, out)
+		if h.Event == "" {
+			h.Event = event
+		}
+		hash := h.DescriptorHash()
+		started := managedHookNow()
+		startRecord := HookAuditRecord{
+			Timestamp: started.UTC(),
+			Event:     event,
+			Hash:      hash,
+			Source:    SourceManaged,
+			Result:    HookAuditStarted,
+		}
+		if opts.Audit == nil || opts.Audit.Append(startRecord) != nil {
+			return newManagedHookExecutionError(event, hash, HookAuditDegraded, false, true)
+		}
+
+		cmd, commandErr := expandTemplate(command, escapeDataForGOOS(data, runtime.GOOS))
+		if commandErr == nil {
+			commandErr = runManagedHookCommand(execHookCommand(cmd))
+		}
+		result := HookAuditSuccess
+		if commandErr != nil {
+			result = HookAuditCommandFailed
+		}
+		terminal := HookAuditRecord{
+			Timestamp:  managedHookNow().UTC(),
+			Event:      event,
+			Hash:       hash,
+			Source:     SourceManaged,
+			Result:     result,
+			DurationMS: managedHookSince(started).Milliseconds(),
+		}
+		auditErr := opts.Audit.Append(terminal)
+		if commandErr != nil || auditErr != nil {
+			return newManagedHookExecutionError(event, hash, result, commandErr != nil, auditErr != nil)
 		}
 	}
 	return nil
+}
+
+func runManagedHookCommand(cmd *exec.Cmd) error {
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	return cmd.Run()
+}
+
+type managedHookExecutionError struct {
+	event         Event
+	hash          string
+	result        HookAuditResult
+	commandFailed bool
+	auditDegraded bool
+}
+
+func newManagedHookExecutionError(event Event, hash string, result HookAuditResult, commandFailed, auditDegraded bool) error {
+	return &managedHookExecutionError{
+		event:         event,
+		hash:          hash,
+		result:        result,
+		commandFailed: commandFailed,
+		auditDegraded: auditDegraded,
+	}
+}
+
+func (e *managedHookExecutionError) Error() string {
+	if e.auditDegraded && e.result != HookAuditDegraded {
+		return fmt.Sprintf("managed hook event=%s hash=%s result=%s audit=%s", e.event, e.hash, e.result, HookAuditDegraded)
+	}
+	return fmt.Sprintf("managed hook event=%s hash=%s result=%s", e.event, e.hash, e.result)
+}
+
+func (e *managedHookExecutionError) Unwrap() []error {
+	errs := make([]error, 0, 2)
+	if e.commandFailed {
+		errs = append(errs, ErrManagedHookCommandFailed)
+	}
+	if e.auditDegraded {
+		errs = append(errs, ErrHookAuditDegraded)
+	}
+	return errs
 }
 
 func execHookCommand(command string) *exec.Cmd {

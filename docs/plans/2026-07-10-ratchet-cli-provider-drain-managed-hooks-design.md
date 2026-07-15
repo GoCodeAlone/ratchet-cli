@@ -966,3 +966,144 @@ concrete rights, and principal instead of requiring one physical encoding.
 Scope: no manifest change; this closes Task 6's native Windows gate. Evidence: the native
 `TestBackgroundWindows` selector covers owner assignment, inherited privacy,
 equivalent ACEs, reparse points, hard links, parent replacement, and weak DACLs.
+
+### Backport 2026-07-14: Transactional managed-hook audit namespace
+
+Cause: post-creation Windows ACL replacement exposed a weak-permission window;
+pre-deleting `.1` could destroy retained audit history when replacement failed;
+syncing only `audit/` did not persist the `.ratchet/audit` namespace entries;
+and restrictive Unix umasks could make recursively created parents unusable.
+Change: Windows creates owner-private temporary directories and publishes them
+with `MOVEFILE_WRITE_THROUGH`, creates files with protected current-owner
+security descriptors and `FILE_FLAG_WRITE_THROUGH`, and atomically replaces
+`.1` without pre-delete. Unix creates and normalizes one parent at a time. The
+fixed persistence chain includes `audit/`, `.ratchet/`, and its parent (including
+a root home) before every successful append, with degraded retry semantics. A
+lone `started` record denotes an attempted launch with no terminal confirmation;
+it never claims command execution or success. Append success is linearized only
+after a post-persistence path-to-handle identity check, so file or parent
+replacement cannot admit a managed launch whose canonical audit record is
+missing. Every append also holds an owner-private OS sidecar lock across the
+complete repair/rotate/write/sync/revalidate transaction; Unix creation reopens
+and validates a concurrent winner. Paths are absolute and may create at most
+two namespace directories beneath an existing anchor (the production names are
+`.ratchet/` and `audit/`), matching the fixed three-directory sync chain;
+existing active/archive reads take the same sidecar
+lock without creating an absent namespace. Audit identity is recomputed from
+the event descriptor immediately before launch rather than trusting cached metadata.
+Scope: no manifest change; Task 10 rewrite after quality loop 5. Evidence:
+forced replacement failure preserves the archive; pre/post-syscall subprocess
+contention, barriered concurrent first-create, current-hash, root-home, restrictive-umask,
+namespace-chain, parent-replacement, hard-link, and diagnostic regressions plus
+focused/race gates pass; native Windows syscall interception checks private
+write-through creation and Windows binaries cross-compile.
+
+### Backport 2026-07-14: Trusted managed-hook audit anchor
+
+Cause: the bounded-creation model validated only owner-private descendants;
+another principal with rename/delete-child rights on the existing anchor or an
+ancestor could still orphan the canonical started record after validation.
+Change: `decisions/0010-pin-hook-audit-anchor.md` replaces nearest-existing
+ancestor discovery with a fixed two-level private namespace beneath a validated
+existing anchor. Each transaction pins and revalidates the anchor; Unix rejects
+untrusted ancestry mutation rights and Windows rejects untrusted owner/DACL
+mutation rights while holding directory handles without delete sharing. Read
+uses the same trust lease without creating an absent namespace. Scope: no
+manifest change; Task 10 security rewrite after mandatory quality-loop rewrite.
+Evidence: weak-anchor and anchor-identity regressions fail against the prior
+implementation. Reverting Append anchor admission makes
+`TestManagedHookAuditRejectsUntrustedWritableAnchor` fail by accepting the
+anchor; unlocking before the read-release boundary makes
+`TestManagedHookAuditReadHoldsProcessLockThroughGenerationRead` fail because a
+writer acquires early. Both pass with the rewrite restored.
+
+Spec review found three remaining gaps: Darwin ACLs can grant mutation without
+mode-bit writes, helper-only identity coverage did not prove full transactions,
+and struct decoding accepted duplicate or omitted zero-valued JSON fields.
+Darwin now parses `ATTR_CMN_EXTENDED_SECURITY`, rejects effective
+mutation-capable allow ACEs on the anchor or ancestry, and accepts deny-only
+ACLs. Full Append/Read replacement attempts fail on Unix and Windows. Audit
+reads require all six exact keys once. Revert proofs make the ACL, Read-release,
+and exact-key regressions fail; focused and full hooks tests pass restored.
+
+Quality review clarified the Unix ACL support matrix. Linux POSIX ACL access is
+bounded by the group-class mask exposed in `st_mode`; recognized NFSv4, rich,
+or Samba ACL xattrs fail closed. Darwin retains native ACE parsing. Remaining
+Unix targets support only the portable POSIX mode/ACL contract. Empty Read
+linearizes before lock creation when no generation exists; any observed
+generation is parsed under the process lock. Native Windows runs a named Read
+anchor-pinning regression in addition to the shared transaction test. ADR 0010
+records these proof boundaries.
+
+Darwin inheritance review found that an `only_inherit` mutation ACE can become
+effective on a newly created child. Admission now rejects mutation-capable
+allow ACEs regardless of inheritance flags and revalidates native ACLs on each
+private namespace directory and file. Named constants mirror Darwin
+`KAUTH_VNODE_*` values (`WRITE_DATA=1<<2`, `DELETE=1<<4`) and write/delete,
+inheritance, existing-object, and deny-only regressions prevent bit drift.
+Linux tests exercise real unrelated xattr enumeration plus injected NUL-packed
+unsupported ACL names and fail-closed enumeration errors.
+
+### Backport 2026-07-15: Executable policy-matrix transition
+
+Cause: Task 11 originally named only Markdown status surfaces, but
+`ratchet policy matrix` carries a separate hard-coded row and would continue to
+report managed hooks as deferred after runtime enforcement shipped. Change:
+Task 11 also updates and regression-tests the executable matrix so the supported
+fixed-path, policy-last, immutable-control, and metadata-only audit contract is
+consistent with public docs; only remote distribution and the broader SDK stay
+deferred. Scope: no manifest change; this is the existing Task 11 transition,
+not a new feature or PR. Evidence: the managed row and deferred-filter tests
+fail against the stale matrix and pass after the transition.
+
+### Backport 2026-07-15: Managed-policy platform ACL admission
+
+Cause: root ownership and Unix mode bits do not reveal mutation rights granted
+by a Darwin ACL; documenting the policy as administrator-controlled while
+checking only mode bits overclaimed the security boundary. Change: the managed
+policy snapshot reader now reuses the audit namespace's platform mutation-ACL
+parser against the already-open policy handle before every read and post-read
+inspection (`fgetattrlist` on Darwin, `flistxattr` on Linux). Darwin rejects
+mutation-capable allow ACEs; Linux keeps POSIX access ACLs bounded by the mode
+mask and rejects recognized non-POSIX ACL models. The reader seam is exported
+only inside the Go `internal/hooks` package boundary so Task 11 can drive the
+real parser through engine startup/reload without weakening production reads.
+Scope: no manifest change; this closes Task 9's secure-reader requirement in PR
+4 and strengthens Task 11's malformed-policy boundary proof. Evidence: native
+Darwin ACL and file-descriptor snapshot-invocation regressions fail when the
+shared validator is removed or changed back to pathname inspection and pass
+when restored.
+
+### Backport 2026-07-15: Unsupported-platform local hook commands
+
+Cause: the managed-policy loader exposed only the broad `ErrManagedPolicy`, so
+standalone `hooks list` and trust-store mutations could not distinguish a
+platform without a managed-policy backend from an insecure installed policy.
+Change: add a typed unsupported-platform sentinel. Local discovery and
+trust-store mutation treat only that sentinel as no managed policy; daemon
+startup/reload, explicit `hooks policy` inspection, and every present-policy
+security or parse failure remain fail closed. Scope: no manifest change; this
+corrects Task 11 portability during PR review. Evidence: command regressions
+cover list plus trust/untrust/disable and preserve arbitrary loader failures;
+the unsupported hooks backend production package cross-compiles for AIX.
+
+### Backport 2026-07-15: Native Windows and race-gate correction
+
+Cause: Windows ancestry admission treated create-only directory rights as path
+replacement, rejecting standard runner ancestry; the failed parent append then
+left a subprocess test waiting indefinitely. The restrictive-umask child did
+not restore process state before coverage teardown, and the all-package race
+pass nested a real binary build that exceeded its five-minute limit under
+contention. One finite-watch assertion also missed Task 6's terminal-guard
+observation rule. Change: Windows rejects only delete/delete-child,
+DACL/owner mutation, and generic-all rights while retaining reparse, identity,
+owner, and handle-lease checks; subprocess synchronization is bounded. Restore
+umask before test teardown, wait for the terminal guard, and execute the real
+ACP binary smoke separately before excluding only that test from the race
+pass. Scope: no manifest change; these corrections close Task 11's required
+native Windows and full-race gates. Evidence: PR CI runs `29384160443` and
+`29384973263` reproduce the failures; focused coverage/race tests, Windows test
+cross-compilation, and the next named CI gates must pass. Native test fixtures
+must also use private namespace/file creation and define `command_windows` for
+source-aware hooks; Windows replacement tests accept an access-denied lease as
+the stronger equivalent of post-replacement identity rejection.

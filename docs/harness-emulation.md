@@ -144,9 +144,10 @@ boundaries are tracked in
 [docs/policy-matrix.md](policy-matrix.md): runtime trust rules, persistent
 trust grants, permission prompts, hook trust, ACP launch profiles, explicit ACP
 client watch/drain, and acknowledged per-session background drain are supported.
-Managed hooks remain deferred, TypeScript extension SDK remains deferred, ACPX
-TypeScript flow runtime compatibility remains deferred, arbitrary ACP scheduling
-remains deferred, and local-first channel gateways remain deferred.
+Managed hooks are supported; remote policy distribution remains deferred,
+TypeScript extension SDK remains deferred, ACPX TypeScript flow runtime
+compatibility remains deferred, arbitrary ACP scheduling remains deferred, and
+local-first channel gateways remain deferred.
 
 ## ACP Matrix
 
@@ -277,9 +278,49 @@ entries, `ratchet plugin enable|disable` controls loader participation, and
 daemon restart. `ratchet routines add|list|show|run|pause|resume|remove` and
 `ratchet workflows install|list|show|run|stop|resume` persist visible local
 definitions and run records without hidden workers or JavaScript/shell
-execution. Managed hooks, plugin autoupdate, workflow source execution/triggers,
-broader extension hooks, and the TypeScript extension SDK remain deferred to the
+execution. Plugin autoupdate, workflow source execution/triggers, broader
+extension hooks, and the TypeScript extension SDK remain deferred to the
 runtime extension lifecycle plan.
+
+### Managed hook policy
+
+Managed hooks are supported from one fixed administrator policy path; there is
+no environment or user-configured override:
+
+| Platform | Policy path | Required control |
+|---|---|---|
+| Linux and other supported Unix | `/etc/ratchet/managed-hooks.yaml` | Regular, root-owned, and not group/other-writable. |
+| macOS | `/Library/Application Support/ratchet/managed-hooks.yaml` | Regular, root-owned, not group/other-writable, and without a mutation-capable allow ACL. |
+| Windows | `%ProgramData%\ratchet\managed-hooks.yaml` | Regular non-reparse file owned by Administrators or SYSTEM with a protected DACL that grants no write-equivalent access to non-administrative principals. |
+
+The policy accepts `additive` or `managed-only`. Ratchet merges user, plugin,
+and late project hooks, applies local trust, then applies managed policy last.
+`additive` preserves every otherwise eligible source. `managed-only` keeps local
+hooks visible to `ratchet hooks list --json` as suppressed while running only
+managed hooks. Local `trust`, `untrust`, and `disable` commands cannot mutate a
+managed descriptor. Use `ratchet hooks policy --json` to inspect mode, source,
+and count; absence reports mode `none` without starting the daemon.
+
+Managed execution requires a durable per-user JSONL audit at
+`~/.ratchet/audit/managed-hooks.jsonl`. Unix private directories use `0700` and
+the file uses `0600`; Windows uses an owner-only DACL. Use
+`ratchet hooks audit --json` for bounded newest-first inspection. The active
+file rotates at 4 MiB to `managed-hooks.jsonl.1`; inspection reads the active
+and archive generations. Records contain timestamp, event, descriptor hash,
+source, result class, and duration only. They never contain command, arguments,
+environment, payload, stdout, stderr, or error text. A started record without
+a terminal record means launch was attempted but completion was not durably
+confirmed; it is not evidence of command success.
+
+A missing policy is normal. A present unreadable, insecure, changing,
+oversized, or malformed policy fails closed during daemon startup and plugin
+reload, before an unmanaged hook set can be published. Failure to sync the
+`started` audit record also prevents process launch. Terminal audit degradation
+is reported by classification only. For rollback, remove or migrate the
+administrator policy before stopping the daemon, then revert or upgrade the
+binary; preserve the metadata audit and its archive for operator review.
+Remote policy distribution remains deferred, as do remote management APIs and
+the TypeScript extension SDK.
 
 Scriptable equivalents are available through `ratchet trust list`,
 `ratchet trust grants`, `ratchet trust allow|deny`,

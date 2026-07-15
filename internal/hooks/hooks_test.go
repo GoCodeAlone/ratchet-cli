@@ -1,8 +1,10 @@
 package hooks
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -260,6 +262,62 @@ func TestHookCommandForGOOS(t *testing.T) {
 	windowsOnlyMissing := Hook{Command: "echo posix", SourceKind: SourceProject}
 	if got, ok := windowsOnlyMissing.commandForGOOS("windows"); ok || got != "" {
 		t.Fatalf("windows missing command = %q/%v, want empty/false", got, ok)
+	}
+}
+
+func TestManagedHookTrustIsImmutable(t *testing.T) {
+	hook := Hook{
+		Command:        "echo managed",
+		CommandWindows: "Write-Output managed",
+		Event:          PreCommand,
+		SourceKind:     SourceManaged,
+		SourceID:       "managed:managed-hooks.yaml",
+	}
+	hook.Hash = hook.DescriptorHash()
+	store := &TrustStore{
+		Trusted:  map[string]bool{},
+		Disabled: map[string]bool{hook.Hash: true},
+	}
+	cfg := &HookConfig{Hooks: map[Event][]Hook{PreCommand: {hook}}}
+
+	cfg.ApplyTrust(store)
+
+	got := cfg.Hooks[PreCommand][0]
+	if !got.Trusted {
+		t.Fatal("managed hook was untrusted by local state")
+	}
+	if got.Disabled {
+		t.Fatal("managed hook was disabled by local state")
+	}
+	if !got.runnable() {
+		t.Fatal("managed hook is not runnable")
+	}
+}
+
+func TestManagedHookRunCompatibilityWrapperRequiresAuditBeforeLaunch(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "launched")
+	hook := managedAuditTestHook(managedAuditMarkerCommand(marker))
+	cfg := &HookConfig{Hooks: map[Event][]Hook{PreCommand: {hook}}}
+
+	err := cfg.Run(PreCommand, map[string]string{})
+	if !errors.Is(err, ErrHookAuditDegraded) {
+		t.Fatalf("Run error = %v, want ErrHookAuditDegraded", err)
+	}
+	if _, statErr := os.Stat(marker); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("managed command launched without audit: %v", statErr)
+	}
+}
+
+func TestRunCompatibilityWrapperPreservesUnmanagedErrorOutput(t *testing.T) {
+	cfg := &HookConfig{Hooks: map[Event][]Hook{
+		PreCommand: {{
+			Command:        "printf 'compat-output' >&2; exit 9",
+			CommandWindows: "Write-Error 'compat-output'; exit 9",
+		}},
+	}}
+	err := cfg.Run(PreCommand, map[string]string{})
+	if err == nil || !strings.Contains(err.Error(), "compat-output") {
+		t.Fatalf("Run compatibility error = %v", err)
 	}
 }
 
