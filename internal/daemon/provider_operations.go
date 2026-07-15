@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/GoCodeAlone/workflow/secrets"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -393,9 +392,7 @@ func (m *providerOperationManager) finalizeOperation(parent context.Context, ope
 	if secretName != "" {
 		value, err := m.engine.SecretsProvider.Get(ctx, secretName)
 		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
-				errors.Is(err, secrets.ErrInvalidKey) || errors.Is(err, secrets.ErrUnsupported) ||
-				errors.Is(err, secrets.ErrProviderInit) {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return err
 			}
 			return &providerOperationSecretFinalizationError{cause: err}

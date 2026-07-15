@@ -364,56 +364,6 @@ func TestProviderOperationStartupFinalizationContextFailuresStopStartup(t *testi
 	}
 }
 
-func TestProviderOperationStartupFinalizationPermanentSecretFailuresStopStartup(t *testing.T) {
-	const (
-		operationID = "0fbaef00-f9bb-48ff-bc98-0f8dd42cbff5"
-		alias       = "startup-applied-permanent-secret-failure"
-		secretName  = "invalid provider secret key"
-	)
-
-	tests := []struct {
-		name string
-		err  error
-	}{
-		{name: "invalid key", err: secrets.ErrInvalidKey},
-		{name: "unsupported", err: fmt.Errorf("secret read: %w", secrets.ErrUnsupported)},
-		{name: "provider init", err: secrets.ErrProviderInit},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			provider := newOperationSecrets()
-			db := openProviderOperationTestDB(t)
-			if err := initDB(db); err != nil {
-				t.Fatal(err)
-			}
-			insertProviderRow(t, db, alias, secretName, "startup-permanent-failure-model")
-			if _, err := db.Exec(`INSERT INTO provider_operations
-				(operation_id, alias, state, failure, secret_name, result_type, result_model,
-				 result_is_default, created_at, updated_at, expires_at)
-				VALUES (?, ?, 'applied', '', ?, 'openai', 'startup-permanent-failure-model', 1,
-				 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, datetime('now', '+1 day'))`,
-				operationID, alias, secretName); err != nil {
-				t.Fatal(err)
-			}
-			provider.getHook = func(context.Context, string) error {
-				return tt.err
-			}
-			engine := &EngineContext{
-				DB:              db,
-				SecretsProvider: provider,
-				SecretsRedactor: secrets.NewRedactor(),
-			}
-			manager := newProviderOperationManager(engine)
-			err := manager.Start(t.Context())
-			manager.Stop()
-			if !errors.Is(err, tt.err) {
-				t.Fatalf("provider operation startup error = %v, want %v", err, tt.err)
-			}
-			assertOperationFailure(t, db, operationID, providerOperationApplied, "")
-		})
-	}
-}
-
 func TestCommitProviderSaveRollbackPreservesActiveSecret(t *testing.T) {
 	provider := newOperationSecrets()
 	provider.values["provider_old"] = "old-secret"
