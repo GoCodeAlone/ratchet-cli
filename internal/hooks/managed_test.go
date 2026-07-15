@@ -212,6 +212,7 @@ mode: additive
 hooks:
   pre-command:
     - command: "echo managed"
+      command_windows: "Write-Output managed"
 `)
 
 	if policy.Mode != ManagedModeAdditive {
@@ -770,6 +771,7 @@ mode: additive
 hooks:
   pre-command:
     - command: "echo managed"
+      command_windows: "Write-Output managed"
 `)
 
 	cfg.ApplyManagedPolicy(policy)
@@ -795,6 +797,7 @@ mode: managed-only
 hooks:
   pre-command:
     - command: "echo managed"
+      command_windows: "Write-Output managed"
 `)
 
 	cfg.ApplyManagedPolicy(policy)
@@ -872,11 +875,12 @@ func hookConfigWithSources(kinds ...SourceKind) *HookConfig {
 	hooks := make([]Hook, 0, len(kinds))
 	for _, kind := range kinds {
 		hook := Hook{
-			Command:    "echo " + string(kind),
-			Event:      PreCommand,
-			SourceKind: kind,
-			SourceID:   string(kind) + ":fixture",
-			Trusted:    true,
+			Command:        "echo " + string(kind),
+			CommandWindows: "Write-Output " + string(kind),
+			Event:          PreCommand,
+			SourceKind:     kind,
+			SourceID:       string(kind) + ":fixture",
+			Trusted:        true,
 		}
 		hook.Hash = hook.DescriptorHash()
 		hooks = append(hooks, hook)

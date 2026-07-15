@@ -1103,4 +1103,7 @@ ACP binary smoke separately before excluding only that test from the race
 pass. Scope: no manifest change; these corrections close Task 11's required
 native Windows and full-race gates. Evidence: PR CI runs `29384160443` and
 `29384973263` reproduce the failures; focused coverage/race tests, Windows test
-cross-compilation, and the next named CI gates must pass.
+cross-compilation, and the next named CI gates must pass. Native test fixtures
+must also use private namespace/file creation and define `command_windows` for
+source-aware hooks; Windows replacement tests accept an access-denied lease as
+the stronger equivalent of post-replacement identity rejection.

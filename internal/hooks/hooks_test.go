@@ -267,10 +267,11 @@ func TestHookCommandForGOOS(t *testing.T) {
 
 func TestManagedHookTrustIsImmutable(t *testing.T) {
 	hook := Hook{
-		Command:    "echo managed",
-		Event:      PreCommand,
-		SourceKind: SourceManaged,
-		SourceID:   "managed:managed-hooks.yaml",
+		Command:        "echo managed",
+		CommandWindows: "Write-Output managed",
+		Event:          PreCommand,
+		SourceKind:     SourceManaged,
+		SourceID:       "managed:managed-hooks.yaml",
 	}
 	hook.Hash = hook.DescriptorHash()
 	store := &TrustStore{

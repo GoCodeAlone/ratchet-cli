@@ -368,6 +368,12 @@ func TestManagedHookAuditRejectsParentReplacementDuringAppend(t *testing.T) {
 	}
 
 	err := audit.Append(managedAuditRecord(HookAuditSuccess))
+	if runtime.GOOS == "windows" {
+		if !errors.Is(err, os.ErrPermission) {
+			t.Fatalf("Append error = %v, want parent lease to deny replacement", err)
+		}
+		return
+	}
 	if err == nil || !strings.Contains(err.Error(), "target changed during open") {
 		t.Fatalf("Append error = %v, want parent-replacement identity failure", err)
 	}
@@ -769,8 +775,8 @@ func TestManagedHookAuditReadDoesNotCreateAbsentNamespace(t *testing.T) {
 
 func TestManagedHookAuditReadDoesNotCreateLockForEmptyNamespace(t *testing.T) {
 	path := managedAuditTestPath(t)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
+	if ready, err := prepareHookAuditPrivateNamespace(path, true); err != nil || !ready {
+		t.Fatalf("prepare private namespace = %v, %v", ready, err)
 	}
 	if records, err := NewHookAudit(path).Read(1); err != nil || len(records) != 0 {
 		t.Fatalf("Read empty namespace = %+v, %v", records, err)
@@ -806,9 +812,6 @@ func TestManagedHookAuditDecodeRetainsOnlyTheRequestedLimit(t *testing.T) {
 
 func TestManagedHookAuditRotatesBeforeCapacityDisablesExecution(t *testing.T) {
 	path := managedAuditTestPath(t)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
 	seed := managedAuditRecord(HookAuditSuccess)
 	encoded, err := json.Marshal(seed)
 	if err != nil {
@@ -816,9 +819,7 @@ func TestManagedHookAuditRotatesBeforeCapacityDisablesExecution(t *testing.T) {
 	}
 	line := append(encoded, '\n')
 	data := bytes.Repeat(line, maxHookAuditBytes/len(line))
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+	writeManagedAuditTestFile(t, path, data)
 
 	next := managedAuditRecord(HookAuditStarted)
 	next.Hash = strings.Repeat("b", 64)
@@ -893,12 +894,7 @@ func TestManagedHookAuditRejectsMalformedCommittedAndOversizedData(t *testing.T)
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			path := managedAuditTestPath(t)
-			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-				t.Fatalf("MkdirAll: %v", err)
-			}
-			if err := os.WriteFile(path, test.data, 0o600); err != nil {
-				t.Fatalf("WriteFile: %v", err)
-			}
+			writeManagedAuditTestFile(t, path, test.data)
 			if _, err := NewHookAudit(path).Read(10); err == nil {
 				t.Fatal("Read accepted invalid committed audit data")
 			}
@@ -1097,6 +1093,21 @@ func managedAuditRecord(result HookAuditResult) HookAuditRecord {
 func managedAuditTestPath(t *testing.T) string {
 	t.Helper()
 	return filepath.Join(t.TempDir(), ".ratchet", "audit", "hooks.jsonl")
+}
+
+func writeManagedAuditTestFile(t *testing.T, path string, data []byte) {
+	t.Helper()
+	file, _, err := openHookAuditFile(path, true)
+	if err != nil {
+		t.Fatalf("open private audit fixture: %v", err)
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		t.Fatalf("write private audit fixture: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close private audit fixture: %v", err)
+	}
 }
 
 func assertManagedAuditFilePrivate(t *testing.T, path string) {
