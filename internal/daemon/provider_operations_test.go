@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
@@ -67,6 +68,243 @@ func TestProviderOperationSchemaFailureStopsStartup(t *testing.T) {
 	if err := initDB(db); err == nil {
 		t.Fatal("initDB succeeded with conflicting provider_operations view")
 	}
+}
+
+func TestProviderOperationRequestsAfterStopReturnUnavailable(t *testing.T) {
+	svc, db := newProviderOperationTestService(t, newOperationSecrets())
+	svc.providerOps.Stop()
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	requests := map[string]*pb.CommitProviderSaveReq{
+		"valid": providerSaveRequest("2ae2d3c1-f7fa-436b-896c-2fb8df2ed24b", "stopped", "secret"),
+		"nil":   nil,
+	}
+	for name, req := range requests {
+		t.Run(name, func(t *testing.T) {
+			_, err := svc.CommitProviderSave(t.Context(), req)
+			if status.Code(err) != codes.Unavailable {
+				t.Fatalf("commit after stop code = %v, want Unavailable (err=%v)", status.Code(err), err)
+			}
+		})
+	}
+	if _, err := svc.providerOps.Get(t.Context(), "missing"); status.Code(err) != codes.Unavailable {
+		t.Fatalf("get after stop code = %v, want Unavailable (err=%v)", status.Code(err), err)
+	}
+}
+
+func TestProviderOperationStartAfterStopFails(t *testing.T) {
+	db := openProviderOperationTestDB(t)
+	if err := initDB(db); err != nil {
+		t.Fatal(err)
+	}
+	manager := newProviderOperationManager(&EngineContext{DB: db, SecretsProvider: newOperationSecrets()})
+	manager.Stop()
+	err := manager.Start(t.Context())
+	if err == nil {
+		manager.cancel()
+		manager.background.Wait()
+		t.Fatal("provider operations started after stop")
+	}
+	if !strings.Contains(err.Error(), "stopped") {
+		t.Fatalf("start after stop error = %q, want stopped classification", err)
+	}
+}
+
+func TestProviderOperationPreStartAdmissionFails(t *testing.T) {
+	db := openProviderOperationTestDB(t)
+	if err := initDB(db); err != nil {
+		t.Fatal(err)
+	}
+	manager := newProviderOperationManager(&EngineContext{DB: db, SecretsProvider: newOperationSecrets()})
+	svc := &Service{providerOps: manager}
+
+	if _, err := svc.CommitProviderSave(t.Context(), nil); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("pre-start commit code = %v, want FailedPrecondition (err=%v)", status.Code(err), err)
+	}
+	if _, err := manager.Get(t.Context(), "missing"); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("pre-start get code = %v, want FailedPrecondition (err=%v)", status.Code(err), err)
+	}
+}
+
+func TestProviderOperationStopCancelsStart(t *testing.T) {
+	db := openProviderOperationTestDB(t)
+	if err := initDB(db); err != nil {
+		t.Fatal(err)
+	}
+	provider := newOperationSecrets()
+	started := make(chan struct{})
+	provider.listHook = func(ctx context.Context) error {
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	manager := newProviderOperationManager(&EngineContext{DB: db, SecretsProvider: provider})
+	t.Cleanup(manager.Stop)
+	parent, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	startDone := make(chan error, 1)
+	go func() { startDone <- manager.Start(parent) }()
+	waitProviderOperationValue(t, started, "provider operation startup")
+	stopDone := make(chan struct{})
+	go func() {
+		manager.Stop()
+		close(stopDone)
+	}()
+
+	err := waitProviderOperationValue(t, startDone, "canceled provider operation startup")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("concurrent start error = %v, want context canceled", err)
+	}
+	waitProviderOperationValue(t, stopDone, "provider operation stop")
+}
+
+type providerOperationSignalContext struct {
+	context.Context
+	onDone sync.Once
+	ready  chan struct{}
+}
+
+func (c *providerOperationSignalContext) Done() <-chan struct{} {
+	c.onDone.Do(func() { close(c.ready) })
+	return c.Context.Done()
+}
+
+type providerOperationCommitResult struct {
+	operation *pb.ProviderOperation
+	err       error
+}
+
+func waitProviderOperationValue[T any](t *testing.T, values <-chan T, label string) T {
+	t.Helper()
+	select {
+	case value := <-values:
+		return value
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for %s", label)
+		var zero T
+		return zero
+	}
+}
+
+func assertProviderOperationStopBlocked(t *testing.T, stopDone <-chan struct{}) {
+	t.Helper()
+	synctest.Wait()
+	select {
+	case <-stopDone:
+		t.Fatal("provider operations stopped before blocked work returned")
+	default:
+	}
+}
+
+func TestProviderOperationStopWaitsForFlightAndAttachedCommit(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		provider := newOperationSecrets()
+		started := make(chan struct{})
+		release := make(chan struct{})
+		releaseWork := sync.OnceFunc(func() { close(release) })
+		defer releaseWork()
+		provider.setHook = func(_ context.Context, _, value string) error {
+			if value == "blocked-secret" {
+				close(started)
+				<-release
+			}
+			return nil
+		}
+		svc, _ := newProviderOperationTestService(t, provider)
+		request := providerSaveRequest("3d1e9648-146b-435d-ae67-f4c761636431", "blocked", "blocked-secret")
+
+		firstDone := make(chan providerOperationCommitResult, 1)
+		go func() {
+			operation, err := svc.CommitProviderSave(t.Context(), request)
+			firstDone <- providerOperationCommitResult{operation: operation, err: err}
+		}()
+		waitProviderOperationValue(t, started, "provider flight admission")
+		attachedContext := &providerOperationSignalContext{Context: t.Context(), ready: make(chan struct{})}
+		attachedDone := make(chan providerOperationCommitResult, 1)
+		go func() {
+			operation, err := svc.CommitProviderSave(attachedContext, request)
+			attachedDone <- providerOperationCommitResult{operation: operation, err: err}
+		}()
+		waitProviderOperationValue(t, attachedContext.ready, "attached provider commit")
+
+		stopDone := make(chan struct{})
+		go func() {
+			svc.providerOps.Stop()
+			close(stopDone)
+		}()
+		assertProviderOperationStopBlocked(t, stopDone)
+		releaseWork()
+		for name, done := range map[string]<-chan providerOperationCommitResult{"first": firstDone, "attached": attachedDone} {
+			result := waitProviderOperationValue(t, done, name+" provider commit")
+			if result.err != nil {
+				t.Fatalf("%s commit: %v", name, result.err)
+			}
+			if result.operation.GetState() != pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED {
+				t.Fatalf("%s commit state = %s, want COMMITTED", name, result.operation.GetState())
+			}
+		}
+		waitProviderOperationValue(t, stopDone, "provider operation stop")
+	})
+}
+
+func TestProviderOperationStopWaitsForQueryFinalization(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const (
+			operationID = "01d79ca6-01b9-46d4-a061-811911cf829e"
+			secretName  = "provider-v2-stop-query"
+		)
+		provider := newOperationSecrets()
+		if err := provider.Set(t.Context(), secretName, "secret"); err != nil {
+			t.Fatal(err)
+		}
+		svc, db := newProviderOperationTestService(t, provider)
+		insertProviderRow(t, db, "work", secretName, "model")
+		if _, err := db.Exec(`INSERT INTO provider_operations
+		(operation_id, alias, state, failure, secret_name, result_type, result_model,
+		 result_is_default, created_at, updated_at, expires_at)
+		VALUES (?, 'work', 'applied', '', ?, 'anthropic', 'model', 0,
+		 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, datetime('now', '+1 day'))`,
+			operationID, secretName); err != nil {
+			t.Fatal(err)
+		}
+
+		started := make(chan struct{})
+		release := make(chan struct{})
+		releaseWork := sync.OnceFunc(func() { close(release) })
+		defer releaseWork()
+		provider.getHook = func(ctx context.Context, key string) error {
+			if key != secretName {
+				return nil
+			}
+			close(started)
+			select {
+			case <-release:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		getDone := make(chan error, 1)
+		go func() {
+			_, err := svc.GetProviderOperation(t.Context(), &pb.GetProviderOperationReq{OperationId: operationID})
+			getDone <- err
+		}()
+		waitProviderOperationValue(t, started, "provider query finalization")
+
+		stopDone := make(chan struct{})
+		go func() {
+			svc.providerOps.Stop()
+			close(stopDone)
+		}()
+		assertProviderOperationStopBlocked(t, stopDone)
+		releaseWork()
+		if err := waitProviderOperationValue(t, getDone, "provider query result"); err != nil {
+			t.Fatalf("query finalization: %v", err)
+		}
+		waitProviderOperationValue(t, stopDone, "provider operation stop")
+	})
 }
 
 func TestCommitProviderSaveRollbackPreservesActiveSecret(t *testing.T) {
@@ -751,6 +989,7 @@ type operationSecrets struct {
 	setHook    func(context.Context, string, string) error
 	getHook    func(context.Context, string) error
 	deleteHook func(context.Context, string) error
+	listHook   func(context.Context) error
 	listErr    error
 }
 
@@ -803,7 +1042,12 @@ func (p *operationSecrets) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-func (p *operationSecrets) List(context.Context) ([]string, error) {
+func (p *operationSecrets) List(ctx context.Context) ([]string, error) {
+	if p.listHook != nil {
+		if err := p.listHook(ctx); err != nil {
+			return nil, err
+		}
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.listErr != nil {

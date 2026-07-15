@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log"
 	"time"
 
 	"github.com/GoCodeAlone/workflow/secrets"
@@ -63,11 +64,22 @@ func (m *providerOperationManager) dispatchCleanup() {
 	var names []string
 	for rows.Next() {
 		var name string
-		if rows.Scan(&name) == nil {
-			names = append(names, name)
+		if err := rows.Scan(&name); err != nil {
+			log.Printf("provider cleanup: scan candidate: %v", err)
+			_ = rows.Close()
+			return
 		}
+		names = append(names, name)
 	}
-	_ = rows.Close()
+	if err := rows.Err(); err != nil {
+		log.Printf("provider cleanup: iterate candidates: %v", err)
+		_ = rows.Close()
+		return
+	}
+	if err := rows.Close(); err != nil {
+		log.Printf("provider cleanup: close candidates: %v", err)
+		return
+	}
 	for _, name := range names {
 		m.cleanupMu.Lock()
 		if len(m.cleaning) >= providerCleanupWorkers {
@@ -80,7 +92,11 @@ func (m *providerOperationManager) dispatchCleanup() {
 		}
 		m.cleaning[name] = true
 		m.cleanupMu.Unlock()
-		go m.cleanupSecret(name)
+		m.background.Add(1)
+		go func() {
+			defer m.background.Done()
+			m.cleanupSecret(name)
+		}()
 	}
 }
 

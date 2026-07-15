@@ -59,8 +59,8 @@ func assertMessageFields(t *testing.T, message protoreflect.MessageDescriptor, w
 	}
 }
 
-// startTestServer starts an in-process daemon gRPC server on a temp Unix socket.
-// Returns the client connection. Caller must close conn and stop server.
+// startTestServer starts an in-process daemon gRPC server on a temp Unix socket
+// and registers all connection, server, service, listener, and temp cleanup.
 func startTestServer(t *testing.T) (pb.RatchetDaemonClient, *grpc.ClientConn) {
 	t.Helper()
 	tmp := t.TempDir()
@@ -72,17 +72,18 @@ func startTestServer(t *testing.T) (pb.RatchetDaemonClient, *grpc.ClientConn) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = lis.Close() })
 
 	srv := grpc.NewServer()
 	svc, err := NewService(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(svc.Close)
 	pb.RegisterRatchetDaemonServer(srv, svc)
 	go srv.Serve(lis)
 	t.Cleanup(func() {
 		srv.Stop()
-		lis.Close()
 	})
 
 	conn, err := grpc.NewClient(
