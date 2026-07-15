@@ -1,6 +1,6 @@
 # 0006. Make Provider Saves Durable
 
-**Status:** Accepted
+**Status:** Accepted (provider-state projection superseded by `0011`)
 **Date:** 2026-07-10
 **Decision-makers:** project owner, implementation agent
 **Related:** `decisions/0003-centralize-provider-setup.md`, `docs/plans/2026-07-10-ratchet-cli-provider-drain-managed-hooks-design.md`
