@@ -17,13 +17,12 @@ import (
 )
 
 const (
-	maxHookAuditBytes       = 4 << 20
-	defaultHookAuditLimit   = 100
-	maxHookAuditReadLimit   = 1000
-	hookAuditFileName       = "managed-hooks.jsonl"
-	hookAuditDirectoryName  = "audit"
-	hookAuditArchiveSuffix  = ".1"
-	maxHookAuditMissingDirs = 2
+	maxHookAuditBytes      = 4 << 20
+	defaultHookAuditLimit  = 100
+	maxHookAuditReadLimit  = 1000
+	hookAuditFileName      = "managed-hooks.jsonl"
+	hookAuditDirectoryName = "audit"
+	hookAuditArchiveSuffix = ".1"
 )
 
 var (
@@ -52,6 +51,12 @@ type hookAuditWindowsAccessEntry struct {
 	inheritOnly bool
 }
 
+type hookAuditWindowsAnchorAccessEntry struct {
+	allowed  bool
+	trusted  bool
+	mutating bool
+}
+
 func validateHookAuditWindowsAccess(ownerMatches, protected bool, entries []hookAuditWindowsAccessEntry) error {
 	if !ownerMatches {
 		return errors.New("managed hook audit owner is not the current user")
@@ -65,6 +70,21 @@ func validateHookAuditWindowsAccess(ownerMatches, protected bool, entries []hook
 	for _, entry := range entries {
 		if !entry.allowed || !entry.owner || !entry.fullControl || entry.inheritOnly {
 			return errors.New("managed hook audit DACL is not owner-only full control")
+		}
+	}
+	return nil
+}
+
+func validateHookAuditWindowsAnchorAccess(ownerTrusted, daclPresent bool, entries []hookAuditWindowsAnchorAccessEntry) error {
+	if !ownerTrusted {
+		return errors.New("managed hook audit trusted anchor owner is untrusted")
+	}
+	if !daclPresent {
+		return errors.New("managed hook audit trusted anchor has a null DACL")
+	}
+	for _, entry := range entries {
+		if entry.allowed && entry.mutating && !entry.trusted {
+			return errors.New("managed hook audit trusted anchor grants mutation rights to an untrusted principal")
 		}
 	}
 	return nil
@@ -89,12 +109,13 @@ type HookAuditWriter interface {
 
 // HookAudit stores managed hook metadata as owner-only JSONL.
 type HookAudit struct {
-	path              string
-	syncFile          func(*os.File) error
-	syncDir           func(string) error
-	rotateFile        func(string, string) error
-	beforeProcessLock func() error
-	afterProcessLock  func() error
+	path                string
+	syncFile            func(*os.File) error
+	syncDir             func(string) error
+	rotateFile          func(string, string) error
+	beforeProcessLock   func() error
+	afterProcessLock    func() error
+	beforeProcessUnlock func() error
 }
 
 type hookAuditPathState struct {
@@ -155,7 +176,14 @@ func (a *HookAudit) Append(record HookAuditRecord) (err error) {
 			lock.degraded = &degraded
 		}
 	}()
-	releaseProcessLock, err := acquireHookAuditProcessLock(a.path, a.beforeProcessLock, a.afterProcessLock)
+	releaseAnchor, err := acquireHookAuditTrustedAnchor(a.path)
+	if err != nil {
+		return fmt.Errorf("validate managed hook audit trusted anchor: %w", err)
+	}
+	defer func() {
+		err = errors.Join(err, releaseAnchor())
+	}()
+	releaseProcessLock, err := acquireHookAuditProcessLock(a.path, a.beforeProcessLock, a.afterProcessLock, a.beforeProcessUnlock)
 	if err != nil {
 		return fmt.Errorf("lock managed hook audit: %w", err)
 	}
@@ -246,6 +274,20 @@ func (a *HookAudit) Read(limit int) (records []HookAuditRecord, err error) {
 	lock := hookAuditPathLock(a.path)
 	lock.Lock()
 	defer lock.Unlock()
+	releaseAnchor, err := acquireHookAuditTrustedAnchor(a.path)
+	if err != nil {
+		return nil, fmt.Errorf("validate managed hook audit trusted anchor: %w", err)
+	}
+	defer func() {
+		err = errors.Join(err, releaseAnchor())
+	}()
+	ready, err := prepareHookAuditPrivateNamespace(a.path, false)
+	if err != nil {
+		return nil, err
+	}
+	if !ready {
+		return []HookAuditRecord{}, nil
+	}
 	hasGeneration, err := hookAuditHasGeneration(a.path)
 	if err != nil {
 		return nil, err
@@ -253,7 +295,7 @@ func (a *HookAudit) Read(limit int) (records []HookAuditRecord, err error) {
 	if !hasGeneration {
 		return []HookAuditRecord{}, nil
 	}
-	releaseProcessLock, err := acquireHookAuditProcessLock(a.path, a.beforeProcessLock, a.afterProcessLock)
+	releaseProcessLock, err := acquireHookAuditProcessLock(a.path, a.beforeProcessLock, a.afterProcessLock, a.beforeProcessUnlock)
 	if err != nil {
 		return nil, fmt.Errorf("lock managed hook audit: %w", err)
 	}
@@ -281,7 +323,18 @@ func validateHookAuditPath(a *HookAudit) error {
 	if !filepath.IsAbs(a.path) {
 		return errors.New("managed hook audit requires an absolute path")
 	}
-	return nil
+	_, _, err := hookAuditNamespace(a.path)
+	return err
+}
+
+func hookAuditNamespace(path string) (string, [2]string, error) {
+	inner := filepath.Dir(path)
+	outer := filepath.Dir(inner)
+	anchor := filepath.Dir(outer)
+	if inner == path || outer == inner || anchor == outer {
+		return "", [2]string{}, errors.New("managed hook audit path requires two namespace levels beneath a trusted anchor")
+	}
+	return anchor, [2]string{outer, inner}, nil
 }
 
 func hookAuditHasGeneration(path string) (bool, error) {
@@ -340,16 +393,8 @@ func decodeHookAuditRecords(data []byte, limit int) ([]HookAuditRecord, error) {
 		if len(bytes.TrimSpace(line)) == 0 {
 			return nil, fmt.Errorf("read managed hook audit committed record %d: empty record", lineIndex)
 		}
-		var record HookAuditRecord
-		decoder := json.NewDecoder(bytes.NewReader(line))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&record); err != nil {
-			return nil, fmt.Errorf("read managed hook audit committed record %d: %w", lineIndex, err)
-		}
-		if err := requireJSONEOF(decoder); err != nil {
-			return nil, fmt.Errorf("read managed hook audit committed record %d: %w", lineIndex, err)
-		}
-		if err := validateHookAuditRecord(record); err != nil {
+		record, err := decodeHookAuditRecord(line)
+		if err != nil {
 			return nil, fmt.Errorf("read managed hook audit committed record %d: %w", lineIndex, err)
 		}
 		ring[total%limit] = record
@@ -364,6 +409,67 @@ func decodeHookAuditRecords(data []byte, limit int) ([]HookAuditRecord, error) {
 		records[i] = ring[(total-1-i)%limit]
 	}
 	return records, nil
+}
+
+func decodeHookAuditRecord(line []byte) (HookAuditRecord, error) {
+	decoder := json.NewDecoder(bytes.NewReader(line))
+	token, err := decoder.Token()
+	if err != nil {
+		return HookAuditRecord{}, err
+	}
+	if delimiter, ok := token.(json.Delim); !ok || delimiter != '{' {
+		return HookAuditRecord{}, errors.New("managed hook audit record must be an object")
+	}
+	var record HookAuditRecord
+	seen := make(map[string]struct{}, 6)
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return HookAuditRecord{}, err
+		}
+		key, ok := token.(string)
+		if !ok {
+			return HookAuditRecord{}, errors.New("managed hook audit field name must be a string")
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return HookAuditRecord{}, fmt.Errorf("managed hook audit field %q is duplicated", key)
+		}
+		seen[key] = struct{}{}
+		switch key {
+		case "timestamp":
+			err = decoder.Decode(&record.Timestamp)
+		case "event":
+			err = decoder.Decode(&record.Event)
+		case "hash":
+			err = decoder.Decode(&record.Hash)
+		case "source":
+			err = decoder.Decode(&record.Source)
+		case "result":
+			err = decoder.Decode(&record.Result)
+		case "duration_ms":
+			err = decoder.Decode(&record.DurationMS)
+		default:
+			return HookAuditRecord{}, fmt.Errorf("managed hook audit field %q is unknown", key)
+		}
+		if err != nil {
+			return HookAuditRecord{}, fmt.Errorf("decode managed hook audit field %q: %w", key, err)
+		}
+	}
+	if _, err := decoder.Token(); err != nil {
+		return HookAuditRecord{}, err
+	}
+	for _, required := range []string{"timestamp", "event", "hash", "source", "result", "duration_ms"} {
+		if _, ok := seen[required]; !ok {
+			return HookAuditRecord{}, fmt.Errorf("managed hook audit field %q is required", required)
+		}
+	}
+	if err := requireJSONEOF(decoder); err != nil {
+		return HookAuditRecord{}, err
+	}
+	if err := validateHookAuditRecord(record); err != nil {
+		return HookAuditRecord{}, err
+	}
+	return record, nil
 }
 
 func (a *HookAudit) sync(f *os.File) error {
@@ -388,23 +494,11 @@ func (a *HookAudit) rotatePath(source, destination string) error {
 }
 
 func hookAuditNamespaceSyncDirectories(path string) []string {
-	directories := make([]string, 0, 3)
-	directory := filepath.Dir(path)
-	for range 3 {
-		if directory == "." {
-			break
-		}
-		directories = append(directories, directory)
-		if directory == string(filepath.Separator) {
-			break
-		}
-		next := filepath.Dir(directory)
-		if next == directory {
-			break
-		}
-		directory = next
+	anchor, namespace, err := hookAuditNamespace(path)
+	if err != nil {
+		return nil
 	}
-	return directories
+	return []string{namespace[1], namespace[0], anchor}
 }
 
 func (a *HookAudit) rotate(current *os.File) (_ *os.File, err error) {

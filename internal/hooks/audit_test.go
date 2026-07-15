@@ -48,9 +48,17 @@ func TestDefaultHookAuditPathRejectsRelativeHome(t *testing.T) {
 
 func TestManagedHookAuditRejectsRelativePath(t *testing.T) {
 	t.Chdir(t.TempDir())
-	err := NewHookAudit(filepath.Join(".ratchet", "audit", "hooks.jsonl")).Append(managedAuditRecord(HookAuditStarted))
-	if err == nil || !strings.Contains(err.Error(), "absolute path") {
-		t.Fatalf("Append error = %v, want absolute-path requirement", err)
+	audit := NewHookAudit(filepath.Join(".ratchet", "audit", "hooks.jsonl"))
+	for name, operation := range map[string]func() error{
+		"Append": func() error { return audit.Append(managedAuditRecord(HookAuditStarted)) },
+		"Read":   func() error { _, err := audit.Read(1); return err },
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := operation()
+			if err == nil || !strings.Contains(err.Error(), "absolute path") {
+				t.Fatalf("%s error = %v, want absolute-path requirement", name, err)
+			}
+		})
 	}
 }
 
@@ -58,8 +66,8 @@ func TestManagedHookAuditRejectsDeepMissingNamespace(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "one", "two", "three", "hooks.jsonl")
 	err := NewHookAudit(path).Append(managedAuditRecord(HookAuditStarted))
-	if err == nil || !strings.Contains(err.Error(), "existing anchor") {
-		t.Fatalf("Append error = %v, want existing-anchor requirement", err)
+	if err == nil || !strings.Contains(err.Error(), "trusted anchor") {
+		t.Fatalf("Append error = %v, want trusted-anchor requirement", err)
 	}
 	if _, statErr := os.Stat(filepath.Join(root, "one")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("deep namespace was partially created: %v", statErr)
@@ -67,7 +75,7 @@ func TestManagedHookAuditRejectsDeepMissingNamespace(t *testing.T) {
 }
 
 func TestManagedHookAuditRecordsMetadataOnly(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
+	path := managedAuditTestPath(t)
 	audit := NewHookAudit(path)
 	hook := managedAuditTestHook(managedAuditSuccessCommand())
 	cfg := &HookConfig{Hooks: map[Event][]Hook{PreCommand: {hook}}}
@@ -244,7 +252,7 @@ func TestManagedHookAuditTemplateFailureIsClassifiedPrivately(t *testing.T) {
 }
 
 func TestManagedHookAuditPersistsDegradedResultOnRecovery(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
+	path := managedAuditTestPath(t)
 	audit := NewHookAudit(path)
 	if err := audit.Append(managedAuditRecord(HookAuditStarted)); err != nil {
 		t.Fatalf("Append start: %v", err)
@@ -288,7 +296,7 @@ func TestManagedHookAuditPersistsDegradedResultOnRecovery(t *testing.T) {
 }
 
 func TestManagedHookAuditRetriesNamespaceSyncBeforeClearingDegraded(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
+	path := managedAuditTestPath(t)
 	audit := NewHookAudit(path)
 	syncCalls := 0
 	audit.syncDir = func(string) error {
@@ -337,7 +345,7 @@ func TestManagedHookAuditSyncsFixedNamespaceChain(t *testing.T) {
 }
 
 func TestManagedHookAuditRejectsParentReplacementDuringAppend(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "private", "audit", "hooks.jsonl")
+	path := managedAuditTestPath(t)
 	audit := NewHookAudit(path)
 	if err := audit.Append(managedAuditRecord(HookAuditStarted)); err != nil {
 		t.Fatalf("seed Append: %v", err)
@@ -372,6 +380,83 @@ func TestManagedHookAuditRejectsParentReplacementDuringAppend(t *testing.T) {
 	}
 }
 
+func TestManagedHookAuditRejectsAnchorReplacementDuringAppend(t *testing.T) {
+	base := t.TempDir()
+	anchor := filepath.Join(base, "home")
+	if err := os.Mkdir(anchor, 0o700); err != nil {
+		t.Fatalf("Mkdir anchor: %v", err)
+	}
+	path := filepath.Join(anchor, ".ratchet", "audit", "hooks.jsonl")
+	audit := NewHookAudit(path)
+	if err := audit.Append(managedAuditRecord(HookAuditStarted)); err != nil {
+		t.Fatalf("seed Append: %v", err)
+	}
+
+	displaced := anchor + ".displaced"
+	audit.syncFile = func(file *os.File) error {
+		if err := file.Sync(); err != nil {
+			return err
+		}
+		if err := os.Rename(anchor, displaced); err != nil {
+			return fmt.Errorf("replace audit anchor: %w", err)
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return fmt.Errorf("create replacement namespace: %w", err)
+		}
+		if err := os.Chmod(filepath.Dir(filepath.Dir(path)), 0o700); err != nil {
+			return fmt.Errorf("secure replacement namespace root: %w", err)
+		}
+		if err := os.Chmod(filepath.Dir(path), 0o700); err != nil {
+			return fmt.Errorf("secure replacement namespace: %w", err)
+		}
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			return fmt.Errorf("create replacement audit: %w", err)
+		}
+		return nil
+	}
+
+	err := audit.Append(managedAuditRecord(HookAuditSuccess))
+	if err == nil {
+		t.Fatal("Append succeeded after trusted-anchor replacement attempt")
+	}
+	if runtime.GOOS != "windows" {
+		info, statErr := os.Stat(path)
+		if statErr != nil {
+			t.Fatalf("Stat replacement audit: %v", statErr)
+		}
+		if info.Size() != 0 {
+			t.Fatalf("replacement audit size = %d, want no canonical record", info.Size())
+		}
+	}
+}
+
+func TestManagedHookAuditRejectsAnchorReplacementBeforeReadUnlock(t *testing.T) {
+	base := t.TempDir()
+	anchor := filepath.Join(base, "home")
+	if err := os.Mkdir(anchor, 0o700); err != nil {
+		t.Fatalf("Mkdir anchor: %v", err)
+	}
+	path := filepath.Join(anchor, ".ratchet", "audit", "hooks.jsonl")
+	audit := NewHookAudit(path)
+	if err := audit.Append(managedAuditRecord(HookAuditStarted)); err != nil {
+		t.Fatalf("seed Append: %v", err)
+	}
+	displaced := anchor + ".displaced"
+	audit.beforeProcessUnlock = func() error {
+		if err := os.Rename(anchor, displaced); err != nil {
+			return fmt.Errorf("replace audit anchor: %w", err)
+		}
+		if err := os.Mkdir(anchor, 0o700); err != nil {
+			return fmt.Errorf("create replacement anchor: %w", err)
+		}
+		return nil
+	}
+
+	if _, err := audit.Read(1); err == nil {
+		t.Fatal("Read succeeded after trusted-anchor replacement attempt")
+	}
+}
+
 func TestManagedHookAuditSerializesAcrossProcesses(t *testing.T) {
 	if os.Getenv("RATCHET_AUDIT_PROCESS_CHILD") == "1" {
 		audit := NewHookAudit(os.Getenv("RATCHET_AUDIT_PROCESS_PATH"))
@@ -388,7 +473,7 @@ func TestManagedHookAuditSerializesAcrossProcesses(t *testing.T) {
 	}
 
 	root := t.TempDir()
-	path := filepath.Join(root, "private", "hooks.jsonl")
+	path := filepath.Join(root, ".ratchet", "audit", "hooks.jsonl")
 	attempted := filepath.Join(root, "child-attempted")
 	acquired := filepath.Join(root, "child-acquired")
 	audit := NewHookAudit(path)
@@ -464,7 +549,7 @@ func TestManagedHookAuditSerializesAcrossProcesses(t *testing.T) {
 }
 
 func TestManagedHookExecutionRecomputesAuditHash(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
+	path := managedAuditTestPath(t)
 	hook := managedAuditTestHook(managedAuditSuccessCommand())
 	staleHash := strings.Repeat("f", 64)
 	hook.Hash = staleHash
@@ -508,7 +593,7 @@ func TestManagedHookAuditStartedDurationDiagnostic(t *testing.T) {
 }
 
 func TestManagedHookAuditReadIsBoundedStrictAndNewestFirst(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
+	path := managedAuditTestPath(t)
 	audit := NewHookAudit(path)
 	now := time.Now().UTC()
 	for i, result := range []HookAuditResult{HookAuditStarted, HookAuditSuccess, HookAuditCommandFailed} {
@@ -549,7 +634,7 @@ func TestManagedHookAuditReadIsBoundedStrictAndNewestFirst(t *testing.T) {
 }
 
 func TestManagedHookAuditReadLocksExistingGenerations(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
+	path := managedAuditTestPath(t)
 	audit := NewHookAudit(path)
 	if err := audit.Append(managedAuditRecord(HookAuditStarted)); err != nil {
 		t.Fatalf("seed Append: %v", err)
@@ -572,9 +657,96 @@ func TestManagedHookAuditReadLocksExistingGenerations(t *testing.T) {
 	}
 }
 
+func TestManagedHookAuditReadHoldsProcessLockThroughGenerationRead(t *testing.T) {
+	if os.Getenv("RATCHET_AUDIT_READ_LOCK_CHILD") == "1" {
+		audit := NewHookAudit(os.Getenv("RATCHET_AUDIT_READ_LOCK_PATH"))
+		audit.beforeProcessLock = func() error {
+			return os.WriteFile(os.Getenv("RATCHET_AUDIT_READ_LOCK_ATTEMPTED"), nil, 0o600)
+		}
+		audit.afterProcessLock = func() error {
+			return os.WriteFile(os.Getenv("RATCHET_AUDIT_READ_LOCK_ACQUIRED"), nil, 0o600)
+		}
+		if err := audit.Append(managedAuditRecord(HookAuditSuccess)); err != nil {
+			t.Fatalf("child Append: %v", err)
+		}
+		return
+	}
+
+	root := t.TempDir()
+	path := filepath.Join(root, ".ratchet", "audit", "hooks.jsonl")
+	audit := NewHookAudit(path)
+	if err := audit.Append(managedAuditRecord(HookAuditStarted)); err != nil {
+		t.Fatalf("seed Append: %v", err)
+	}
+	readParsed := make(chan struct{})
+	releaseRead := make(chan struct{})
+	audit.beforeProcessUnlock = func() error {
+		close(readParsed)
+		<-releaseRead
+		return nil
+	}
+	readDone := make(chan error, 1)
+	go func() {
+		_, err := audit.Read(1)
+		readDone <- err
+	}()
+	<-readParsed
+
+	attempted := filepath.Join(root, "writer-attempted")
+	acquired := filepath.Join(root, "writer-acquired")
+	command := exec.Command(os.Args[0], "-test.run=^TestManagedHookAuditReadHoldsProcessLockThroughGenerationRead$")
+	command.Env = append(os.Environ(),
+		"RATCHET_AUDIT_READ_LOCK_CHILD=1",
+		"RATCHET_AUDIT_READ_LOCK_PATH="+path,
+		"RATCHET_AUDIT_READ_LOCK_ATTEMPTED="+attempted,
+		"RATCHET_AUDIT_READ_LOCK_ACQUIRED="+acquired,
+	)
+	if err := command.Start(); err != nil {
+		close(releaseRead)
+		t.Fatalf("start audit child: %v", err)
+	}
+	childDone := make(chan error, 1)
+	go func() { childDone <- command.Wait() }()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(attempted); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			close(releaseRead)
+			t.Fatal("timed out waiting for writer to reach the OS lock syscall")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := os.Stat(acquired); err == nil {
+		close(releaseRead)
+		t.Fatal("writer acquired process lock before generation read released it")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		close(releaseRead)
+		t.Fatalf("inspect writer acquired marker: %v", err)
+	}
+	select {
+	case err := <-childDone:
+		close(releaseRead)
+		t.Fatalf("writer exited while read lock was held: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	close(releaseRead)
+	if err := <-readDone; err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if err := <-childDone; err != nil {
+		t.Fatalf("child process: %v", err)
+	}
+	if _, err := os.Stat(acquired); err != nil {
+		t.Fatalf("writer never acquired process lock after read release: %v", err)
+	}
+}
+
 func TestManagedHookAuditReadDoesNotCreateAbsentNamespace(t *testing.T) {
 	root := t.TempDir()
-	path := filepath.Join(root, "private", "hooks.jsonl")
+	path := filepath.Join(root, ".ratchet", "audit", "hooks.jsonl")
 	if records, err := NewHookAudit(path).Read(1); err != nil || len(records) != 0 {
 		t.Fatalf("Read absent = %+v, %v", records, err)
 	}
@@ -608,7 +780,7 @@ func TestManagedHookAuditDecodeRetainsOnlyTheRequestedLimit(t *testing.T) {
 }
 
 func TestManagedHookAuditRotatesBeforeCapacityDisablesExecution(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
+	path := managedAuditTestPath(t)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
@@ -649,7 +821,7 @@ func TestManagedHookAuditRotatesBeforeCapacityDisablesExecution(t *testing.T) {
 }
 
 func TestManagedHookAuditFailedRotationPreservesPriorArchive(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
+	path := managedAuditTestPath(t)
 	audit := NewHookAudit(path)
 	if err := audit.Append(managedAuditRecord(HookAuditStarted)); err != nil {
 		t.Fatalf("seed Append: %v", err)
@@ -677,15 +849,25 @@ func TestManagedHookAuditFailedRotationPreservesPriorArchive(t *testing.T) {
 }
 
 func TestManagedHookAuditRejectsMalformedCommittedAndOversizedData(t *testing.T) {
+	strictTimestamp := "2026-07-14T12:00:00Z"
+	strictHash := strings.Repeat("a", 64)
 	for _, test := range []struct {
 		name string
 		data []byte
 	}{
 		{name: "malformed committed line", data: []byte("{not-json}\n")},
+		{
+			name: "missing required duration",
+			data: fmt.Appendf(nil, `{"timestamp":%q,"event":"pre-command","hash":%q,"source":"managed","result":"started"}`+"\n", strictTimestamp, strictHash),
+		},
+		{
+			name: "duplicate result field",
+			data: fmt.Appendf(nil, `{"timestamp":%q,"event":"pre-command","hash":%q,"source":"managed","result":"started","result":"success","duration_ms":0}`+"\n", strictTimestamp, strictHash),
+		},
 		{name: "oversized file", data: make([]byte, maxHookAuditBytes+1)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
+			path := managedAuditTestPath(t)
 			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 				t.Fatalf("MkdirAll: %v", err)
 			}
@@ -704,7 +886,10 @@ func TestManagedHookAuditRejectsUnsafeExistingTargets(t *testing.T) {
 		t.Skip("portable FileMode does not expose Windows DACLs")
 	}
 	t.Run("weak parent", func(t *testing.T) {
-		parent := filepath.Join(t.TempDir(), "audit")
+		parent := filepath.Dir(managedAuditTestPath(t))
+		if err := os.Mkdir(filepath.Dir(parent), 0o700); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.Mkdir(parent, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -714,7 +899,7 @@ func TestManagedHookAuditRejectsUnsafeExistingTargets(t *testing.T) {
 		}
 	})
 	t.Run("weak file", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "audit", "hooks.jsonl")
+		path := managedAuditTestPath(t)
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -726,7 +911,7 @@ func TestManagedHookAuditRejectsUnsafeExistingTargets(t *testing.T) {
 		}
 	})
 	t.Run("symlink", func(t *testing.T) {
-		parent := filepath.Join(t.TempDir(), "audit")
+		parent := filepath.Dir(managedAuditTestPath(t))
 		if err := os.MkdirAll(parent, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -743,7 +928,7 @@ func TestManagedHookAuditRejectsUnsafeExistingTargets(t *testing.T) {
 		}
 	})
 	t.Run("non-regular", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "audit", "hooks.jsonl")
+		path := managedAuditTestPath(t)
 		if err := os.MkdirAll(path, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -785,6 +970,49 @@ func TestManagedHookAuditWindowsAccessRequiresProtectedOwnerOnlyFullControl(t *t
 	}
 }
 
+func TestManagedHookAuditWindowsAnchorAccessRejectsUntrustedMutation(t *testing.T) {
+	tests := []struct {
+		name         string
+		ownerTrusted bool
+		daclPresent  bool
+		entries      []hookAuditWindowsAnchorAccessEntry
+		wantErr      bool
+	}{
+		{
+			name:         "trusted mutation and untrusted read",
+			ownerTrusted: true,
+			daclPresent:  true,
+			entries: []hookAuditWindowsAnchorAccessEntry{
+				{allowed: true, trusted: true, mutating: true},
+				{allowed: true},
+			},
+		},
+		{
+			name:         "untrusted mutation",
+			ownerTrusted: true,
+			daclPresent:  true,
+			entries:      []hookAuditWindowsAnchorAccessEntry{{allowed: true, mutating: true}},
+			wantErr:      true,
+		},
+		{name: "untrusted owner", daclPresent: true, wantErr: true},
+		{name: "null DACL", ownerTrusted: true, wantErr: true},
+		{
+			name:         "deny does not grant mutation",
+			ownerTrusted: true,
+			daclPresent:  true,
+			entries:      []hookAuditWindowsAnchorAccessEntry{{mutating: true}},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateHookAuditWindowsAnchorAccess(test.ownerTrusted, test.daclPresent, test.entries)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("error = %v, wantErr %v", err, test.wantErr)
+			}
+		})
+	}
+}
+
 type hookAuditWriterFunc func(HookAuditRecord) error
 
 func (f hookAuditWriterFunc) Append(record HookAuditRecord) error { return f(record) }
@@ -818,6 +1046,11 @@ func managedAuditRecord(result HookAuditResult) HookAuditRecord {
 		Result:     result,
 		DurationMS: 0,
 	}
+}
+
+func managedAuditTestPath(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(t.TempDir(), ".ratchet", "audit", "hooks.jsonl")
 }
 
 func assertManagedAuditFilePrivate(t *testing.T, path string) {

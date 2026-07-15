@@ -20,17 +20,15 @@ func rotateHookAuditPath(source, destination string) error {
 }
 
 func openHookAuditFile(path string, create bool) (*os.File, bool, error) {
-	parent := filepath.Dir(path)
-	parentInfo, err := os.Lstat(parent)
-	if errors.Is(err, os.ErrNotExist) && create {
-		if err := ensureHookAuditPrivateDir(parent); err != nil {
-			return nil, false, err
-		}
-		parentInfo, err = os.Lstat(parent)
+	ready, err := prepareHookAuditPrivateNamespace(path, create)
+	if err != nil {
+		return nil, false, err
 	}
-	if errors.Is(err, os.ErrNotExist) && !create {
+	if !ready {
 		return nil, false, os.ErrNotExist
 	}
+	parent := filepath.Dir(path)
+	parentInfo, err := os.Lstat(parent)
 	if err != nil {
 		return nil, false, fmt.Errorf("inspect managed hook audit namespace: %w", err)
 	}
@@ -81,44 +79,164 @@ func openHookAuditFile(path string, create bool) (*os.File, bool, error) {
 	return f, false, nil
 }
 
-func ensureHookAuditPrivateDir(path string) error {
-	missing := make([]string, 0, 2)
-	current := path
-	for {
-		if _, err := os.Lstat(current); err == nil {
-			break
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("inspect managed hook audit namespace: %w", err)
+func prepareHookAuditPrivateNamespace(path string, create bool) (bool, error) {
+	_, directories, err := hookAuditNamespace(path)
+	if err != nil {
+		return false, err
+	}
+	for _, directory := range directories {
+		_, statErr := os.Lstat(directory)
+		if errors.Is(statErr, os.ErrNotExist) && !create {
+			return false, nil
 		}
-		missing = append(missing, current)
-		if len(missing) > maxHookAuditMissingDirs {
-			return errors.New("managed hook audit namespace requires an existing anchor within two parent levels")
+		if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+			return false, fmt.Errorf("inspect managed hook audit namespace: %w", statErr)
+		}
+		created := false
+		if errors.Is(statErr, os.ErrNotExist) {
+			if err := os.Mkdir(directory, 0o700); err == nil {
+				created = true
+			} else if !errors.Is(err, os.ErrExist) {
+				return false, fmt.Errorf("create managed hook audit namespace: %w", err)
+			}
+		}
+		if created {
+			if err := os.Chmod(directory, 0o700); err != nil {
+				return false, fmt.Errorf("secure managed hook audit namespace: %w", err)
+			}
+		}
+		info, err := os.Lstat(directory)
+		if err != nil {
+			return false, fmt.Errorf("inspect managed hook audit namespace: %w", err)
+		}
+		if err := validateHookAuditParent(directory, info); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+func acquireHookAuditTrustedAnchor(path string) (func() error, error) {
+	anchor, _, err := hookAuditNamespace(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateHookAuditTrustedAncestry(anchor); err != nil {
+		return nil, err
+	}
+	file, err := os.Open(anchor)
+	if err != nil {
+		return nil, fmt.Errorf("open managed hook audit trusted anchor: %w", err)
+	}
+	if err := validateHookAuditTrustedAncestry(anchor); err != nil {
+		return nil, errors.Join(err, file.Close())
+	}
+	if err := validateHookAuditAnchorIdentity(anchor, file); err != nil {
+		return nil, errors.Join(err, file.Close())
+	}
+	return func() error {
+		return errors.Join(
+			validateHookAuditTrustedAncestry(anchor),
+			validateHookAuditAnchorIdentity(anchor, file),
+			file.Close(),
+		)
+	}, nil
+}
+
+func validateHookAuditTrustedAncestry(anchor string) error {
+	anchorInfo, err := os.Lstat(anchor)
+	if err != nil {
+		return fmt.Errorf("inspect managed hook audit trusted anchor: %w", err)
+	}
+	if anchorInfo.Mode()&os.ModeSymlink != 0 || !anchorInfo.IsDir() {
+		return errors.New("managed hook audit trusted anchor must be a regular directory")
+	}
+	canonical, err := filepath.EvalSymlinks(anchor)
+	if err != nil {
+		return fmt.Errorf("resolve managed hook audit trusted anchor: %w", err)
+	}
+	if err := validateHookAuditTrustedDirectoryChain(canonical, false); err != nil {
+		return err
+	}
+	for current := anchor; ; current = filepath.Dir(current) {
+		info, err := os.Lstat(current)
+		if err != nil {
+			return fmt.Errorf("inspect managed hook audit trusted anchor ancestry: %w", err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			if err := validateHookAuditTrustedOwner(current, info); err != nil {
+				return err
+			}
+		} else if err := validateHookAuditTrustedDirectory(current, info, current == anchor); err != nil {
+			return err
 		}
 		parent := filepath.Dir(current)
 		if parent == current {
-			return errors.New("managed hook audit namespace has no existing ancestor")
+			break
 		}
-		current = parent
 	}
-	for i := len(missing) - 1; i >= 0; i-- {
-		created := false
-		if err := os.Mkdir(missing[i], 0o700); err == nil {
-			created = true
-		} else if !errors.Is(err, os.ErrExist) {
-			return fmt.Errorf("create managed hook audit namespace: %w", err)
-		}
-		if created {
-			if err := os.Chmod(missing[i], 0o700); err != nil {
-				return fmt.Errorf("secure managed hook audit namespace: %w", err)
-			}
-		}
-		info, err := os.Lstat(missing[i])
+	return nil
+}
+
+func validateHookAuditTrustedDirectoryChain(path string, anchor bool) error {
+	for current := path; ; current = filepath.Dir(current) {
+		info, err := os.Lstat(current)
 		if err != nil {
-			return fmt.Errorf("inspect managed hook audit namespace: %w", err)
+			return fmt.Errorf("inspect managed hook audit trusted anchor ancestry: %w", err)
 		}
-		if err := validateHookAuditParent(missing[i], info); err != nil {
+		if err := validateHookAuditTrustedDirectory(current, info, anchor && current == path); err != nil {
 			return err
 		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return nil
+		}
+	}
+}
+
+func validateHookAuditTrustedDirectory(path string, info os.FileInfo, anchor bool) error {
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return errors.New("managed hook audit trusted anchor ancestry must contain only regular directories")
+	}
+	if err := validateHookAuditTrustedOwner(path, info); err != nil {
+		return err
+	}
+	if err := validateHookAuditPlatformACL(path); err != nil {
+		return err
+	}
+	if info.Mode().Perm()&0o022 != 0 && info.Mode()&os.ModeSticky == 0 {
+		location := "ancestry"
+		if anchor {
+			location = "anchor"
+		}
+		return fmt.Errorf("managed hook audit trusted %s permits untrusted mutation: %s", location, path)
+	}
+	return nil
+}
+
+func validateHookAuditTrustedOwner(path string, info os.FileInfo) error {
+	uid, ok := hookAuditMetadataUint(info, "Uid")
+	if !ok {
+		return fmt.Errorf("managed hook audit trusted anchor owner cannot be verified: %s", path)
+	}
+	currentUID := hookAuditEffectiveUID()
+	if currentUID < 0 || uid != 0 && uid != uint64(currentUID) {
+		return fmt.Errorf("managed hook audit trusted anchor has an untrusted owner: %s", path)
+	}
+	return nil
+}
+
+func validateHookAuditAnchorIdentity(path string, file *os.File) error {
+	opened, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("inspect opened managed hook audit trusted anchor: %w", err)
+	}
+	current, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("inspect managed hook audit trusted anchor identity: %w", err)
+	}
+	if current.Mode()&os.ModeSymlink != 0 || !current.IsDir() || !os.SameFile(opened, current) {
+		return errors.New("managed hook audit trusted anchor changed during transaction")
 	}
 	return nil
 }

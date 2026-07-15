@@ -10,7 +10,7 @@ import (
 
 const hookAuditProcessLockSuffix = ".lock"
 
-func acquireHookAuditProcessLock(path string, before, after func() error) (func() error, error) {
+func acquireHookAuditProcessLock(path string, before, after, beforeUnlock func() error) (func() error, error) {
 	lockPath := path + hookAuditProcessLockSuffix
 	file, _, err := openHookAuditFile(lockPath, true)
 	if err != nil {
@@ -33,6 +33,10 @@ func acquireHookAuditProcessLock(path string, before, after func() error) (func(
 		return nil, errors.Join(err, unix.Flock(int(file.Fd()), unix.LOCK_UN), file.Close())
 	}
 	return func() error {
-		return errors.Join(unix.Flock(int(file.Fd()), unix.LOCK_UN), file.Close())
+		var beforeUnlockErr error
+		if beforeUnlock != nil {
+			beforeUnlockErr = beforeUnlock()
+		}
+		return errors.Join(beforeUnlockErr, unix.Flock(int(file.Fd()), unix.LOCK_UN), file.Close())
 	}, nil
 }

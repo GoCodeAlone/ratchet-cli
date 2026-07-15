@@ -14,10 +14,11 @@ import (
 )
 
 func TestManagedHookAuditWindowsCreatesOwnerOnlyDACL(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
+	path := managedAuditTestPath(t)
 	if err := NewHookAudit(path).Append(managedAuditRecord(HookAuditStarted)); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
+	assertManagedHookAuditWindowsPrivate(t, filepath.Dir(filepath.Dir(path)))
 	assertManagedHookAuditWindowsPrivate(t, filepath.Dir(path))
 	assertManagedHookAuditWindowsPrivate(t, path)
 }
@@ -59,7 +60,7 @@ func TestManagedHookAuditWindowsCreationIsAtomicallyPrivate(t *testing.T) {
 		return originalMove(from, to, flags)
 	}
 
-	path := filepath.Join(t.TempDir(), "private", "nested", "hooks.jsonl")
+	path := managedAuditTestPath(t)
 	if err := NewHookAudit(path).Append(managedAuditRecord(HookAuditStarted)); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
@@ -82,7 +83,7 @@ func TestManagedHookAuditWindowsReaderAllowsRotation(t *testing.T) {
 	if hookAuditWindowsFileShare&windows.FILE_SHARE_DELETE == 0 {
 		t.Fatal("audit file share mask does not permit rotation")
 	}
-	path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
+	path := managedAuditTestPath(t)
 	audit := NewHookAudit(path)
 	if err := audit.Append(managedAuditRecord(HookAuditStarted)); err != nil {
 		t.Fatalf("seed Append: %v", err)
@@ -137,8 +138,23 @@ func TestManagedHookAuditWindowsRotationWritesThrough(t *testing.T) {
 }
 
 func TestManagedHookAuditWindowsRejectsWeakDACL(t *testing.T) {
+	t.Run("trusted anchor", func(t *testing.T) {
+		anchor := t.TempDir()
+		setManagedHookAuditWindowsMutableDACL(t, anchor)
+		path := filepath.Join(anchor, ".ratchet", "audit", "hooks.jsonl")
+		if err := NewHookAudit(path).Append(managedAuditRecord(HookAuditStarted)); err == nil {
+			t.Fatal("Append accepted an anchor mutable by Everyone")
+		}
+		if _, err := os.Stat(filepath.Join(anchor, ".ratchet")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("audit namespace created beneath weak anchor: %v", err)
+		}
+	})
+
 	t.Run("namespace", func(t *testing.T) {
-		parent := filepath.Join(t.TempDir(), "private")
+		parent := filepath.Dir(managedAuditTestPath(t))
+		if err := hookAuditWindowsEnsurePrivateDir(filepath.Dir(parent)); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.Mkdir(parent, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -153,7 +169,7 @@ func TestManagedHookAuditWindowsRejectsWeakDACL(t *testing.T) {
 	})
 
 	t.Run("file", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
+		path := managedAuditTestPath(t)
 		audit := NewHookAudit(path)
 		if err := audit.Append(managedAuditRecord(HookAuditStarted)); err != nil {
 			t.Fatalf("seed Append: %v", err)
@@ -165,7 +181,7 @@ func TestManagedHookAuditWindowsRejectsWeakDACL(t *testing.T) {
 	})
 
 	t.Run("protected file with extra principal", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
+		path := managedAuditTestPath(t)
 		audit := NewHookAudit(path)
 		if err := audit.Append(managedAuditRecord(HookAuditStarted)); err != nil {
 			t.Fatalf("seed Append: %v", err)
@@ -177,7 +193,7 @@ func TestManagedHookAuditWindowsRejectsWeakDACL(t *testing.T) {
 	})
 
 	t.Run("protected file with inherit-only owner", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
+		path := managedAuditTestPath(t)
 		audit := NewHookAudit(path)
 		if err := audit.Append(managedAuditRecord(HookAuditStarted)); err != nil {
 			t.Fatalf("seed Append: %v", err)
@@ -194,17 +210,50 @@ func TestManagedHookAuditWindowsRejectsWeakDACL(t *testing.T) {
 	})
 }
 
+func setManagedHookAuditWindowsMutableDACL(t *testing.T, path string) {
+	t.Helper()
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	everyone, err := windows.StringToSid("S-1-1-0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{
+		{
+			AccessPermissions: windows.GENERIC_ALL,
+			AccessMode:        windows.GRANT_ACCESS,
+			Trustee: windows.TRUSTEE{TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeType: windows.TRUSTEE_IS_USER,
+				TrusteeValue: windows.TrusteeValueFromSID(user.User.Sid)},
+		},
+		{
+			AccessPermissions: windows.GENERIC_ALL,
+			AccessMode:        windows.GRANT_ACCESS,
+			Trustee: windows.TRUSTEE{TrusteeForm: windows.TRUSTEE_IS_SID, TrusteeType: windows.TRUSTEE_IS_WELL_KNOWN_GROUP,
+				TrusteeValue: windows.TrusteeValueFromSID(everyone)},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, acl, nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestManagedHookAuditWindowsRejectsReparseAndNonRegularTargets(t *testing.T) {
 	t.Run("reparse", func(t *testing.T) {
-		parent := filepath.Join(t.TempDir(), "private")
-		if err := hookAuditWindowsEnsurePrivateDir(parent); err != nil {
+		path := managedAuditTestPath(t)
+		if ready, err := prepareHookAuditPrivateNamespace(path, true); err != nil || !ready {
 			t.Fatal(err)
 		}
 		target := filepath.Join(t.TempDir(), "target.jsonl")
 		if err := os.WriteFile(target, []byte("unchanged"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		path := filepath.Join(parent, "hooks.jsonl")
 		if err := os.Symlink(target, path); err != nil {
 			t.Skipf("create Windows symlink: %v", err)
 		}
@@ -217,8 +266,8 @@ func TestManagedHookAuditWindowsRejectsReparseAndNonRegularTargets(t *testing.T)
 	})
 
 	t.Run("directory", func(t *testing.T) {
-		path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
-		if err := hookAuditWindowsEnsurePrivateDir(filepath.Dir(path)); err != nil {
+		path := managedAuditTestPath(t)
+		if ready, err := prepareHookAuditPrivateNamespace(path, true); err != nil || !ready {
 			t.Fatal(err)
 		}
 		if err := hookAuditWindowsEnsurePrivateDir(path); err != nil {
@@ -231,7 +280,7 @@ func TestManagedHookAuditWindowsRejectsReparseAndNonRegularTargets(t *testing.T)
 }
 
 func TestManagedHookAuditWindowsRejectsHardLink(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
+	path := managedAuditTestPath(t)
 	audit := NewHookAudit(path)
 	if err := audit.Append(managedAuditRecord(HookAuditStarted)); err != nil {
 		t.Fatalf("seed Append: %v", err)

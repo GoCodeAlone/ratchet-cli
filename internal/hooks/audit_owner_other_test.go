@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -37,7 +38,7 @@ func TestManagedHookAuditOwnerUsesEffectiveUID(t *testing.T) {
 }
 
 func TestManagedHookAuditRejectsHardLink(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
+	path := managedAuditTestPath(t)
 	audit := NewHookAudit(path)
 	if err := audit.Append(managedAuditRecord(HookAuditStarted)); err != nil {
 		t.Fatalf("seed Append: %v", err)
@@ -52,7 +53,7 @@ func TestManagedHookAuditRejectsHardLink(t *testing.T) {
 
 func TestManagedHookAuditConcurrentFirstCreationReopensWinner(t *testing.T) {
 	const workers = 32
-	path := filepath.Join(t.TempDir(), "private", "hooks.jsonl")
+	path := managedAuditTestPath(t)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
@@ -104,5 +105,44 @@ func TestManagedHookAuditConcurrentFirstCreationReopensWinner(t *testing.T) {
 	if exclusiveCalls.Load() != workers || winners.Load() != 1 || existing.Load() != workers-1 || createdResults.Load() != 1 {
 		t.Fatalf("creation paths = calls %d, winners %d, EEXIST %d, created results %d; want %d/1/%d/1",
 			exclusiveCalls.Load(), winners.Load(), existing.Load(), createdResults.Load(), workers, workers-1)
+	}
+}
+
+func TestManagedHookAuditRejectsUntrustedWritableAnchor(t *testing.T) {
+	anchor := t.TempDir()
+	if err := os.Chmod(anchor, 0o770); err != nil {
+		t.Fatalf("Chmod anchor: %v", err)
+	}
+	path := filepath.Join(anchor, ".ratchet", "audit", "hooks.jsonl")
+
+	err := NewHookAudit(path).Append(managedAuditRecord(HookAuditStarted))
+	if err == nil || !strings.Contains(err.Error(), "trusted anchor") {
+		t.Fatalf("Append error = %v, want trusted-anchor rejection", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(anchor, ".ratchet")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("unsafe anchor gained audit namespace: %v", statErr)
+	}
+}
+
+func TestManagedHookAuditRevalidatesTrustedAnchorIdentity(t *testing.T) {
+	base := t.TempDir()
+	anchor := filepath.Join(base, "home")
+	if err := os.Mkdir(anchor, 0o700); err != nil {
+		t.Fatalf("Mkdir anchor: %v", err)
+	}
+	path := filepath.Join(anchor, ".ratchet", "audit", "hooks.jsonl")
+	release, err := acquireHookAuditTrustedAnchor(path)
+	if err != nil {
+		t.Fatalf("acquireHookAuditTrustedAnchor: %v", err)
+	}
+	displaced := anchor + ".displaced"
+	if err := os.Rename(anchor, displaced); err != nil {
+		t.Fatalf("Rename anchor: %v", err)
+	}
+	if err := os.Mkdir(anchor, 0o700); err != nil {
+		t.Fatalf("Mkdir replacement anchor: %v", err)
+	}
+	if err := release(); err == nil || !strings.Contains(err.Error(), "trusted anchor changed") {
+		t.Fatalf("release error = %v, want trusted-anchor identity failure", err)
 	}
 }

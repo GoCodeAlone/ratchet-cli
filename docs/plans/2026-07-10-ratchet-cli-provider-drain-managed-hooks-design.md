@@ -997,3 +997,31 @@ contention, barriered concurrent first-create, current-hash, root-home, restrict
 namespace-chain, parent-replacement, hard-link, and diagnostic regressions plus
 focused/race gates pass; native Windows syscall interception checks private
 write-through creation and Windows binaries cross-compile.
+
+### Backport 2026-07-14: Trusted managed-hook audit anchor
+
+Cause: the bounded-creation model validated only owner-private descendants;
+another principal with rename/delete-child rights on the existing anchor or an
+ancestor could still orphan the canonical started record after validation.
+Change: `decisions/0010-pin-hook-audit-anchor.md` replaces nearest-existing
+ancestor discovery with a fixed two-level private namespace beneath a validated
+existing anchor. Each transaction pins and revalidates the anchor; Unix rejects
+untrusted ancestry mutation rights and Windows rejects untrusted owner/DACL
+mutation rights while holding directory handles without delete sharing. Read
+uses the same trust lease without creating an absent namespace. Scope: no
+manifest change; Task 10 security rewrite after mandatory quality-loop rewrite.
+Evidence: weak-anchor and anchor-identity regressions fail against the prior
+implementation. Reverting Append anchor admission makes
+`TestManagedHookAuditRejectsUntrustedWritableAnchor` fail by accepting the
+anchor; unlocking before the read-release boundary makes
+`TestManagedHookAuditReadHoldsProcessLockThroughGenerationRead` fail because a
+writer acquires early. Both pass with the rewrite restored.
+
+Spec review found three remaining gaps: Darwin ACLs can grant mutation without
+mode-bit writes, helper-only identity coverage did not prove full transactions,
+and struct decoding accepted duplicate or omitted zero-valued JSON fields.
+Darwin now parses `ATTR_CMN_EXTENDED_SECURITY`, rejects effective
+mutation-capable allow ACEs on the anchor or ancestry, and accepts deny-only
+ACLs. Full Append/Read replacement attempts fail on Unix and Windows. Audit
+reads require all six exact keys once. Revert proofs make the ACL, Read-release,
+and exact-key regressions fail; focused and full hooks tests pass restored.

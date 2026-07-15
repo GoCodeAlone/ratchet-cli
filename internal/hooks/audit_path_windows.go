@@ -18,11 +18,20 @@ const (
 	hookAuditWindowsFileAllAccess windows.ACCESS_MASK = windows.STANDARD_RIGHTS_REQUIRED | windows.SYNCHRONIZE | 0x1ff
 	hookAuditWindowsInheritance                       = windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT
 	hookAuditWindowsFileShare                         = windows.FILE_SHARE_READ | windows.FILE_SHARE_WRITE | windows.FILE_SHARE_DELETE
+	hookAuditWindowsMutationMask  uint32              = windows.DELETE | windows.WRITE_DAC | windows.WRITE_OWNER |
+		windows.FILE_WRITE_DATA | windows.FILE_APPEND_DATA | windows.FILE_WRITE_ATTRIBUTES | windows.FILE_WRITE_EA |
+		windows.GENERIC_WRITE | windows.GENERIC_ALL | 0x40 // FILE_DELETE_CHILD
 )
 
 type hookAuditWindowsFileID struct {
 	VolumeSerialNumber uint64
 	FileID             [16]byte
+}
+
+type hookAuditWindowsTrustedDirectory struct {
+	path     string
+	handle   windows.Handle
+	identity hookAuditWindowsFileID
 }
 
 var (
@@ -48,16 +57,12 @@ func rotateHookAuditPath(source, destination string) error {
 }
 
 func openHookAuditFile(path string, create bool) (*os.File, bool, error) {
-	parent := filepath.Dir(path)
-	if create {
-		if err := hookAuditWindowsEnsurePrivateDir(parent); err != nil {
-			return nil, false, err
-		}
-	} else if err := hookAuditWindowsValidatePrivatePath(parent, true); err != nil {
-		if hookAuditWindowsPathNotExist(err) || errors.Is(err, os.ErrNotExist) {
-			return nil, false, os.ErrNotExist
-		}
+	ready, err := prepareHookAuditPrivateNamespace(path, create)
+	if err != nil {
 		return nil, false, err
+	}
+	if !ready {
+		return nil, false, os.ErrNotExist
 	}
 
 	file, created, err := hookAuditWindowsOpenFile(path, create)
@@ -150,33 +155,180 @@ func hookAuditWindowsEnsurePrivateDir(path string) error {
 		return err
 	}
 
-	missing := make([]string, 0, 2)
-	current := path
-	for {
-		if _, err := os.Lstat(current); err == nil {
-			break
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("inspect managed hook audit namespace: %w", err)
-		}
-		missing = append(missing, current)
-		if len(missing) > maxHookAuditMissingDirs {
-			return errors.New("managed hook audit namespace requires an existing anchor within two parent levels")
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return errors.New("managed hook audit namespace has no existing ancestor")
-		}
-		current = parent
-	}
-	for i := len(missing) - 1; i >= 0; i-- {
-		if err := hookAuditWindowsCreatePrivateDir(missing[i]); err != nil && !errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
-			return fmt.Errorf("create managed hook audit namespace: %w", err)
-		}
-		if err := hookAuditWindowsValidatePrivatePath(missing[i], true); err != nil {
-			return err
-		}
+	if err := hookAuditWindowsCreatePrivateDir(path); err != nil && !errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+		return fmt.Errorf("create managed hook audit namespace: %w", err)
 	}
 	return hookAuditWindowsValidatePrivatePath(path, true)
+}
+
+func prepareHookAuditPrivateNamespace(path string, create bool) (bool, error) {
+	_, directories, err := hookAuditNamespace(path)
+	if err != nil {
+		return false, err
+	}
+	for _, directory := range directories {
+		err := hookAuditWindowsValidatePrivatePath(directory, true)
+		if err == nil {
+			continue
+		}
+		if !hookAuditWindowsPathNotExist(err) && !errors.Is(err, os.ErrNotExist) {
+			return false, err
+		}
+		if !create {
+			return false, nil
+		}
+		if err := hookAuditWindowsEnsurePrivateDir(directory); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+func acquireHookAuditTrustedAnchor(path string) (func() error, error) {
+	anchor, _, err := hookAuditNamespace(path)
+	if err != nil {
+		return nil, err
+	}
+	directories := make([]hookAuditWindowsTrustedDirectory, 0, 8)
+	closeDirectories := func() error {
+		var closeErr error
+		for i := len(directories) - 1; i >= 0; i-- {
+			closeErr = errors.Join(closeErr, windows.CloseHandle(directories[i].handle))
+		}
+		return closeErr
+	}
+	for current := anchor; ; current = filepath.Dir(current) {
+		directory, err := hookAuditWindowsOpenTrustedDirectory(current)
+		if err != nil {
+			return nil, errors.Join(err, closeDirectories())
+		}
+		directories = append(directories, directory)
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+	}
+	if err := validateHookAuditWindowsTrustedDirectoryIdentities(directories); err != nil {
+		return nil, errors.Join(err, closeDirectories())
+	}
+	return func() error {
+		return errors.Join(validateHookAuditWindowsTrustedDirectoryIdentities(directories), closeDirectories())
+	}, nil
+}
+
+func hookAuditWindowsOpenTrustedDirectory(path string) (hookAuditWindowsTrustedDirectory, error) {
+	pathPtr, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return hookAuditWindowsTrustedDirectory{}, err
+	}
+	handle, err := hookAuditWindowsCreateFile(
+		pathPtr,
+		windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE,
+		nil,
+		windows.OPEN_EXISTING,
+		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT,
+		0,
+	)
+	if err != nil {
+		return hookAuditWindowsTrustedDirectory{}, fmt.Errorf("open managed hook audit trusted anchor ancestry: %w", err)
+	}
+	if err := hookAuditWindowsValidateTrustedDirectoryHandle(handle); err != nil {
+		return hookAuditWindowsTrustedDirectory{}, errors.Join(err, windows.CloseHandle(handle))
+	}
+	identity, err := hookAuditWindowsHandleIdentity(handle)
+	if err != nil {
+		return hookAuditWindowsTrustedDirectory{}, errors.Join(err, windows.CloseHandle(handle))
+	}
+	return hookAuditWindowsTrustedDirectory{path: path, handle: handle, identity: identity}, nil
+}
+
+func validateHookAuditWindowsTrustedDirectoryIdentities(directories []hookAuditWindowsTrustedDirectory) error {
+	for _, directory := range directories {
+		current, err := hookAuditWindowsOpenTrustedDirectory(directory.path)
+		if err != nil {
+			return fmt.Errorf("revalidate managed hook audit trusted anchor: %w", err)
+		}
+		closeErr := windows.CloseHandle(current.handle)
+		if current.identity != directory.identity {
+			return errors.Join(errors.New("managed hook audit trusted anchor changed during transaction"), closeErr)
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+	return nil
+}
+
+func hookAuditWindowsValidateTrustedDirectoryHandle(handle windows.Handle) error {
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(handle, &info); err != nil {
+		return err
+	}
+	if info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 || info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		return errors.New("managed hook audit trusted anchor ancestry contains an unsafe target")
+	}
+	descriptor, err := windows.GetSecurityInfo(
+		handle,
+		windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION,
+	)
+	if err != nil {
+		return err
+	}
+	owner, _, err := descriptor.Owner()
+	if err != nil {
+		return err
+	}
+	current, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return err
+	}
+	dacl, _, err := descriptor.DACL()
+	if err != nil || dacl == nil {
+		return validateHookAuditWindowsAnchorAccess(hookAuditWindowsTrustedSID(owner, current.User.Sid), false, nil)
+	}
+	entries := make([]hookAuditWindowsAnchorAccessEntry, 0, dacl.AceCount)
+	for i := uint32(0); i < uint32(dacl.AceCount); i++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(dacl, i, &ace); err != nil {
+			return err
+		}
+		entry := hookAuditWindowsAnchorAccessEntry{}
+		switch ace.Header.AceType {
+		case windows.ACCESS_ALLOWED_ACE_TYPE:
+			entry.allowed = true
+		case windows.ACCESS_DENIED_ACE_TYPE:
+		default:
+			return fmt.Errorf("managed hook audit trusted anchor has unsupported ACE type %#x", ace.Header.AceType)
+		}
+		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		entry.trusted = hookAuditWindowsTrustedSID(sid, current.User.Sid)
+		entry.mutating = ace.Header.AceFlags&windows.INHERIT_ONLY_ACE == 0 && uint32(ace.Mask)&hookAuditWindowsMutationMask != 0
+		entries = append(entries, entry)
+	}
+	return validateHookAuditWindowsAnchorAccess(hookAuditWindowsTrustedSID(owner, current.User.Sid), true, entries)
+}
+
+func hookAuditWindowsTrustedSID(candidate, current *windows.SID) bool {
+	if candidate == nil {
+		return false
+	}
+	if current != nil && candidate.Equals(current) {
+		return true
+	}
+	for _, value := range []string{
+		"S-1-5-18",     // LocalSystem
+		"S-1-5-32-544", // Builtin Administrators
+		"S-1-5-80-956008885-3418522649-1831038044-" + // TrustedInstaller
+			"1853292631-2271478464",
+	} {
+		trusted, err := windows.StringToSid(value)
+		if err == nil && candidate.Equals(trusted) {
+			return true
+		}
+	}
+	return false
 }
 
 func hookAuditWindowsCreatePrivateDir(path string) error {
