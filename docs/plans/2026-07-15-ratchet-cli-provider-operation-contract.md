@@ -121,7 +121,7 @@ schema-compatible and again project as `PENDING` until finalization.
 Rollback: revert smoke/docs changes with the daemon projection commit. Prior
 binaries and persisted rows remain compatible.
 
-### Task 4: Verify, Review, Merge, Release, And Close
+### Task 4: Verify, Review, Merge, And Release
 
 **Files:**
 - Modify only files named in Tasks 1-3 plus approved design/plan/ADR artifacts.
