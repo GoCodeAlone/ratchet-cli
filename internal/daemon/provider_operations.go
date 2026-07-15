@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GoCodeAlone/workflow/secrets"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -68,11 +69,32 @@ type providerOperationSecretFinalizationError struct {
 }
 
 func (e *providerOperationSecretFinalizationError) Error() string {
-	return "provider operation finalization secret unavailable"
+	switch {
+	case errors.Is(e.cause, context.Canceled):
+		return "provider operation finalization secret read canceled"
+	case errors.Is(e.cause, context.DeadlineExceeded):
+		return "provider operation finalization secret read timed out"
+	case errors.Is(e.cause, secrets.ErrInvalidKey):
+		return "provider operation finalization secret key is invalid"
+	case errors.Is(e.cause, secrets.ErrUnsupported):
+		return "provider operation finalization secret read is unsupported"
+	case errors.Is(e.cause, secrets.ErrProviderInit):
+		return "provider operation finalization secret provider initialization failed"
+	default:
+		return "provider operation finalization secret unavailable"
+	}
 }
 
 func (e *providerOperationSecretFinalizationError) Unwrap() error {
 	return e.cause
+}
+
+func (e *providerOperationSecretFinalizationError) retryableAtStartup() bool {
+	return !errors.Is(e.cause, context.Canceled) &&
+		!errors.Is(e.cause, context.DeadlineExceeded) &&
+		!errors.Is(e.cause, secrets.ErrInvalidKey) &&
+		!errors.Is(e.cause, secrets.ErrUnsupported) &&
+		!errors.Is(e.cause, secrets.ErrProviderInit)
 }
 
 func newProviderOperationManager(engine *EngineContext) *providerOperationManager {
@@ -392,9 +414,6 @@ func (m *providerOperationManager) finalizeOperation(parent context.Context, ope
 	if secretName != "" {
 		value, err := m.engine.SecretsProvider.Get(ctx, secretName)
 		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return err
-			}
 			return &providerOperationSecretFinalizationError{cause: err}
 		}
 		secretValue = value
@@ -566,7 +585,7 @@ func (m *providerOperationManager) reconcileStartup(ctx context.Context) error {
 	for _, operationID := range applied {
 		if err := m.finalizeOperation(ctx, operationID); err != nil {
 			var secretErr *providerOperationSecretFinalizationError
-			if errors.As(err, &secretErr) {
+			if errors.As(err, &secretErr) && secretErr.retryableAtStartup() {
 				continue
 			}
 			return fmt.Errorf("finalize provider operation: %w", err)
