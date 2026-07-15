@@ -436,8 +436,6 @@ func (m *providerOperationManager) get(ctx context.Context, operationID string, 
 		if err := m.finalizeOperation(context.WithoutCancel(ctx), operationID); err == nil {
 			return m.get(ctx, operationID, false)
 		}
-		// Applied remains externally pending until finalization succeeds.
-		op.State = pb.ProviderOperationState_PROVIDER_OPERATION_STATE_PENDING
 	}
 	return op, nil
 }
@@ -486,8 +484,10 @@ func syntheticProviderOperation(operationID, alias, failure string) *pb.Provider
 
 func providerOperationStatePB(state string) pb.ProviderOperationState {
 	switch state {
-	case providerOperationPending, providerOperationApplied:
+	case providerOperationPending:
 		return pb.ProviderOperationState_PROVIDER_OPERATION_STATE_PENDING
+	case providerOperationApplied:
+		return pb.ProviderOperationState_PROVIDER_OPERATION_STATE_APPLIED
 	case providerOperationCommitted:
 		return pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED
 	case providerOperationFailed:

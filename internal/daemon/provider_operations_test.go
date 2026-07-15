@@ -69,6 +69,87 @@ func TestProviderOperationSchemaFailureStopsStartup(t *testing.T) {
 	}
 }
 
+func TestProviderOperationStatePBMapsApplied(t *testing.T) {
+	if got := providerOperationStatePB(providerOperationApplied); got != pb.ProviderOperationState_PROVIDER_OPERATION_STATE_APPLIED {
+		t.Fatalf("providerOperationStatePB(applied) = %s, want APPLIED", got)
+	}
+}
+
+func TestGetProviderOperationFinalizationFailureRemainsAppliedAndRetries(t *testing.T) {
+	const (
+		operationID = "b4aff148-ef2b-4b18-9971-e4702ab45586"
+		alias       = "applied-retry"
+		secretName  = "provider-v2-applied-retry"
+		credential  = "APPLIED-RETRY-CREDENTIAL-SENTINEL"
+		rawError    = "APPLIED-RETRY-RAW-ERROR-SENTINEL"
+	)
+
+	provider := newOperationSecrets()
+	svc, db := newProviderOperationTestService(t, provider)
+	if err := provider.Set(t.Context(), secretName, credential); err != nil {
+		t.Fatal(err)
+	}
+	insertProviderRow(t, db, alias, secretName, "retry-model")
+	if _, err := db.Exec(`INSERT INTO provider_operations
+		(operation_id, alias, state, failure, secret_name, result_type, result_model,
+		 result_is_default, created_at, updated_at, expires_at)
+		VALUES (?, ?, 'applied', '', ?, 'openai', 'retry-model', 1,
+		 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, datetime('now', '+1 day'))`,
+		operationID, alias, secretName); err != nil {
+		t.Fatal(err)
+	}
+
+	failGet := true
+	getAttempts := 0
+	provider.getHook = func(_ context.Context, key string) error {
+		if key != secretName {
+			return nil
+		}
+		getAttempts++
+		if failGet {
+			return errors.New(rawError)
+		}
+		return nil
+	}
+
+	applied, err := svc.GetProviderOperation(t.Context(), &pb.GetProviderOperationReq{OperationId: operationID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied.GetState() != pb.ProviderOperationState_PROVIDER_OPERATION_STATE_APPLIED {
+		t.Fatalf("first query state = %s, want APPLIED", applied.GetState())
+	}
+	if applied.GetFailure() != pb.ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_UNSPECIFIED {
+		t.Fatalf("first query failure = %s, want UNSPECIFIED", applied.GetFailure())
+	}
+	result := applied.GetResult()
+	if result == nil || result.GetAlias() != alias || result.GetType() != "openai" ||
+		result.GetModel() != "retry-model" || !result.GetIsDefault() {
+		t.Fatalf("first query result = %+v", result)
+	}
+	wire, err := protojson.Marshal(applied)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(wire), credential) || strings.Contains(string(wire), rawError) {
+		t.Fatalf("applied operation exposed secret or raw error: %s", wire)
+	}
+	assertOperationFailure(t, db, operationID, providerOperationApplied, "")
+
+	failGet = false
+	committed, err := svc.GetProviderOperation(t.Context(), &pb.GetProviderOperationReq{OperationId: operationID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if committed.GetState() != pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED {
+		t.Fatalf("retry query state = %s, want COMMITTED", committed.GetState())
+	}
+	if getAttempts != 2 {
+		t.Fatalf("secret get attempts = %d, want 2", getAttempts)
+	}
+	assertOperationFailure(t, db, operationID, providerOperationCommitted, "")
+}
+
 func TestCommitProviderSaveRollbackPreservesActiveSecret(t *testing.T) {
 	provider := newOperationSecrets()
 	provider.values["provider_old"] = "old-secret"
