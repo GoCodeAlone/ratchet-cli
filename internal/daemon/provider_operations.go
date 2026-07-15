@@ -39,10 +39,14 @@ const (
 type providerOperationManager struct {
 	engine *EngineContext
 
-	mu      sync.Mutex
-	flights map[string]*providerOperationFlight
-	aliasMu sync.Mutex
-	aliases map[string]*providerAliasGate
+	mu          sync.Mutex
+	flights     map[string]*providerOperationFlight
+	starting    bool
+	started     bool
+	stopped     bool
+	startCancel context.CancelFunc
+	aliasMu     sync.Mutex
+	aliases     map[string]*providerAliasGate
 
 	ctx         context.Context
 	cancel      context.CancelFunc
@@ -50,6 +54,7 @@ type providerOperationManager struct {
 	cleanupMu   sync.Mutex
 	cleaning    map[string]bool
 	stopOnce    sync.Once
+	background  sync.WaitGroup
 }
 
 type providerOperationFlight struct {
@@ -77,16 +82,58 @@ func (m *providerOperationManager) Start(parent context.Context) error {
 	if m == nil || m.engine == nil || m.engine.DB == nil || m.engine.SecretsProvider == nil {
 		return fmt.Errorf("provider operation manager is not fully configured")
 	}
-	if _, err := m.engine.SecretsProvider.List(parent); err != nil {
+	m.mu.Lock()
+	if m.stopped {
+		m.mu.Unlock()
+		return fmt.Errorf("provider operation manager is stopped")
+	}
+	if m.starting || m.started {
+		m.mu.Unlock()
+		return fmt.Errorf("provider operation manager is already starting or started")
+	}
+	startupCtx, startupCancel := context.WithCancel(parent)
+	m.starting = true
+	m.startCancel = startupCancel
+	m.background.Add(1)
+	m.mu.Unlock()
+	defer m.background.Done()
+
+	if _, err := m.engine.SecretsProvider.List(startupCtx); err != nil {
+		m.finishFailedStart()
+		startupCancel()
 		return fmt.Errorf("list provider secrets: %w", err)
 	}
-	if err := m.reconcileStartup(parent); err != nil {
+	if err := m.reconcileStartup(startupCtx); err != nil {
+		m.finishFailedStart()
+		startupCancel()
 		return err
 	}
-	m.ctx, m.cancel = context.WithCancel(parent)
-	go m.cleanupLoop()
+	m.mu.Lock()
+	m.starting = false
+	m.startCancel = nil
+	if m.stopped {
+		m.mu.Unlock()
+		startupCancel()
+		return fmt.Errorf("provider operation manager is stopped")
+	}
+	m.ctx = startupCtx
+	m.cancel = startupCancel
+	m.started = true
+	m.background.Add(1)
+	go func() {
+		defer m.background.Done()
+		m.cleanupLoop()
+	}()
+	m.mu.Unlock()
 	m.WakeCleanup()
 	return nil
+}
+
+func (m *providerOperationManager) finishFailedStart() {
+	m.mu.Lock()
+	m.starting = false
+	m.startCancel = nil
+	m.mu.Unlock()
 }
 
 func (m *providerOperationManager) Stop() {
@@ -94,13 +141,23 @@ func (m *providerOperationManager) Stop() {
 		return
 	}
 	m.stopOnce.Do(func() {
+		m.mu.Lock()
+		m.stopped = true
+		if m.startCancel != nil {
+			m.startCancel()
+		}
 		if m.cancel != nil {
 			m.cancel()
 		}
+		m.mu.Unlock()
+		m.background.Wait()
 	})
 }
 
 func (m *providerOperationManager) Commit(ctx context.Context, req *pb.CommitProviderSaveReq) (*pb.ProviderOperation, error) {
+	if err := m.operationAdmissionError(); err != nil {
+		return nil, err
+	}
 	provider, normalizedSettings, err := validateProviderSaveRequest(req)
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
@@ -109,6 +166,12 @@ func (m *providerOperationManager) Commit(ctx context.Context, req *pb.CommitPro
 	request.Settings = normalizedSettings
 
 	m.mu.Lock()
+	if err := m.operationAdmissionErrorLocked(); err != nil {
+		m.mu.Unlock()
+		return nil, err
+	}
+	m.background.Add(1)
+	defer m.background.Done()
 	existing, err := m.get(ctx, req.GetOperationId(), false)
 	if err != nil && status.Code(err) != codes.NotFound {
 		m.mu.Unlock()
@@ -164,9 +227,12 @@ func (m *providerOperationManager) Commit(ctx context.Context, req *pb.CommitPro
 		releaseAlias: releaseAlias,
 	}
 	m.flights[request.GetAlias()] = flight
+	m.background.Add(1)
 	m.mu.Unlock()
-
-	go m.runFlight(flight, request, secretName)
+	go func() {
+		defer m.background.Done()
+		m.runFlight(flight, request, secretName)
+	}()
 	return m.waitForFlight(ctx, req.GetOperationId(), flight)
 }
 
@@ -199,7 +265,7 @@ func (m *providerOperationManager) waitForFlight(ctx context.Context, operationI
 	case <-flight.done:
 		queryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), providerOperationFinalizerLimit)
 		defer cancel()
-		return m.Get(queryCtx, operationID)
+		return m.get(queryCtx, operationID, true)
 	case <-ctx.Done():
 		return nil, status.FromContextError(ctx.Err()).Err()
 	}
@@ -414,11 +480,41 @@ func (m *providerOperationManager) finalizeOperationLocked(ctx context.Context, 
 }
 
 func (m *providerOperationManager) Get(ctx context.Context, operationID string) (*pb.ProviderOperation, error) {
+	if err := m.beginOperation(); err != nil {
+		return nil, err
+	}
+	defer m.background.Done()
 	op, err := m.get(ctx, operationID, true)
 	if err != nil {
 		return nil, err
 	}
 	return op, nil
+}
+
+func (m *providerOperationManager) beginOperation() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.operationAdmissionErrorLocked(); err != nil {
+		return err
+	}
+	m.background.Add(1)
+	return nil
+}
+
+func (m *providerOperationManager) operationAdmissionError() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.operationAdmissionErrorLocked()
+}
+
+func (m *providerOperationManager) operationAdmissionErrorLocked() error {
+	if m.stopped {
+		return status.Error(codes.Unavailable, "provider operations are stopping")
+	}
+	if !m.started {
+		return status.Error(codes.FailedPrecondition, "provider operations are not started")
+	}
+	return nil
 }
 
 func (m *providerOperationManager) get(ctx context.Context, operationID string, finalize bool) (*pb.ProviderOperation, error) {
