@@ -55,6 +55,7 @@ distinct information; it is removed from the same-type diagnostic.
 |---|---|---|
 | Secret unavailable during finalization | `APPLIED` + result, unspecified failure, no raw error | row remains `applied`; next query retries |
 | Later finalization succeeds | `COMMITTED` + result | row becomes `committed` |
+| Database or journal-invariant failure during startup finalization | daemon startup fails | row remains `applied`; operator repairs infrastructure and restarts |
 | Unknown persisted state | `UNSPECIFIED` | unchanged |
 | Duplicate canonical type | deterministic validation error | no mutation |
 
@@ -133,12 +134,18 @@ Cause: the initial smoke seeded `applied` after startup, bypassing
 `reconcileStartup`; an unavailable finalization secret made restart fail before
 the recovery RPC could serve.
 
-Change: startup attempts finalization but retains an unsuccessful row as
-`applied` and continues serving; the built-binary smoke now restarts before
-querying.
+Change: startup attempts finalization but classifies secret-read failures as
+operation-local, retains the row as `applied`, and continues serving. Database,
+context, and journal-invariant failures remain fail-stop. The built-binary
+smoke now restarts before querying.
 
 Scope: no manifest change; this is required by Tasks 2-3 retry/restart behavior.
 
 Evidence: `TestProviderOperationStartupKeepsUnfinalizedAppliedRetryable` failed
 with `finalize provider operation: startup finalization unavailable` before the
-fix and passes after it.
+fix and passes after it;
+`TestProviderOperationStartupFinalizationDatabaseFailureStopsStartup` failed
+under broad suppression and passes with typed classification;
+`TestProviderOperationStartupFinalizationContextFailureStopsStartup` failed
+when cancellation was wrapped as secret unavailability and passes when context
+errors remain fail-stop.

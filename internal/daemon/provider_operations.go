@@ -63,6 +63,18 @@ type providerAliasGate struct {
 	refs int
 }
 
+type providerOperationSecretFinalizationError struct {
+	cause error
+}
+
+func (e *providerOperationSecretFinalizationError) Error() string {
+	return "provider operation finalization secret unavailable"
+}
+
+func (e *providerOperationSecretFinalizationError) Unwrap() error {
+	return e.cause
+}
+
 func newProviderOperationManager(engine *EngineContext) *providerOperationManager {
 	return &providerOperationManager{
 		engine:      engine,
@@ -380,7 +392,10 @@ func (m *providerOperationManager) finalizeOperation(parent context.Context, ope
 	if secretName != "" {
 		value, err := m.engine.SecretsProvider.Get(ctx, secretName)
 		if err != nil {
-			return err
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return err
+			}
+			return &providerOperationSecretFinalizationError{cause: err}
 		}
 		secretValue = value
 	}
@@ -549,7 +564,13 @@ func (m *providerOperationManager) reconcileStartup(ctx context.Context) error {
 	}
 	m.engine.ProviderRowsMu.Unlock()
 	for _, operationID := range applied {
-		_ = m.finalizeOperation(ctx, operationID)
+		if err := m.finalizeOperation(ctx, operationID); err != nil {
+			var secretErr *providerOperationSecretFinalizationError
+			if errors.As(err, &secretErr) {
+				continue
+			}
+			return fmt.Errorf("finalize provider operation: %w", err)
+		}
 	}
 
 	keys, err := m.engine.SecretsProvider.List(ctx)

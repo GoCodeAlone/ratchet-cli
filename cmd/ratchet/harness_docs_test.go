@@ -163,16 +163,22 @@ func TestHarnessDocsDescribeUnifiedProviderSetup(t *testing.T) {
 		"secret reference",
 		"operation/status/log output",
 		"durable provider save",
-		"PENDING",
-		"APPLIED",
-		"COMMITTED",
-		"FAILED",
-		"ratchet provider operation",
-		"retry finalization",
 		"Windows ConPTY provider save",
 	} {
 		if !containsWords(publicDocs, required) {
 			t.Fatalf("unified provider docs missing %q", required)
+		}
+	}
+	for _, required := range []string{
+		"`PENDING`: the save has not yet been durably applied",
+		"`APPLIED`: provider state is durable, but daemon finalization is incomplete",
+		"`COMMITTED`: the save and finalization completed successfully",
+		"`FAILED`: the save reached a terminal classified failure",
+		"Run `ratchet provider operation <id> --json` again to retry finalization",
+		"the daemon still starts and serves the operation as `APPLIED`",
+	} {
+		if !containsWords(readme, required) {
+			t.Fatalf("README provider lifecycle missing %q", required)
 		}
 	}
 	for _, providerType := range []string{

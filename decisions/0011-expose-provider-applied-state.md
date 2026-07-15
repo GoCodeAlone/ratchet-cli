@@ -20,7 +20,9 @@ a query-triggered finalization attempt fails. The row remains retryable: every
 later `GetProviderOperation` call attempts finalization again, then returns
 `COMMITTED` after success. `APPLIED` includes the existing non-secret result and
 no raw finalization error. Startup also attempts APPLIED finalization, but a
-failed attempt leaves the row retryable and does not stop the daemon.
+secret-read failure leaves the row retryable and does not stop the daemon.
+Database, context, and journal-invariant finalization failures still stop
+startup.
 
 This supersedes only ADR 0006's statement that operation queries expose
 `applied` as pending and its fail-stop startup finalization behavior. The
@@ -32,7 +34,8 @@ terminal-state rules remain unchanged.
 - Existing clients continue polling because CLI and TUI already classify both
   `PENDING` and `APPLIED` as unresolved.
 - Automation can distinguish pre-apply uncertainty from retryable finalization.
-- A transient finalization failure cannot make the recovery RPC unavailable.
+- A transient secret-read failure cannot make the recovery RPC unavailable;
+  infrastructure and invariant failures remain fail-stop.
 - No protobuf, database, migration, or retention change is required.
 - Rollback may restore the old projection without changing persisted rows or
   generated clients.

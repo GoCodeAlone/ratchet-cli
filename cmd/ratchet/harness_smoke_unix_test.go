@@ -188,11 +188,12 @@ func TestHarnessSmokeProviderAppliedState(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_STATE_HOME", state)
+	red := harnessredact.New(home, state, root, bin, daemon.SocketPath(), daemon.PIDPath(), secretName, credential).String
 	t.Cleanup(bestEffortShutdownHarnessSmokeDaemon)
 
 	startOutput, err := runRatchetSmoke(t, bin, home, "daemon", "start", "--background")
 	if err != nil {
-		t.Fatalf("start production daemon: %v\n%s", err, startOutput)
+		t.Fatalf("start production daemon: %v\n%s", err, red(startOutput))
 	}
 	waitForRatchetSmokePresent(t, daemon.SocketPath(), 5*time.Second)
 	waitForRatchetSmokePresent(t, daemon.PIDPath(), 5*time.Second)
@@ -221,18 +222,18 @@ func TestHarnessSmokeProviderAppliedState(t *testing.T) {
 	waitForRatchetSmokeMissing(t, daemon.PIDPath(), 5*time.Second)
 	restartOutput, err := runRatchetSmoke(t, bin, home, "daemon", "start", "--background")
 	if err != nil {
-		t.Fatalf("restart production daemon with applied operation: %v\n%s", err, restartOutput)
+		t.Fatalf("restart production daemon with applied operation: %v\n%s", err, red(restartOutput))
 	}
 	waitForRatchetSmokePresent(t, daemon.SocketPath(), 5*time.Second)
 	waitForRatchetSmokePresent(t, daemon.PIDPath(), 5*time.Second)
 
 	appliedOutput, err := runRatchetSmoke(t, bin, home, "provider", "operation", operationID, "--json")
 	if err != nil {
-		t.Fatalf("query applied provider operation: %v\n%s", err, appliedOutput)
+		t.Fatalf("query applied provider operation: %v\n%s", err, red(appliedOutput))
 	}
 	var applied pb.ProviderOperation
 	if err := protojson.Unmarshal([]byte(appliedOutput), &applied); err != nil {
-		t.Fatalf("decode applied provider operation: %v\n%s", err, appliedOutput)
+		t.Fatalf("decode applied provider operation: %v\n%s", err, red(appliedOutput))
 	}
 	if applied.GetState() != pb.ProviderOperationState_PROVIDER_OPERATION_STATE_APPLIED ||
 		applied.GetFailure() != pb.ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_UNSPECIFIED {
@@ -251,19 +252,19 @@ func TestHarnessSmokeProviderAppliedState(t *testing.T) {
 	}
 	committedOutput, err := runRatchetSmoke(t, bin, home, "provider", "operation", operationID, "--json")
 	if err != nil {
-		t.Fatalf("retry applied provider operation: %v\n%s", err, committedOutput)
+		t.Fatalf("retry applied provider operation: %v\n%s", err, red(committedOutput))
 	}
 	var committed pb.ProviderOperation
 	if err := protojson.Unmarshal([]byte(committedOutput), &committed); err != nil {
-		t.Fatalf("decode committed provider operation: %v\n%s", err, committedOutput)
+		t.Fatalf("decode committed provider operation: %v\n%s", err, red(committedOutput))
 	}
 	if committed.GetState() != pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED {
 		t.Fatalf("retried provider operation state = %s, want COMMITTED", committed.GetState())
 	}
 	assertHarnessSmokeOperationState(t, db, operationID, "committed")
-	for _, output := range []string{appliedOutput, committedOutput} {
+	for _, output := range []string{startOutput, restartOutput, appliedOutput, committedOutput} {
 		if strings.Contains(output, credential) || strings.Contains(output, secretName) || strings.Contains(strings.ToLower(output), "secret not found") {
-			t.Fatalf("provider operation output exposed secret metadata: %s", output)
+			t.Fatalf("provider operation output exposed secret metadata: %s", red(output))
 		}
 	}
 
