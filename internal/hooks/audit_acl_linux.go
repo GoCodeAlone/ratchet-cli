@@ -10,9 +10,11 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+var hookAuditLinuxListxattr = unix.Listxattr
+
 func validateHookAuditPlatformACL(path string) error {
 	for range 3 {
-		size, err := unix.Listxattr(path, nil)
+		size, err := hookAuditLinuxListxattr(path, nil)
 		if errors.Is(err, unix.ENOTSUP) || errors.Is(err, unix.EOPNOTSUPP) {
 			return nil
 		}
@@ -23,7 +25,7 @@ func validateHookAuditPlatformACL(path string) error {
 			return nil
 		}
 		buffer := make([]byte, size)
-		read, err := unix.Listxattr(path, buffer)
+		read, err := hookAuditLinuxListxattr(path, buffer)
 		if errors.Is(err, unix.ERANGE) {
 			continue
 		}

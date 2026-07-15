@@ -21,8 +21,19 @@ const (
 	hookAuditDarwinMaxACLEntries       = 128
 	hookAuditDarwinACEPermit           = 1
 	hookAuditDarwinACEKindMask         = 0xf
-	hookAuditDarwinACEOnlyInherit      = 1 << 8
-	hookAuditDarwinMutationRights      = 1<<2 | 1<<4 | 1<<5 | 1<<6 | 1<<8 | 1<<10 | 1<<12 | 1<<13 | 1<<21 | 1<<23
+	hookAuditDarwinWriteData           = 1 << 2
+	hookAuditDarwinDelete              = 1 << 4
+	hookAuditDarwinAppendData          = 1 << 5
+	hookAuditDarwinDeleteChild         = 1 << 6
+	hookAuditDarwinWriteAttributes     = 1 << 8
+	hookAuditDarwinWriteExtendedAttrs  = 1 << 10
+	hookAuditDarwinWriteSecurity       = 1 << 12
+	hookAuditDarwinTakeOwnership       = 1 << 13
+	hookAuditDarwinGenericAll          = 1 << 21
+	hookAuditDarwinGenericWrite        = 1 << 23
+	hookAuditDarwinMutationRights      = hookAuditDarwinWriteData | hookAuditDarwinDelete | hookAuditDarwinAppendData |
+		hookAuditDarwinDeleteChild | hookAuditDarwinWriteAttributes | hookAuditDarwinWriteExtendedAttrs |
+		hookAuditDarwinWriteSecurity | hookAuditDarwinTakeOwnership | hookAuditDarwinGenericAll | hookAuditDarwinGenericWrite
 )
 
 func validateHookAuditPlatformACL(path string) error {
@@ -78,7 +89,7 @@ func validateHookAuditPlatformACL(path string) error {
 		entryStart := dataStart + hookAuditDarwinFileSecuritySize + i*hookAuditDarwinACEBytes
 		flags := binary.LittleEndian.Uint32(buffer[entryStart+16 : entryStart+20])
 		rights := binary.LittleEndian.Uint32(buffer[entryStart+20 : entryStart+24])
-		if flags&hookAuditDarwinACEKindMask != hookAuditDarwinACEPermit || flags&hookAuditDarwinACEOnlyInherit != 0 || rights&hookAuditDarwinMutationRights == 0 {
+		if flags&hookAuditDarwinACEKindMask != hookAuditDarwinACEPermit || rights&hookAuditDarwinMutationRights == 0 {
 			continue
 		}
 		return errors.New("managed hook audit trusted anchor ACL grants mutation rights")

@@ -1034,3 +1034,12 @@ linearizes before lock creation when no generation exists; any observed
 generation is parsed under the process lock. Native Windows runs a named Read
 anchor-pinning regression in addition to the shared transaction test. ADR 0010
 records these proof boundaries.
+
+Darwin inheritance review found that an `only_inherit` mutation ACE can become
+effective on a newly created child. Admission now rejects mutation-capable
+allow ACEs regardless of inheritance flags and revalidates native ACLs on each
+private namespace directory and file. Named constants mirror Darwin
+`KAUTH_VNODE_*` values (`WRITE_DATA=1<<2`, `DELETE=1<<4`) and write/delete,
+inheritance, existing-object, and deny-only regressions prevent bit drift.
+Linux tests exercise real unrelated xattr enumeration plus injected NUL-packed
+unsupported ACL names and fail-closed enumeration errors.

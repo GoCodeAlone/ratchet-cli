@@ -248,7 +248,10 @@ func validateHookAuditParent(path string, info os.FileInfo) error {
 	if info.Mode().Perm() != 0o700 {
 		return fmt.Errorf("managed hook audit namespace must have mode 0700, got %04o", info.Mode().Perm())
 	}
-	return validateHookAuditOwner(path, info)
+	if err := validateHookAuditOwner(path, info); err != nil {
+		return err
+	}
+	return validateHookAuditPlatformACL(path)
 }
 
 func validateHookAuditFile(path string, info os.FileInfo) error {
@@ -261,7 +264,10 @@ func validateHookAuditFile(path string, info os.FileInfo) error {
 	if links, ok := hookAuditMetadataUint(info, "Nlink"); ok && links != 1 {
 		return errors.New("managed hook audit must have exactly one link")
 	}
-	return validateHookAuditOwner(path, info)
+	if err := validateHookAuditOwner(path, info); err != nil {
+		return err
+	}
+	return validateHookAuditPlatformACL(path)
 }
 
 func validateHookAuditIdentity(path string, f *os.File) error {

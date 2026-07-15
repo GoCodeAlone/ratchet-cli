@@ -19,8 +19,9 @@ transaction, validates the anchor and its ancestry against untrusted
 rename/delete rights, and revalidates identity before release. Unix accepts
 only current-user/root-owned ancestry without untrusted mode or supported
 native ACL mutation rights, with trusted-owner sticky directories supported.
-Darwin rejects effective mutation-capable allow ACEs; deny-only ACLs remain
-valid. Linux accepts POSIX access/default ACLs because their effective access
+Darwin rejects mutation-capable allow ACEs, including inherit-only entries,
+before namespace creation and revalidates ACLs on private directories/files;
+deny-only ACLs remain valid. Linux accepts POSIX access/default ACLs because their effective access
 mask is reflected in `st_mode`, and rejects recognized non-POSIX ACL xattrs.
 Other Unix targets support the portable POSIX mode/ACL contract only.
 Windows evaluates owner and DACL mutation rights and holds directory handles
@@ -40,7 +41,9 @@ arbitrary-depth traversal because it expands race and durability surfaces.
 ## Proof
 
 `TestManagedHookAuditRejectsMutationACLOnTrustedAnchor` covers Darwin anchor
-and ancestor allow ACLs; its deny-only sibling protects normal macOS homes.
+and ancestor write/delete allow ACLs; inheritance and existing-object siblings
+prove private namespace/file ACL validation. Its deny-only sibling protects
+normal macOS homes.
 `TestManagedHookAuditRejectsAnchorReplacementDuringAppend` and
 `TestManagedHookAuditRejectsAnchorReplacementBeforeReadUnlock` exercise full
 transactions. Windows additionally runs
