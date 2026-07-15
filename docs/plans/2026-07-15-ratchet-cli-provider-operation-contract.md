@@ -14,8 +14,8 @@
 
 ## Scope Manifest
 
-**PR Count:** 1
-**Tasks:** 4
+**PR Count:** 2
+**Tasks:** 5
 **Estimated Lines of Change:** ~260
 
 **Out of scope:**
@@ -29,6 +29,7 @@
 | PR # | Title | Tasks | Branch |
 |------|-------|-------|--------|
 | 1 | fix(provider): expose applied operation state | Task 1, Task 2, Task 3, Task 4 | feat/provider-operation-contract |
+| 2 | docs: close provider operation contract | Task 5 | docs/provider-operation-contract-closeout |
 
 **Status:** Draft
 
@@ -41,9 +42,10 @@
 - Modify: `internal/provider/catalog.go`
 
 **Steps:**
-1. RED: change the duplicate-type table case to require the full error
-   `duplicate provider type "anthropic"` (using the first catalog entry's
-   actual type) rather than a substring.
+1. RED: add a separate `TestValidateCatalogDuplicateTypeDiagnostic` that
+   duplicates the first catalog entry and compares `err.Error()` for exact
+   equality with `duplicate provider type "anthropic"`. Do not reuse the
+   existing substring-based invalid-entry table for this regression.
 2. Run:
    `go test ./internal/provider -run TestValidateCatalogRejectsInvalidEntriesAndRuntimeGaps -count=1`.
    Expected: FAIL because the current error appends
@@ -134,10 +136,10 @@ binaries and persisted rows remain compatible.
    Expected: PASS; the real-binary applied smoke is skipped under race.
 5. Run `go vet ./...` and
    `golangci-lint run --new-from-rev=origin/master`. Expected: exit 0.
-6. Run `go test ./internal/releaseguard -count=1`, `goreleaser check`, and
-   `scripts/check-release-artifacts.sh --manifest-only <snapshot-dist>` via the
-   repository's snapshot command. Expected: release guards PASS and six
-   platform archives remain declared.
+6. Run `go test ./internal/releaseguard -count=1`, `goreleaser check`,
+   `goreleaser release --snapshot --clean --skip=publish`, and
+   `scripts/check-release-artifacts.sh --manifest-only dist`. Expected: release
+   guards PASS and six platform archives remain declared.
 7. Build Windows command binaries:
    `GOOS=windows GOARCH=amd64 go build -o <tmp>/ratchet-amd64.exe ./cmd/ratchet`
    and arm64 equivalent. Expected: both exit 0. Native Windows CI remains the
@@ -152,14 +154,41 @@ binaries and persisted rows remain compatible.
     version; monitor Release to success. Verify public non-draft release,
     checksums, macOS/Linux/Windows amd64+arm64 assets, Formula+Cask version and
     hashes, direct archive `ratchet --version`, and a time-bounded installed
-    Homebrew `ratchet --version` plus `ratchet provider operation --help`.
-11. Write the post-merge retro, backfeed durable guidance only if warranted,
-    complete the scope lock with verification evidence, and merge any closeout
-    docs through a green PR. Release that merge as the next patch version.
+    Homebrew `ratchet --version` plus `ratchet provider setup list --json`.
 
 Rollback: before merge, revert feature commits. After release, restore the prior
 archive/Homebrew version and revert the merge; no schema or data downgrade is
 required.
+
+### Task 5: Retrospective, Scope Closeout, And Documentation Release
+
+**Files:**
+- Create: `docs/retros/2026-07-15-provider-operation-contract-retro.md`
+- Modify: `docs/plans/2026-07-15-ratchet-cli-provider-operation-contract.md`
+- Modify only if a durable lesson exists: `docs/design-guidance.md`
+- Remove through the scope helper: `docs/plans/2026-07-15-ratchet-cli-provider-operation-contract.md.scope-lock`
+
+**Steps:**
+1. Branch `docs/provider-operation-contract-closeout` from the exact PR1 merge
+   commit. Gather design, plan/review findings, PR threads, settled CI, release,
+   archive, Homebrew, runtime, and activation evidence.
+2. Use `autodev:post-merge-retrospective` to write the retro. Score D1-D4 and
+   P1-P4 against implementation/review evidence; record unavailable activation
+   evidence explicitly rather than inventing it.
+3. Backfeed `docs/design-guidance.md` only for a reusable lesson not already
+   covered. Run the autodev `scope-lock-complete` helper with exact PR1 release
+   evidence; require status `Complete`, lock sidecar removal, and completion
+   state row.
+4. Run `git diff --check`, machine-path scan, `go test ./...`, `go vet ./...`,
+   and `golangci-lint run --new-from-rev=origin/master`. Expected: PASS.
+5. Push the closeout branch, open PR2, monitor all checks/review threads until
+   settled green, admin squash-merge, and delete the branch.
+6. Tag the exact PR2 merge commit with the next patch version; monitor Release
+   to success and repeat public release, checksum, six-archive, Formula+Cask,
+   direct archive, and installed Homebrew time-bounded runtime verification.
+
+Rollback: revert PR2 if its documentation is inaccurate. Scope completion and
+release metadata are repaired forward; no runtime or persisted data changes.
 
 ## Requirement Trace
 
@@ -173,3 +202,4 @@ required.
 | Human lifecycle documentation | Task 3 |
 | Shared CLI/TUI compatibility | Task 2 focused/full existing tests, Task 4 |
 | Windows/build/release/rollback gates | Task 4 |
+| Retro, scope completion, closeout PR/release | Task 5 |
