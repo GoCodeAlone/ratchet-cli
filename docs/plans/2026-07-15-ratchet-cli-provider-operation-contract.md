@@ -31,7 +31,7 @@
 | 1 | fix(provider): expose applied operation state | Task 1, Task 2, Task 3, Task 4 | feat/provider-operation-contract |
 | 2 | docs: close provider operation contract | Task 5 | docs/provider-operation-contract-closeout |
 
-**Status:** Draft
+**Status:** Locked 2026-07-15T05:04:28Z
 
 ## Tasks
 
