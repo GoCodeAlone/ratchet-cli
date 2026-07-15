@@ -81,7 +81,7 @@ is not required.
 |---|---|---|
 | Catalog validator | runtime-integrated | focused exact-error unit regression |
 | Journal to protobuf projection | runtime-integrated | focused daemon state mapping test |
-| Built CLI to daemon to file secret provider | runtime-integrated | run `ratchet provider operation --json` against an `applied` row with an unavailable secret; assert row remains `applied`, add secret, rerun, observe `COMMITTED` |
+| Built CLI to daemon to file secret provider | runtime-integrated | restart with an `applied` row and unavailable secret; daemon remains available; query returns `APPLIED`; add secret, rerun, observe `COMMITTED` |
 | CLI and TUI reconciliation | runtime-integrated, unchanged | existing tests prove both poll `APPLIED`; rerun focused packages and full suite |
 | README lifecycle | config-only | docs guard plus exact state/recovery wording review |
 | Release archives/Homebrew | runtime-integrated | post-merge tag, checksums, six archives, installed time-bounded commands |
@@ -126,3 +126,19 @@ after correction.
   ./...`, lint, generated-code check, Windows cross-build, and native CI.
 - Exact merge commit release with archive/checksum/Homebrew/installed-binary
   verification.
+
+### Backport 2026-07-15: Startup Must Preserve The Recovery Boundary
+
+Cause: the initial smoke seeded `applied` after startup, bypassing
+`reconcileStartup`; an unavailable finalization secret made restart fail before
+the recovery RPC could serve.
+
+Change: startup attempts finalization but retains an unsuccessful row as
+`applied` and continues serving; the built-binary smoke now restarts before
+querying.
+
+Scope: no manifest change; this is required by Tasks 2-3 retry/restart behavior.
+
+Evidence: `TestProviderOperationStartupKeepsUnfinalizedAppliedRetryable` failed
+with `finalize provider operation: startup finalization unavailable` before the
+fix and passes after it.

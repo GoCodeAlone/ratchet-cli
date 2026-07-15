@@ -216,6 +216,15 @@ func TestHarnessSmokeProviderAppliedState(t *testing.T) {
 		operationID, alias, secretName); err != nil {
 		t.Fatalf("seed applied provider operation: %v", err)
 	}
+	shutdownHarnessSmokeDaemon(t)
+	waitForRatchetSmokeMissing(t, daemon.SocketPath(), 5*time.Second)
+	waitForRatchetSmokeMissing(t, daemon.PIDPath(), 5*time.Second)
+	restartOutput, err := runRatchetSmoke(t, bin, home, "daemon", "start", "--background")
+	if err != nil {
+		t.Fatalf("restart production daemon with applied operation: %v\n%s", err, restartOutput)
+	}
+	waitForRatchetSmokePresent(t, daemon.SocketPath(), 5*time.Second)
+	waitForRatchetSmokePresent(t, daemon.PIDPath(), 5*time.Second)
 
 	appliedOutput, err := runRatchetSmoke(t, bin, home, "provider", "operation", operationID, "--json")
 	if err != nil {

@@ -549,9 +549,7 @@ func (m *providerOperationManager) reconcileStartup(ctx context.Context) error {
 	}
 	m.engine.ProviderRowsMu.Unlock()
 	for _, operationID := range applied {
-		if err := m.finalizeOperation(ctx, operationID); err != nil {
-			return fmt.Errorf("finalize provider operation: %w", err)
-		}
+		_ = m.finalizeOperation(ctx, operationID)
 	}
 
 	keys, err := m.engine.SecretsProvider.List(ctx)

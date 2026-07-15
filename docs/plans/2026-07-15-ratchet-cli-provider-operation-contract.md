@@ -47,7 +47,7 @@
    equality with `duplicate provider type "anthropic"`. Do not reuse the
    existing substring-based invalid-entry table for this regression.
 2. Run:
-   `go test ./internal/provider -run TestValidateCatalogRejectsInvalidEntriesAndRuntimeGaps -count=1`.
+   `go test ./internal/provider -run '^TestValidateCatalogDuplicateTypeDiagnostic$' -count=1`.
    Expected: FAIL because the current error appends
    `(already owned by "anthropic")`.
 3. GREEN: return only `fmt.Errorf("duplicate provider type %q", entry.Type)`;
@@ -98,7 +98,8 @@ schema-compatible and again project as `PENDING` until finalization.
 1. RED: add a lightweight `TestHarnessSmokeProviderAppliedState` using an
    isolated HOME, built ratchet binary, production daemon, SQLite DB, and file
    secret provider. Seed an `applied` operation whose secret is unavailable;
-   run `ratchet provider operation <id> --json`; require `APPLIED`, complete
+   restart the daemon, then run `ratchet provider operation <id> --json`;
+   require the daemon stays available, `APPLIED`, complete
    result, unspecified failure, no credential/raw error, and SQL `applied`.
    Restore the secret, rerun the command, and require `COMMITTED` plus SQL
    `committed`. Keep it separate from the TLS provider smoke and skip only under
@@ -128,7 +129,8 @@ binaries and persisted rows remain compatible.
 
 **Steps:**
 1. Verify lock: run the autodev `plan-scope-check.sh --verify-lock` helper for
-   this plan. Expected: PASS, 4 tasks/1 PR.
+   this plan. Expected: PASS for the global 5-task/2-PR manifest and the PR1
+   Tasks 1-4 checkpoint.
 2. Run focused commands from Tasks 1-3. Expected: PASS.
 3. Run `go test ./...`. Expected: all packages PASS.
 4. Run the merge-gating selector exactly:
