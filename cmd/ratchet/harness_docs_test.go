@@ -163,6 +163,12 @@ func TestHarnessDocsDescribeUnifiedProviderSetup(t *testing.T) {
 		"secret reference",
 		"operation/status/log output",
 		"durable provider save",
+		"PENDING",
+		"APPLIED",
+		"COMMITTED",
+		"FAILED",
+		"ratchet provider operation",
+		"retry finalization",
 		"Windows ConPTY provider save",
 	} {
 		if !containsWords(publicDocs, required) {
