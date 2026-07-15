@@ -268,6 +268,72 @@ func TestHooksManagedMutationRejectsOnlyDiscoveredManagedHashes(t *testing.T) {
 	}
 }
 
+func TestHooksListContinuesWhenManagedPolicyIsUnsupported(t *testing.T) {
+	_, workDir := setupHookCLIWorkspace(t)
+	previousLoad := loadManagedHookPolicy
+	loadManagedHookPolicy = func(hooks.LoadOptions) (*hooks.ManagedPolicy, error) {
+		return nil, errors.Join(errors.New("resolve managed policy"), hooks.ErrManagedPolicyUnsupportedPlatform)
+	}
+	defer func() { loadManagedHookPolicy = previousLoad }()
+
+	items, err := discoverHooks(workDir)
+	if err != nil {
+		t.Fatalf("discoverHooks: %v", err)
+	}
+	wantStatuses := map[string]string{"user": "trusted", "project": "untrusted", "plugin": "untrusted"}
+	for _, item := range items {
+		want, ok := wantStatuses[item.SourceKind]
+		if !ok {
+			continue
+		}
+		if item.Status != want {
+			t.Fatalf("%s hook status = %q, want %q", item.SourceKind, item.Status, want)
+		}
+		delete(wantStatuses, item.SourceKind)
+	}
+	if len(wantStatuses) != 0 {
+		t.Fatalf("local hook sources missing after unsupported managed policy: %v", wantStatuses)
+	}
+}
+
+func TestHooksTrustMutationsContinueWhenManagedPolicyIsUnsupported(t *testing.T) {
+	setHooksTestHome(t)
+	previousLoad := loadManagedHookPolicy
+	loadManagedHookPolicy = func(hooks.LoadOptions) (*hooks.ManagedPolicy, error) {
+		return nil, errors.Join(errors.New("resolve managed policy"), hooks.ErrManagedPolicyUnsupportedPlatform)
+	}
+	defer func() { loadManagedHookPolicy = previousLoad }()
+
+	hashes := []string{strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64)}
+	for i, action := range []string{"trust", "untrust", "disable"} {
+		if err := mutateHookTrust(action, hashes[i]); err != nil {
+			t.Fatalf("%s hook: %v", action, err)
+		}
+	}
+	store, err := hooks.LoadTrustStore(hooks.DefaultTrustStorePath())
+	if err != nil {
+		t.Fatalf("LoadTrustStore: %v", err)
+	}
+	if !store.IsTrusted(hashes[0]) || store.IsTrusted(hashes[1]) || !store.IsDisabled(hashes[2]) {
+		t.Fatalf("trust mutations were not persisted: %+v", store)
+	}
+}
+
+func TestHooksLocalCommandsPropagateManagedPolicyFailure(t *testing.T) {
+	setHooksTestHome(t)
+	sentinel := errors.New("insecure managed policy")
+	previousLoad := loadManagedHookPolicy
+	loadManagedHookPolicy = func(hooks.LoadOptions) (*hooks.ManagedPolicy, error) { return nil, sentinel }
+	defer func() { loadManagedHookPolicy = previousLoad }()
+
+	if _, err := discoverHooks(t.TempDir()); !errors.Is(err, sentinel) {
+		t.Fatalf("discoverHooks error = %v, want %v", err, sentinel)
+	}
+	if err := mutateHookTrust("disable", strings.Repeat("d", 64)); !errors.Is(err, sentinel) {
+		t.Fatalf("mutateHookTrust error = %v, want %v", err, sentinel)
+	}
+}
+
 type hookCLIItem struct {
 	Event      string `json:"event"`
 	SourceKind string `json:"source_kind"`

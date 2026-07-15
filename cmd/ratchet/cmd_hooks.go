@@ -182,7 +182,7 @@ func handleHooksAudit(args []string) error {
 }
 
 func mutateHookTrust(action, hash string) error {
-	policy, err := loadManagedHookPolicy(hooks.LoadOptions{})
+	policy, err := loadManagedHookPolicyForLocalCommand()
 	if err != nil {
 		return err
 	}
@@ -215,6 +215,14 @@ func mutateHookTrust(action, hash string) error {
 		fmt.Printf("Disabled hook %s\n", hash)
 	}
 	return nil
+}
+
+func loadManagedHookPolicyForLocalCommand() (*hooks.ManagedPolicy, error) {
+	policy, err := loadManagedHookPolicy(hooks.LoadOptions{})
+	if errors.Is(err, hooks.ErrManagedPolicyUnsupportedPlatform) {
+		return nil, nil
+	}
+	return policy, err
 }
 
 func managedPolicyContainsHash(policy *hooks.ManagedPolicy, hash string) bool {
@@ -253,7 +261,7 @@ func discoverHooks(cwd string) ([]hookListRecord, error) {
 		}
 	}
 	cfg.ApplyTrust(store)
-	policy, err := loadManagedHookPolicy(hooks.LoadOptions{})
+	policy, err := loadManagedHookPolicyForLocalCommand()
 	if err != nil {
 		return nil, err
 	}

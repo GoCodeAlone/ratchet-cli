@@ -1073,3 +1073,16 @@ Scope: no manifest change; this closes Task 9's secure-reader requirement in PR
 Darwin ACL and file-descriptor snapshot-invocation regressions fail when the
 shared validator is removed or changed back to pathname inspection and pass
 when restored.
+
+### Backport 2026-07-15: Unsupported-platform local hook commands
+
+Cause: the managed-policy loader exposed only the broad `ErrManagedPolicy`, so
+standalone `hooks list` and trust-store mutations could not distinguish a
+platform without a managed-policy backend from an insecure installed policy.
+Change: add a typed unsupported-platform sentinel. Local discovery and
+trust-store mutation treat only that sentinel as no managed policy; daemon
+startup/reload, explicit `hooks policy` inspection, and every present-policy
+security or parse failure remain fail closed. Scope: no manifest change; this
+corrects Task 11 portability during PR review. Evidence: command regressions
+cover list plus trust/untrust/disable and preserve arbitrary loader failures;
+the unsupported hooks backend production package cross-compiles for AIX.

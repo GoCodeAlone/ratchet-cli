@@ -13,9 +13,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ErrManagedPolicy identifies a present policy that could not be securely
-// loaded or validated.
-var ErrManagedPolicy = errors.New("managed hook policy")
+var (
+	// ErrManagedPolicy identifies a present policy that could not be securely
+	// loaded or validated.
+	ErrManagedPolicy = errors.New("managed hook policy")
+	// ErrManagedPolicyUnsupportedPlatform identifies a platform without a
+	// managed-policy trust-boundary implementation.
+	ErrManagedPolicyUnsupportedPlatform = errors.New("managed hook policy is unsupported on this platform")
+)
 
 // ManagedMode controls whether local hook sources may execute alongside
 // administrator-managed hooks.

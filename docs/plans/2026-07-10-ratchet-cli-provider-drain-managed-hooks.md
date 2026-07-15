@@ -1287,6 +1287,8 @@ payload, output, error, or secret sentinels.
 - Modify: `docs/policy-matrix.md`
 - Modify: `cmd/ratchet/cmd_policy.go`
 - Modify: `cmd/ratchet/cmd_policy_test.go`
+- Modify: `cmd/ratchet/cmd_hooks.go`
+- Modify: `cmd/ratchet/cmd_hooks_test.go`
 - Modify: `cmd/ratchet/harness_docs_test.go`
 
 **Step 1: Add failing all-source enforcement tests**

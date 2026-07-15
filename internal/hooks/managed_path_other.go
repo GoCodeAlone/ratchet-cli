@@ -2,9 +2,7 @@
 
 package hooks
 
-import "errors"
-
-var errManagedPolicyUnsupportedPlatform = errors.New("managed hook policy is unsupported on this platform")
+var errManagedPolicyUnsupportedPlatform = ErrManagedPolicyUnsupportedPlatform
 
 func defaultManagedPolicyPath() (string, error) {
 	return "", errManagedPolicyUnsupportedPlatform
