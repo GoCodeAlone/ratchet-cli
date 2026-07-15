@@ -55,6 +55,7 @@ distinct information; it is removed from the same-type diagnostic.
 |---|---|---|
 | Secret unavailable during finalization | `APPLIED` + result, unspecified failure, no raw error | row remains `applied`; next query retries |
 | Later finalization succeeds | `COMMITTED` + result | row becomes `committed` |
+| Invalid key, unsupported read, or provider-init failure during startup finalization | daemon startup fails | row remains `applied`; operator repairs journal/provider configuration |
 | Database or journal-invariant failure during startup finalization | daemon startup fails | row remains `applied`; operator repairs infrastructure and restarts |
 | Unknown persisted state | `UNSPECIFIED` | unchanged |
 | Duplicate canonical type | deterministic validation error | no mutation |
@@ -148,4 +149,7 @@ fix and passes after it;
 under broad suppression and passes with typed classification;
 `TestProviderOperationStartupFinalizationContextFailuresStopStartup` failed
 when cancellation was wrapped as secret unavailability and passes when context
-errors remain fail-stop.
+errors remain fail-stop;
+`TestProviderOperationStartupFinalizationPermanentSecretFailuresStopStartup`
+failed when invalid-key, unsupported-read, and provider-init errors were wrapped
+as retryable and passes when those sentinels remain fail-stop.

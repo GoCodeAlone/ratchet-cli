@@ -21,8 +21,9 @@ later `GetProviderOperation` call attempts finalization again, then returns
 `COMMITTED` after success. `APPLIED` includes the existing non-secret result and
 no raw finalization error. Startup also attempts APPLIED finalization, but a
 secret-read failure leaves the row retryable and does not stop the daemon.
-Database, context, and journal-invariant finalization failures still stop
-startup.
+Permanent provider errors (`ErrInvalidKey`, `ErrUnsupported`, and
+`ErrProviderInit`), database errors, context errors, and journal-invariant
+failures still stop startup.
 
 This supersedes only ADR 0006's statement that operation queries expose
 `applied` as pending and its fail-stop startup finalization behavior. The
