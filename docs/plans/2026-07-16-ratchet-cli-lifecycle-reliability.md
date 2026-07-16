@@ -53,7 +53,7 @@ Source: `docs/design-guidance.md`
 **Step 1: Write RED tests**
 
 - `TestProviderCleanupCandidateRowsPreservePrimaryAndCloseErrors`: fake rows return a scan/iteration sentinel and independent close sentinel; require `errors.Is` for both.
-- `TestProviderCleanupDispatchReturnsQueryFailure`: stop the manager, close the database, invoke dispatch, and require a classified query error.
+- `TestProviderCleanupDispatchReturnsQueryFailure`: construct a manager without starting its loop, set its internal context to `t.Context()`, close its database, invoke dispatch, and require a classified candidate-query error. The live context prevents `context.Canceled` from masking the database failure.
 - `TestProviderCleanupErrorReporterSuppressesEquivalentFailures`: inject clock/log function; same error logs once inside one minute, logs after one minute, and nil resets suppression.
 - Make `TestProviderCleanupDispatcherFairness` wait for both four provider deletes and cleanup-row count zero.
 
@@ -80,7 +80,7 @@ Expected: PASS; four deletes, two poison attempts, max concurrency 1..2, zero cl
 
 **Step 4: Regression proof and commit**
 
-Temporarily restore old void dispatch/manual close while retaining tests; focused selector must FAIL. Restore implementation; expect PASS. Record both outputs in PR #1.
+Temporarily keep the new method signatures but discard the query error, drop the joined close error, and disable reporter suppression while retaining tests; focused selector must FAIL behaviorally rather than only failing to compile. Restore implementation; expect PASS. Record both outputs in PR #1.
 
 ```bash
 git add internal/daemon/provider_cleanup.go internal/daemon/provider_cleanup_test.go
@@ -133,6 +133,7 @@ Expected: FAIL with elapsed `100ms`, want `0s`.
 - After ACP `Cancel` send completion, immediately join the send error with `terminateCancellation()`; retain bounded send context, transport closure/join, process kill/reap, and cause precedence.
 - Add shared test constant `acpClientProcessSmokeTimeout = 30 * time.Second` plus channel/poll helper.
 - Use it for named profile launch/start-return/child-exit and cancellation prompt/return waits. Keep 200 ms lock-blocked negative assertions.
+- On a child-exit timeout, kill the process and drain its `Wait` result before failing the test so the failure path does not leak a child/zombie.
 
 **Step 3: Verify, regression-proof, and commit**
 
