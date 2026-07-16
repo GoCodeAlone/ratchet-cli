@@ -30,7 +30,7 @@
 | 1 | `fix: harden lifecycle cleanup and process smoke` | Task 1, Task 2, Task 3, Task 4, Task 5 | `fix/reliability-followups` |
 | 2 | `docs: close lifecycle reliability plan` | Task 6 | `docs/lifecycle-reliability-closeout` |
 
-**Status:** Draft
+**Status:** Locked 2026-07-16T12:38:31Z
 
 ## Guidance Mapping
 
