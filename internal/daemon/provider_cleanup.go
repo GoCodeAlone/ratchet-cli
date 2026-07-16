@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log"
 	"time"
 
@@ -11,6 +12,53 @@ import (
 )
 
 const providerCleanupWorkers = 2
+
+type providerCleanupRows interface {
+	Next() bool
+	Scan(...any) error
+	Err() error
+	Close() error
+}
+
+type providerCleanupErrorReporter struct {
+	now            func() time.Time
+	logf           func(string, ...any)
+	lastError      string
+	lastReportedAt time.Time
+}
+
+func (r *providerCleanupErrorReporter) report(err error) {
+	if err == nil {
+		r.lastError = ""
+		r.lastReportedAt = time.Time{}
+		return
+	}
+	now := r.now()
+	errorText := err.Error()
+	if errorText == r.lastError && now.Sub(r.lastReportedAt) < time.Minute {
+		return
+	}
+	r.logf("provider cleanup: dispatch: %v", err)
+	r.lastError = errorText
+	r.lastReportedAt = now
+}
+
+func collectProviderCleanupCandidates(rows providerCleanupRows) (names []string, err error) {
+	defer func() {
+		err = errors.Join(err, rows.Close())
+	}()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("scan provider cleanup candidate: %w", err)
+		}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate provider cleanup candidates: %w", err)
+	}
+	return names, nil
+}
 
 func queueProviderSecretCleanupTx(ctx context.Context, tx *sql.Tx, secretName string) error {
 	if secretName == "" {
@@ -36,55 +84,41 @@ func (m *providerOperationManager) WakeCleanup() {
 func (m *providerOperationManager) cleanupLoop() {
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
+	reporter := providerCleanupErrorReporter{now: time.Now, logf: log.Printf}
 	for {
 		select {
 		case <-m.ctx.Done():
 			return
 		case <-m.cleanupWake:
-			m.dispatchCleanup()
+			reporter.report(m.dispatchCleanup())
 		case <-ticker.C:
-			m.dispatchCleanup()
+			reporter.report(m.dispatchCleanup())
 		}
 	}
 }
 
-func (m *providerOperationManager) dispatchCleanup() {
+func (m *providerOperationManager) dispatchCleanup() error {
 	m.cleanupMu.Lock()
 	available := providerCleanupWorkers - len(m.cleaning)
 	m.cleanupMu.Unlock()
 	if available <= 0 {
-		return
+		return nil
 	}
 	rows, err := m.engine.DB.QueryContext(m.ctx, `SELECT secret_name FROM provider_secret_cleanup
 		WHERE unixepoch(next_attempt_at) <= unixepoch()
 		ORDER BY unixepoch(next_attempt_at), unixepoch(created_at) LIMIT ?`, available*4)
 	if err != nil {
-		return
+		return fmt.Errorf("query provider cleanup candidates: %w", err)
 	}
-	var names []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			log.Printf("provider cleanup: scan candidate: %v", err)
-			_ = rows.Close()
-			return
-		}
-		names = append(names, name)
-	}
-	if err := rows.Err(); err != nil {
-		log.Printf("provider cleanup: iterate candidates: %v", err)
-		_ = rows.Close()
-		return
-	}
-	if err := rows.Close(); err != nil {
-		log.Printf("provider cleanup: close candidates: %v", err)
-		return
+	names, err := collectProviderCleanupCandidates(rows)
+	if err != nil {
+		return fmt.Errorf("collect provider cleanup candidates: %w", err)
 	}
 	for _, name := range names {
 		m.cleanupMu.Lock()
 		if len(m.cleaning) >= providerCleanupWorkers {
 			m.cleanupMu.Unlock()
-			return
+			return nil
 		}
 		if m.cleaning[name] {
 			m.cleanupMu.Unlock()
@@ -98,6 +132,7 @@ func (m *providerOperationManager) dispatchCleanup() {
 			m.cleanupSecret(name)
 		}()
 	}
+	return nil
 }
 
 func (m *providerOperationManager) cleanupSecret(secretName string) {

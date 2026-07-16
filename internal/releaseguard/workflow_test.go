@@ -156,6 +156,19 @@ func TestCIRequiresNativeWindowsBackgroundPersistence(t *testing.T) {
 		"go test ./internal/acpclient -run '^TestBackgroundWindows' -count=1")
 }
 
+func TestCIIsolatesACPClientLifecycleBinarySmoke(t *testing.T) {
+	workflow := loadWorkflow(t, ".github/workflows/ci.yml")
+	const command = "go test ./internal/acpclient -run '^TestACPClientLifecycleBinarySmoke' -count=1 -timeout=5m"
+
+	linux := requireJob(t, workflow, "test")
+	requireRun(t, linux, "Run ACP client lifecycle smoke", command)
+	requireRun(t, linux, "Test with race detector",
+		"-skip '^(TestACPClientExecBinarySmoke|TestACPClientLifecycleBinarySmoke)'")
+
+	windows := requireJob(t, workflow, "windows-conpty-smoke")
+	requireRun(t, windows, "Run ACP client lifecycle smoke", command)
+}
+
 func TestReleaseWorkflowPrePublishGuards(t *testing.T) {
 	workflow := loadWorkflow(t, ".github/workflows/release.yml")
 	job := requireJob(t, workflow, "release")

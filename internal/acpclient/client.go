@@ -402,9 +402,6 @@ func (c *Client) sendCancelAndTerminate(ctx context.Context, sessionID acpsdk.Se
 	}()
 	select {
 	case sendErr := <-sendDone:
-		grace := time.NewTimer(min(c.timeout, 100*time.Millisecond))
-		<-grace.C
-		grace.Stop()
 		return errors.Join(sendErr, c.terminateCancellation())
 	case <-sendCtx.Done():
 		sendCancel()

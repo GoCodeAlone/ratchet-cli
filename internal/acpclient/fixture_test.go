@@ -5,7 +5,22 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 )
+
+const acpClientProcessSmokeTimeout = 30 * time.Second
+
+func waitACPClientProcessValue[T any](t *testing.T, values <-chan T, action string) T {
+	t.Helper()
+	select {
+	case value := <-values:
+		return value
+	case <-time.After(acpClientProcessSmokeTimeout):
+		t.Fatalf("timed out waiting for %s", action)
+		var zero T
+		return zero
+	}
+}
 
 func BuildFixtureAgent(t *testing.T) string {
 	t.Helper()

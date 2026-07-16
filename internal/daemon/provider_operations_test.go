@@ -551,7 +551,7 @@ func TestProviderOperationRequestsAfterStopReturnUnavailable(t *testing.T) {
 			}
 		})
 	}
-	if _, err := svc.providerOps.Get(t.Context(), "missing"); status.Code(err) != codes.Unavailable {
+	if _, err := svc.GetProviderOperation(t.Context(), &pb.GetProviderOperationReq{OperationId: "missing"}); status.Code(err) != codes.Unavailable {
 		t.Fatalf("get after stop code = %v, want Unavailable (err=%v)", status.Code(err), err)
 	}
 }
@@ -618,6 +618,68 @@ func TestProviderOperationStopCancelsStart(t *testing.T) {
 	err := waitProviderOperationValue(t, startDone, "canceled provider operation startup")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("concurrent start error = %v, want context canceled", err)
+	}
+	waitProviderOperationValue(t, stopDone, "provider operation stop")
+}
+
+func TestProviderOperationStopCancelsStartupReconciliation(t *testing.T) {
+	const (
+		operationID = "d4c09fc0-296f-4b9f-b820-d01fe7bc5aa6"
+		alias       = "startup-stop-reconcile"
+		secretName  = "provider-v2-startup-stop-reconcile"
+		credential  = "startup-stop-sensitive-credential"
+	)
+	db := openProviderOperationTestDB(t)
+	if err := initDB(db); err != nil {
+		t.Fatal(err)
+	}
+	provider := newOperationSecrets()
+	if err := provider.Set(t.Context(), secretName, credential); err != nil {
+		t.Fatal(err)
+	}
+	insertProviderRow(t, db, alias, secretName, "startup-stop-model")
+	if _, err := db.Exec(`INSERT INTO provider_operations
+		(operation_id, alias, state, failure, secret_name, result_type, result_model,
+		 result_is_default, created_at, updated_at, expires_at)
+		VALUES (?, ?, 'applied', '', ?, 'openai', 'startup-stop-model', 1,
+		 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, datetime('now', '+1 day'))`,
+		operationID, alias, secretName); err != nil {
+		t.Fatal(err)
+	}
+
+	started := make(chan struct{})
+	provider.getHook = func(ctx context.Context, key string) error {
+		if key != secretName {
+			return nil
+		}
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	manager := newProviderOperationManager(&EngineContext{
+		DB:              db,
+		SecretsProvider: provider,
+		SecretsRedactor: secrets.NewRedactor(),
+	})
+	t.Cleanup(manager.Stop)
+	startDone := make(chan error, 1)
+	go func() { startDone <- manager.Start(t.Context()) }()
+	waitProviderOperationValue(t, started, "provider operation startup reconciliation")
+
+	stopDone := make(chan struct{})
+	go func() {
+		manager.Stop()
+		close(stopDone)
+	}()
+	err := waitProviderOperationValue(t, startDone, "canceled provider operation startup reconciliation")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("startup reconciliation error = %v, want context canceled", err)
+	}
+	if got, want := err.Error(), "finalize provider operation: provider operation finalization secret read canceled"; got != want {
+		t.Fatalf("startup reconciliation error = %q, want %q", got, want)
+	}
+	if strings.Contains(err.Error(), secretName) || strings.Contains(err.Error(), credential) {
+		t.Fatalf("startup reconciliation error leaked sensitive metadata: %q", err)
 	}
 	waitProviderOperationValue(t, stopDone, "provider operation stop")
 }
