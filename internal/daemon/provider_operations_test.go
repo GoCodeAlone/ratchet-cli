@@ -70,6 +70,468 @@ func TestProviderOperationSchemaFailureStopsStartup(t *testing.T) {
 	}
 }
 
+func TestProviderOperationStatePBMapsApplied(t *testing.T) {
+	if got := providerOperationStatePB(providerOperationApplied); got != pb.ProviderOperationState_PROVIDER_OPERATION_STATE_APPLIED {
+		t.Fatalf("providerOperationStatePB(applied) = %s, want APPLIED", got)
+	}
+}
+
+func TestGetProviderOperationFinalizationFailureRemainsAppliedAndRetries(t *testing.T) {
+	const (
+		operationID = "b4aff148-ef2b-4b18-9971-e4702ab45586"
+		alias       = "applied-retry"
+		secretName  = "provider-v2-applied-retry"
+		credential  = "APPLIED-RETRY-CREDENTIAL-SENTINEL"
+		rawError    = "APPLIED-RETRY-RAW-ERROR-SENTINEL"
+	)
+
+	provider := newOperationSecrets()
+	svc, db := newProviderOperationTestService(t, provider)
+	if err := provider.Set(t.Context(), secretName, credential); err != nil {
+		t.Fatal(err)
+	}
+	insertProviderRow(t, db, alias, secretName, "retry-model")
+	if _, err := db.Exec(`INSERT INTO provider_operations
+		(operation_id, alias, state, failure, secret_name, result_type, result_model,
+		 result_is_default, created_at, updated_at, expires_at)
+		VALUES (?, ?, 'applied', '', ?, 'openai', 'retry-model', 1,
+		 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, datetime('now', '+1 day'))`,
+		operationID, alias, secretName); err != nil {
+		t.Fatal(err)
+	}
+
+	failGet := true
+	getAttempts := 0
+	provider.getHook = func(_ context.Context, key string) error {
+		if key != secretName {
+			return nil
+		}
+		getAttempts++
+		if failGet {
+			return errors.New(rawError)
+		}
+		return nil
+	}
+
+	applied, err := svc.GetProviderOperation(t.Context(), &pb.GetProviderOperationReq{OperationId: operationID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied.GetState() != pb.ProviderOperationState_PROVIDER_OPERATION_STATE_APPLIED {
+		t.Fatalf("first query state = %s, want APPLIED", applied.GetState())
+	}
+	if applied.GetFailure() != pb.ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_UNSPECIFIED {
+		t.Fatalf("first query failure = %s, want UNSPECIFIED", applied.GetFailure())
+	}
+	result := applied.GetResult()
+	if result == nil || result.GetAlias() != alias || result.GetType() != "openai" ||
+		result.GetModel() != "retry-model" || !result.GetIsDefault() {
+		t.Fatalf("first query result = %+v", result)
+	}
+	wire, err := protojson.Marshal(applied)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(wire), credential) || strings.Contains(string(wire), rawError) {
+		t.Fatalf("applied operation exposed secret or raw error: %s", wire)
+	}
+	assertOperationFailure(t, db, operationID, providerOperationApplied, "")
+
+	failGet = false
+	committed, err := svc.GetProviderOperation(t.Context(), &pb.GetProviderOperationReq{OperationId: operationID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if committed.GetState() != pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED {
+		t.Fatalf("retry query state = %s, want COMMITTED", committed.GetState())
+	}
+	if getAttempts != 2 {
+		t.Fatalf("secret get attempts = %d, want 2", getAttempts)
+	}
+	assertOperationFailure(t, db, operationID, providerOperationCommitted, "")
+}
+
+func TestProviderOperationStartupKeepsUnfinalizedAppliedRetryable(t *testing.T) {
+	const (
+		operationID = "3833c939-829e-4749-ac13-195081eb181d"
+		alias       = "startup-applied-retry"
+		secretName  = "provider-v2-startup-applied-retry"
+	)
+
+	provider := newOperationSecrets()
+	db := openProviderOperationTestDB(t)
+	if err := initDB(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.Set(t.Context(), secretName, "startup-retry-credential"); err != nil {
+		t.Fatal(err)
+	}
+	insertProviderRow(t, db, alias, secretName, "startup-retry-model")
+	if _, err := db.Exec(`INSERT INTO provider_operations
+		(operation_id, alias, state, failure, secret_name, result_type, result_model,
+		 result_is_default, created_at, updated_at, expires_at)
+		VALUES (?, ?, 'applied', '', ?, 'openai', 'startup-retry-model', 1,
+		 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, datetime('now', '+1 day'))`,
+		operationID, alias, secretName); err != nil {
+		t.Fatal(err)
+	}
+
+	failGet := true
+	getAttempts := 0
+	provider.getHook = func(_ context.Context, key string) error {
+		if key == secretName {
+			getAttempts++
+			if failGet {
+				return errors.New("startup finalization unavailable")
+			}
+		}
+		return nil
+	}
+	engine := &EngineContext{
+		DB:              db,
+		SecretsProvider: provider,
+		SecretsRedactor: secrets.NewRedactor(),
+	}
+	manager := newProviderOperationManager(engine)
+	if err := manager.Start(t.Context()); err != nil {
+		t.Fatalf("provider operation startup with retryable applied row: %v", err)
+	}
+	t.Cleanup(manager.Stop)
+	if getAttempts != 1 {
+		t.Fatalf("startup secret get attempts = %d, want 1", getAttempts)
+	}
+	svc := &Service{engine: engine, providerOps: manager}
+
+	applied, err := svc.GetProviderOperation(t.Context(), &pb.GetProviderOperationReq{OperationId: operationID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied.GetState() != pb.ProviderOperationState_PROVIDER_OPERATION_STATE_APPLIED {
+		t.Fatalf("unavailable finalization state = %s, want APPLIED", applied.GetState())
+	}
+	if getAttempts != 2 {
+		t.Fatalf("failed query secret get attempts = %d, want 2", getAttempts)
+	}
+	assertOperationFailure(t, db, operationID, providerOperationApplied, "")
+
+	failGet = false
+	committed, err := svc.GetProviderOperation(t.Context(), &pb.GetProviderOperationReq{OperationId: operationID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if committed.GetState() != pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED {
+		t.Fatalf("recovered finalization state = %s, want COMMITTED", committed.GetState())
+	}
+	if getAttempts != 3 {
+		t.Fatalf("recovered secret get attempts = %d, want 3", getAttempts)
+	}
+	assertOperationFailure(t, db, operationID, providerOperationCommitted, "")
+}
+
+func TestProviderOperationStartupFinalizesAppliedWithAvailableSecret(t *testing.T) {
+	const (
+		operationID = "db396feb-4d9f-4fea-aef8-0f3ada67ae44"
+		alias       = "startup-applied-commit"
+		secretName  = "provider-v2-startup-applied-commit"
+	)
+
+	provider := newOperationSecrets()
+	db := openProviderOperationTestDB(t)
+	if err := initDB(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.Set(t.Context(), secretName, "startup-commit-credential"); err != nil {
+		t.Fatal(err)
+	}
+	insertProviderRow(t, db, alias, secretName, "startup-commit-model")
+	if _, err := db.Exec(`INSERT INTO provider_operations
+		(operation_id, alias, state, failure, secret_name, result_type, result_model,
+		 result_is_default, created_at, updated_at, expires_at)
+		VALUES (?, ?, 'applied', '', ?, 'openai', 'startup-commit-model', 1,
+		 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, datetime('now', '+1 day'))`,
+		operationID, alias, secretName); err != nil {
+		t.Fatal(err)
+	}
+	engine := &EngineContext{
+		DB:              db,
+		SecretsProvider: provider,
+		SecretsRedactor: secrets.NewRedactor(),
+	}
+	manager := newProviderOperationManager(engine)
+	if err := manager.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Stop)
+	assertOperationFailure(t, db, operationID, providerOperationCommitted, "")
+}
+
+func TestProviderOperationStartupFinalizationDatabaseFailureStopsStartup(t *testing.T) {
+	const (
+		operationID = "674e5764-ecc9-4d94-b790-53b9b59ce1f0"
+		alias       = "startup-applied-db-failure"
+		secretName  = "provider-v2-startup-applied-db-failure"
+	)
+
+	provider := newOperationSecrets()
+	db := openProviderOperationTestDB(t)
+	if err := initDB(db); err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.Set(t.Context(), secretName, "startup-db-failure-credential"); err != nil {
+		t.Fatal(err)
+	}
+	insertProviderRow(t, db, alias, secretName, "startup-db-failure-model")
+	if _, err := db.Exec(`INSERT INTO provider_operations
+		(operation_id, alias, state, failure, secret_name, result_type, result_model,
+		 result_is_default, created_at, updated_at, expires_at)
+		VALUES (?, ?, 'applied', '', ?, 'openai', 'startup-db-failure-model', 1,
+		 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, datetime('now', '+1 day'))`,
+		operationID, alias, secretName); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER fail_provider_operation_finalization
+		BEFORE UPDATE OF state ON provider_operations
+		WHEN OLD.state = 'applied' AND NEW.state = 'committed'
+		BEGIN SELECT RAISE(ABORT, 'forced finalization failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	engine := &EngineContext{
+		DB:              db,
+		SecretsProvider: provider,
+		SecretsRedactor: secrets.NewRedactor(),
+	}
+	manager := newProviderOperationManager(engine)
+	err := manager.Start(t.Context())
+	manager.Stop()
+	if err == nil {
+		t.Fatal("provider operation startup ignored finalization database failure")
+	}
+	if !strings.Contains(err.Error(), "finalize provider operation") {
+		t.Fatalf("provider operation startup error = %q", err)
+	}
+	assertOperationFailure(t, db, operationID, providerOperationApplied, "")
+}
+
+func TestProviderOperationStartupFinalizationContextFailuresStopStartup(t *testing.T) {
+	const (
+		operationID = "d08ad01e-199a-42a4-89e0-e7b09c7016cf"
+		alias       = "startup-applied-context-failure"
+		secretName  = "provider-v2-startup-applied-context-failure"
+		backend     = "context-failure-backend-location"
+	)
+
+	tests := []struct {
+		name     string
+		sentinel error
+		want     string
+	}{
+		{
+			name:     "canceled",
+			sentinel: context.Canceled,
+			want:     "finalize provider operation: provider operation finalization secret read canceled",
+		},
+		{
+			name:     "wrapped deadline",
+			sentinel: context.DeadlineExceeded,
+			want:     "finalize provider operation: provider operation finalization secret read timed out",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := newOperationSecrets()
+			db := openProviderOperationTestDB(t)
+			if err := initDB(db); err != nil {
+				t.Fatal(err)
+			}
+			if err := provider.Set(t.Context(), secretName, "startup-context-failure-credential"); err != nil {
+				t.Fatal(err)
+			}
+			insertProviderRow(t, db, alias, secretName, "startup-context-failure-model")
+			if _, err := db.Exec(`INSERT INTO provider_operations
+				(operation_id, alias, state, failure, secret_name, result_type, result_model,
+				 result_is_default, created_at, updated_at, expires_at)
+				VALUES (?, ?, 'applied', '', ?, 'openai', 'startup-context-failure-model', 1,
+				 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, datetime('now', '+1 day'))`,
+				operationID, alias, secretName); err != nil {
+				t.Fatal(err)
+			}
+			provider.getHook = func(context.Context, string) error {
+				return fmt.Errorf("read secret %q from %q: %w", secretName, backend, tt.sentinel)
+			}
+			engine := &EngineContext{
+				DB:              db,
+				SecretsProvider: provider,
+				SecretsRedactor: secrets.NewRedactor(),
+			}
+			manager := newProviderOperationManager(engine)
+			err := manager.Start(t.Context())
+			manager.Stop()
+			if !errors.Is(err, tt.sentinel) {
+				t.Fatalf("provider operation startup error = %v, want %v", err, tt.sentinel)
+			}
+			if err.Error() != tt.want {
+				t.Fatalf("provider operation startup error = %q, want %q", err, tt.want)
+			}
+			if strings.Contains(err.Error(), secretName) || strings.Contains(err.Error(), backend) {
+				t.Fatalf("provider operation startup error leaked secret metadata: %q", err)
+			}
+			assertOperationFailure(t, db, operationID, providerOperationApplied, "")
+		})
+	}
+}
+
+func TestProviderOperationStartupFinalizationPermanentSecretFailuresAreSanitized(t *testing.T) {
+	const (
+		operationID = "0fbaef00-f9bb-48ff-bc98-0f8dd42cbff5"
+		alias       = "startup-applied-permanent-secret-failure"
+		secretName  = "invalid provider secret key"
+		backend     = "raw backend location"
+	)
+
+	tests := []struct {
+		name     string
+		sentinel error
+		want     string
+	}{
+		{
+			name:     "invalid key",
+			sentinel: secrets.ErrInvalidKey,
+			want:     "finalize provider operation: provider operation finalization secret read key is invalid",
+		},
+		{
+			name:     "unsupported",
+			sentinel: secrets.ErrUnsupported,
+			want:     "finalize provider operation: provider operation finalization secret read is unsupported",
+		},
+		{
+			name:     "provider init",
+			sentinel: secrets.ErrProviderInit,
+			want:     "finalize provider operation: provider operation finalization secret read provider initialization failed",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := newOperationSecrets()
+			db := openProviderOperationTestDB(t)
+			if err := initDB(db); err != nil {
+				t.Fatal(err)
+			}
+			insertProviderRow(t, db, alias, secretName, "startup-permanent-failure-model")
+			if _, err := db.Exec(`INSERT INTO provider_operations
+				(operation_id, alias, state, failure, secret_name, result_type, result_model,
+				 result_is_default, created_at, updated_at, expires_at)
+				VALUES (?, ?, 'applied', '', ?, 'openai', 'startup-permanent-failure-model', 1,
+				 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, datetime('now', '+1 day'))`,
+				operationID, alias, secretName); err != nil {
+				t.Fatal(err)
+			}
+			provider.getHook = func(context.Context, string) error {
+				return fmt.Errorf("read secret %q from %q: %w", secretName, backend, tt.sentinel)
+			}
+			engine := &EngineContext{
+				DB:              db,
+				SecretsProvider: provider,
+				SecretsRedactor: secrets.NewRedactor(),
+			}
+			manager := newProviderOperationManager(engine)
+			err := manager.Start(t.Context())
+			manager.Stop()
+			if !errors.Is(err, tt.sentinel) {
+				t.Fatalf("provider operation startup error = %v, want %v", err, tt.sentinel)
+			}
+			if err.Error() != tt.want {
+				t.Fatalf("provider operation startup error = %q, want %q", err, tt.want)
+			}
+			if strings.Contains(err.Error(), secretName) || strings.Contains(err.Error(), backend) {
+				t.Fatalf("provider operation startup error leaked secret metadata: %q", err)
+			}
+			assertOperationFailure(t, db, operationID, providerOperationApplied, "")
+		})
+	}
+}
+
+func TestProviderOperationStartupSecretEnumerationFailuresAreSanitized(t *testing.T) {
+	const (
+		secretName = "provider-v2-enumeration-secret-metadata"
+		backend    = "credential-bearing-backend-location"
+	)
+
+	tests := []struct {
+		name        string
+		failureCall int
+		failure     error
+		sentinel    error
+		want        string
+	}{
+		{
+			name:        "initial provider initialization",
+			failureCall: 1,
+			failure:     fmt.Errorf("list %q from %q: %w", secretName, backend, secrets.ErrProviderInit),
+			sentinel:    secrets.ErrProviderInit,
+			want:        "list provider secrets: provider operation secret enumeration provider initialization failed",
+		},
+		{
+			name:        "reconciliation provider initialization",
+			failureCall: 2,
+			failure:     fmt.Errorf("list %q from %q: %w", secretName, backend, secrets.ErrProviderInit),
+			sentinel:    secrets.ErrProviderInit,
+			want:        "list provider secrets: provider operation secret enumeration provider initialization failed",
+		},
+		{
+			name:        "initial unclassified",
+			failureCall: 1,
+			failure:     fmt.Errorf("list %q from %q: backend unavailable", secretName, backend),
+			want:        "list provider secrets: provider operation secret enumeration unavailable",
+		},
+		{
+			name:        "reconciliation unclassified",
+			failureCall: 2,
+			failure:     fmt.Errorf("list %q from %q: backend unavailable", secretName, backend),
+			want:        "list provider secrets: provider operation secret enumeration unavailable",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := newOperationSecrets()
+			db := openProviderOperationTestDB(t)
+			if err := initDB(db); err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			provider.listHook = func(context.Context) error {
+				calls++
+				if calls == tt.failureCall {
+					return tt.failure
+				}
+				return nil
+			}
+			engine := &EngineContext{
+				DB:              db,
+				SecretsProvider: provider,
+				SecretsRedactor: secrets.NewRedactor(),
+			}
+			manager := newProviderOperationManager(engine)
+			err := manager.Start(t.Context())
+			manager.Stop()
+			if err == nil {
+				t.Fatal("provider operation startup succeeded after secret inventory failure")
+			}
+			if tt.sentinel != nil && !errors.Is(err, tt.sentinel) {
+				t.Fatalf("provider operation startup error = %v, want %v", err, tt.sentinel)
+			}
+			if err.Error() != tt.want {
+				t.Fatalf("provider operation startup error = %q, want %q", err, tt.want)
+			}
+			if strings.Contains(err.Error(), secretName) || strings.Contains(err.Error(), backend) {
+				t.Fatalf("provider operation startup error leaked secret metadata: %q", err)
+			}
+			if calls != tt.failureCall {
+				t.Fatalf("secret inventory calls = %d, want %d", calls, tt.failureCall)
+			}
+		})
+	}
+}
+
 func TestProviderOperationRequestsAfterStopReturnUnavailable(t *testing.T) {
 	svc, db := newProviderOperationTestService(t, newOperationSecrets())
 	svc.providerOps.Stop()

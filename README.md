@@ -99,6 +99,21 @@ operation/status/log output exclude credential values. A durable provider save
 can be queried with `ratchet provider operation <id> --json` after a daemon
 restart.
 
+Provider operation states show where a save stopped:
+
+- `PENDING`: the save has not yet been durably applied.
+- `APPLIED`: provider state is durable, but daemon finalization is incomplete.
+- `COMMITTED`: the save and finalization completed successfully.
+- `FAILED`: the save reached a terminal classified failure.
+
+`APPLIED` is recoverable. Run `ratchet provider operation <id> --json` again to
+retry finalization; the operation remains queryable without resubmitting the
+credential. If a transient or missing-secret read blocks restart-time
+finalization, the daemon still starts and serves the operation as `APPLIED` so
+that query retry remains usable. Cancellation, timeout, invalid-key,
+unsupported-store, provider-initialization, secret-inventory, database, and
+journal errors remain fail-stop; repair the cause and restart the daemon.
+
 On first interactive use, ratchet starts or connects to its local daemon and
 opens the TUI. The daemon owns persisted sessions, team state, blackboard
 entries, trust grants, plugin state, routines, and workflow records. Most data

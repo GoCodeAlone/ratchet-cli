@@ -165,6 +165,133 @@ func TestHarnessSmokeDurableProviderSaveRestart(t *testing.T) {
 	waitForRatchetSmokeMissing(t, daemon.PIDPath(), 5*time.Second)
 }
 
+func TestHarnessSmokeProviderAppliedState(t *testing.T) {
+	if raceEnabled {
+		t.Skip("production provider state smoke is disabled under -race")
+	}
+	const (
+		operationID = "c603c6bf-7f45-48c8-87e2-f9ef914731d5"
+		alias       = "applied-smoke"
+		secretName  = "provider-v2-applied-smoke"
+		credential  = "APPLIED-SMOKE-CREDENTIAL-SENTINEL"
+	)
+
+	bin := buildRatchetSmokeBinary(t)
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	state := filepath.Join(home, ".local", "state")
+	for _, dir := range []string{home, state} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_STATE_HOME", state)
+	red := harnessredact.New(home, state, root, bin, daemon.SocketPath(), daemon.PIDPath(), secretName, credential).String
+	t.Cleanup(bestEffortShutdownHarnessSmokeDaemon)
+
+	startOutput, err := runRatchetSmoke(t, bin, home, "daemon", "start", "--background")
+	if err != nil {
+		t.Fatalf("start production daemon: %v\n%s", err, red(startOutput))
+	}
+	waitForRatchetSmokePresent(t, daemon.SocketPath(), 5*time.Second)
+	waitForRatchetSmokePresent(t, daemon.PIDPath(), 5*time.Second)
+
+	db, err := sql.Open("sqlite", daemon.DBPath()+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatalf("open production smoke database: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO llm_providers
+		(id, alias, type, model, secret_name, base_url, max_tokens, settings, is_default)
+		VALUES ('applied-smoke-id', ?, 'openai', 'applied-smoke-model', ?, '', 4096, '{}', 1)`,
+		alias, secretName); err != nil {
+		t.Fatalf("seed production provider: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO provider_operations
+		(operation_id, alias, state, failure, secret_name, result_type, result_model,
+		 result_is_default, created_at, updated_at, expires_at)
+		VALUES (?, ?, 'applied', '', ?, 'openai', 'applied-smoke-model', 1,
+		 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, datetime('now', '+1 day'))`,
+		operationID, alias, secretName); err != nil {
+		t.Fatalf("seed applied provider operation: %v", err)
+	}
+	shutdownHarnessSmokeDaemon(t)
+	waitForRatchetSmokeMissing(t, daemon.SocketPath(), 5*time.Second)
+	waitForRatchetSmokeMissing(t, daemon.PIDPath(), 5*time.Second)
+	restartOutput, err := runRatchetSmoke(t, bin, home, "daemon", "start", "--background")
+	if err != nil {
+		t.Fatalf("restart production daemon with applied operation: %v\n%s", err, red(restartOutput))
+	}
+	waitForRatchetSmokePresent(t, daemon.SocketPath(), 5*time.Second)
+	waitForRatchetSmokePresent(t, daemon.PIDPath(), 5*time.Second)
+
+	appliedOutput, err := runRatchetSmoke(t, bin, home, "provider", "operation", operationID, "--json")
+	if err != nil {
+		t.Fatalf("query applied provider operation: %v\n%s", err, red(appliedOutput))
+	}
+	var applied pb.ProviderOperation
+	if err := protojson.Unmarshal([]byte(appliedOutput), &applied); err != nil {
+		t.Fatalf("decode applied provider operation: %v\n%s", err, red(appliedOutput))
+	}
+	if applied.GetState() != pb.ProviderOperationState_PROVIDER_OPERATION_STATE_APPLIED ||
+		applied.GetFailure() != pb.ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_UNSPECIFIED {
+		t.Fatalf("applied provider operation = %s/%s", applied.GetState(), applied.GetFailure())
+	}
+	result := applied.GetResult()
+	if applied.GetOperationId() != operationID || result == nil || result.GetAlias() != alias ||
+		result.GetType() != "openai" || result.GetModel() != "applied-smoke-model" || !result.GetIsDefault() {
+		t.Fatalf("applied provider result = %+v", result)
+	}
+	assertHarnessSmokeOperationState(t, db, operationID, "applied")
+
+	fileSecrets := secrets.NewFileProvider(filepath.Join(daemon.DataDir(), "secrets"))
+	if err := fileSecrets.Set(t.Context(), secretName, credential); err != nil {
+		t.Fatalf("restore applied provider secret: %v", err)
+	}
+	committedOutput, err := runRatchetSmoke(t, bin, home, "provider", "operation", operationID, "--json")
+	if err != nil {
+		t.Fatalf("retry applied provider operation: %v\n%s", err, red(committedOutput))
+	}
+	var committed pb.ProviderOperation
+	if err := protojson.Unmarshal([]byte(committedOutput), &committed); err != nil {
+		t.Fatalf("decode committed provider operation: %v\n%s", err, red(committedOutput))
+	}
+	if committed.GetState() != pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED ||
+		committed.GetFailure() != pb.ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_UNSPECIFIED {
+		t.Fatalf("retried provider operation = %s/%s, want COMMITTED/UNSPECIFIED", committed.GetState(), committed.GetFailure())
+	}
+	result = committed.GetResult()
+	if committed.GetOperationId() != operationID || result == nil || result.GetAlias() != alias ||
+		result.GetType() != "openai" || result.GetModel() != "applied-smoke-model" || !result.GetIsDefault() {
+		t.Fatalf("committed provider result = %+v", result)
+	}
+	assertHarnessSmokeOperationState(t, db, operationID, "committed")
+	// StartBackground disconnects daemon logs. Launcher/RPC output is checked here;
+	// startup sanitization is covered at the provider-operation manager boundary.
+	for _, output := range []string{startOutput, restartOutput, appliedOutput, committedOutput} {
+		if strings.Contains(output, credential) || strings.Contains(output, secretName) || strings.Contains(strings.ToLower(output), "secret not found") {
+			t.Fatalf("provider operation output exposed secret metadata: %s", red(output))
+		}
+	}
+
+	shutdownHarnessSmokeDaemon(t)
+	waitForRatchetSmokeMissing(t, daemon.SocketPath(), 5*time.Second)
+	waitForRatchetSmokeMissing(t, daemon.PIDPath(), 5*time.Second)
+}
+
+func assertHarnessSmokeOperationState(t *testing.T, db *sql.DB, operationID, want string) {
+	t.Helper()
+	var got string
+	if err := db.QueryRow(`SELECT state FROM provider_operations WHERE operation_id = ?`, operationID).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("provider operation SQL state = %q, want %q", got, want)
+	}
+}
+
 func providerOperationIDFromSmokeOutput(t *testing.T, output string, red func(string) string) string {
 	t.Helper()
 	match := regexp.MustCompile(`"operation_id"\s*:\s*"([0-9a-f-]{36})"`).FindStringSubmatch(output)

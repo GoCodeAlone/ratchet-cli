@@ -224,3 +224,27 @@ func TestValidateCatalogRejectsInvalidEntriesAndRuntimeGaps(t *testing.T) {
 		t.Fatalf("validateCatalog(runtime gap) error = %v", err)
 	}
 }
+
+func TestValidateCatalogDuplicateTypeDiagnostic(t *testing.T) {
+	entries := Catalog()
+	entries = append(entries, cloneSetupEntry(entries[0]))
+	err := validateCatalog(entries, nil)
+	if err == nil {
+		t.Fatal("validateCatalog() accepted a duplicate provider type")
+	}
+	if got, want := err.Error(), `duplicate provider type "anthropic"`; got != want {
+		t.Fatalf("validateCatalog() error = %q, want %q", got, want)
+	}
+}
+
+func TestValidateCatalogAliasThenTypeCollisionRetainsOwnerDiagnostic(t *testing.T) {
+	entries := Catalog()
+	entries[0].Aliases = append(entries[0].Aliases, entries[1].Type)
+	err := validateCatalog(entries, nil)
+	if err == nil {
+		t.Fatal("validateCatalog() accepted an alias-to-type collision")
+	}
+	if got, want := err.Error(), `duplicate provider name "openai" (owned by "anthropic" and "openai")`; got != want {
+		t.Fatalf("validateCatalog() error = %q, want %q", got, want)
+	}
+}

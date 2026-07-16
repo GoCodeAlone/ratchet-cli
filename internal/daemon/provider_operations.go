@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GoCodeAlone/workflow/secrets"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -68,6 +69,52 @@ type providerAliasGate struct {
 	refs int
 }
 
+type providerOperationSecretAction uint8
+
+const (
+	providerOperationSecretFinalizationRead providerOperationSecretAction = iota
+	providerOperationSecretEnumeration
+)
+
+type providerOperationSecretError struct {
+	action providerOperationSecretAction
+	cause  error
+}
+
+func (e *providerOperationSecretError) Error() string {
+	action := "finalization secret read"
+	if e.action == providerOperationSecretEnumeration {
+		action = "secret enumeration"
+	}
+	switch {
+	case errors.Is(e.cause, context.Canceled):
+		return "provider operation " + action + " canceled"
+	case errors.Is(e.cause, context.DeadlineExceeded):
+		return "provider operation " + action + " timed out"
+	case errors.Is(e.cause, secrets.ErrInvalidKey):
+		return "provider operation " + action + " key is invalid"
+	case errors.Is(e.cause, secrets.ErrUnsupported):
+		return "provider operation " + action + " is unsupported"
+	case errors.Is(e.cause, secrets.ErrProviderInit):
+		return "provider operation " + action + " provider initialization failed"
+	default:
+		return "provider operation " + action + " unavailable"
+	}
+}
+
+func (e *providerOperationSecretError) Unwrap() error {
+	return e.cause
+}
+
+func (e *providerOperationSecretError) retryableFinalizationAtStartup() bool {
+	return e.action == providerOperationSecretFinalizationRead &&
+		!errors.Is(e.cause, context.Canceled) &&
+		!errors.Is(e.cause, context.DeadlineExceeded) &&
+		!errors.Is(e.cause, secrets.ErrInvalidKey) &&
+		!errors.Is(e.cause, secrets.ErrUnsupported) &&
+		!errors.Is(e.cause, secrets.ErrProviderInit)
+}
+
 func newProviderOperationManager(engine *EngineContext) *providerOperationManager {
 	return &providerOperationManager{
 		engine:      engine,
@@ -101,7 +148,10 @@ func (m *providerOperationManager) Start(parent context.Context) error {
 	if _, err := m.engine.SecretsProvider.List(startupCtx); err != nil {
 		m.finishFailedStart()
 		startupCancel()
-		return fmt.Errorf("list provider secrets: %w", err)
+		return fmt.Errorf("list provider secrets: %w", &providerOperationSecretError{
+			action: providerOperationSecretEnumeration,
+			cause:  err,
+		})
 	}
 	if err := m.reconcileStartup(startupCtx); err != nil {
 		m.finishFailedStart()
@@ -446,7 +496,10 @@ func (m *providerOperationManager) finalizeOperation(parent context.Context, ope
 	if secretName != "" {
 		value, err := m.engine.SecretsProvider.Get(ctx, secretName)
 		if err != nil {
-			return err
+			return &providerOperationSecretError{
+				action: providerOperationSecretFinalizationRead,
+				cause:  err,
+			}
 		}
 		secretValue = value
 	}
@@ -532,8 +585,6 @@ func (m *providerOperationManager) get(ctx context.Context, operationID string, 
 		if err := m.finalizeOperation(context.WithoutCancel(ctx), operationID); err == nil {
 			return m.get(ctx, operationID, false)
 		}
-		// Applied remains externally pending until finalization succeeds.
-		op.State = pb.ProviderOperationState_PROVIDER_OPERATION_STATE_PENDING
 	}
 	return op, nil
 }
@@ -582,8 +633,10 @@ func syntheticProviderOperation(operationID, alias, failure string) *pb.Provider
 
 func providerOperationStatePB(state string) pb.ProviderOperationState {
 	switch state {
-	case providerOperationPending, providerOperationApplied:
+	case providerOperationPending:
 		return pb.ProviderOperationState_PROVIDER_OPERATION_STATE_PENDING
+	case providerOperationApplied:
+		return pb.ProviderOperationState_PROVIDER_OPERATION_STATE_APPLIED
 	case providerOperationCommitted:
 		return pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED
 	case providerOperationFailed:
@@ -646,13 +699,20 @@ func (m *providerOperationManager) reconcileStartup(ctx context.Context) error {
 	m.engine.ProviderRowsMu.Unlock()
 	for _, operationID := range applied {
 		if err := m.finalizeOperation(ctx, operationID); err != nil {
+			var secretErr *providerOperationSecretError
+			if errors.As(err, &secretErr) && secretErr.retryableFinalizationAtStartup() {
+				continue
+			}
 			return fmt.Errorf("finalize provider operation: %w", err)
 		}
 	}
 
 	keys, err := m.engine.SecretsProvider.List(ctx)
 	if err != nil {
-		return fmt.Errorf("list provider secrets: %w", err)
+		return fmt.Errorf("list provider secrets: %w", &providerOperationSecretError{
+			action: providerOperationSecretEnumeration,
+			cause:  err,
+		})
 	}
 	for _, key := range keys {
 		if !strings.HasPrefix(key, "provider-v2-") {
