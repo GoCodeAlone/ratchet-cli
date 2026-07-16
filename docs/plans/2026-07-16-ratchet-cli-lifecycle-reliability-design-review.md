@@ -44,3 +44,7 @@ None.
 2. Add a public lifecycle-event API: richer diagnostics, but no current consumer justifies its compatibility and synchronization cost.
 
 **Verdict reasoning:** All Important findings were incorporated into the design. Remaining risk is bounded to internal lifecycle implementation and existing CI jobs; the design now matches native-platform guidance, directly addresses every named follow-up, and avoids new public state or infrastructure.
+
+### Process Amendment
+
+The release section now distinguishes the implementation PR from the required post-merge retro/closeout PR. This does not change feature scope; it prevents pre-merge CI/release evidence from being fabricated in a retro and makes both merges follow the operator's release rule.

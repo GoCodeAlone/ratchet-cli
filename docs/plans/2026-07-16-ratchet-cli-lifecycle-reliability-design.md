@@ -139,4 +139,4 @@ Declared integrations:
 
 ## Release
 
-One PR. After green required checks and resolved review threads, admin squash-merge, publish the next patch release from the merge commit, verify every archive/checksum plus Homebrew, and run time-bounded installed `ratchet --version` and provider catalog probes.
+Two PRs: one implementation PR, then one post-merge retro/plan-closeout PR containing evidence that can only exist after the first merge and release. For each PR, wait for green required checks and resolved review threads, admin squash-merge, publish the next patch release from the merge commit, verify every archive/checksum plus Homebrew, and run time-bounded installed `ratchet --version` and provider catalog probes.
