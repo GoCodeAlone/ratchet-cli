@@ -172,7 +172,11 @@ func waitProfileProcess(t *testing.T, child *profileProcess) {
 		}
 	case <-time.After(acpClientProcessSmokeTimeout):
 		killErr := child.cmd.Process.Kill()
-		waitErr := <-child.done
-		t.Fatalf("profile process remained blocked (kill: %v, wait: %v)\n%s", killErr, waitErr, child.output.String())
+		select {
+		case waitErr := <-child.done:
+			t.Fatalf("profile process remained blocked (kill: %v, wait: %v)\n%s", killErr, waitErr, child.output.String())
+		case <-time.After(acpClientProcessSmokeTimeout):
+			t.Fatalf("profile process remained blocked and Wait did not return after kill (kill: %v)\n%s", killErr, child.output.String())
+		}
 	}
 }
