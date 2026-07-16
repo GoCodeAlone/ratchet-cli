@@ -155,3 +155,26 @@ failed when invalid-key, unsupported-read, and provider-init errors were treated
 as retryable. It passes when a typed wrapper keeps those sentinels fail-stop,
 preserves `errors.Is`, and emits only classified diagnostics without the secret
 name or backend detail.
+
+### Backport 2026-07-16: Sanitize Inventory Errors At The Service Boundary
+
+Cause: startup's two secret-inventory calls wrapped provider errors directly,
+so backend paths, secret metadata, or credential-bearing provider text could
+reach the foreground daemon diagnostic. The built-binary recovery smoke could
+not detect that class because `StartBackground` disconnects daemon output.
+
+Change: finalization reads and both inventory calls now share one typed,
+fixed-label error boundary that preserves `errors.Is` while excluding provider
+text. Inventory errors remain fail-stop. The release-shaped smoke continues to
+prove restart, `APPLIED` query, retry, and `COMMITTED`; manager-start regressions
+separately prove the provider-operation diagnostic boundary is sanitized.
+
+Scope: no manifest change; this closes Task 3's existing no-raw-error security
+requirement and clarifies its two verification boundaries.
+
+Evidence: `TestProviderOperationStartupSecretEnumerationFailuresAreSanitized`
+failed at both inventory calls with the secret name and backend in the returned
+error. It passes with the shared wrapper, preserves the provider sentinel, and
+pins the classified manager error text. The README guard also distinguishes
+retryable missing/transient reads from fail-stop context, permanent-provider,
+inventory, database, and journal failures.

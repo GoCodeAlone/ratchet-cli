@@ -317,15 +317,24 @@ func TestProviderOperationStartupFinalizationContextFailuresStopStartup(t *testi
 		operationID = "d08ad01e-199a-42a4-89e0-e7b09c7016cf"
 		alias       = "startup-applied-context-failure"
 		secretName  = "provider-v2-startup-applied-context-failure"
+		backend     = "context-failure-backend-location"
 	)
 
 	tests := []struct {
-		name string
-		err  error
-		want error
+		name     string
+		sentinel error
+		want     string
 	}{
-		{name: "canceled", err: context.Canceled, want: context.Canceled},
-		{name: "wrapped deadline", err: fmt.Errorf("secret read: %w", context.DeadlineExceeded), want: context.DeadlineExceeded},
+		{
+			name:     "canceled",
+			sentinel: context.Canceled,
+			want:     "finalize provider operation: provider operation finalization secret read canceled",
+		},
+		{
+			name:     "wrapped deadline",
+			sentinel: context.DeadlineExceeded,
+			want:     "finalize provider operation: provider operation finalization secret read timed out",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -347,7 +356,7 @@ func TestProviderOperationStartupFinalizationContextFailuresStopStartup(t *testi
 				t.Fatal(err)
 			}
 			provider.getHook = func(context.Context, string) error {
-				return tt.err
+				return fmt.Errorf("read secret %q from %q: %w", secretName, backend, tt.sentinel)
 			}
 			engine := &EngineContext{
 				DB:              db,
@@ -357,8 +366,14 @@ func TestProviderOperationStartupFinalizationContextFailuresStopStartup(t *testi
 			manager := newProviderOperationManager(engine)
 			err := manager.Start(t.Context())
 			manager.Stop()
-			if !errors.Is(err, tt.want) {
-				t.Fatalf("provider operation startup error = %v, want %v", err, tt.want)
+			if !errors.Is(err, tt.sentinel) {
+				t.Fatalf("provider operation startup error = %v, want %v", err, tt.sentinel)
+			}
+			if err.Error() != tt.want {
+				t.Fatalf("provider operation startup error = %q, want %q", err, tt.want)
+			}
+			if strings.Contains(err.Error(), secretName) || strings.Contains(err.Error(), backend) {
+				t.Fatalf("provider operation startup error leaked secret metadata: %q", err)
 			}
 			assertOperationFailure(t, db, operationID, providerOperationApplied, "")
 		})
@@ -376,10 +391,23 @@ func TestProviderOperationStartupFinalizationPermanentSecretFailuresAreSanitized
 	tests := []struct {
 		name     string
 		sentinel error
+		want     string
 	}{
-		{name: "invalid key", sentinel: secrets.ErrInvalidKey},
-		{name: "unsupported", sentinel: secrets.ErrUnsupported},
-		{name: "provider init", sentinel: secrets.ErrProviderInit},
+		{
+			name:     "invalid key",
+			sentinel: secrets.ErrInvalidKey,
+			want:     "finalize provider operation: provider operation finalization secret read key is invalid",
+		},
+		{
+			name:     "unsupported",
+			sentinel: secrets.ErrUnsupported,
+			want:     "finalize provider operation: provider operation finalization secret read is unsupported",
+		},
+		{
+			name:     "provider init",
+			sentinel: secrets.ErrProviderInit,
+			want:     "finalize provider operation: provider operation finalization secret read provider initialization failed",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -411,10 +439,95 @@ func TestProviderOperationStartupFinalizationPermanentSecretFailuresAreSanitized
 			if !errors.Is(err, tt.sentinel) {
 				t.Fatalf("provider operation startup error = %v, want %v", err, tt.sentinel)
 			}
+			if err.Error() != tt.want {
+				t.Fatalf("provider operation startup error = %q, want %q", err, tt.want)
+			}
 			if strings.Contains(err.Error(), secretName) || strings.Contains(err.Error(), backend) {
 				t.Fatalf("provider operation startup error leaked secret metadata: %q", err)
 			}
 			assertOperationFailure(t, db, operationID, providerOperationApplied, "")
+		})
+	}
+}
+
+func TestProviderOperationStartupSecretEnumerationFailuresAreSanitized(t *testing.T) {
+	const (
+		secretName = "provider-v2-enumeration-secret-metadata"
+		backend    = "credential-bearing-backend-location"
+	)
+
+	tests := []struct {
+		name        string
+		failureCall int
+		failure     error
+		sentinel    error
+		want        string
+	}{
+		{
+			name:        "initial provider initialization",
+			failureCall: 1,
+			failure:     fmt.Errorf("list %q from %q: %w", secretName, backend, secrets.ErrProviderInit),
+			sentinel:    secrets.ErrProviderInit,
+			want:        "list provider secrets: provider operation secret enumeration provider initialization failed",
+		},
+		{
+			name:        "reconciliation provider initialization",
+			failureCall: 2,
+			failure:     fmt.Errorf("list %q from %q: %w", secretName, backend, secrets.ErrProviderInit),
+			sentinel:    secrets.ErrProviderInit,
+			want:        "list provider secrets: provider operation secret enumeration provider initialization failed",
+		},
+		{
+			name:        "initial unclassified",
+			failureCall: 1,
+			failure:     fmt.Errorf("list %q from %q: backend unavailable", secretName, backend),
+			want:        "list provider secrets: provider operation secret enumeration unavailable",
+		},
+		{
+			name:        "reconciliation unclassified",
+			failureCall: 2,
+			failure:     fmt.Errorf("list %q from %q: backend unavailable", secretName, backend),
+			want:        "list provider secrets: provider operation secret enumeration unavailable",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := newOperationSecrets()
+			db := openProviderOperationTestDB(t)
+			if err := initDB(db); err != nil {
+				t.Fatal(err)
+			}
+			calls := 0
+			provider.listHook = func(context.Context) error {
+				calls++
+				if calls == tt.failureCall {
+					return tt.failure
+				}
+				return nil
+			}
+			engine := &EngineContext{
+				DB:              db,
+				SecretsProvider: provider,
+				SecretsRedactor: secrets.NewRedactor(),
+			}
+			manager := newProviderOperationManager(engine)
+			err := manager.Start(t.Context())
+			manager.Stop()
+			if err == nil {
+				t.Fatal("provider operation startup succeeded after secret inventory failure")
+			}
+			if tt.sentinel != nil && !errors.Is(err, tt.sentinel) {
+				t.Fatalf("provider operation startup error = %v, want %v", err, tt.sentinel)
+			}
+			if err.Error() != tt.want {
+				t.Fatalf("provider operation startup error = %q, want %q", err, tt.want)
+			}
+			if strings.Contains(err.Error(), secretName) || strings.Contains(err.Error(), backend) {
+				t.Fatalf("provider operation startup error leaked secret metadata: %q", err)
+			}
+			if calls != tt.failureCall {
+				t.Fatalf("secret inventory calls = %d, want %d", calls, tt.failureCall)
+			}
 		})
 	}
 }

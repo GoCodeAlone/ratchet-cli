@@ -108,8 +108,11 @@ Provider operation states show where a save stopped:
 
 `APPLIED` is recoverable. Run `ratchet provider operation <id> --json` again to
 retry finalization; the operation remains queryable without resubmitting the
-credential. If restart-time finalization is unavailable, the daemon still
-starts and serves the operation as `APPLIED` so that query retry remains usable.
+credential. If a transient or missing-secret read blocks restart-time
+finalization, the daemon still starts and serves the operation as `APPLIED` so
+that query retry remains usable. Cancellation, timeout, invalid-key,
+unsupported-store, provider-initialization, secret-inventory, database, and
+journal errors remain fail-stop; repair the cause and restart the daemon.
 
 On first interactive use, ratchet starts or connects to its local daemon and
 opens the TUI. The daemon owns persisted sessions, team state, blackboard

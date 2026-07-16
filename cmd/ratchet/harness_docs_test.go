@@ -176,7 +176,9 @@ func TestHarnessDocsDescribeUnifiedProviderSetup(t *testing.T) {
 		"`FAILED`: the save reached a terminal classified failure",
 		"Run `ratchet provider operation <id> --json` again to retry finalization",
 		"the operation remains queryable without resubmitting the credential",
+		"transient or missing-secret read blocks restart-time finalization",
 		"the daemon still starts and serves the operation as `APPLIED`",
+		"Cancellation, timeout, invalid-key, unsupported-store, provider-initialization, secret-inventory, database, and journal errors remain fail-stop",
 	} {
 		if !containsWords(readme, required) {
 			t.Fatalf("README provider lifecycle missing %q", required)

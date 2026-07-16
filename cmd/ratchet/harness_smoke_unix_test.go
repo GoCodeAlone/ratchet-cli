@@ -258,10 +258,18 @@ func TestHarnessSmokeProviderAppliedState(t *testing.T) {
 	if err := protojson.Unmarshal([]byte(committedOutput), &committed); err != nil {
 		t.Fatalf("decode committed provider operation: %v\n%s", err, red(committedOutput))
 	}
-	if committed.GetState() != pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED {
-		t.Fatalf("retried provider operation state = %s, want COMMITTED", committed.GetState())
+	if committed.GetState() != pb.ProviderOperationState_PROVIDER_OPERATION_STATE_COMMITTED ||
+		committed.GetFailure() != pb.ProviderOperationFailure_PROVIDER_OPERATION_FAILURE_UNSPECIFIED {
+		t.Fatalf("retried provider operation = %s/%s, want COMMITTED/UNSPECIFIED", committed.GetState(), committed.GetFailure())
+	}
+	result = committed.GetResult()
+	if committed.GetOperationId() != operationID || result == nil || result.GetAlias() != alias ||
+		result.GetType() != "openai" || result.GetModel() != "applied-smoke-model" || !result.GetIsDefault() {
+		t.Fatalf("committed provider result = %+v", result)
 	}
 	assertHarnessSmokeOperationState(t, db, operationID, "committed")
+	// StartBackground disconnects daemon logs. Launcher/RPC output is checked here;
+	// startup sanitization is covered at the provider-operation manager boundary.
 	for _, output := range []string{startOutput, restartOutput, appliedOutput, committedOutput} {
 		if strings.Contains(output, credential) || strings.Contains(output, secretName) || strings.Contains(strings.ToLower(output), "secret not found") {
 			t.Fatalf("provider operation output exposed secret metadata: %s", red(output))
