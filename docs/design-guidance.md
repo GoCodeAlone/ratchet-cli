@@ -1,8 +1,10 @@
 # Design Guidance
 
 **Status:** Active
-**Last updated:** 2026-07-15
-**Source:** workspace guidance; `docs/retros/2026-07-15-provider-drain-managed-hooks-retro.md`
+**Last updated:** 2026-07-16
+**Source:** workspace guidance;
+`docs/retros/2026-07-15-provider-drain-managed-hooks-retro.md`;
+`docs/retros/2026-07-16-ratchet-cli-lifecycle-reliability-retro.md`
 
 ## Product Direction
 
@@ -36,6 +38,8 @@
 - Run the exact merge-gating race/coverage selector locally when practical.
   Isolate heavyweight real-binary process smoke from race/coverage jobs so one
   test cannot consume the suite timeout.
+- Bound cleanup and join paths independently. A timeout-triggered cancel or
+  process kill must not be followed by an unbounded `Wait` or channel receive.
 - Keep credentials, request payloads, command environments, and raw provider
   errors out of durable metadata, logs, snapshots, audits, and PR evidence.
 - Release only merge commits. Verify checksums, every declared platform
@@ -55,6 +59,8 @@
 - Exercise each runtime-integrated boundary through its real consumer: CLI or
   TUI to daemon, daemon to plugin/provider, and released archive or package to
   operating system.
+- For asynchronous notifications, prove send completion and receiver handling
+  separately; use an explicit receiver barrier when claiming handler behavior.
 - Stateful flows prove results after restart or reload where feasible. Security
   boundaries include a negative authorization, trust, or mutation path.
 
@@ -75,3 +81,4 @@
 | Date | Source | Change |
 |---|---|---|
 | 2026-07-15 | `docs/retros/2026-07-15-provider-drain-managed-hooks-retro.md` | Established shared-contract, native-platform, settled-merge, exact-test, and release-runtime gates after repeated Windows and PR-monitoring misses. |
+| 2026-07-16 | `docs/retros/2026-07-16-ratchet-cli-lifecycle-reliability-retro.md` | Added independent cleanup-join bounds and separate notification send/handler proof after ACP stress and PR review findings. |
