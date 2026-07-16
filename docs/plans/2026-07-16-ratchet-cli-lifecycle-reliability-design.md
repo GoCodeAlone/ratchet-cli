@@ -39,6 +39,7 @@ Source: `docs/design-guidance.md`
 ### Provider Cleanup
 
 - Change cleanup dispatch to return an error. The loop logs a stable operation label plus the error; secret names and credential values remain absent.
+- Rate-limit repeated equivalent dispatch failures to one log per minute and clear the suppression state after a successful dispatch. A persistent database outage must not emit on every 250 ms tick.
 - Extract candidate-row collection behind the minimal `Next`/`Scan`/`Err`/`Close` shape. Always close rows and return `errors.Join(primary, closeErr)` so a secondary close failure is preserved.
 - Treat the SQL row removal as cleanup completion in the fairness regression. The test waits for both provider deletion and zero durable cleanup rows before asserting attempts/concurrency.
 - Keep the worker count, retry schedule, secret naming, and durable schema unchanged.
@@ -54,6 +55,8 @@ Source: `docs/design-guidance.md`
 - ACP cancellation remains one bounded notification attempt followed by transport closure and process kill/reap. Remove the fixed 100 ms sleep after `ClientSideConnection.Cancel` returns; notification write completion is the strongest available transport signal because ACP cancellation has no response.
 - Keep exact-once peer handling assertions in the in-process pipe test, where write completion is synchronized with the reader. The real OS-process test proves prompt return and process reap, not peer handling before forced termination.
 - Rename/collect real-process lifecycle tests under a stable binary-smoke selector. Run them once in a dedicated, bounded Linux CI step without race instrumentation; skip only that selector in the race/coverage command.
+- Replace the trusted-profile helper's fixed five-second start wait with a shared 30-second process-smoke bound. The dedicated job retains an outer five-minute package timeout, so a deadlock still fails without competing with race/coverage load.
+- Run the same real-process lifecycle selector on the existing `windows-2025` job. This adds a step but does not add or change runners.
 - Keep in-process cancellation, blocked-send, queue, lock, and persistence tests in the race job. Keep native Windows persistence, daemon lock, release startup, and ConPTY jobs unchanged.
 - Add a releaseguard assertion that the dedicated smoke command and matching race skip remain paired.
 
@@ -66,7 +69,7 @@ Source: `docs/design-guidance.md`
 | Cancellation write failure | Error joins with teardown result; process still killed/reaped. |
 | Agent ignores cancellation | Transport/process teardown completes without waiting for a nonexistent ACP acknowledgment. |
 | Startup reconcile canceled by stop | `Start` returns a context-classified failure; `Stop` joins startup. |
-| Dedicated smoke timeout | CI fails independently without consuming race/coverage timeout. |
+| Dedicated smoke timeout | Linux and Windows CI fail independently without consuming race/coverage timeout. |
 
 ## Security Review
 
@@ -77,7 +80,7 @@ Source: `docs/design-guidance.md`
 
 ## Infrastructure Impact
 
-- CI only: one additional Linux Go test step and a narrower race skip for named real-process tests.
+- CI only: one additional Linux Go test step, one step on the existing Windows job, and a narrower race skip for named real-process tests.
 - No cloud resources, storage schema, migration, IAM, network listener, secret, runner, or production deployment change.
 - Existing Windows hosted jobs remain required; this design does not change runners.
 
@@ -87,8 +90,8 @@ Source: `docs/design-guidance.md`
 |---|---|
 | cleanup worker + SQLite + secret provider | Fairness test observes retry, bounded concurrency, secret deletion, and durable row removal. |
 | service + provider operation manager | Post-stop service call returns `Unavailable`; reconcile-time stop cancels and joins startup. |
-| ACP SDK + OS process | Dedicated smoke launches the real test child, sends cancel, and proves prompt return plus process reap. |
-| trusted profile + process lock + real agent | Dedicated smoke proves the profile process lock remains held through real `Start` success/failure acknowledgment. |
+| ACP SDK + OS process | Linux and Windows dedicated smoke launch the real test child and prove bounded cancellation attempt, prompt return, and process reap; in-process tests prove exact peer handling. |
+| trusted profile + process lock + real agent | Linux and Windows dedicated smoke prove the profile process lock remains held through real `Start` success/failure acknowledgment. |
 | CI contract | releaseguard rejects a missing dedicated smoke or mismatched race skip. |
 
 Declared integrations:
@@ -97,7 +100,7 @@ Declared integrations:
 |---|---|---|
 | `github.com/coder/acp-go-sdk` | runtime-integrated | real child process plus in-process exact-once cancellation tests |
 | Workflow `secrets.Provider` | runtime-integrated | provider cleanup service test with durable SQLite state |
-| GitHub Actions | config-only | releaseguard workflow assertions and PR check execution |
+| GitHub Actions | config-only | releaseguard workflow assertions and Linux/native-Windows PR check execution |
 
 ## Assumptions
 
@@ -108,12 +111,19 @@ Declared integrations:
 | A3 | Cleanup-row deletion is the durable completion signal. | Delete can fail after secret removal. | Existing startup retry remains authoritative; dispatch diagnostics expose the failure. |
 | A4 | In-process cancellation tests provide sufficient race coverage for notification ownership. | OS pipe behavior differs from `io.Pipe`. | Dedicated real-process smoke covers OS behavior without race load. |
 | A5 | Existing provider/ACP public contracts are correct. | A consumer may need explicit lifecycle events later. | Add a consumer-driven API design; do not preemptively expose internals. |
+| A6 | A 30-second isolated process-start bound is sufficient on hosted Linux and Windows. | Runner degradation may exceed it. | Preserve the outer five-minute job timeout and diagnose runner health before increasing the per-transition bound. |
 
 ## Self-Challenge
 
 1. **Simplest solution:** Polling SQL and increasing timeouts would reduce flakes, but would leave silent cleanup errors and runtime delay; the targeted design is the minimum that fixes both behavior and evidence.
 2. **Fragile assumption:** A1 means Ratchet cannot prove the child handled cancellation before kill. The contract is therefore explicitly notification-attempt plus bounded termination, not peer acknowledgment.
 3. **Partial failure:** Cleanup can remove a secret and fail to remove its queue row. Startup/retry is idempotent through `secrets.ErrNotFound`, and the new joined error is observable.
+
+## Adversarial Review Resolutions
+
+- Repeated cleanup errors are transition/rate-limited rather than logged every tick.
+- The fixed five-second real-start wait is replaced explicitly, not merely moved to another job.
+- Real-process lifecycle proof runs on existing Linux and Windows runners; cross-compilation is not treated as native proof.
 
 ## Non-Goals
 
