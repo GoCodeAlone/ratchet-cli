@@ -442,7 +442,7 @@ func TestBackgroundProfileUnsupportedLeaseFailsBeforeDurableWriteOrStart(t *test
 	}
 }
 
-func TestBackgroundProfileLaunchHoldsProcessLeaseThroughRealStart(t *testing.T) {
+func TestACPClientLifecycleBinarySmokeBackgroundProfileLaunchHoldsProcessLeaseThroughRealStart(t *testing.T) {
 	dir := t.TempDir()
 	fixture := BuildFixtureAgent(t)
 	manager, sessions, profiles, barriers := newBackgroundProfileProcessManager(t, dir, fixture, func(
@@ -494,7 +494,7 @@ func TestBackgroundProfileLaunchHoldsProcessLeaseThroughRealStart(t *testing.T) 
 	})
 }
 
-func TestBackgroundProfileLaunchReleasesProcessLeaseAfterStartFailure(t *testing.T) {
+func TestACPClientLifecycleBinarySmokeBackgroundProfileLaunchReleasesProcessLeaseAfterStartFailure(t *testing.T) {
 	dir := t.TempDir()
 	missingCommand := filepath.Join(dir, "missing-agent")
 	manager, _, profiles, barriers := newBackgroundProfileProcessManager(t, dir, missingCommand, func(
@@ -658,22 +658,12 @@ type backgroundLaunchBarriers struct {
 
 func waitBackgroundLaunchEntered(t *testing.T, entered <-chan struct{}) {
 	t.Helper()
-	select {
-	case <-entered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("profile launch did not reach StartRunner barrier")
-	}
+	waitACPClientProcessValue(t, entered, "profile launch StartRunner barrier")
 }
 
 func waitBackgroundStartReturned(t *testing.T, returned <-chan error) error {
 	t.Helper()
-	select {
-	case err := <-returned:
-		return err
-	case <-time.After(5 * time.Second):
-		t.Fatal("profile launch StartRunner did not acknowledge real start")
-		return nil
-	}
+	return waitACPClientProcessValue(t, returned, "profile launch StartRunner acknowledgment")
 }
 
 type backgroundBarrierStartRunner func(

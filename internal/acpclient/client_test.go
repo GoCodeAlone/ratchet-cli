@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	acpsdk "github.com/coder/acp-go-sdk"
@@ -324,7 +325,7 @@ func TestClientCancellationCommittedWithPromptResponseWins(t *testing.T) {
 	})
 
 	requested := &atomic.Bool{}
-	agent := &cancelOnPromptResponseAgent{requested: requested}
+	agent := &cancelOnPromptResponseAgent{requested: requested, cancelCalled: make(chan struct{})}
 	agentConn := acpsdk.NewAgentSideConnection(agent, agentToClientW, clientToAgentR)
 	agent.conn = agentConn
 	client := NewInProcessClient(clientToAgentW, agentToClientR, RunOptions{
@@ -339,14 +340,63 @@ func TestClientCancellationCommittedWithPromptResponseWins(t *testing.T) {
 	if _, err := client.RunPrompt(t.Context(), "response race"); !errors.Is(err, ErrCancelRequested) {
 		t.Fatalf("RunPrompt error = %v, want ErrCancelRequested", err)
 	}
+	waitACPClientProcessValue(t, agent.cancelCalled, "in-process ACP peer cancellation")
 	if got := agent.cancelCount.Load(); got != 1 {
 		t.Fatalf("ACP cancel count = %d, want 1", got)
 	}
 }
 
-func TestClientCancellationIgnoringAgentReturnsAndReapsProcess(t *testing.T) {
+func TestClientCancellationNoPostSendDelay(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		clientToAgentR, clientToAgentW := io.Pipe()
+		agentToClientR, agentToClientW := io.Pipe()
+		defer func() {
+			_ = clientToAgentR.Close()
+			_ = clientToAgentW.Close()
+			_ = agentToClientR.Close()
+			_ = agentToClientW.Close()
+		}()
+
+		agent := &cancellationRaceAgent{cancelCalled: make(chan struct{})}
+		agentConn := acpsdk.NewAgentSideConnection(agent, agentToClientW, clientToAgentR)
+		client := NewInProcessClient(clientToAgentW, agentToClientR, RunOptions{
+			Timeout: time.Second,
+			CancelRequested: func(string) (bool, error) {
+				return true, nil
+			},
+		})
+
+		started := time.Now()
+		stopWatcher, err := client.startCancelWatcher(t.Context(), "immediate-cancel")
+		if !errors.Is(err, ErrCancelRequested) {
+			t.Fatalf("cancel watcher error = %v, want ErrCancelRequested", err)
+		}
+		if stopWatcher != nil {
+			t.Fatal("cancel watcher returned a stop function after immediate cancellation")
+		}
+		if elapsed := time.Since(started); elapsed != 0 {
+			t.Fatalf("cancel watcher elapsed = %v, want 0s", elapsed)
+		}
+
+		synctest.Wait()
+		if got := agent.cancelCount.Load(); got != 1 {
+			t.Fatalf("ACP cancel count = %d, want 1", got)
+		}
+		select {
+		case <-agent.cancelCalled:
+		default:
+			t.Fatal("ACP peer did not handle cancellation")
+		}
+		select {
+		case <-agentConn.Done():
+		default:
+		}
+	})
+}
+
+func TestACPClientLifecycleBinarySmokeCancellationIgnoringAgentReturnsAndReapsProcess(t *testing.T) {
 	requested := &atomic.Bool{}
-	client, cancelMarker, promptMarker := startCancellationProcessClient(t, requested, nil)
+	client, _, promptMarker := startCancellationProcessClient(t, requested, nil)
 	runner, err := client.StartSession(t.Context(), "")
 	if err != nil {
 		t.Fatalf("StartSession: %v", err)
@@ -359,18 +409,10 @@ func TestClientCancellationIgnoringAgentReturnsAndReapsProcess(t *testing.T) {
 	}()
 	waitForCancellationMarker(t, promptMarker)
 	requested.Store(true)
-	select {
-	case err := <-done:
-		if !errors.Is(err, ErrCancelRequested) {
-			t.Fatalf("Prompt error = %v, want ErrCancelRequested", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("Prompt did not return after cancellation")
+	if err := waitACPClientProcessValue(t, done, "canceled prompt return"); !errors.Is(err, ErrCancelRequested) {
+		t.Fatalf("Prompt error = %v, want ErrCancelRequested", err)
 	}
 	assertCancellationProcessReaped(t, client)
-	if got := markerLineCount(t, cancelMarker); got != 1 {
-		t.Fatalf("ACP cancel count = %d, want 1", got)
-	}
 	if err := client.Close(); err != nil {
 		t.Fatalf("idempotent Close: %v", err)
 	}
@@ -892,7 +934,7 @@ func cancellationProcessSpec() AgentSpec {
 
 func waitForCancellationMarker(t *testing.T, path string) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(acpClientProcessSmokeTimeout)
 	for time.Now().Before(deadline) {
 		if _, err := os.Stat(path); err == nil {
 			return
@@ -1035,12 +1077,15 @@ type cancellationRaceAgent struct {
 
 type cancelOnPromptResponseAgent struct {
 	echoAgent
-	requested   *atomic.Bool
-	cancelCount atomic.Int64
+	requested    *atomic.Bool
+	cancelCalled chan struct{}
+	cancelOnce   sync.Once
+	cancelCount  atomic.Int64
 }
 
 func (a *cancelOnPromptResponseAgent) Cancel(context.Context, acpsdk.CancelNotification) error {
 	a.cancelCount.Add(1)
+	a.cancelOnce.Do(func() { close(a.cancelCalled) })
 	return nil
 }
 

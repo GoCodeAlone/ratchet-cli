@@ -125,6 +125,15 @@ Declared integrations:
 - The fixed five-second real-start wait is replaced explicitly, not merely moved to another job.
 - Real-process lifecycle proof runs on existing Linux and Windows runners; cross-compilation is not treated as native proof.
 
+## Backport 2026-07-16: ACP Handler Scheduling
+
+The in-process pipe synchronizes notification bytes with the peer reader, but
+`acp-go-sdk` dispatches the decoded notification to `handleInbound` in a new
+goroutine. Stress evidence observed the handler count before that goroutine ran.
+Runtime behavior remains immediate bounded teardown because ACP has no cancel
+acknowledgment; in-process exact-once tests now wait on an explicit peer-handler
+barrier. The Scope Manifest is unchanged.
+
 ## Non-Goals
 
 - New daemon lifecycle RPCs, metrics backend, log framework, retry policy, worker count, or cleanup schema.

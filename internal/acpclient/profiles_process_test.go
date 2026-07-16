@@ -170,8 +170,9 @@ func waitProfileProcess(t *testing.T, child *profileProcess) {
 		if err != nil {
 			t.Fatalf("profile process failed: %v\n%s", err, child.output.String())
 		}
-	case <-time.After(5 * time.Second):
-		_ = child.cmd.Process.Kill()
-		t.Fatalf("profile process remained blocked\n%s", child.output.String())
+	case <-time.After(acpClientProcessSmokeTimeout):
+		killErr := child.cmd.Process.Kill()
+		waitErr := <-child.done
+		t.Fatalf("profile process remained blocked (kill: %v, wait: %v)\n%s", killErr, waitErr, child.output.String())
 	}
 }
