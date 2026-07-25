@@ -37,7 +37,7 @@
 | 7 | `fix: consume remediated agent SDKs` (`ratchet-cli`) | Task 7 | `fix/ratchet-agent-sdk-security` |
 | 8 | `docs: close CI and SDK security plan` (`ratchet-cli`) | Task 8 | `docs/ci-sdk-security-closeout` |
 
-**Status:** Draft
+**Status:** Locked 2026-07-25T19:55:44Z
 
 ## Integration Matrix
 
