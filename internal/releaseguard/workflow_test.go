@@ -35,20 +35,79 @@ func TestCIReleaseCheckJob(t *testing.T) {
 		t.Fatalf("release-check runs-on = %q, want ubuntu-latest", job.RunsOn)
 	}
 	requireStep(t, job, func(step workflowStep) bool {
-		return step.Uses == "actions/checkout@v4" && step.With["fetch-depth"] == "0"
+		return step.Uses == "actions/checkout@v7" && step.With["fetch-depth"] == "0"
 	}, "checkout with fetch-depth 0")
 	requireStep(t, job, func(step workflowStep) bool {
-		return step.Uses == "actions/setup-go@v5" && step.With["go-version"] == "1.26"
+		return step.Uses == "actions/setup-go@v7" && step.With["go-version"] == "1.26"
 	}, "setup-go 1.26")
 	requireRun(t, job, "Configure Git for private modules", `url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf`)
 	requireGoReleaserStep(t, job, "check")
 	requireGoReleaserStep(t, job, "release --snapshot --clean --skip=publish")
 	requireRun(t, job, "Check release artifacts", "scripts/check-release-artifacts.sh --manifest-only dist")
 	requireStep(t, job, func(step workflowStep) bool {
-		return step.Uses == "actions/upload-artifact@v4" &&
+		return step.Uses == "actions/upload-artifact@v7" &&
 			step.With["name"] == "ratchet-snapshot-dist" &&
 			step.With["path"] == "dist"
 	}, "upload ratchet-snapshot-dist artifact")
+}
+
+func TestWorkflowActionRuntimeMajors(t *testing.T) {
+	common := []string{
+		"actions/checkout@v7",
+		"actions/setup-go@v7",
+	}
+	forbidden := []string{
+		"actions/checkout@v4",
+		"actions/setup-go@v5",
+		"actions/upload-artifact@v4",
+		"actions/github-script@v7",
+		"codecov/codecov-action@v4",
+		"golangci/golangci-lint-action@v8",
+		"require('@actions/github')",
+	}
+	tests := []struct {
+		name     string
+		path     string
+		required []string
+	}{
+		{
+			name: "CI",
+			path: ".github/workflows/ci.yml",
+			required: []string{
+				"actions/upload-artifact@v7",
+				"codecov/codecov-action@v7",
+				"golangci/golangci-lint-action@v9",
+			},
+		},
+		{
+			name: "release",
+			path: ".github/workflows/release.yml",
+			required: []string{
+				"actions/github-script@v9",
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw := loadWorkflowRaw(t, test.path)
+			workflow := parseWorkflow(t, raw)
+			required := append([]string{}, common...)
+			required = append(required, test.required...)
+			for _, action := range required {
+				name, version, ok := strings.Cut(action, "@")
+				if !ok {
+					t.Fatalf("invalid required action %q", action)
+				}
+				requireWorkflowActionVersion(t, workflow, name, version)
+			}
+			for _, legacy := range forbidden {
+				if strings.Contains(raw, legacy) {
+					t.Errorf("%s contains forbidden legacy runtime %q", test.path, legacy)
+				}
+			}
+		})
+	}
 }
 
 func TestCIWindowsBuildUsesRunnerTemp(t *testing.T) {
@@ -99,7 +158,7 @@ func TestCIRequiresWindowsProviderDurability(t *testing.T) {
 	workflow := loadWorkflow(t, ".github/workflows/ci.yml")
 	linuxSmoke := requireJob(t, workflow, "tui-smoke")
 	requireStep(t, linuxSmoke, func(step workflowStep) bool {
-		return step.Uses == "actions/checkout@v4" && step.With["fetch-depth"] == "0"
+		return step.Uses == "actions/checkout@v7" && step.With["fetch-depth"] == "0"
 	}, "TUI smoke checkout with fetch-depth 0")
 	requireRun(t, linuxSmoke, "Run production provider durability smoke",
 		"go test ./cmd/ratchet -run 'HarnessSmokeDurableProviderSaveRestart' -count=1 -timeout=12m")
@@ -291,6 +350,25 @@ func requireStep(t *testing.T, job workflowJob, match func(workflowStep) bool, d
 		}
 	}
 	t.Fatalf("workflow job missing step: %s", description)
+}
+
+func requireWorkflowActionVersion(t *testing.T, workflow workflowFile, action, version string) {
+	t.Helper()
+	found := false
+	for jobName, job := range workflow.Jobs {
+		for _, step := range job.Steps {
+			if !strings.HasPrefix(step.Uses, action+"@") {
+				continue
+			}
+			found = true
+			if step.Uses != action+"@"+version {
+				t.Errorf("workflow job %q uses %q, want %s@%s", jobName, step.Uses, action, version)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("workflow missing action %s@%s", action, version)
+	}
 }
 
 func requireTextOrder(t *testing.T, text, before, after string) {
