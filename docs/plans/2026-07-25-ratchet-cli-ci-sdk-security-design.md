@@ -83,9 +83,10 @@ owner-first Docker/Ollama remediation, then ratchet-cli consumption."
   plugin tag. Main deployment must complete before the first release dispatch.
 - Each subsequent plugin release must create or update the expected generated
   sync PR; merge it only after registry validation is green, then prove the
-  repository-main manifest version and all six checksums. Because the agent
-  plugin is private, prove the authenticated registry path returns the manifest
-  while the unauthenticated public index does not disclose a private entry.
+  repository-main and Pages per-plugin manifest versions plus all six
+  checksums. Because the agent plugin is private, prove the public bulk index
+  omits it. The existing registry contract intentionally publishes per-plugin
+  manifest metadata; private release assets still require repository access.
 - A green dispatch run is insufficient by itself. After every run, compare the
   repository-main manifest version with the released tag; `skip=1`,
   `changed=0`, or no generated PR while versions differ is a failed
@@ -178,8 +179,10 @@ owner-first Docker/Ollama remediation, then ratchet-cli consumption."
 - Registry aliasing is constrained by filename regex, path rejection, manifest
   existence, and exact normalized `GoCodeAlone/workflow-plugin-<name>`
   repository identity; it is not an arbitrary prefix fallback.
-- The private agent manifest is verified through authenticated access.
-  Unauthenticated index output must continue excluding private plugin metadata.
+- The private agent entry remains absent from the public bulk index. The
+  existing public per-plugin manifest must contain metadata only and no
+  credential values; private release downloads remain access-controlled by
+  GitHub.
 - GitHub Actions remain major-tag pinned to match repository convention.
   Release integrity still relies on current action publishers and existing
   checksum/draft/tap guards.
@@ -201,7 +204,7 @@ owner-first Docker/Ollama remediation, then ratchet-cli consumption."
 | Boundary | Proof |
 |---|---|
 | plugin release -> repository dispatch -> registry resolver | Release job success, dispatch run logs canonical prefixed plugin, generated sync PR. |
-| registry sync -> release assets | Repository-main and authenticated manifest tag/checksums match all six plugin archives; unauthenticated index omits the private plugin; registry validators and main deployment green. |
+| registry sync -> release assets | Repository-main and Pages per-plugin manifest tag/checksums match all six plugin archives; public bulk index omits the private plugin; registry validators and main deployment green. |
 | action contract -> hosted runner | Parsed workflow tests plus actual PR CI and tag release jobs. |
 | Docker SDK -> plugin wrapper | Fake-client lifecycle tests and full plugin race suite. |
 | Ollama SDK -> HTTP service wrapper | Real upstream client against httptest list/pull/health/error endpoints. |
@@ -214,7 +217,7 @@ Declared integrations:
 | Integration | Class | Validation |
 |---|---|---|
 | GitHub Actions | runtime-integrated | PR/tag jobs run the changed action majors |
-| workflow-registry | runtime-integrated | dispatch creates reviewed manifest PR; repository main and authenticated endpoint expose the version; public index preserves private exclusion |
+| workflow-registry | runtime-integrated | dispatch creates reviewed manifest PR; repository main and Pages per-plugin manifest expose the version; bulk index preserves private exclusion |
 | Docker SDK | runtime-integrated | plugin wrapper fake lifecycle; ratchet consumes released wrapper |
 | Ollama SDK | runtime-integrated | httptest-backed upstream client behavior; ratchet provider paths |
 | gRPC | runtime-integrated | plugin adapter plus ratchet daemon/client tests |

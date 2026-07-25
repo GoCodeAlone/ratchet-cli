@@ -10,7 +10,7 @@
 
 **Findings (Important):**
 
-- `D1` [security/privacy; declared integration proof] [`Release-Driven Registry Sync`]: “public/main manifest” conflated repository state with public exposure for a private plugin. Recommendation: require repository-main plus authenticated manifest proof and an unauthenticated private-exclusion negative check. _Resolution: design updated._
+- `D1` [security/privacy; declared integration proof] [`Release-Driven Registry Sync`]: “public/main manifest” conflated repository state, the public per-plugin endpoint, and bulk-index exposure for a private plugin. Recommendation: prove repository-main and Pages per-plugin metadata, retain bulk-index private exclusion, and do not invent an authenticated static endpoint. _Resolution: design updated after runtime-validity check._
 - `D2` [security; assumptions under attack] [`Release-Driven Registry Sync`]: “repository identifies that plugin repository” left alias identity normalization ambiguous and could authorize an unintended owner/prefix. Recommendation: require exact normalized `GoCodeAlone/workflow-plugin-<name>` identity and negative mismatch coverage. _Resolution: design updated._
 - `D3` [missing failure mode; multi-component validation] [`Release-Driven Registry Sync`]: the prior failure returned a green run after `skip=1`; requiring only workflow success/generated-PR observation could repeat the false green when `changed=0` or no PR appears. Recommendation: compare repository manifest version to the released tag after every dispatch and stop the release cascade on mismatch. _Resolution: design updated._
 
@@ -32,7 +32,7 @@
 | Security / privacy at architecture level | Finding | D1 and D2 tighten private visibility and alias authorization. |
 | Infrastructure impact | Clean | Existing Actions, registry deployment, and release paths are named; no new resources or IAM. |
 | Multi-component validation | Finding | D3 strengthens release-to-registry state proof. |
-| Declared integration proof | Finding | D1 adds authenticated/unauthenticated registry checks; integration matrix covers all dependencies. |
+| Declared integration proof | Finding | D1 aligns proof with the real Pages per-plugin endpoint and bulk-index exclusion; integration matrix covers all dependencies. |
 | Contributed UI rendering proof | Clean | No UI contribution. |
 | Rollback story | Clean | Action, SDK, registry, tag, and module rollback constraints are explicit. |
 | Simpler alternative not considered | Clean | Combined repo PRs and downstream overrides are evaluated and rejected. |
