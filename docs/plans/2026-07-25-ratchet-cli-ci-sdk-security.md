@@ -139,7 +139,7 @@ Run a non-destructive manual dispatch with plugin `workflow-plugin-agent`:
 ```bash
 gh workflow run sync-registry-manifests.yml \
   --repo GoCodeAlone/workflow-registry \
-  -f plugin=workflow-plugin-agent
+  -f plugin=agent
 ```
 Expected: resolver emits `plugin=workflow-plugin-agent`, never `skip=1`.
 
@@ -301,10 +301,20 @@ go test . -run TestWorkflowActionContracts -count=1
 go test -race ./...
 go vet ./...
 golangci-lint run --new-from-rev=origin/master
-goreleaser check
-goreleaser release --snapshot --clean --skip=publish
 ```
-Expected: all exit 0 and artifacts cover six OS/architecture pairs.
+Expected: all exit 0.
+
+The plugin GoReleaser before hook rewrites `plugin.json` and runs `go mod tidy`.
+Run release validation in a disposable source copy so verification cannot add
+generated changes to the feature branch:
+```bash
+snapshot_dir="$(mktemp -d)"
+rsync -a --exclude .git --exclude .worktrees --exclude dist ./ "${snapshot_dir}/"
+(cd "${snapshot_dir}" &&
+  goreleaser check &&
+  goreleaser release --snapshot --clean --skip=publish)
+```
+Expected: six OS/architecture artifacts; feature worktree remains unchanged.
 
 Build the external plugin in the layout accepted by wfctl and run
 `wfctl plugin verify-capabilities` against the real binary/manifest.
@@ -337,8 +347,10 @@ version remains on the last verified release until its generated PR merges.
 
 **Step 1: Inspect generated PR**
 
-Expected branch: `chore/sync-workflow-plugin-agent-v0.12.9` (or next actual
-patch). Confirm PR body cites `repository_dispatch (event_type=plugin-release)`.
+Expected branch: `chore/sync-workflow-plugin-agent-v0.12.9`. Confirm PR body
+cites `repository_dispatch (event_type=plugin-release)`. If a parallel release
+advanced the tag after scope lock, stop and use the formal manifest amendment,
+alignment, and re-lock path before accepting a differently named branch.
 
 **Step 2: Validate exact release projection**
 
@@ -443,11 +455,13 @@ go list -m github.com/docker/docker github.com/ollama/ollama google.golang.org/g
 go mod why -m github.com/docker/docker
 go mod why -m github.com/ollama/ollama
 go mod why -m google.golang.org/grpc
-goreleaser check
-goreleaser release --snapshot --clean --skip=publish
 ```
-Expected: target versions, no replaces, full suite/lint green, six artifacts,
-and wfctl capability verification against the real snapshot binary exits 0.
+Expected: target versions, no replaces, and full suite/lint green.
+
+Run GoReleaser in the same disposable `rsync` source-copy pattern from Task 3
+because its before hook rewrites `plugin.json` and runs `go mod tidy`.
+Expected: six artifacts, no feature-worktree mutation, and wfctl capability
+verification against the real snapshot binary exits 0.
 
 **Step 6: Commit, review, merge, release**
 
@@ -469,7 +483,7 @@ return to Docker <=28.5.2, Ollama <=0.20.2, or gRPC <1.82.1.
 **Repository:** `GoCodeAlone/workflow-registry`
 
 Repeat Task 4 against generated branch
-`chore/sync-workflow-plugin-agent-v0.12.10` (or next actual patch):
+`chore/sync-workflow-plugin-agent-v0.12.10`:
 - verify dispatch was not skipped;
 - verify repository-main version and 6/6 release hashes;
 - run manifest/index tests;
@@ -500,7 +514,7 @@ Branch: `fix/ratchet-agent-sdk-security`.
 Parse `go.mod` and assert:
 - workflow-plugin-agent equals Task 5 release;
 - gRPC equals v1.82.1;
-- no Docker/Ollama direct requirement, replace, or exclude;
+- Docker/Ollama remain indirect only, with no replace or exclude;
 - no replacement for workflow-plugin-agent/gRPC.
 
 Run: `go test ./internal/releaseguard -run TestSecurityDependencyOwnership -count=1`
@@ -514,8 +528,9 @@ go get github.com/GoCodeAlone/workflow-plugin-agent@v0.12.10
 go get google.golang.org/grpc@v1.82.1
 go mod tidy
 ```
-Use the actual Task 5 tag if patch numbers advanced. Do not add Docker/Ollama
-requirements, replaces, or copied adapters.
+Use the locked Task 5 tag. If patch numbers advanced after lock, stop for the
+formal manifest amendment/alignment/re-lock path. Do not promote Docker/Ollama
+to direct requirements or add replaces/copied adapters.
 
 **Step 4: Verify module graph and focused consumers**
 

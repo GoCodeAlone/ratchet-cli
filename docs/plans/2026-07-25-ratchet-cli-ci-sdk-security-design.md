@@ -151,8 +151,10 @@ owner-first Docker/Ollama remediation, then ratchet-cli consumption."
   6. generated registry sync to v0.12.10;
   7. ratchet-cli consumer release v0.30.39;
   8. ratchet-cli retrospective/plan closeout release v0.30.40.
-- Version targets assume no intervening release. If another merge advances a
-  repository, use the next patch versions without changing feature scope.
+- Version targets assume no intervening release and are rechecked immediately
+  before scope lock. If another merge advances a repository after lock, record
+  the version/branch-row amendment, re-run plan review/alignment, and re-lock
+  before continuing; feature scope and PR count remain unchanged.
 - Every PR receives Copilot review, all reported checks/threads settle, then an
   admin squash merge. Delayed checks do not waive local verification or
   required repository gates.
@@ -232,7 +234,7 @@ Declared integrations:
 | A3 | Docker v29.6.2 preserves the narrow client operations used by the plugin. | `types`/option shapes may move. | Adapt the owner wrapper and interface; do not expose SDK types downstream. |
 | A4 | Ollama v0.32.4 preserves list/pull/heartbeat semantics. | Response fields or endpoints may change. | Normalize in `provider.OllamaClient`, verified against httptest responses. |
 | A5 | Registry prefix mapping can be generalized safely by repository identity. | Another short name may ambiguously map to core/external manifests. | Preserve direct/core precedence; skip on identity mismatch. |
-| A6 | No intervening release consumes planned patch numbers. | Parallel work may tag first. | Recompute next patch versions at each release; scope/ordering stay fixed. |
+| A6 | No intervening release consumes planned patch numbers after lock. | Parallel work may tag first. | Use the formal manifest amendment, alignment, and re-lock path for version/branch rows; scope/ordering stay fixed. |
 | A7 | GitHub reevaluates Dependabot after module graph changes. | Alert closure may lag. | Treat resolved versions as security proof; continue bounded polling and record GitHub lag. |
 
 ## Self-Challenge
