@@ -19,13 +19,14 @@ primary-source inventory on 2026-07-25 found:
 | `codecov/codecov-action` | v4 (ratchet-cli) | v7 |
 | `golangci/golangci-lint-action` | v8 (ratchet-cli) | v9 |
 | `goreleaser/goreleaser-action` | v7 | retain v7 |
-| Docker Go module | v28.5.2 | v29.6.2 |
+| Docker Go modules | `github.com/docker/docker` v28.5.2 | Moby client v0.5.0 + API v1.55.0 (Docker v29.6.2) |
 | Ollama Go module | v0.18.3 | v0.32.4 |
 | gRPC Go module | v1.81.1 | v1.82.1 |
 
 Official latest releases are checkout v7.0.1, setup-go v7.0.0,
 upload-artifact v7.0.1, github-script v9.0.0, codecov v7.0.0,
-golangci-lint-action v9.3.0, Docker v29.6.2, Ollama v0.32.4, and gRPC v1.82.1.
+golangci-lint-action v9.3.0, Docker v29.6.2 (Moby client v0.5.0 and
+API v1.55.0), Ollama v0.32.4, and gRPC v1.82.1.
 The workflows follow the repositories' existing major-tag convention.
 
 Dependabot reports seven open alerts in both `workflow-plugin-agent` and
@@ -112,8 +113,11 @@ owner-first Docker/Ollama remediation, then ratchet-cli consumption."
 
 ### Owner-First SDK Remediation
 
-- In workflow-plugin-agent, upgrade Docker to v29.6.2, Ollama to v0.32.4, and
-  gRPC to v1.82.1 with `go get`/`go mod tidy`; do not copy or fork SDK code.
+- In workflow-plugin-agent, migrate from the retired
+  `github.com/docker/docker` module line to the Docker v29.6.2 split modules
+  `github.com/moby/moby/client` v0.5.0 and `github.com/moby/moby/api` v1.55.0;
+  upgrade Ollama to v0.32.4 and gRPC to v1.82.1 with `go get`/`go mod tidy`;
+  do not copy or fork SDK code.
 - Keep `orchestrator.dockerAPIClient` and `provider.OllamaClient` as the narrow
   compatibility boundaries. Adapt only compile-time API changes at those
   boundaries.
@@ -131,9 +135,9 @@ owner-first Docker/Ollama remediation, then ratchet-cli consumption."
 
 - Upgrade ratchet-cli to the released SDK-remediated plugin and gRPC v1.82.1;
   run `go mod tidy`; add no Docker/Ollama override or replace directive.
-- Prove `go mod why` routes Docker/Ollama through workflow-plugin-agent and
-  `go list -m` resolves Docker v29.6.2, Ollama v0.32.4, gRPC v1.82.1, and the
-  expected plugin tag.
+- Prove `go mod why` routes Moby client/API and Ollama through
+  workflow-plugin-agent and `go list -m` resolves Moby client v0.5.0,
+  Moby API v1.55.0, Ollama v0.32.4, gRPC v1.82.1, and the expected plugin tag.
 - Exercise real ratchet consumers: provider catalog, Ollama wrapper-backed
   setup/model paths with local HTTP fakes, Docker orchestrator package tests,
   daemon/client gRPC tests, releaseguard, and native Windows CI.
@@ -231,7 +235,7 @@ Declared integrations:
 |---|---|---|---|
 | A1 | Current action majors support existing inputs and hosted runners. | Node/runtime or input changes may be undocumented. | Isolated action PRs; actual PR/tag jobs are release gates. |
 | A2 | github-script v9 accepts Node built-in `require("fs")`. | ESM migration could forbid all `require`. | Replace only built-in access with `import()` if actual release job disproves it. |
-| A3 | Docker v29.6.2 preserves the narrow client operations used by the plugin. | `types`/option shapes may move. | Adapt the owner wrapper and interface; do not expose SDK types downstream. |
+| A3 | Docker v29.6.2's split Moby client/API modules preserve the narrow operations used by the plugin. | Method names, results, and option shapes moved from the legacy module. | Migrate the owner wrapper and interface to official split modules; do not expose SDK types downstream. |
 | A4 | Ollama v0.32.4 preserves list/pull/heartbeat semantics. | Response fields or endpoints may change. | Normalize in `provider.OllamaClient`, verified against httptest responses. |
 | A5 | Registry prefix mapping can be generalized safely by repository identity. | Another short name may ambiguously map to core/external manifests. | Preserve direct/core precedence; skip on identity mismatch. |
 | A6 | No intervening release consumes planned patch numbers after lock. | Parallel work may tag first. | Use the formal manifest amendment, alignment, and re-lock path for version/branch rows; scope/ordering stay fixed. |
@@ -292,6 +296,24 @@ Declared integrations:
 - **Manifest impact:** none. Task 1 already owns the registry validation,
   main-merge, and deployment gate; PR count, task count, branch, ordering, and
   shipped runtime behavior remain unchanged.
+
+## Backport 2026-07-25: Docker 29 Split Modules
+
+- **Failed assumption:** Docker Engine v29.6.2 is tagged
+  `docker-v29.6.2`; no `github.com/docker/docker` module version
+  `v29.6.2+incompatible` exists. That legacy module line ends at v28.5.2.
+- **Evidence:** `go mod download github.com/docker/docker@v29.6.2+incompatible`
+  fails with `unknown revision v29.6.2`. The official Docker v29.6.2 source
+  requires `github.com/moby/moby/client` v0.5.0 and
+  `github.com/moby/moby/api` v1.55.0, and both are published Go modules.
+  After direct migration, the only remaining legacy graph edge came from
+  workflow-plugin-authz v0.5.4; its existing v0.6.0 release removes Docker.
+- **Corrected behavior:** Task 5 migrates the plugin's narrow Docker wrapper to
+  those official split modules, upgrades workflow-plugin-authz to v0.6.0, and
+  removes the legacy module from the graph. Task 7 consumes the split modules
+  indirectly through the released plugin.
+- **Manifest impact:** none. Owner-first SDK remediation, Task 5/7 boundaries,
+  PR count, branch names, ordering, and shipped behavior remain unchanged.
 
 ## Release And PR Model
 

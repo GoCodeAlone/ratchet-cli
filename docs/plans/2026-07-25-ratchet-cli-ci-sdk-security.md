@@ -6,7 +6,7 @@
 
 **Architecture:** Fix workflow-registry alias resolution before the next plugin tag. Isolate Actions changes from SDK changes; release workflow-plugin-agent before changing ratchet-cli's module graph. Use existing SDK wrappers, releaseguard, registry sync, GoReleaser, native Windows jobs, and Homebrew publication as authorities.
 
-**Tech Stack:** Go 1.26.4, Bash, GitHub Actions, GoReleaser v2/action v7, `wfctl`, workflow-registry, Docker v29.6.2, Ollama v0.32.4, gRPC v1.82.1, Homebrew.
+**Tech Stack:** Go 1.26.4, Bash, GitHub Actions, GoReleaser v2/action v7, `wfctl`, workflow-registry, Docker v29.6.2 via Moby client v0.5.0/API v1.55.0, Ollama v0.32.4, gRPC v1.82.1, Homebrew.
 
 **Base branch:** `master` for ratchet-cli/workflow-plugin-agent; `main` for workflow-registry.
 
@@ -419,12 +419,15 @@ Branch: `fix/agent-sdk-security`; verify base contains Task 3 merge/tag.
 Parse `go.mod` with `golang.org/x/mod/modfile`. Require:
 ```go
 map[string]string{
-	"github.com/docker/docker": "v29.6.2+incompatible",
-	"github.com/ollama/ollama":  "v0.32.4",
-	"google.golang.org/grpc":    "v1.82.1",
+	"github.com/GoCodeAlone/workflow-plugin-authz": "v0.6.0",
+	"github.com/moby/moby/api":                    "v1.55.0",
+	"github.com/moby/moby/client":                 "v0.5.0",
+	"github.com/ollama/ollama":                    "v0.32.4",
+	"google.golang.org/grpc":                      "v1.82.1",
 }
 ```
-Also reject `replace` directives for Docker/Ollama/gRPC.
+Also reject the legacy `github.com/docker/docker` direct requirement and any
+replace directives for Moby client/API, Docker, Ollama, or gRPC.
 
 Run: `go test . -run TestSecurityDependencyVersions -count=1`
 Expected: FAIL on all old versions.
@@ -450,7 +453,9 @@ new version guard remains RED.
 
 Run:
 ```bash
-go get github.com/docker/docker@v29.6.2+incompatible
+go get github.com/moby/moby/client@v0.5.0
+go get github.com/moby/moby/api@v1.55.0
+go get github.com/GoCodeAlone/workflow-plugin-authz@v0.6.0
 go get github.com/ollama/ollama@v0.32.4
 go get google.golang.org/grpc@v1.82.1
 go mod tidy
@@ -466,8 +471,12 @@ go test ./provider ./orchestrator -count=1
 go test -race ./...
 go vet ./...
 golangci-lint run --new-from-rev=origin/master
-go list -m github.com/docker/docker github.com/ollama/ollama google.golang.org/grpc
-go mod why -m github.com/docker/docker
+go list -m github.com/GoCodeAlone/workflow-plugin-authz \
+  github.com/moby/moby/client github.com/moby/moby/api \
+  github.com/ollama/ollama google.golang.org/grpc
+go mod why -m github.com/GoCodeAlone/workflow-plugin-authz
+go mod why -m github.com/moby/moby/client
+go mod why -m github.com/moby/moby/api
 go mod why -m github.com/ollama/ollama
 go mod why -m google.golang.org/grpc
 ```
@@ -491,7 +500,8 @@ and checksums, then require the release dispatch to create/update PR #6.
 
 Rollback: choose the newest API-compatible versions outside every advisory
 range, revert wrapper adaptations as needed, and publish a new patch. Never
-return to Docker <=28.5.2, Ollama <=0.20.2, or gRPC <1.82.1.
+return to the legacy Docker module/Docker <=28.5.2, Ollama <=0.20.2, or
+gRPC <1.82.1.
 
 ### Task 6: Publish Workflow-Plugin-Agent v0.12.10 In Registry
 
@@ -529,7 +539,8 @@ Branch: `fix/ratchet-agent-sdk-security`.
 Parse `go.mod` and assert:
 - workflow-plugin-agent equals Task 5 release;
 - gRPC equals v1.82.1;
-- Docker/Ollama remain indirect only, with no replace or exclude;
+- Moby client/API and Ollama remain indirect only, the legacy Docker module is
+  absent, and none has a replace or exclude;
 - no replacement for workflow-plugin-agent/gRPC.
 
 Run: `go test ./internal/releaseguard -run TestSecurityDependencyOwnership -count=1`
@@ -552,8 +563,10 @@ to direct requirements or add replaces/copied adapters.
 Run:
 ```bash
 go list -m github.com/GoCodeAlone/workflow-plugin-agent \
-  github.com/docker/docker github.com/ollama/ollama google.golang.org/grpc
-go mod why -m github.com/docker/docker
+  github.com/moby/moby/client github.com/moby/moby/api \
+  github.com/ollama/ollama google.golang.org/grpc
+go mod why -m github.com/moby/moby/client
+go mod why -m github.com/moby/moby/api
 go mod why -m github.com/ollama/ollama
 go test ./internal/releaseguard ./internal/provider ./internal/plugins \
   ./internal/client ./internal/daemon -count=1
