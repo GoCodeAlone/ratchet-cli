@@ -71,8 +71,9 @@ owner-first Docker/Ollama remediation, then ratchet-cli consumption."
 
 - Fix the existing general alias resolver, not the agent manifest: when
   `plugins/<name>` is absent and `plugins/workflow-plugin-<name>` exists, accept
-  the prefixed candidate only when its manifest repository identifies that
-  plugin repository.
+  the prefixed candidate only when its normalized manifest repository is
+  exactly `GoCodeAlone/workflow-plugin-<name>` (accepting the registry's
+  established HTTPS or git+SSH representation, with no arbitrary owner).
 - Preserve the existing core-vs-external disambiguation when both paths exist.
 - Invalid names, owner/repo traversal forms, unknown plugins, and mismatched
   repository metadata continue to skip safely.
@@ -82,7 +83,14 @@ owner-first Docker/Ollama remediation, then ratchet-cli consumption."
   plugin tag. Main deployment must complete before the first release dispatch.
 - Each subsequent plugin release must create or update the expected generated
   sync PR; merge it only after registry validation is green, then prove the
-  public/main manifest version and all six checksums.
+  repository-main manifest version and all six checksums. Because the agent
+  plugin is private, prove the authenticated registry path returns the manifest
+  while the unauthenticated public index does not disclose a private entry.
+- A green dispatch run is insufficient by itself. After every run, compare the
+  repository-main manifest version with the released tag; `skip=1`,
+  `changed=0`, or no generated PR while versions differ is a failed
+  publication gate. Re-run with the canonical prefixed plugin name only after
+  the resolver defect is fixed; do not continue to consumer release.
 
 ### GitHub Action Runtimes
 
@@ -152,7 +160,7 @@ owner-first Docker/Ollama remediation, then ratchet-cli consumption."
 
 | Failure | Result |
 |---|---|
-| Registry dispatch uses unknown/unsafe name | Resolver emits `skip=1`; no path access or PR. |
+| Registry dispatch uses unknown/unsafe name | Resolver emits `skip=1`; no path access or PR; release verification still fails if the repository manifest is stale. |
 | Valid short name has prefixed external manifest | Resolver emits canonical prefixed directory and sync proceeds. |
 | Action major breaks workflow input/runtime | Contract test or PR CI fails; revert only that action PR. |
 | github-script ESM incompatibility | Script step fails before publication; draft remains unpublished and tap is unchanged. |
@@ -168,7 +176,10 @@ owner-first Docker/Ollama remediation, then ratchet-cli consumption."
   unchanged; no credential values enter logs, tests, PR bodies, or registry
   manifests.
 - Registry aliasing is constrained by filename regex, path rejection, manifest
-  existence, and repository identity; it is not an arbitrary prefix fallback.
+  existence, and exact normalized `GoCodeAlone/workflow-plugin-<name>`
+  repository identity; it is not an arbitrary prefix fallback.
+- The private agent manifest is verified through authenticated access.
+  Unauthenticated index output must continue excluding private plugin metadata.
 - GitHub Actions remain major-tag pinned to match repository convention.
   Release integrity still relies on current action publishers and existing
   checksum/draft/tap guards.
@@ -190,7 +201,7 @@ owner-first Docker/Ollama remediation, then ratchet-cli consumption."
 | Boundary | Proof |
 |---|---|
 | plugin release -> repository dispatch -> registry resolver | Release job success, dispatch run logs canonical prefixed plugin, generated sync PR. |
-| registry sync -> release assets | Manifest tag/checksums match all six plugin archives; registry validators and main deployment green. |
+| registry sync -> release assets | Repository-main and authenticated manifest tag/checksums match all six plugin archives; unauthenticated index omits the private plugin; registry validators and main deployment green. |
 | action contract -> hosted runner | Parsed workflow tests plus actual PR CI and tag release jobs. |
 | Docker SDK -> plugin wrapper | Fake-client lifecycle tests and full plugin race suite. |
 | Ollama SDK -> HTTP service wrapper | Real upstream client against httptest list/pull/health/error endpoints. |
@@ -203,7 +214,7 @@ Declared integrations:
 | Integration | Class | Validation |
 |---|---|---|
 | GitHub Actions | runtime-integrated | PR/tag jobs run the changed action majors |
-| workflow-registry | runtime-integrated | dispatch creates reviewed manifest PR and deployed main exposes version |
+| workflow-registry | runtime-integrated | dispatch creates reviewed manifest PR; repository main and authenticated endpoint expose the version; public index preserves private exclusion |
 | Docker SDK | runtime-integrated | plugin wrapper fake lifecycle; ratchet consumes released wrapper |
 | Ollama SDK | runtime-integrated | httptest-backed upstream client behavior; ratchet provider paths |
 | gRPC | runtime-integrated | plugin adapter plus ratchet daemon/client tests |
