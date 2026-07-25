@@ -58,6 +58,13 @@
 **Files:**
 - Modify: `tests/test-resolve-sync-plugin-filter.sh`
 - Modify: `scripts/resolve-sync-plugin-filter.sh`
+- Modify: `.github/workflows/validate.yml`
+- Modify: `.github/workflows/sync-registry-manifests.yml`
+
+**Execution backport (2026-07-25):** workflow `main` raised its Go floor to
+1.26.5 after plan lock. Task 1's existing green validation/sync gate therefore
+updates both registry workflow Go/cache pins from 1.26.4 to 1.26.5. The Scope
+Manifest is unchanged; see the design backport for evidence.
 
 **Step 1: Create isolated worktree**
 
@@ -126,6 +133,14 @@ Expected: every command exits 0; filter test prints `resolve-sync-plugin-filter 
 
 Run: `golangci-lint run --new-from-rev=origin/main`
 Expected: exit 0 or documented not-applicable because this PR changes no Go files.
+
+Run the exact Linux core-manifest validation path with Go 1.26.5:
+```bash
+wfctl plugin registry-sync core \
+  --registry-dir . \
+  --workflow-repo /path/to/workflow-main
+```
+Expected: `Core plugin manifests match workflow plugin declarations.`
 
 **Step 6: Commit, review, merge, and deploy**
 

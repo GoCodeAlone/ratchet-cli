@@ -277,6 +277,22 @@ Declared integrations:
   Existing fully qualified/prefixed dispatches and daily full sync remain.
 - Module and registry formats do not migrate; no data rollback is required.
 
+## Backport 2026-07-25: Registry Go Toolchain Floor
+
+- **Failed assumption:** workflow-registry's `validate.yml` and scheduled
+  `sync-registry-manifests.yml` pinned Go 1.26.4 while checking out moving
+  workflow `main`; workflow commit `2805e843` raised `go.mod` to Go 1.26.5.
+- **Evidence:** PR 629's core-manifest job failed twice with `exit status 1`;
+  direct Linux execution exposed `go.mod requires go >= 1.26.5 (running go
+  1.26.4; GOTOOLCHAIN=local)`. The same manifests and commits pass with a
+  compatible toolchain, and every resolver-specific check is green.
+- **Corrected behavior:** Task 1 updates both registry workflow Go/cache pins
+  to 1.26.5 so PR validation and full scheduled sync use the checked-out
+  workflow repository's minimum supported toolchain.
+- **Manifest impact:** none. Task 1 already owns the registry validation,
+  main-merge, and deployment gate; PR count, task count, branch, ordering, and
+  shipped runtime behavior remain unchanged.
+
 ## Release And PR Model
 
 Eight planned PRs: registry resolver fix; ratchet Actions; plugin Actions;
