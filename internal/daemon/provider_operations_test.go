@@ -684,6 +684,97 @@ func TestProviderOperationStopCancelsStartupReconciliation(t *testing.T) {
 	waitProviderOperationValue(t, stopDone, "provider operation stop")
 }
 
+func TestListAppliedProviderOperationsPropagatesCanceledQuery(t *testing.T) {
+	db := openProviderOperationTestDB(t)
+	if err := initDB(db); err != nil {
+		t.Fatal(err)
+	}
+	manager := newProviderOperationManager(&EngineContext{DB: db})
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	_, err := manager.listAppliedProviderOperations(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("list applied operations error = %v, want context canceled", err)
+	}
+	if !strings.Contains(err.Error(), "list applied provider operations") {
+		t.Fatalf("list applied operations error = %q, want query classification", err)
+	}
+}
+
+func TestCollectAppliedProviderOperationsPropagatesIterationError(t *testing.T) {
+	iterateErr := errors.New("row iteration sentinel")
+	rows := &appliedOperationRowsStub{iterateErr: iterateErr}
+
+	_, err := collectAppliedProviderOperations(rows)
+	if !errors.Is(err, iterateErr) {
+		t.Fatalf("collect applied operations error = %v, want iteration sentinel", err)
+	}
+	if got, want := err.Error(), "iterate applied provider operations: row iteration sentinel"; got != want {
+		t.Fatalf("collect applied operations error = %q, want %q", got, want)
+	}
+	if !rows.closed {
+		t.Fatal("applied operation rows were not closed")
+	}
+}
+
+func TestCollectAppliedProviderOperationsJoinsCloseError(t *testing.T) {
+	primaryErr := errors.New("row primary sentinel")
+	closeErr := errors.New("row close sentinel")
+	tests := map[string]*appliedOperationRowsStub{
+		"scan": {
+			next:     true,
+			scanErr:  primaryErr,
+			closeErr: closeErr,
+		},
+		"iteration": {
+			iterateErr: primaryErr,
+			closeErr:   closeErr,
+		},
+	}
+	for name, rows := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := collectAppliedProviderOperations(rows)
+			if !errors.Is(err, primaryErr) {
+				t.Fatalf("collect applied operations error = %v, want primary sentinel", err)
+			}
+			if !errors.Is(err, closeErr) {
+				t.Fatalf("collect applied operations error = %v, want close sentinel", err)
+			}
+			if !rows.closed {
+				t.Fatal("applied operation rows were not closed")
+			}
+		})
+	}
+}
+
+type appliedOperationRowsStub struct {
+	next       bool
+	scanErr    error
+	iterateErr error
+	closeErr   error
+	closed     bool
+}
+
+func (r *appliedOperationRowsStub) Next() bool {
+	next := r.next
+	r.next = false
+	return next
+}
+
+func (r *appliedOperationRowsStub) Scan(...any) error {
+	return r.scanErr
+}
+
+func (r *appliedOperationRowsStub) Err() error {
+	return r.iterateErr
+}
+
+func (r *appliedOperationRowsStub) Close() error {
+	r.closed = true
+	return r.closeErr
+}
+
 type providerOperationSignalContext struct {
 	context.Context
 	onDone sync.Once
