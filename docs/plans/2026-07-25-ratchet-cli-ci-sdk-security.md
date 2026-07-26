@@ -6,7 +6,10 @@
 
 **Architecture:** Fix workflow-registry alias resolution before the next plugin tag. Isolate Actions changes from SDK changes; release workflow-plugin-agent before changing ratchet-cli's module graph. Use existing SDK wrappers, releaseguard, registry sync, GoReleaser, native Windows jobs, and Homebrew publication as authorities.
 
-**Tech Stack:** Go 1.26.4, Bash, GitHub Actions, GoReleaser v2/action v7, `wfctl`, workflow-registry, Docker v29.6.2 via Moby client v0.5.0/API v1.55.0, Ollama v0.32.4, gRPC v1.82.1, Homebrew.
+**Tech Stack:** Go 1.26.4 for ratchet-cli/workflow-plugin-agent and Go
+1.26.5 for workflow-registry validation, Bash, GitHub Actions, GoReleaser
+v2/action v7, `wfctl`, workflow-registry, Docker v29.6.2 via Moby client
+v0.5.0/API v1.55.0, Ollama v0.32.4, gRPC v1.82.1, Homebrew.
 
 **Base branch:** `master` for ratchet-cli/workflow-plugin-agent; `main` for workflow-registry.
 
@@ -26,18 +29,73 @@
 
 **PR Grouping:**
 
-| PR # | Title | Tasks | Branch |
-|---|---|---|---|
-| 1 | `fix: resolve short plugin release aliases` (`workflow-registry`) | Task 1 | `fix/plugin-release-alias-resolution` |
-| 2 | `ci: update ratchet Action runtimes` (`ratchet-cli`) | Task 2 | `chore/ratchet-action-runtimes` |
-| 3 | `ci: update agent plugin Action runtimes` (`workflow-plugin-agent`) | Task 3 | `chore/agent-action-runtimes` |
-| 4 | `chore: sync workflow-plugin-agent to v0.12.9` (`workflow-registry`, generated) | Task 4 | `chore/sync-workflow-plugin-agent-v0.12.9` |
-| 5 | `fix: remediate agent SDK advisories` (`workflow-plugin-agent`) | Task 5 | `fix/agent-sdk-security` |
-| 6 | `chore: sync workflow-plugin-agent to v0.12.10` (`workflow-registry`, generated) | Task 6 | `chore/sync-workflow-plugin-agent-v0.12.10` |
-| 7 | `fix: consume remediated agent SDKs` (`ratchet-cli`) | Task 7 | `fix/ratchet-agent-sdk-security` |
-| 8 | `docs: close CI and SDK security plan` (`ratchet-cli`) | Task 8 | `docs/ci-sdk-security-closeout` |
+| PR # | Title | Tasks | Branch | Completion |
+|---|---|---|---|---|
+| 1 | `fix: resolve short plugin release aliases` (`workflow-registry`) | Task 1 | `fix/plugin-release-alias-resolution` | Complete |
+| 2 | `ci: update ratchet Action runtimes` (`ratchet-cli`) | Task 2 | `chore/ratchet-action-runtimes` | Complete |
+| 3 | `ci: update agent plugin Action runtimes` (`workflow-plugin-agent`) | Task 3 | `chore/agent-action-runtimes` | Complete |
+| 4 | `chore: sync workflow-plugin-agent to v0.12.9` (`workflow-registry`, generated) | Task 4 | `chore/sync-workflow-plugin-agent-v0.12.9` | Complete |
+| 5 | `fix: remediate agent SDK advisories` (`workflow-plugin-agent`) | Task 5 | `fix/agent-sdk-security` | Complete |
+| 6 | `chore: sync workflow-plugin-agent to v0.12.10` (`workflow-registry`, generated) | Task 6 | `chore/sync-workflow-plugin-agent-v0.12.10` | Complete |
+| 7 | `fix: consume remediated agent SDKs` (`ratchet-cli`) | Task 7 | `fix/ratchet-agent-sdk-security` | Complete |
+| 8 | `docs: close CI and SDK security plan` (`ratchet-cli`) | Task 8 | `docs/ci-sdk-security-closeout` | Documentation complete in #146; integration pending |
 
-**Status:** Locked 2026-07-25T19:55:44Z
+**Status:** Scope implementation complete 2026-07-26T01:34:02Z;
+integration pending for ratchet-cli #146 and `v0.30.40`.
+
+The scope-lock completion timestamp records the immutable implementation scope
+and removal of its sidecar. It does not assert that this document's own PR or
+release already exists. A commit cannot contain evidence of its future merge
+SHA or tag workflow, so the workspace phase-progress ledger is the
+authoritative append-only record for #146 integration, `v0.30.40`, and final
+workspace reconciliation.
+
+## Completion Evidence
+
+| Task | Exact integration record | PR and settled integration workflow runs |
+|---|---|---|
+| 1 | workflow-registry #629, merge `571f73ac6e8c5907d00ab44dccf9ec98cdcec176` | PR `30173902649`, validation `30173904211`; main policy `30174254928`, deploy `30174255060`, validation `30174255076`; short-alias dispatch `30174621567` |
+| 2 | ratchet-cli #144, merge/tag `c391e5a70e144fd9ce58ca78eb4ce7ea09b5b6e4`, `v0.30.38` | PR policy `30175540305`, quality `30175540316`, CI `30175541257`; main quality `30176219749`, policy `30176219893`, CI `30176219970`; release `30176230104` |
+| 3 | workflow-plugin-agent #42, merge/tag `9cbc0009bb2eb629eb9f086862e1b2fe2bf4a104`, `v0.12.9` | PR policy `30177484712`, CI `30177485909`; main policy `30177705277`, CI `30177705520`; release `30177716512` |
+| 4 | workflow-registry #630, merge `47b7f2ef05d29f9dacc3cf79ad72436a16910773` | PR policy `30178160119`; main policy `30178210748`, validation `30178211056`, deploy `30178211090` |
+| 5 | workflow-plugin-agent #43, merge/tag `36882286121c93ad8b0974b0427025df2a191b56`, `v0.12.10` | PR policy `30179275063`, CI `30179275723`; main policy/CodeQL `30179495585`, CI `30179495789`, graph `30179497415`; release `30179497372` |
+| 6 | workflow-registry #631, merge `fd9cad072476ceaa3d1c7fdbdd838f60f9979e0b` | release dispatch `30179794046`; PR policy `30179872519`, validation `30179873264`; main policy `30180022517`, validation `30180022653`, deploy `30180022660` |
+| 7 | ratchet-cli #145, merge/tag `5afbfd0fafcefe7ecc47e41bd876537a873a7e88`, `v0.30.39` | PR quality `30181979630`, policy `30181979637`, CI `30181980216`; main quality `30182445433`, policy/CodeQL `30182445525`, CI `30182445914`, graph `30182446782`; release `30182453196` |
+| 8 | ratchet-cli #146, `docs/ci-sdk-security-closeout` | retrospective, guidance, evidence ledger, scope-lock sidecar removal, local verification, and independent review are complete; merge SHA, `v0.30.40`, and workspace PR evidence remain pending in external phase progress |
+
+### Release Assets
+
+Every archive digest matched the downloaded `checksums.txt`. Each
+`checksums.txt` digest is GitHub's independent SHA-256 asset digest.
+
+| Release | Tagged merge and release run | Asset SHA-256 |
+|---|---|---|
+| ratchet-cli `v0.30.38` | `c391e5a70e144fd9ce58ca78eb4ce7ea09b5b6e4`; `30176230104` | `checksums.txt=4166656c018898630bb45abe99790752c220980becc7f98643025138513b2eba`<br>`ratchet_darwin_amd64.tar.gz=541f1d0e994f6022cc38d7713ee9fbc0175f407c30d30345de78e1aab53bb465`<br>`ratchet_darwin_arm64.tar.gz=35ca63b0fa391a32c701dd5ddfeb00999d4cfafb6b223f283e5e50c5b87a552e`<br>`ratchet_linux_amd64.tar.gz=936b0e147fbce3c6a60efff6c97c55dd6eb436550837e6b0763836e2545ed064`<br>`ratchet_linux_arm64.tar.gz=8fe9a1dee6a7501ebd728d932ebd4d67c8c5ed5a3502c2efe74bad54aa16e7f1`<br>`ratchet_windows_amd64.zip=ca46c610cc17ed5a0f70181557097cfacf88cde2cd18e067ae484dc6cba6ff65`<br>`ratchet_windows_arm64.zip=153225dd1c8c419aac84ff0c410f0607936ca0889d28ceac5e2c320f6eed5d37` |
+| workflow-plugin-agent `v0.12.9` | `9cbc0009bb2eb629eb9f086862e1b2fe2bf4a104`; `30177716512` | `checksums.txt=9fe1d7f2885627afd63905688782be70b7a6a2a358be77dba44257de2ec133c1`<br>`workflow-plugin-agent_0.12.9_darwin_amd64.tar.gz=4ffe5a9b1c201c4001875aa0c4e83d093f62c0a04151e0ae1c0ae2911c3d7125`<br>`workflow-plugin-agent_0.12.9_darwin_arm64.tar.gz=7d897602b19cb4b4f63cb7bcb381a90d23edef1d1791be5e7494c6946da572bc`<br>`workflow-plugin-agent_0.12.9_linux_amd64.tar.gz=8729528716ee21e19a344c3703652af310b26f56056c50c0e0c867f9fdc74dcd`<br>`workflow-plugin-agent_0.12.9_linux_arm64.tar.gz=fc8bdc51a784427bafeca7fd3189a9fbf89319acbb88dbc5746198b5ec821654`<br>`workflow-plugin-agent_0.12.9_windows_amd64.tar.gz=2677567303142642190f5837f40f0408ae9e6f325faceeddb61d9bcdd2638b1d`<br>`workflow-plugin-agent_0.12.9_windows_arm64.tar.gz=350c3c9d33da95d0029c46e6f225333abee10802d7037af88bb62a058dbdb347` |
+| workflow-plugin-agent `v0.12.10` | `36882286121c93ad8b0974b0427025df2a191b56`; `30179497372` | `checksums.txt=d179a49b85941055f01b732e95900305dd39536c6fc587a53fcb49be12905442`<br>`workflow-plugin-agent_0.12.10_darwin_amd64.tar.gz=6b7d21893f667b8b300bfd4088d44fa0fe77336501203f3dece862969527926c`<br>`workflow-plugin-agent_0.12.10_darwin_arm64.tar.gz=2b918649721e57c9b682fc08b28d3b51ff7d9eeff52edb72b3d094cbec327a3d`<br>`workflow-plugin-agent_0.12.10_linux_amd64.tar.gz=8f0b54e37364d6c46f9633f46e2ca08da8a4d30207e1b9e593e1c976ab5d8355`<br>`workflow-plugin-agent_0.12.10_linux_arm64.tar.gz=73d18c8aa76cef081042908bb647bb98886fe8c9f44414e0856331d3c2154066`<br>`workflow-plugin-agent_0.12.10_windows_amd64.tar.gz=8649ef86991fc75dcbffe3066df91fab9106e6a3af6f5a08e617c42bb0dd0a06`<br>`workflow-plugin-agent_0.12.10_windows_arm64.tar.gz=1c7ecbcac7de11b558ec2a7ea486a66b0bb3c663518fb2bc18bb7c94bfc2dcc1` |
+| ratchet-cli `v0.30.39` | `5afbfd0fafcefe7ecc47e41bd876537a873a7e88`; `30182453196` | `checksums.txt=d5b5694c74dfb60a2acf89ba4d0be52c17370d808af6e28341d0daee47f6bfd6`<br>`ratchet_darwin_amd64.tar.gz=ed04649972523be151462d97460861b4b44bf1e8dd0b5b4eb3605435b015c1ca`<br>`ratchet_darwin_arm64.tar.gz=2df75c0f42e034f89d9bab9da237654ec2c9619bfe5e0e0222765ff5454322d7`<br>`ratchet_linux_amd64.tar.gz=436cb75407e22cc19696fcf8a0d90e9e6dea36ce121da5f212f08ee7be8d0f2b`<br>`ratchet_linux_arm64.tar.gz=ff88d8a82f4402a063cf89b0bb4b59263848bd8dceb085662e66d2ca7c3f45f1`<br>`ratchet_windows_amd64.zip=750ea62768e21e0464abbff1e9f83e0dfc0eb20ebd35df1be4e2e0022066fc4b`<br>`ratchet_windows_arm64.zip=3fb046551196816a3c7fb8d330223519fb3a24118aa78ed5ffb5ce0a0e4b829c` |
+
+### Homebrew And Runtime
+
+| Release | Tap authority | Bounded runtime proof |
+|---|---|---|
+| `v0.30.38` | homebrew-tap `1b4d937812ef42f12cc0eb893b7f6e6a8a4b824b`; Formula/Cask version `0.30.38`; four Darwin/Linux hashes match the release table | Task 2 recorded a bounded Homebrew installation, but its exact historical `brew list` and installed-path transcript were not retained; retained released-binary output: `ratchet 0.30.38 (c391e5a70e144fd9ce58ca78eb4ce7ea09b5b6e4, 2026-07-25T21:58:27Z)`; setup catalog count `22` |
+| `v0.30.39` | homebrew-tap `0d855b5694597114e1918457c1ab0415ab74ac0b`; Formula/Cask version `0.30.39`; four Darwin/Linux hashes match the release table | `brew list --versions ratchet-cli` returned `ratchet-cli 0.30.39`; installed binary returned `ratchet 0.30.39 (5afbfd0fafcefe7ecc47e41bd876537a873a7e88, 2026-07-26T01:24:28Z)`; setup catalog count `22` |
+
+Registry #630 and #631 each projected all six plugin archive hashes exactly,
+served private per-plugin manifests at `v0.12.9` and `v0.12.10`, and retained a
+bulk-index count of zero. Open Dependabot alert counts were zero for both
+workflow-plugin-agent and ratchet-cli after Task 7.
+
+Copilot was requested on every authored/generated PR but did not materialize a
+review. Task 7 instead completed four local adversarial review rounds and ended
+`SHIP-IT` with no Critical or Important findings. All GitHub review-thread
+queries for Tasks 1-7 were empty at merge.
+
+Two execution backports preserved scope: Task 1 raised workflow-registry's
+Workflow-derived Go floor from 1.26.4 to 1.26.5 after sibling `main` moved, and
+Task 5 replaced the nonexistent Docker module pin with the published Moby
+client/API split. Neither added an SDK copy, downstream override, task, or PR.
 
 ## Integration Matrix
 

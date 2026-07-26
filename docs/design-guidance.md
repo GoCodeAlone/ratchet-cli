@@ -1,10 +1,11 @@
 # Design Guidance
 
 **Status:** Active
-**Last updated:** 2026-07-16
+**Last updated:** 2026-07-26
 **Source:** workspace guidance;
 `docs/retros/2026-07-15-provider-drain-managed-hooks-retro.md`;
-`docs/retros/2026-07-16-ratchet-cli-lifecycle-reliability-retro.md`
+`docs/retros/2026-07-16-ratchet-cli-lifecycle-reliability-retro.md`;
+`docs/retros/2026-07-25-ratchet-cli-ci-sdk-security-retro.md`
 
 ## Product Direction
 
@@ -17,6 +18,9 @@
 
 - Use Go and existing Workflow plugins, provider SDKs, secret providers, and
   `secrets.Redactor`; do not duplicate those integrations or secret custody.
+- Resolve SDK pins as published Go module coordinates before locking a design;
+  a product release or source tag is not proof that a matching module version
+  exists.
 - Keep one authority for durable state and derive compatibility projections
   from it. UI-specific code may present a contract but must not redefine it.
 - Preserve supported Windows, macOS, and Linux release paths. Cross-compilation
@@ -38,6 +42,8 @@
 - Run the exact merge-gating race/coverage selector locally when practical.
   Isolate heavyweight real-binary process smoke from race/coverage jobs so one
   test cannot consume the suite timeout.
+- Run multi-command verification transcripts with fail-fast shell semantics so
+  a later success cannot mask an earlier failed gate.
 - Bound cleanup and join paths independently. A timeout-triggered cancel or
   process kill must not be followed by an unbounded `Wait` or channel receive.
 - Keep credentials, request payloads, command environments, and raw provider
@@ -51,6 +57,9 @@
 - Designs must name files, sockets, processes, network paths, plugins, secrets,
   migrations, and external services they create or mutate, including rollback
   and upgrade-forward constraints.
+- CI that consumes a moving sibling branch must derive or explicitly check that
+  sibling's minimum toolchain version instead of assuming the current floor is
+  stable.
 - Production deployment or destructive production changes still require the
   recorded approval applicable to that environment.
 
@@ -59,6 +68,9 @@
 - Exercise each runtime-integrated boundary through its real consumer: CLI or
   TUI to daemon, daemon to plugin/provider, and released archive or package to
   operating system.
+- Security dependency changes must prove the selected module graph, reject
+  protected or legacy replacements, and verify production ownership across
+  every declared release target.
 - For asynchronous notifications, prove send completion and receiver handling
   separately; use an explicit receiver barrier when claiming handler behavior.
 - Stateful flows prove results after restart or reload where feasible. Security
@@ -82,3 +94,4 @@
 |---|---|---|
 | 2026-07-15 | `docs/retros/2026-07-15-provider-drain-managed-hooks-retro.md` | Established shared-contract, native-platform, settled-merge, exact-test, and release-runtime gates after repeated Windows and PR-monitoring misses. |
 | 2026-07-16 | `docs/retros/2026-07-16-ratchet-cli-lifecycle-reliability-retro.md` | Added independent cleanup-join bounds and separate notification send/handler proof after ACP stress and PR review findings. |
+| 2026-07-26 | `docs/retros/2026-07-25-ratchet-cli-ci-sdk-security-retro.md` | Added published-module, fail-fast verification, moving-toolchain, and selected-graph ownership gates after the CI/SDK security initiative. |
