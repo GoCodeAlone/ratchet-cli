@@ -547,8 +547,9 @@ Parse `go.mod` and assert:
 - the selected module graph resolves those exact versions and contains no
   legacy Docker module;
 - the production package-import graph from `internal/daemon` and `cmd/ratchet`
-  reaches Moby client/API and Ollama through workflow-plugin-agent, excluding
-  test-only imports.
+  reaches Moby client/API and Ollama only through workflow-plugin-agent,
+  excluding test-only imports, across all six GoReleaser OS/architecture
+  targets.
 
 Run: `go test ./internal/releaseguard -run TestSecurityDependencyOwnership -count=1`
 Expected: FAIL on plugin v0.12.8 and gRPC v1.81.1.
