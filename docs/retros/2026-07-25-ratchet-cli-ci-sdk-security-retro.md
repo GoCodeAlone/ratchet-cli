@@ -15,13 +15,13 @@ workflow-plugin-agent `v0.12.9`, `v0.12.10`
 |---|---|---|---|
 | design | D1: private plugin repository, per-plugin Pages, and bulk-index state were conflated | Important | Resolved upfront: both registry publications proved the private per-plugin document while retaining bulk-index exclusion. |
 | design | D2: short-name alias identity was under-constrained | Important | Resolved upfront: exact repository identity and mismatch tests shipped in #629. |
-| design | D3: a green sync run could still skip publication | Important | Prescient: the prior v0.12.8 dispatch had returned `skip=1`; repaired short-name dispatches generated #630 and #631, and live version/hash checks independently proved state. |
+| design | D3: a green sync run could still skip publication | Important | Resolved upfront: the prior v0.12.8 `skip=1` precursor motivated release-state gates; repaired short-name dispatches generated #630 and #631, and live version/hash checks independently proved state. |
 | design | D4: mutable Action major tags | Minor | Inconclusive: repository precedent held and all workflows passed, but publisher tag mutability remains. |
 | design | D5: eight PRs and five releases were operationally expensive | Minor | Inconclusive: the cost was real, while independent rollback and release diagnosis worked as designed. |
 | plan | P1: post-lock version changes would invalidate version-derived branches | Important | Resolved upfront: all locked tags and branch rows remained exact. |
 | plan | P2: canonical dispatch would not test the repaired `agent` alias | Important | Resolved upfront: live dispatch used `agent` and resolved `workflow-plugin-agent`. |
 | plan | P3: plugin GoReleaser hooks could dirty feature worktrees | Important | Resolved upfront: disposable source copies produced six-platform snapshots while feature trees stayed clean. |
-| plan | P4: owner plugin lacked native Windows CI | Minor | Resolved upfront: owner releases cross-built Windows and ratchet's native `windows-2025` consumer gates passed after both SDK updates. |
+| plan | P4: owner plugin lacked native Windows CI | Minor | Inconclusive: owner releases cross-built Windows and ratchet's native `windows-2025` consumer gates proved downstream compatibility, but the owner plugin still lacks native Windows execution. |
 | plan | P5: eight-PR over-decomposition | Minor | Inconclusive: generated registry PRs added latency but isolated every release and deployment boundary. |
 | plan | P6: Action major tags were not SHA-pinned | Minor | Inconclusive: unchanged repository policy passed every PR, merge, and tag workflow. |
 
@@ -30,13 +30,12 @@ workflow-plugin-agent `v0.12.9`, `v0.12.10`
 | Issue | Gate that missed | Why it slipped | Fix idea |
 |---|---|---|---|
 | The design treated Docker Engine `docker-v29.6.2` as a valid `github.com/docker/docker@v29.6.2+incompatible` Go module version. | `adversarial-design-review` (design), then plan review | Existence checking stopped at the product/source tag instead of resolving the exact Go module coordinate. | Resolve every pinned module with `go mod download` or `go list -m` before lock. |
+| workflow-registry PR run `30172819761` failed after sibling Workflow `main` raised its Go floor from 1.26.4 to 1.26.5. | pre-PR dependency/toolchain preflight | The locked plan treated a moving sibling branch's previously observed toolchain floor as static. | Derive or check moving sibling toolchain floors immediately before PR publication. |
 | A combined local artifact/runtime verification continued after releaseguard hit a corrupt Go build-cache object. | `verification-before-completion` command construction | The shell command lacked fail-fast mode, so a later successful probe masked the earlier non-zero command status. Log inspection caught it and the gate was rerun after rebuilding the disposable cache. | Use `set -euo pipefail` for multi-command verification transcripts. |
 
-The only PR CI failure was workflow-registry run `30172819761`: moving workflow
-`main` raised its Go floor after plan lock. Direct reproduction identified the
-1.26.4/1.26.5 skew, the design was backported without changing scope, and
-replacement run `30173904211` plus main validation/deploy passed. This was
-post-lock dependency skew, not a missed pre-lock fact.
+Direct reproduction of run `30172819761` identified the 1.26.4/1.26.5 skew.
+The design was backported without changing scope, and replacement run
+`30173904211` plus main validation/deploy passed.
 
 No GitHub review thread requested a change. Four local adversarial code-review
 rounds on Task 7 found root-only graph checks, non-hermetic nested Go commands,
