@@ -426,8 +426,9 @@ map[string]string{
 	"google.golang.org/grpc":                      "v1.82.1",
 }
 ```
-Also reject the legacy `github.com/docker/docker` direct requirement and any
-replace directives for Moby client/API, Docker, Ollama, or gRPC.
+Also reject the legacy `github.com/docker/docker` module anywhere in the
+selected graph and any replace or exclude directives for workflow-plugin-authz,
+Moby client/API, Docker, Ollama, or gRPC.
 
 Run: `go test . -run TestSecurityDependencyVersions -count=1`
 Expected: FAIL on all old versions.
@@ -542,6 +543,10 @@ Parse `go.mod` and assert:
 - Moby client/API and Ollama remain indirect only, the legacy Docker module is
   absent, and none has a replace or exclude;
 - no replacement for workflow-plugin-agent/gRPC.
+- the selected module graph resolves those exact versions and contains no
+  legacy Docker module;
+- `go mod why -m` paths for Moby client/API and Ollama cross
+  workflow-plugin-agent.
 
 Run: `go test ./internal/releaseguard -run TestSecurityDependencyOwnership -count=1`
 Expected: FAIL on plugin v0.12.8 and gRPC v1.81.1.
