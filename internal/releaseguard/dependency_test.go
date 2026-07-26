@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -58,27 +59,24 @@ func TestSecurityDependencyOwnership(t *testing.T) {
 	}
 
 	const legacyDocker = "github.com/docker/docker"
-	selected := selectedModuleGraph(t)
-	for module, want := range required {
-		version, present := selected[module]
-		if !present {
-			t.Errorf("selected module graph is missing %s", module)
-			continue
-		}
-		if version != want.version {
-			t.Errorf("selected %s version = %s, want %s", module, version, want.version)
-		}
-	}
-	if version, present := selected[legacyDocker]; present {
-		t.Errorf("selected module graph retains legacy Docker module %s", version)
-	}
-
 	protected := make(map[string]struct{}, len(required)+2)
 	for module := range required {
 		protected[module] = struct{}{}
 	}
 	protected[legacyDocker] = struct{}{}
 	protected["github.com/GoCodeAlone/workflow-plugin-authz"] = struct{}{}
+
+	selected := selectedModuleGraph(t)
+	for module, want := range required {
+		dependency, present := selected[module]
+		if !present {
+			t.Errorf("selected module graph is missing %s", module)
+			continue
+		}
+		if dependency.Version != want.version {
+			t.Errorf("selected %s version = %s, want %s", module, dependency.Version, want.version)
+		}
+	}
 	for _, replacement := range mod.Replace {
 		if _, forbidden := protected[replacement.Old.Path]; forbidden {
 			t.Errorf("go.mod replaces tracked module %s", replacement.Old.Path)
@@ -89,23 +87,45 @@ func TestSecurityDependencyOwnership(t *testing.T) {
 			t.Errorf("go.mod excludes tracked module %s", exclusion.Mod.Path)
 		}
 	}
+	for _, dependency := range selected {
+		if dependency.Path == legacyDocker {
+			t.Errorf("selected module graph retains legacy Docker module %s", dependency.Version)
+		}
+		if dependency.Replace == nil {
+			continue
+		}
+		if _, forbidden := protected[dependency.Path]; forbidden {
+			t.Errorf("selected module graph replaces tracked module %s with %s", dependency.Path, dependency.Replace.Path)
+		}
+		if _, forbidden := protected[dependency.Replace.Path]; forbidden {
+			t.Errorf("selected module graph uses protected module %s as a replacement for %s", dependency.Replace.Path, dependency.Path)
+		}
+	}
 
-	for _, module := range []string{
-		"github.com/moby/moby/api",
-		"github.com/moby/moby/client",
-		"github.com/ollama/ollama",
+	graph := productionPackageGraph(t)
+	for _, dependency := range []struct {
+		module string
+		root   string
+	}{
+		{module: "github.com/moby/moby/api", root: "github.com/GoCodeAlone/ratchet-cli/internal/daemon"},
+		{module: "github.com/moby/moby/client", root: "github.com/GoCodeAlone/ratchet-cli/internal/daemon"},
+		{module: "github.com/ollama/ollama", root: "github.com/GoCodeAlone/ratchet-cli/cmd/ratchet"},
 	} {
-		why := moduleWhy(t, module)
-		if !strings.Contains(why, "github.com/GoCodeAlone/workflow-plugin-agent/") {
-			t.Errorf("%s ownership path does not cross workflow-plugin-agent:\n%s", module, why)
+		if !productionPathCrossesAgent(graph, dependency.root, dependency.module) {
+			t.Errorf("production import graph has no %s -> workflow-plugin-agent -> %s path", dependency.root, dependency.module)
 		}
 	}
 }
 
-func selectedModuleGraph(t *testing.T) map[string]string {
+type selectedModule struct {
+	Path    string
+	Version string
+	Replace *selectedModule
+}
+
+func selectedModuleGraph(t *testing.T) map[string]selectedModule {
 	t.Helper()
-	cmd := exec.CommandContext(t.Context(), "go", "list", "-mod=readonly", "-m", "-json", "all")
-	cmd.Dir = repoRoot(t)
+	cmd := isolatedGoCommand(t, "list", "-mod=readonly", "-m", "-json", "all")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	raw, err := cmd.Output()
@@ -113,13 +133,10 @@ func selectedModuleGraph(t *testing.T) map[string]string {
 		t.Fatalf("list selected module graph: %v\n%s", err, stderr.String())
 	}
 
-	selected := make(map[string]string)
+	selected := make(map[string]selectedModule)
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	for {
-		var module struct {
-			Path    string
-			Version string
-		}
+		var module selectedModule
 		err := decoder.Decode(&module)
 		if errors.Is(err, io.EOF) {
 			break
@@ -127,18 +144,160 @@ func selectedModuleGraph(t *testing.T) map[string]string {
 		if err != nil {
 			t.Fatalf("decode selected module graph: %v", err)
 		}
-		selected[module.Path] = module.Version
+		selected[module.Path] = module
 	}
 	return selected
 }
 
-func moduleWhy(t *testing.T, module string) string {
+type productionPackage struct {
+	ImportPath string
+	Imports    []string
+	Module     *selectedModule
+}
+
+func productionPackageGraph(t *testing.T) map[string]productionPackage {
 	t.Helper()
-	cmd := exec.CommandContext(t.Context(), "go", "mod", "why", "-m", module)
-	cmd.Dir = repoRoot(t)
-	raw, err := cmd.CombinedOutput()
+	cmd := isolatedGoCommand(t, "list", "-mod=readonly", "-deps", "-json", "./internal/daemon", "./cmd/ratchet")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	raw, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("explain module ownership for %s: %v\n%s", module, err, raw)
+		t.Fatalf("list production package graph: %v\n%s", err, stderr.String())
 	}
-	return string(raw)
+
+	graph := make(map[string]productionPackage)
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	for {
+		var pkg productionPackage
+		err := decoder.Decode(&pkg)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("decode production package graph: %v", err)
+		}
+		graph[pkg.ImportPath] = pkg
+	}
+	return graph
+}
+
+func productionPathCrossesAgent(graph map[string]productionPackage, root, targetModule string) bool {
+	const agentPrefix = "github.com/GoCodeAlone/workflow-plugin-agent/"
+	type state struct {
+		importPath   string
+		crossesAgent bool
+	}
+	queue := []state{{importPath: root}}
+	seen := make(map[state]struct{})
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		if _, visited := seen[current]; visited {
+			continue
+		}
+		seen[current] = struct{}{}
+
+		pkg, present := graph[current.importPath]
+		if !present {
+			continue
+		}
+		current.crossesAgent = current.crossesAgent || strings.HasPrefix(pkg.ImportPath, agentPrefix)
+		if current.crossesAgent && pkg.Module != nil && pkg.Module.Path == targetModule {
+			return true
+		}
+		for _, imported := range pkg.Imports {
+			queue = append(queue, state{importPath: imported, crossesAgent: current.crossesAgent})
+		}
+	}
+	return false
+}
+
+func TestProductionPathCrossesAgent(t *testing.T) {
+	const (
+		root          = "github.com/GoCodeAlone/ratchet-cli/internal/daemon"
+		agent         = "github.com/GoCodeAlone/workflow-plugin-agent/orchestrator"
+		target        = "github.com/moby/moby/client"
+		targetPackage = target
+	)
+	targetNode := productionPackage{
+		ImportPath: targetPackage,
+		Module:     &selectedModule{Path: target},
+	}
+	tests := []struct {
+		name  string
+		graph map[string]productionPackage
+		want  bool
+	}{
+		{
+			name: "owner path",
+			graph: map[string]productionPackage{
+				root:          {ImportPath: root, Imports: []string{agent}},
+				agent:         {ImportPath: agent, Imports: []string{targetPackage}},
+				targetPackage: targetNode,
+			},
+			want: true,
+		},
+		{
+			name: "direct non-owner path",
+			graph: map[string]productionPackage{
+				root:          {ImportPath: root, Imports: []string{targetPackage}},
+				targetPackage: targetNode,
+			},
+		},
+		{
+			name: "unreachable test-only owner",
+			graph: map[string]productionPackage{
+				root:          {ImportPath: root},
+				agent:         {ImportPath: agent, Imports: []string{targetPackage}},
+				targetPackage: targetNode,
+			},
+		},
+		{
+			name: "non-owner cycle",
+			graph: map[string]productionPackage{
+				root:                {ImportPath: root, Imports: []string{"example.com/cycle"}},
+				"example.com/cycle": {ImportPath: "example.com/cycle", Imports: []string{root}},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := productionPathCrossesAgent(test.graph, root, target); got != test.want {
+				t.Fatalf("productionPathCrossesAgent() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestIsolatedGoCommandEnvironment(t *testing.T) {
+	t.Setenv("GOWORK", "/tmp/untrusted-go.work")
+	t.Setenv("GOFLAGS", "-mod=mod")
+
+	cmd := isolatedGoCommand(t, "version")
+	values := make(map[string][]string)
+	for _, entry := range cmd.Env {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok && (key == "GOWORK" || key == "GOFLAGS") {
+			values[key] = append(values[key], value)
+		}
+	}
+	if got := values["GOWORK"]; len(got) != 1 || got[0] != "off" {
+		t.Fatalf("GOWORK values = %q, want [off]", got)
+	}
+	if got := values["GOFLAGS"]; len(got) != 1 || got[0] != "" {
+		t.Fatalf("GOFLAGS values = %q, want one empty value", got)
+	}
+}
+
+func isolatedGoCommand(t *testing.T, args ...string) *exec.Cmd {
+	t.Helper()
+	cmd := exec.CommandContext(t.Context(), "go", args...)
+	cmd.Dir = repoRoot(t)
+	cmd.Env = slices.DeleteFunc(cmd.Environ(), func(entry string) bool {
+		key, _, _ := strings.Cut(entry, "=")
+		return key == "GOWORK" || key == "GOFLAGS"
+	})
+	cmd.Env = append(cmd.Env, "GOWORK=off", "GOFLAGS=")
+	return cmd
 }

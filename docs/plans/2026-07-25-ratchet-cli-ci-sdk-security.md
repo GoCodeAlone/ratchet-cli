@@ -426,9 +426,10 @@ map[string]string{
 	"google.golang.org/grpc":                      "v1.82.1",
 }
 ```
-Also reject the legacy `github.com/docker/docker` module anywhere in the
-selected graph and any replace or exclude directives for workflow-plugin-authz,
-Moby client/API, Docker, Ollama, or gRPC.
+The committed guard rejects a direct legacy `github.com/docker/docker`
+requirement and replacement directives for the tracked modules or legacy
+Docker. Task 5's GREEN verification separately requires `go list -m all` to
+contain no legacy Docker module.
 
 Run: `go test . -run TestSecurityDependencyVersions -count=1`
 Expected: FAIL on all old versions.
@@ -545,8 +546,9 @@ Parse `go.mod` and assert:
 - no replacement for workflow-plugin-agent/gRPC.
 - the selected module graph resolves those exact versions and contains no
   legacy Docker module;
-- `go mod why -m` paths for Moby client/API and Ollama cross
-  workflow-plugin-agent.
+- the production package-import graph from `internal/daemon` and `cmd/ratchet`
+  reaches Moby client/API and Ollama through workflow-plugin-agent, excluding
+  test-only imports.
 
 Run: `go test ./internal/releaseguard -run TestSecurityDependencyOwnership -count=1`
 Expected: FAIL on plugin v0.12.8 and gRPC v1.81.1.
