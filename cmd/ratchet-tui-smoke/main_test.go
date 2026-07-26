@@ -2,10 +2,10 @@ package main
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSmokeBinaryBuildTags(t *testing.T) {
@@ -76,11 +76,14 @@ func assertGoFails(t *testing.T, root string, env []string, label string, args .
 }
 
 func runGo(root string, env []string, args ...string) (string, error) {
-	cmd := exec.Command("go", args...)
-	cmd.Dir = root
-	cmd.Env = append(os.Environ(), env...)
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	return runBoundedCommand(
+		root,
+		env,
+		2*time.Minute,
+		5*time.Second,
+		"go",
+		args...,
+	)
 }
 
 func repoRoot(t *testing.T) string {
