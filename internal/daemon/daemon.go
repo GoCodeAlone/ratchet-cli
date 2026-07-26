@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 )
@@ -20,6 +22,29 @@ var (
 	exportReloadCheckpoint = ExportCheckpoint
 	saveReloadCheckpoint   = SaveCheckpoint
 )
+
+const (
+	daemonShutdownRPCTimeout = 2 * time.Second
+	daemonGracePeriod        = 5 * time.Second
+	daemonFallbackPeriod     = 5 * time.Second
+	daemonPollInterval       = 100 * time.Millisecond
+	daemonStopTimeout        = 15 * time.Second
+)
+
+var errNoDaemonRunning = errors.New("no daemon running")
+
+type daemonLifecycleOps struct {
+	readPID         func() (int, error)
+	processRunning  func(int) bool
+	shutdownRPC     func(context.Context) error
+	terminate       func(int) error
+	cleanupPID      func()
+	cleanupSocket   func()
+	startBackground func(bool) error
+	pollInterval    time.Duration
+	gracePeriod     time.Duration
+	fallbackPeriod  time.Duration
+}
 
 type daemonReloadBarrier struct {
 	mu         sync.Mutex
@@ -187,17 +212,189 @@ func StartBackground(debug bool) error {
 	return fmt.Errorf("daemon did not start within 5s")
 }
 
-// Stop sends the platform's configured termination signal to the running daemon.
-func Stop() error {
-	pid, err := ReadPID()
-	if err != nil {
-		return fmt.Errorf("no daemon running")
+func defaultDaemonLifecycleOps() daemonLifecycleOps {
+	return daemonLifecycleOps{
+		readPID:         ReadPID,
+		processRunning:  processRunning,
+		shutdownRPC:     requestDaemonShutdown,
+		terminate:       terminateDaemon,
+		cleanupPID:      CleanupPID,
+		cleanupSocket:   CleanupSocket,
+		startBackground: StartBackground,
+		pollInterval:    daemonPollInterval,
+		gracePeriod:     daemonGracePeriod,
+		fallbackPeriod:  daemonFallbackPeriod,
 	}
+}
+
+func requestDaemonShutdown(ctx context.Context) (retErr error) {
+	conn, err := grpc.NewClient(
+		"unix://"+SocketPath(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		return fmt.Errorf("connect to daemon at %s: %w", SocketPath(), err)
+	}
+	defer func() {
+		retErr = errors.Join(retErr, conn.Close())
+	}()
+
+	if _, err := pb.NewRatchetDaemonClient(conn).Shutdown(ctx, &pb.Empty{}); err != nil {
+		return fmt.Errorf("request daemon shutdown: %w", err)
+	}
+	return nil
+}
+
+func terminateDaemon(pid int) error {
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return fmt.Errorf("find process %d: %w", pid, err)
 	}
-	return proc.Signal(terminateSignal())
+	if err := proc.Signal(terminateSignal()); err != nil {
+		return fmt.Errorf("signal process %d: %w", pid, err)
+	}
+	return nil
+}
+
+func waitForDaemonExit(
+	ctx context.Context,
+	pid int,
+	limit time.Duration,
+	ops daemonLifecycleOps,
+) error {
+	waitCtx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+
+	for ops.processRunning(pid) {
+		select {
+		case <-waitCtx.Done():
+			return waitCtx.Err()
+		case <-time.After(ops.pollInterval):
+		}
+	}
+	return nil
+}
+
+func reconcileDaemonOwnership(oldPID int, ops daemonLifecycleOps) (bool, error) {
+	currentPID, err := ops.readPID()
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			ops.cleanupPID()
+			ops.cleanupSocket()
+			return false, nil
+		}
+		return false, fmt.Errorf("read daemon PID ownership: %w", err)
+	}
+
+	if currentPID != oldPID && ops.processRunning(currentPID) {
+		return true, nil
+	}
+	if currentPID == oldPID && ops.processRunning(currentPID) {
+		return false, fmt.Errorf("daemon process %d is still running", currentPID)
+	}
+
+	ops.cleanupPID()
+	ops.cleanupSocket()
+	return false, nil
+}
+
+func stopContextWithOps(ctx context.Context, ops daemonLifecycleOps) (bool, error) {
+	oldPID, err := ops.readPID()
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			ops.cleanupPID()
+			ops.cleanupSocket()
+			return false, errNoDaemonRunning
+		}
+		return false, fmt.Errorf("read daemon PID: %w", err)
+	}
+	if !ops.processRunning(oldPID) {
+		return reconcileDaemonOwnership(oldPID, ops)
+	}
+	if err := ctx.Err(); err != nil {
+		return false, fmt.Errorf("wait for daemon shutdown: %w", err)
+	}
+
+	rpcCtx, cancelRPC := context.WithTimeout(ctx, daemonShutdownRPCTimeout)
+	rpcErr := ops.shutdownRPC(rpcCtx)
+	cancelRPC()
+	if err := ctx.Err(); err != nil {
+		return false, fmt.Errorf("wait for daemon shutdown: %w", err)
+	}
+
+	var gracefulErr error
+	if rpcErr == nil {
+		gracefulErr = waitForDaemonExit(ctx, oldPID, ops.gracePeriod, ops)
+		if gracefulErr == nil {
+			return reconcileDaemonOwnership(oldPID, ops)
+		}
+		if err := ctx.Err(); err != nil {
+			return false, fmt.Errorf("wait for daemon shutdown: %w", err)
+		}
+	}
+
+	if err := ops.terminate(oldPID); err != nil {
+		terminateErr := fmt.Errorf("terminate daemon process %d: %w", oldPID, err)
+		if rpcErr != nil {
+			return false, errors.Join(rpcErr, terminateErr)
+		}
+		return false, errors.Join(
+			fmt.Errorf("wait for graceful daemon shutdown: %w", gracefulErr),
+			terminateErr,
+		)
+	}
+
+	if err := waitForDaemonExit(ctx, oldPID, ops.fallbackPeriod, ops); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return false, fmt.Errorf("wait for daemon shutdown: %w", ctxErr)
+		}
+		fallbackErr := fmt.Errorf("wait for terminated daemon process %d: %w", oldPID, err)
+		if rpcErr != nil {
+			return false, errors.Join(rpcErr, fallbackErr)
+		}
+		return false, errors.Join(
+			fmt.Errorf("wait for graceful daemon shutdown: %w", gracefulErr),
+			fallbackErr,
+		)
+	}
+	return reconcileDaemonOwnership(oldPID, ops)
+}
+
+// StopContext requests graceful shutdown and waits until the captured daemon
+// process has exited or ctx is canceled.
+func StopContext(ctx context.Context) error {
+	_, err := stopContextWithOps(ctx, defaultDaemonLifecycleOps())
+	return err
+}
+
+// Stop is the bounded compatibility wrapper for StopContext.
+func Stop() error {
+	ctx, cancel := context.WithTimeout(context.Background(), daemonStopTimeout)
+	defer cancel()
+	return StopContext(ctx)
+}
+
+func restartWithOps(ctx context.Context, debug bool, ops daemonLifecycleOps) error {
+	replaced, err := stopContextWithOps(ctx, ops)
+	if err != nil && !errors.Is(err, errNoDaemonRunning) {
+		return err
+	}
+	if replaced {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("wait for daemon shutdown: %w", err)
+	}
+	if err := ops.startBackground(debug); err != nil {
+		return fmt.Errorf("start replacement daemon: %w", err)
+	}
+	return nil
+}
+
+// Restart waits for the captured daemon process to exit before ensuring a
+// replacement is ready.
+func Restart(ctx context.Context, debug bool) error {
+	return restartWithOps(ctx, debug, defaultDaemonLifecycleOps())
 }
 
 // Status returns daemon health info.
