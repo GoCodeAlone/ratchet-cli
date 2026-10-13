@@ -58,6 +58,13 @@ type providerOperationManager struct {
 	background  sync.WaitGroup
 }
 
+type appliedOperationRows interface {
+	Next() bool
+	Scan(...any) error
+	Err() error
+	Close() error
+}
+
 type providerOperationFlight struct {
 	operationID  string
 	done         chan struct{}
@@ -669,34 +676,53 @@ func providerOperationFailurePB(failure string) pb.ProviderOperationFailure {
 	}
 }
 
-func (m *providerOperationManager) reconcileStartup(ctx context.Context) error {
-	m.engine.ProviderRowsMu.Lock()
-	if _, err := m.engine.DB.ExecContext(ctx, `UPDATE provider_operations
-		SET state = ?, failure = ?, updated_at = CURRENT_TIMESTAMP WHERE state = ?`,
-		providerOperationFailed, providerFailureRestartRecovery, providerOperationPending); err != nil {
-		m.engine.ProviderRowsMu.Unlock()
-		return fmt.Errorf("recover pending provider operations: %w", err)
-	}
-	rows, err := m.engine.DB.QueryContext(ctx, `SELECT operation_id FROM provider_operations WHERE state = ?`, providerOperationApplied)
-	if err != nil {
-		m.engine.ProviderRowsMu.Unlock()
-		return fmt.Errorf("list applied provider operations: %w", err)
-	}
-	var applied []string
+func collectAppliedProviderOperations(rows appliedOperationRows) (operationIDs []string, err error) {
+	defer func() {
+		err = errors.Join(err, rows.Close())
+	}()
 	for rows.Next() {
 		var operationID string
 		if err := rows.Scan(&operationID); err != nil {
-			rows.Close()
-			m.engine.ProviderRowsMu.Unlock()
-			return err
+			return nil, fmt.Errorf("scan applied provider operation: %w", err)
 		}
-		applied = append(applied, operationID)
+		operationIDs = append(operationIDs, operationID)
 	}
-	if err := rows.Close(); err != nil {
-		m.engine.ProviderRowsMu.Unlock()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate applied provider operations: %w", err)
+	}
+	return operationIDs, nil
+}
+
+func (m *providerOperationManager) listAppliedProviderOperations(ctx context.Context) ([]string, error) {
+	rows, err := m.engine.DB.QueryContext(
+		ctx,
+		`SELECT operation_id FROM provider_operations WHERE state = ?`,
+		providerOperationApplied,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list applied provider operations: %w", err)
+	}
+	operationIDs, err := collectAppliedProviderOperations(rows)
+	if err != nil {
+		return nil, fmt.Errorf("collect applied provider operations: %w", err)
+	}
+	return operationIDs, nil
+}
+
+func (m *providerOperationManager) reconcileStartup(ctx context.Context) error {
+	applied, err := func() ([]string, error) {
+		m.engine.ProviderRowsMu.Lock()
+		defer m.engine.ProviderRowsMu.Unlock()
+		if _, err := m.engine.DB.ExecContext(ctx, `UPDATE provider_operations
+			SET state = ?, failure = ?, updated_at = CURRENT_TIMESTAMP WHERE state = ?`,
+			providerOperationFailed, providerFailureRestartRecovery, providerOperationPending); err != nil {
+			return nil, fmt.Errorf("recover pending provider operations: %w", err)
+		}
+		return m.listAppliedProviderOperations(ctx)
+	}()
+	if err != nil {
 		return err
 	}
-	m.engine.ProviderRowsMu.Unlock()
 	for _, operationID := range applied {
 		if err := m.finalizeOperation(ctx, operationID); err != nil {
 			var secretErr *providerOperationSecretError

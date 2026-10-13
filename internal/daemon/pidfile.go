@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"syscall"
 )
 
 func DataDir() string {
@@ -66,11 +65,5 @@ func IsRunning() bool {
 	if err != nil {
 		return false
 	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	// Signal 0 checks if process exists without sending a signal.
-	err = proc.Signal(syscall.Signal(0))
-	return err == nil
+	return processRunning(pid)
 }

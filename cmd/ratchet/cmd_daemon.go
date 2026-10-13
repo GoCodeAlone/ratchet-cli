@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/daemon"
 )
@@ -38,15 +39,17 @@ func handleDaemon(args []string) {
 			}
 		}
 	case "stop":
-		if err := daemon.Stop(); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		defer cancel()
+		if err := daemon.StopContext(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
 		fmt.Println("daemon stopped")
 	case "restart":
-		// Stop the old daemon (ignore errors — it may not be running).
-		_ = daemon.Stop()
-		if err := daemon.StartBackground(false); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		defer cancel()
+		if err := daemon.Restart(ctx, false); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}

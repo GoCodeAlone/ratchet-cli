@@ -7,7 +7,6 @@ import (
 	"os"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/GoCodeAlone/ratchet-cli/internal/daemon"
 	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
@@ -25,10 +24,7 @@ type Client struct {
 // Connect creates a gRPC client connection to the daemon Unix socket.
 func Connect() (*Client, error) {
 	sock := daemon.SocketPath()
-	conn, err := grpc.NewClient(
-		"unix://"+sock,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	conn, err := daemon.DialUnixSocket(sock)
 	if err != nil {
 		return nil, fmt.Errorf("connect to daemon at %s: %w", sock, err)
 	}
