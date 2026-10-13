@@ -68,6 +68,36 @@ func TestIsRunning(t *testing.T) {
 	_ = IsRunning()
 }
 
+func TestWaitForDaemonReadyRetriesUntilHealthy(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	attempts := 0
+	err := waitForDaemonReady(ctx, func(context.Context) error {
+		attempts++
+		if attempts < 3 {
+			return errors.New("socket exists but daemon is not accepting requests")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 3 {
+		t.Fatalf("health attempts = %d, want 3", attempts)
+	}
+}
+
+func TestWaitForDaemonReadyTimesOutWhenUnhealthy(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	err := waitForDaemonReady(ctx, func(context.Context) error {
+		return errors.New("connection refused")
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want readiness deadline", err)
+	}
+}
+
 func TestRestartWaitsForCapturedDaemonBeforeStarting(t *testing.T) {
 	const oldPID = 41
 	var (

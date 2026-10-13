@@ -25,6 +25,8 @@ var (
 
 const (
 	daemonShutdownRPCTimeout = 2 * time.Second
+	daemonStartupTimeout     = 5 * time.Second
+	daemonHealthProbeTimeout = 300 * time.Millisecond
 	daemonGracePeriod        = 5 * time.Second
 	daemonFallbackPeriod     = 5 * time.Second
 	daemonPollInterval       = 100 * time.Millisecond
@@ -178,8 +180,10 @@ func Start(ctx context.Context, debug bool) error {
 
 // StartBackground forks the current process as a background daemon.
 func StartBackground(debug bool) error {
+	readyCtx, cancel := context.WithTimeout(context.Background(), daemonStartupTimeout)
+	defer cancel()
 	if IsRunning() {
-		return nil // already running
+		return waitForDaemonReady(readyCtx, probeDaemonHealth)
 	}
 
 	exe, err := os.Executable()
@@ -200,14 +204,43 @@ func StartBackground(debug bool) error {
 		return fmt.Errorf("start daemon: %w", err)
 	}
 
-	// Wait for socket to appear
-	for i := 0; i < 50; i++ {
-		if _, err := os.Stat(SocketPath()); err == nil {
+	return waitForDaemonReady(readyCtx, probeDaemonHealth)
+}
+
+func waitForDaemonReady(ctx context.Context, probe func(context.Context) error) error {
+	var lastErr error
+	for {
+		probeCtx, cancel := context.WithTimeout(ctx, daemonHealthProbeTimeout)
+		lastErr = probe(probeCtx)
+		cancel()
+		if lastErr == nil {
 			return nil
 		}
-		time.Sleep(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("daemon did not become healthy: %w (last health probe: %v)", ctx.Err(), lastErr)
+		case <-time.After(daemonPollInterval):
+		}
 	}
-	return fmt.Errorf("daemon did not start within 5s")
+}
+
+func probeDaemonHealth(ctx context.Context) error {
+	conn, err := grpc.NewClient(
+		"unix://"+SocketPath(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		return fmt.Errorf("connect to daemon: %w", err)
+	}
+	defer conn.Close()
+	resp, err := pb.NewRatchetDaemonClient(conn).Health(ctx, &pb.Empty{})
+	if err != nil {
+		return fmt.Errorf("daemon health check: %w", err)
+	}
+	if !resp.GetHealthy() {
+		return fmt.Errorf("daemon reported unhealthy")
+	}
+	return nil
 }
 
 func defaultDaemonLifecycleOps() daemonLifecycleOps {
