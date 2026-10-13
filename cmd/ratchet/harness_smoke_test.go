@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -75,6 +76,12 @@ func TestHarnessSmokeDaemonRestartWaitsForReplacement(t *testing.T) {
 	if err := probe.Close(); err != nil {
 		t.Fatalf("close daemon socket probe: %v", err)
 	}
+	var oldProcess *os.Process
+	t.Cleanup(func() {
+		if oldProcess != nil {
+			_ = oldProcess.Release()
+		}
+	})
 	t.Cleanup(func() {
 		_, _ = runRatchetSmoke(t, bin, home, "daemon", "stop")
 	})
@@ -86,6 +93,10 @@ func TestHarnessSmokeDaemonRestartWaitsForReplacement(t *testing.T) {
 	oldPID, err := daemon.ReadPID()
 	if err != nil {
 		t.Fatalf("read old daemon PID: %v", err)
+	}
+	oldProcess, err = os.FindProcess(oldPID)
+	if err != nil {
+		t.Fatalf("capture old daemon process %d: %v", oldPID, err)
 	}
 
 	out, err = runRatchetSmoke(t, bin, home, "daemon", "restart")
@@ -99,8 +110,30 @@ func TestHarnessSmokeDaemonRestartWaitsForReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read replacement daemon PID: %v", err)
 	}
-	if newPID == oldPID {
+	if runtime.GOOS == "windows" {
+		// Windows can reuse a PID. The captured handle still names the old process.
+		exited := make(chan error, 1)
+		go func() {
+			_, err := oldProcess.Wait()
+			exited <- err
+		}()
+		select {
+		case err := <-exited:
+			if err != nil {
+				t.Fatalf("wait for old daemon process %d: %v", oldPID, err)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("old daemon process %d did not exit after restart", oldPID)
+		}
+	} else if newPID == oldPID {
 		t.Fatalf("replacement PID = old PID %d", oldPID)
+	}
+	conn, err := net.DialTimeout("unix", daemon.SocketPath(), 2*time.Second)
+	if err != nil {
+		t.Fatalf("connect to replacement daemon socket: %v", err)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatalf("close replacement daemon socket: %v", err)
 	}
 
 	out, err = runRatchetSmoke(t, bin, home, "daemon", "status")
