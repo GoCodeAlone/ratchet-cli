@@ -51,7 +51,16 @@ func TestHarnessSmokeDaemonRestartWaitsForReplacement(t *testing.T) {
 		t.Skip("binary-build smoke is covered by normal tests; skip expensive subprocess build under -race")
 	}
 	bin := buildRatchetSmokeBinary(t)
-	home := t.TempDir()
+	// Windows AF_UNIX rejects the long socket path under t.TempDir's test-name prefix.
+	home, err := os.MkdirTemp("", "rt-")
+	if err != nil {
+		t.Fatalf("create short daemon test home: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(home); err != nil {
+			t.Errorf("remove daemon test home: %v", err)
+		}
+	})
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))

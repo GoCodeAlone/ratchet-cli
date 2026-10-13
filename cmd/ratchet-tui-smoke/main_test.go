@@ -76,10 +76,11 @@ func assertGoFails(t *testing.T, root string, env []string, label string, args .
 }
 
 func runGo(root string, env []string, args ...string) (string, error) {
+	// Cold Windows cross-builds under race coverage can exceed two minutes.
 	return runBoundedCommand(
 		root,
 		env,
-		2*time.Minute,
+		5*time.Minute,
 		5*time.Second,
 		"go",
 		args...,
