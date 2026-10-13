@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -54,6 +55,17 @@ func TestHarnessSmokeDaemonRestartWaitsForReplacement(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
+	socket := daemon.SocketPath()
+	if err := os.MkdirAll(filepath.Dir(socket), 0o700); err != nil {
+		t.Fatalf("create daemon socket directory: %v", err)
+	}
+	probe, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatalf("test daemon socket path is not bindable (%d bytes): %v", len(socket), err)
+	}
+	if err := probe.Close(); err != nil {
+		t.Fatalf("close daemon socket probe: %v", err)
+	}
 	t.Cleanup(func() {
 		_, _ = runRatchetSmoke(t, bin, home, "daemon", "stop")
 	})
