@@ -38,8 +38,6 @@ type daemonLifecycleOps struct {
 	processRunning  func(int) bool
 	shutdownRPC     func(context.Context) error
 	terminate       func(int) error
-	cleanupPID      func()
-	cleanupSocket   func()
 	startBackground func(bool) error
 	pollInterval    time.Duration
 	gracePeriod     time.Duration
@@ -218,8 +216,6 @@ func defaultDaemonLifecycleOps() daemonLifecycleOps {
 		processRunning:  processRunning,
 		shutdownRPC:     requestDaemonShutdown,
 		terminate:       terminateDaemon,
-		cleanupPID:      CleanupPID,
-		cleanupSocket:   CleanupSocket,
 		startBackground: StartBackground,
 		pollInterval:    daemonPollInterval,
 		gracePeriod:     daemonGracePeriod,
@@ -279,8 +275,6 @@ func reconcileDaemonOwnership(oldPID int, ops daemonLifecycleOps) (bool, error) 
 	currentPID, err := ops.readPID()
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			ops.cleanupPID()
-			ops.cleanupSocket()
 			return false, nil
 		}
 		return false, fmt.Errorf("read daemon PID ownership: %w", err)
@@ -293,8 +287,9 @@ func reconcileDaemonOwnership(oldPID int, ops daemonLifecycleOps) (bool, error) 
 		return false, fmt.Errorf("daemon process %d is still running", currentPID)
 	}
 
-	ops.cleanupPID()
-	ops.cleanupSocket()
+	// The daemon removes its own files on normal exit. A later Start handles
+	// stale files under daemon.lock. Unlinking here could erase a replacement
+	// that starts after the PID read above.
 	return false, nil
 }
 
@@ -302,8 +297,6 @@ func stopContextWithOps(ctx context.Context, ops daemonLifecycleOps) (bool, erro
 	oldPID, err := ops.readPID()
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			ops.cleanupPID()
-			ops.cleanupSocket()
 			return false, errNoDaemonRunning
 		}
 		return false, fmt.Errorf("read daemon PID: %w", err)

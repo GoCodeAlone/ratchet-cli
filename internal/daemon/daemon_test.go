@@ -88,8 +88,6 @@ func TestRestartWaitsForCapturedDaemonBeforeStarting(t *testing.T) {
 		terminate: func(int) error {
 			return errors.New("terminate called before graceful shutdown window elapsed")
 		},
-		cleanupPID:    func() {},
-		cleanupSocket: func() {},
 		startBackground: func(bool) error {
 			if alive.Load() {
 				return errors.New("replacement started while captured daemon was alive")
@@ -150,8 +148,6 @@ func TestStopContextEscalatesWhenGracefulShutdownDoesNotExit(t *testing.T) {
 			alive.Store(false)
 			return nil
 		},
-		cleanupPID:      func() {},
-		cleanupSocket:   func() {},
 		startBackground: func(bool) error { return nil },
 		pollInterval:    time.Millisecond,
 		gracePeriod:     5 * time.Millisecond,
@@ -170,19 +166,13 @@ func TestStopContextEscalatesWhenGracefulShutdownDoesNotExit(t *testing.T) {
 	}
 }
 
-func TestStopContextCleansUnchangedStaleOwnership(t *testing.T) {
+func TestStopContextReturnsForUnchangedStaleOwnership(t *testing.T) {
 	const oldPID = 57
-	var (
-		pidCleaned    atomic.Bool
-		socketCleaned atomic.Bool
-	)
 	ops := daemonLifecycleOps{
 		readPID:         func() (int, error) { return oldPID, nil },
 		processRunning:  func(int) bool { return false },
 		shutdownRPC:     func(context.Context) error { return nil },
 		terminate:       func(int) error { return nil },
-		cleanupPID:      func() { pidCleaned.Store(true) },
-		cleanupSocket:   func() { socketCleaned.Store(true) },
 		startBackground: func(bool) error { return nil },
 		pollInterval:    time.Millisecond,
 		gracePeriod:     time.Second,
@@ -196,8 +186,46 @@ func TestStopContextCleansUnchangedStaleOwnership(t *testing.T) {
 	if replaced {
 		t.Fatal("stop reported a replacement for unchanged stale ownership")
 	}
-	if !pidCleaned.Load() || !socketCleaned.Load() {
-		t.Fatalf("stale cleanup = pid:%t socket:%t, want both", pidCleaned.Load(), socketCleaned.Load())
+}
+
+func TestStopContextDoesNotUnlinkReplacementAfterPIDRead(t *testing.T) {
+	const oldPID = 57
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if err := EnsureDataDir(); err != nil {
+		t.Fatal(err)
+	}
+
+	ops := defaultDaemonLifecycleOps()
+	var reads int
+	ops.readPID = func() (int, error) {
+		reads++
+		if reads == 1 {
+			return oldPID, nil
+		}
+		// A replacement writes its files immediately after this stale read.
+		for _, path := range []string{PIDPath(), SocketPath()} {
+			if err := os.WriteFile(path, []byte("replacement"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return 0, os.ErrNotExist
+	}
+	ops.processRunning = func(int) bool { return false }
+
+	replaced, err := stopContextWithOps(t.Context(), ops)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replaced {
+		t.Fatal("stop reported a replacement before its PID was visible")
+	}
+	for _, path := range []string{PIDPath(), SocketPath()} {
+		content, err := os.ReadFile(path)
+		if err != nil || string(content) != "replacement" {
+			t.Fatalf("replacement file %s was removed or changed: content %q, err %v", path, content, err)
+		}
 	}
 }
 
@@ -210,8 +238,6 @@ func TestStopContextJoinsRPCAndFallbackErrors(t *testing.T) {
 		processRunning:  func(int) bool { return true },
 		shutdownRPC:     func(context.Context) error { return rpcErr },
 		terminate:       func(int) error { return terminateErr },
-		cleanupPID:      func() {},
-		cleanupSocket:   func() {},
 		startBackground: func(bool) error { return nil },
 		pollInterval:    time.Millisecond,
 		gracePeriod:     time.Millisecond,
@@ -231,7 +257,6 @@ func TestRestartPreservesConcurrentLiveReplacement(t *testing.T) {
 	)
 	var (
 		readCalls atomic.Int32
-		cleaned   atomic.Bool
 		started   atomic.Bool
 	)
 	ops := daemonLifecycleOps{
@@ -244,8 +269,6 @@ func TestRestartPreservesConcurrentLiveReplacement(t *testing.T) {
 		processRunning: func(pid int) bool { return pid == newPID },
 		shutdownRPC:    func(context.Context) error { return nil },
 		terminate:      func(int) error { return nil },
-		cleanupPID:     func() { cleaned.Store(true) },
-		cleanupSocket:  func() { cleaned.Store(true) },
 		startBackground: func(bool) error {
 			started.Store(true)
 			return nil
@@ -257,9 +280,6 @@ func TestRestartPreservesConcurrentLiveReplacement(t *testing.T) {
 
 	if err := restartWithOps(t.Context(), false, ops); err != nil {
 		t.Fatal(err)
-	}
-	if cleaned.Load() {
-		t.Fatal("restart cleaned files owned by a live replacement")
 	}
 	if started.Load() {
 		t.Fatal("restart launched a second replacement")
@@ -276,8 +296,6 @@ func TestRestartCancellationDoesNotStartReplacement(t *testing.T) {
 		processRunning:  func(int) bool { return true },
 		shutdownRPC:     func(context.Context) error { return nil },
 		terminate:       func(int) error { return nil },
-		cleanupPID:      func() {},
-		cleanupSocket:   func() {},
 		startBackground: func(bool) error { started.Store(true); return nil },
 		pollInterval:    time.Millisecond,
 		gracePeriod:     time.Second,
