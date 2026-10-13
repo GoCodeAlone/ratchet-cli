@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GoCodeAlone/ratchet-cli/internal/client"
 	"github.com/GoCodeAlone/ratchet-cli/internal/daemon"
 )
 
@@ -90,6 +91,7 @@ func TestHarnessSmokeDaemonRestartWaitsForReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start daemon: %v\n%s", err, out)
 	}
+	requireSmokeClientHealth(t)
 	oldPID, err := daemon.ReadPID()
 	if err != nil {
 		t.Fatalf("read old daemon PID: %v", err)
@@ -135,6 +137,7 @@ func TestHarnessSmokeDaemonRestartWaitsForReplacement(t *testing.T) {
 	if err := conn.Close(); err != nil {
 		t.Fatalf("close replacement daemon socket: %v", err)
 	}
+	requireSmokeClientHealth(t)
 
 	out, err = runRatchetSmoke(t, bin, home, "daemon", "status")
 	if err != nil {
@@ -152,6 +155,24 @@ func TestHarnessSmokeDaemonRestartWaitsForReplacement(t *testing.T) {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("daemon path %s remains after stop: %v", path, err)
 		}
+	}
+}
+
+func requireSmokeClientHealth(t *testing.T) {
+	t.Helper()
+	cli, err := client.Connect()
+	if err != nil {
+		t.Fatalf("connect production daemon client: %v", err)
+	}
+	defer cli.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	health, err := cli.Health(ctx)
+	if err != nil {
+		t.Fatalf("production daemon client Health: %v", err)
+	}
+	if !health.GetHealthy() {
+		t.Fatal("production daemon client reported unhealthy")
 	}
 }
 

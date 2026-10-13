@@ -224,11 +224,20 @@ func waitForDaemonReady(ctx context.Context, probe func(context.Context) error) 
 	}
 }
 
-func probeDaemonHealth(ctx context.Context) error {
-	conn, err := grpc.NewClient(
-		"unix://"+SocketPath(),
+// DialUnixSocket passes the raw path to the Unix dialer, without URL parsing.
+func DialUnixSocket(path string) (*grpc.ClientConn, error) {
+	return grpc.NewClient(
+		"passthrough:///ratchet-daemon",
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			var dialer net.Dialer
+			return dialer.DialContext(ctx, "unix", path)
+		}),
 	)
+}
+
+func probeDaemonHealth(ctx context.Context) error {
+	conn, err := DialUnixSocket(SocketPath())
 	if err != nil {
 		return fmt.Errorf("connect to daemon: %w", err)
 	}
@@ -257,10 +266,7 @@ func defaultDaemonLifecycleOps() daemonLifecycleOps {
 }
 
 func requestDaemonShutdown(ctx context.Context) (retErr error) {
-	conn, err := grpc.NewClient(
-		"unix://"+SocketPath(),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	conn, err := DialUnixSocket(SocketPath())
 	if err != nil {
 		return fmt.Errorf("connect to daemon at %s: %w", SocketPath(), err)
 	}

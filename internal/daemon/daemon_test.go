@@ -3,11 +3,16 @@ package daemon
 import (
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"google.golang.org/grpc"
+
+	pb "github.com/GoCodeAlone/ratchet-cli/internal/proto"
 )
 
 func TestEnsureDataDir(t *testing.T) {
@@ -95,6 +100,47 @@ func TestWaitForDaemonReadyTimesOutWhenUnhealthy(t *testing.T) {
 	})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("error = %v, want readiness deadline", err)
+	}
+}
+
+type healthySocketTestServer struct {
+	pb.UnimplementedRatchetDaemonServer
+}
+
+func (healthySocketTestServer) Health(context.Context, *pb.Empty) (*pb.HealthResponse, error) {
+	return &pb.HealthResponse{Healthy: true}, nil
+}
+
+func TestDialUnixSocketPreservesSpecialPath(t *testing.T) {
+	tempRoot, err := os.MkdirTemp("", "rt-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tempRoot) })
+	socket := filepath.Join(tempRoot, "#daemon.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	server := grpc.NewServer()
+	pb.RegisterRatchetDaemonServer(server, healthySocketTestServer{})
+	t.Cleanup(server.Stop)
+	go func() { _ = server.Serve(listener) }()
+
+	conn, err := DialUnixSocket(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	resp, err := pb.NewRatchetDaemonClient(conn).Health(ctx, &pb.Empty{})
+	if err != nil {
+		t.Fatalf("Health over socket with # in path: %v", err)
+	}
+	if !resp.GetHealthy() {
+		t.Fatal("socket Health reported unhealthy")
 	}
 }
 
